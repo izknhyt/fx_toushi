@@ -67,6 +67,13 @@
 | Reporter | 週次/エクイティ/メトリクス出力 | Markdown/HTML |
 | Alert Dispatcher | メール通知 | SMTPライブラリ |
 
+### 2.2 クロスカッティング・コンポーネント
+- **Configuration Governance**: `ConfigRegistry`（シングルトン）でYAMLプロファイルを管理し、JSON Schema検証（FR-23）とバージョンハッシュを計算。安全項目はPub/Subでホットリロードし、危険項目は`NextBarChangeQueue`で遅延適用する。
+- **Event Bus**: Domain層間の疎結合を保つために`DomainEventBus`を採用。同期処理はコアフロー、非同期処理（レポート生成、Slack通知など）はワーカーキューに委譲する。
+- **Snapshot Manager**: `./snapshots/latest/*.json`にセッション状態（Open Tickets、AccountState、GateState、CfgHash）を周期保存し、再起動時にSession Managerがリプレイ（FR-18）。
+- **Health Monitor**: SPRT評価（FR-22）、Kill Switch（FR-05）、連続エラー検出（FR-12）を統合して`HealthState`を更新し、Signal Engine/Mode Controllerへブロードキャスト。
+- **Audit Trail Service**: 監査イベント（FR-11）を受け取ってJSONL/SQLiteへ二重書き込みし、書き込み失敗時はWrite-Aheadログでロールフォワード可能にする（ERROR-C04対策）。
+
 ## 3. ユースケースフロー（MVP）
 1. アプリ起動 -> Session Managerが設定読み込み・Catch-upキュー投入->履歴データ同期。
 2. Data Ingestionが所定ティッカーの新規バーを取得し、キャッシュを更新。
@@ -87,6 +94,7 @@
 17. ユーザーがチケットを承認/却下/編集->監査ログ記録。
 18. Reporterが定期的にレポート/ログを出力。
 19. Kill Switchまたはアラート条件が発火した場合、Mode Controllerが新規提案を停止。
+20. Configuration Governanceが安全項目のホットリロードを配信し、Signal Engine/リスク管理へ反映。危険項目は`NextBarChangeQueue`に保留し、次バー確定時にSession Managerが適用して監査イベントを出力。
 
 ## 4. データ構造と保存先
 - **マーケットデータ**: Parquet（ローカル）、キー: `{symbol}/{timeframe}`。カラム: ts, open, high, low, close, volume, spread(optional)。
@@ -102,6 +110,8 @@
 - **ブローカー仕様**: `config/broker_rules.yaml`でpip値、contract size、最小ロット、tick size、stop level/freeze levelを定義し、ロード結果を`BrokerSpecs`キャッシュとして全モジュールで参照。
 - **スプレッドメトリクス**: `data/spread_metrics.parquet`にスプレッド/手数料の観測結果を保存し、イベント影響や時刻別平均を蓄積してSpread Monitor/Riskが参照。バックテスト時はDukascopyティック/分足からBid/Askを再構成し、観測出来ない区間は`broker_rules.yaml`の固定スプレッドテーブルで補完。
 - **相関メトリクス**: `data/correlation/`以下に通貨バケット別エクスポージャ履歴と相関行列（Parquet/PNGヒートマップ）を保存し、リスク検証に利用。
+- **監査ログ**: `logs/events/`配下に日次ローテーション。`event_type`毎に索引ファイルを生成し、`Audit Trail Service`が二重書き込み結果をチェックサムで検証する。
+- **設定変更ガバナンス**: `logs/config/changes.jsonl`に`cfg_hash_before/after`、安全/危険分類、適用時刻を記録。週次で`ConfigDriftReport`を生成（FR-23, FR-33）。
 
 ### 4.1 Catch-up / Resync フロー
 - **開始トリガー**: 起動時・手動`tradectl resync`・データ欠損検知時にSession Managerが`resync`タスクを起動。
@@ -129,6 +139,7 @@
 - **日次集計**: レポート/リスク指標の集計には日次終値を利用し、Backtestの結果と一致させる。
 - **記録**: リアルタイム換算値と日次終値を両方`fx_rates.parquet`に保存し、監査時に追跡可能とする。
 - **クロスレート優先順位**: 直接ティッカーが存在しない場合は`USD`経由（例: EURUSD × USDJPY）を第一優先、次に`JPY`/`EUR`等のバックアップ経路を設定し、経路と適用時刻を`fx_rates.parquet`へ記録する。
+- **安定化**: クロスレート経路は`fx_rates.parquet`内に`source_priority`列を持ち、1位ソースとの差異が閾値超過した場合は`RateAnomaly`イベントを`Audit Trail Service`へ送信する（FR-21と整合）。
 
 ### 4.4 レート更新スケジュール
 - **5分更新**: トリガー足確定時にFX Rate Updaterが必要通貨ペアの最新値を取得し、差異>0.02%または1時間経過で`fx_rates.parquet`を上書き。
@@ -141,6 +152,7 @@
 - **イベントタグ付与**: カレンダーイベント発生前後±60分のデータにタグを付け、分析時にイベント影響を評価できるようにする。
 - **バックフィル**: Spreadデータ欠損時はブローカー提供履歴もしくは自前記録を再取得し、欠損区間の平均/分散を補完。バックテストではDukascopyティックから再構築し、該当データが無い場合は固定スプレッドで代替。
 - **長期集計**: 日次で時間帯別（東京/ロンドン/NY）平均とp95を集計し、Risk/Position Sizerがスプレッドシナリオ検証に利用。バックテストレポートにも同じ集計を出力し、ライブとの差分を監視。
+- **健全性ガード連携**: SPRTやKill Switchがアクティブな場合、Spread Monitorはスプレッド閾値を自動引き下げ（例: 10%）て追加保守モードへ移行し、解除時には監査イベントを記録する（FR-22）。
 
 ### 4.6 相関評価スケジュール
 - **ローリング計算**: 1日単位で通貨バケット別エクスポージャとシンボル相関を30日ローリングで算出し、`CorrelationMatrix`を更新。
@@ -178,12 +190,21 @@
 | reporter | 指標集計、グラフ化 | PerformanceStats, Logs | Reports |
 | persistence | Parquet/SQLite/JSONL管理 | 各種イベント | 永続化ファイル |
 
+### 6.1 シグナル・リスク・サイジング連携
+- **Signal Engine**は`StrategyPlugin`抽象基底クラスを介してルール/モデル（FR-04）をロードし、`evaluate(context)`で`RawSignal`を返却。プラグインは`@strategy_plugin(name="donchian_breakout")`などのデコレータ登録。
+- **Scoring Service**は`RawSignal`に対して`HybridScore = w_recency·PF_recent + w_global·PF_all − λ·DD_all − γ·(1−Stability)`（FR-19, FR-21）を評価し、`Stability`は±10%摂動のドローダウン差分から算出。
+- **Risk Manager**は`RiskPolicy`（per_trade, daily_loss, weekly_loss, SPRT thresholds）を参照し、Kill SwitchやSPRTフェーズ（FR-05, FR-22）に応じて`SignalAction`（allow/defer/block）を出力。
+- **Correlation Guard**は`CorrelationMatrix`と`BrokerSpecs`から`R_eff`を計算し（FR-37）、超過時はリスク比重を削減またはシグナル除外。
+- **Position Sizer**はFixed Fractionalを基本に、`SpreadMetrics`/`BrokerSpecs`/`FxRateCache`を用いてR値を整合。`min_stop_distance`未満の場合は`Ticket Builder`へ補正案を返却（FR-38）。
+- **Ticket Builder**は`HumanErrorChecklist`（桁/丸め/TP/SL/OCO）を評価し、未充足項目はSignal Boardで赤バッジ表示（FR-30）。
+
 ## 7. 非機能要件への対応方針
 - **性能**: pandasベース処理＋numba/ポリシー最適化と差分再計算キャッシュで5分足ストリーム遅延<100msを目標化。I/Oは非同期キューで平滑化。
-- **信頼性**: イベントソーシング（JSONL）＋定期スナップショットで再現性を確保し、データ品質ガードとKill Switch、Calendar Gate、FXレート補完、スプレッド監視、相関ガードを統合して異常時やイベント期間中/レート欠損時/相関過多時の自動停止・再開・補正を実現。
+- **信頼性**: イベントソーシング（JSONL）＋定期スナップショットで再現性を確保し、データ品質ガードとKill Switch、Calendar Gate、FXレート補完、スプレッド監視、相関ガードを統合して異常時やイベント期間中/レート欠損時/相関過多時の自動停止・再開・補正を実現。Resyncフェーズは二相ロックで`MarketData`と`FeatureCache`を凍結し、終了後にSPRTリセット条件を評価する。
 - **運用性**: CLIコマンド `tradectl`（想定）で start/stop/status/resync を提供。
 - **セキュリティ/コンプラ**: HITL前提で助言表示を限定。設定変更・操作ログを全て監査保存。
 - **拡張性**: Strategy/Scoring/Riskをプラグイン化（`entry_points` / 自前registry）。
+- **再現性**: バックテスト/ライブの乱数seed、cfgハッシュ、データバージョンをレポート出力に埋め込み、`reports/*`のメタヘッダで差分検証可能とする（FR-25）。
 
 ## 8. 環境構成
 - **OS**: macOS (ARM/x86)
@@ -218,6 +239,43 @@ project_root/
 - バージョン管理: Git + Poetry/Pip + `pip --require-hashes` で依存固定。
 - テスト: pytest + hypothesis。バックテスト再現性はAC-13遵守。
 - ログローテーション: 日次でJSONL圧縮。スナップショットは時間足ごとに保存。
+- チューニング・ガバナンス: `tradectl autotune propose`で週次チューニング案を生成し、変更幅±10%・冷却期間2週間（FR-33）を`ConfigRegistry`で検証。承認後に`cfg_change`イベントを発火。
+
+## 11. 要件トレーサビリティ（主要FR対応）
+| 要件ID | 対応セクション/コンポーネント |
+| --- | --- |
+| FR-01, FR-02 | 2.1 Data Ingestion Service / Data Quality Guard, 4.1 Catch-upフロー |
+| FR-03 | 2.1 Feature Engine, 4.2 マルチタイムフレーム合成 |
+| FR-04 | 6, 6.1 Signal Engine/StrategyPlugin |
+| FR-05 | 2.2 Health Monitor, 6.1 Risk Manager |
+| FR-06 | 6.1 Position Sizer |
+| FR-07, FR-30 | 6.1 Ticket Builder、3. ユースケースフロー(16〜17) |
+| FR-08 | 1. システム概要、2.1 Mode Controller |
+| FR-09 | 2.1 Optimizer、6. モジュール別機能割り当て |
+| FR-10 | 2.1 Reporter、9. 運用・保守 |
+| FR-11 | 2.2 Audit Trail Service、4. データ構造 |
+| FR-12 | 2.2 Health Monitor、Alert Dispatcher |
+| FR-13, FR-34 | 2.1 Calendar Service、4. データ構造、4.6 相関評価 |
+| FR-14, FR-23 | 2.2 Configuration Governance、4. データ構造、9. 運用・保守 |
+| FR-15 | 2.1 Calendar Service、6. correlation_guard |
+| FR-16, FR-18 | 2.2 Snapshot Manager、4.1 Catch-upフロー |
+| FR-17, FR-38 | 2.1 Ticket Builder、6.1 Ticket Builder |
+| FR-19, FR-21 | 6.1 Scoring Service、4.3 口座通貨換算ポリシー |
+| FR-20 | 2.1 Regime Detector、6. モジュール別機能割り当て |
+| FR-22 | 2.2 Health Monitor、4.5 スプレッド観測スケジュール |
+| FR-24 | 2.1 Broker Rules Loader、6.1 Position Sizer |
+| FR-25 | 7. 非機能要件、4. データ構造 |
+| FR-26 | 2.1 Calendar Service、4. データ構造 |
+| FR-27 | 2.1 Spread Monitor、4.5 スプレッド観測スケジュール |
+| FR-28 | 2.1 Account Service、6. モジュール別機能割り当て |
+| FR-29 | 3. ユースケースフロー、6. モジュール別機能割り当て |
+| FR-31 | 4.3 口座通貨換算ポリシー |
+| FR-32 | 2.1 Data Quality Guard、4.1 Catch-upフロー |
+| FR-33 | 2.2 Configuration Governance、9. 運用・保守 |
+| FR-35 | 6. モジュール別機能割り当て（backtester/ticket） |
+| FR-36 | 2.1 Risk Manager、6.1 Risk Manager |
+| FR-37 | 2.1 Correlation Guard、6.1 Correlation Guard |
+
 
 ## 10. 今後の拡張ポイント
 - ブローカーAPI連携（自動発注化）
