@@ -73,7 +73,7 @@
 | コンポーネント | 役割 | 技術/形式 | Milestone |
 | --- | --- | --- | --- |
 | CLI/Signal Board | 提案表示・操作入力 | Rich CLI（M1: `tradectl board`コマンド、JSON Lines入力）／将来React GUI | M1 Core |
-| Session Manager | アプリ全体の起動・終了、Catch-up調整 | Python service | M1 Core |
+| Session Manager | アプリ全体の起動・終了、Catch-up調整。スナップショットと最新イベントの差分から欠損ウィンドウを検出し、`resync_queue`へ`priority={critical,high,normal}`付き`BackfillJob`を投入する。長時間停止（24h超）では主要4ペアに`priority=critical`を付与し、復旧完了までは`HealthState=soft_stop(manual_review)`を維持する。 | Python service | M1 Core |
 | Mode Controller | Backtest/Paper/Liveの振る舞い切替 | Stateパターン | M1 Core |
 | Data Ingestion Service | データ取得・キャッシュ管理。ティッカー×プロバイダ単位で**`asyncio.Queue(maxsize>1)`を持つフェッチワーカー**と**内部バッファ**を用意し、取得（fetch）と整形/検証（processing）を分離する。主経路はDukascopy（中央値6秒/p95 12秒）、短期フォールバックはyfinance（中央値24秒/p95 58秒）。`ProviderFetchWorker`が常時4ジョブ並列、Catch-up時は6ジョブまで拡張し、`ProviderParseWorker`が`AsyncBuffer`内でUTC整列・Quality Guard検証を完了させてから`bar_ready_queue`へ整合済みバーのみ投入する。`FallbackRetryTask`が再試行間隔を管理し、手動CSV移行は`ManualCsvIngestionTask`へ委譲してパイプライン本流から切り離す。`metrics/data_ingestion_sla.jsonl`へ`phase=fetch|processing`別の遅延と429/403イベント（`event=rate_limited`, `backoff_sec`）を記録し、30分内に4ペア全履歴を追いつけなければ`health.changed(reason=data_latency_fetch|process|rate_limited)`を発火する。`RateLimitGuard`がRolling 1h失敗率>3%または連続429>5回を検出すると**ポーリング間隔を倍化**し、回復後15分で段階的に戻す。プロバイダp99遅延や連続失敗はRunbook `docs/runbooks/RUN-DATA-05.md`（フォールバック調整）/`docs/runbooks/RUN-DATA-06.md`（手動補填）と連携し、Acceptable Degradation期間中は`HealthState=degraded(fetch)`で新規シグナルを`soft_stop`に留めつつ、代替計画とValidation Data Playbook月次自動サマリ＋四半期レビューでフォローする。**公式API移行計画**として、M1.2でRefinitiv Elektron Lite / dxFeed FX / OANDA premium APIを比較し（費用≦月額¥80,000・ライセンスで個人利用許諾・REST/WebSocketで再配信不可を遵守）、PoCでp95≤12秒を満たしたプロバイダを`Data Ingestion Adapter`へ追加する。導入条件はコンプライアンス承認とSLA 30日ローリング合格、フェイルオーバー統合テスト（AC-45拡張）を満たすこと。 | yfinance, Dukascopy, CSV（M1）、有償API（M1.2+オプション） | M1 Core |
 | Data Quality Guard | 欠損/外れ値判定、再取得制御 | Pandas/Numpy | M1 Core |
@@ -140,6 +140,7 @@
 - **キャッシュ保持期間**: Sharpe/Sortino/最大DD/年率は要件定義の評価期間に合わせ、最低でも**直近252営業日＋安全マージン10営業日**の取引履歴・エクイティカーブ・リスクメトリクスをキャッシュする。四半期レビュー用に**直近90営業日ローリング**のサマリも常備し、`metrics/kpi_cache.parquet`に`window={252d,90d}`単位で保管する。ブートストラップ再標本化での再利用に備えて、各ウィンドウのリターン系列を`returns_{window}.parquet`として別途保持する。
 - **前処理ルール**: ReporterとBenchmark Monitorは共通のData Qualityフィルタを適用し、**欠損バー率≤0.5%/日・連続欠損≤3バー・異常イベント（`flash_crash`, `manual_exclusion`タグ）除外**後のデータセットのみをメトリクス計算に渡す。閾値を超えた場合は当該期間をドロップし、`data_quality_report.md`を添付した上で`HealthState`へ`data_gapped`理由を通知する。ドロップ後にサンプル不足となった場合は`KpiEvaluationStatus=pending`としてRunbookへ記録する。
 - **KPI計算ロジック**: キャッシュ済みの取引リターンからSharpe/Sortino/最大DD/年率/Profit Factorを算出し、252営業日ウィンドウを週次モニタリング、90営業日ウィンドウを四半期レビューにマッピングする。計算は`metrics.compute_kpi(window, returns_df, equity_curve)`ヘルパーに集約し、Data Qualityフィルタ後のデータのみを許可する。ベンチマーク比較時は同一フィルタ・同一ウィンドウで差分を計算する。
+  - **CLIロールアップ**: `tradectl kpi rollup`は週次テンプレート生成とは独立して上記パイプラインをワンショット実行し、`reports/performance/<mode>/<YYYYMMDD>.md`と`reports/kpi_snapshots/<YYYYMMDD>.json`を再生成する。UIは単点値のままでも、ローリング90/252営業日メトリクスは常にバックエンドで更新され、`reports/governance/kpi_alerts/`の逸脱検知と四半期レビューで活用される。
 - **ベンチマークデータ取得**: M1ではTradingView公開シグナル（FX Majorsカテゴリ、ICS/CSVエクスポート）とMyfxbook公開システム（Sharpe>0.6, 稼働>12か月, CSVダウンロード可）をサポートする`BenchmarkFeedLoader`を用意。CLI `tradectl benchmark ingest --provider tradingview --file <path>`でICS/CSVを読み込み、`benchmark_runs/raw/<provider>/<YYYYMMDD>.parquet`へ正規化保存する。エクスポート不可区間は`benchmark_manual_log/<provider>/<YYYYMM>.csv`へ追記し、週次で`BenchmarkFeedLoader`がマージする。M2以降はAPI/Webhook拡張を想定し、インターフェース`BenchmarkFeedAdapter`を差し替え可能にする。
   - **再計算トリガー**: 週次レポート生成（`Reporter.run(schedule=weekly)`）と四半期レビュー（`calendar.quarter_review`イベントまたは`tradectl benchmark compare --quarterly`）の2系統で再計算を走らせる。どちらも**最新バー更新時（5分足確定）→キャッシュ更新→メトリクス再集計→信頼区間計算**の順に非同期ジョブを投入し、完了後に`kpi_snapshot.json`を上書きする。Data Qualityインシデント発生時（`data_gapped`, `anomaly_excluded`）も同じパイプラインを即時再実行する。
 - **テンプレート/スコープ**: 週次レポートはM1 Coreで`reports/weekly/templates/m1_core.md`（Sharpe/最大DD/WinRate/累積R＋コメント2項目）のみをレンダリングし、`reporter.config`の既定値として`bootstrap_enabled=false`・`attribution_enabled=false`・`benchmark_gap_enabled=false`を設定する。Feature Flag `report.weekly.enhanced=true`に切り替えるとM1.1テンプレートへ移行し、ブートストラップ信頼区間やベンチマーク差分グラフ、カテゴリー別アトリビューションを追加出力する。
@@ -355,18 +356,14 @@
 - **データマニフェスト/署名**: `reports/data_manifest.json`に利用データセットのハッシュ/期間/取得元/バージョンを列挙し、`reports/data_manifest.sig`にEd25519署名を保存。`tradectl data verify`で検証し、アーカイブZIPへ両ファイルを同梱（FR-25, FR-52）。
 
 ### 4.1 Catch-up / Resync フロー
-- **開始トリガー**: 起動時・手動`tradectl resync`・データ欠損検知時にSession Managerが`resync`タスクを起動。
-- **欠落検知**: 最新スナップショットと`logs/events`内の`MarketUpdate`タイムスタンプを突合し、欠落バー区間を特定。
-- **バックフィル**: Data Ingestionが欠落期間を優先的に取得し、Parquetキャッシュを更新。プロバイダ障害時は代替ソースへフォールバック。
-- **増分再計算**: Feature Engineはバックフィル区間とTTL=3*TFぶんを再計算し、それ以外はキャッシュ値を再利用。
-- **シグナル評価**: 再計算したバーについてRegime/Scoring/Execution/Risk/Sizingを再実行し、TTL切れやドリフト超過のチケットは自動失効マーク。
-- **スナップショット更新**: 処理完了後に`./snapshots`へ状態を保存し、復旧時のレイテンシを最小化。
+- **開始トリガー**: 起動時・手動`tradectl resync`・データ欠損検知時にSession Managerが`resync`タスクを起動。`Scheduler`が`AsyncOneShotJob`として登録し、他ジョブと排他制御を行う。
+- **欠落検知/ジョブ投入**: 最新スナップショットと`logs/events`内の`MarketUpdate`タイムスタンプ差分、`data/runtime/<symbol>.parquet`のギャップ解析を組み合わせて欠落バー区間を特定。欠損期間とティッカー数に応じて`BackfillJob`を分割し、`priority`を`catch_up_lag_minutes`に基づき付与する（60分超=critical、30分超=high、その他=normal）。
+- **バックフィル実行**: Data Ingestionが`BackfillJob`を取り出して欠落期間を優先的に取得し、Parquetキャッシュを更新。主要4ペアの`catch_up_lag_minutes`は`metrics/data_ingestion_sla.jsonl`に記録し、60分超過で`HealthMonitor.raise(level='critical', reason='data_latency_catch_up')`を発火してAcceptable Degradation（代替ソース＋手動CSV）フローに切り替える。切替時は`tradectl data failover --mode manual`で承認ログを残す。
+- **増分再計算**: Feature Engineはバックフィル区間とTTL=3*TFぶんを再計算し、それ以外はキャッシュ値を再利用。`Workflow Orchestrator`はCatch-upモード中`fast_forward`で順次処理し、失敗したバーは`RetryQueue`へ再投入する。
+- **シグナル評価**: 再計算したバーについてRegime/Scoring/Execution/Risk/Sizingを再実行し、TTL切れやドリフト超過のチケットは自動失効マーク。Acceptable Degradation中は新規シグナル提案を`soft_stop`に維持し、完了後の`ResyncCompleted`イベントで再開。
+- **スナップショット更新**: 処理完了後に`./snapshots`へ状態を保存し、復旧時のレイテンシを最小化。`ResyncCompleted`には`catch_up_elapsed_sec`と`recovered_symbols`を含め、Runbookで承認を記録する。
 - **品質ガード連携**: 欠損率>0.5%/日または外れ値比率>0.2%検知で`DataQualityAlert`イベントを発火し、Risk Managerへ`DATA_STOP`フラグを送信。Kill SwitchがSOFT_STOPへ遷移し、新規提案は抑止。復旧後3バー連続で正常値を確認したら自動解除。
-- **カレンダー更新**: Resync完了後にCalendar ServiceがCSVの更新日時を確認し、差分があれば`GateState`を再生成。外部API同期は日次タスクで実行し、成功時にCSVを上書きする。DST境界のイベントはUTC→`trading_timezone`再変換で再評価。
-- **レート更新**: Resync対象期間に為替レート欠損があればFX Rate Updaterが再取得し、`fx_rates.parquet`を補完。フォールバック経路を用いたクロスレート再計算も同タイミングで実施。
-- **スプレッド補完**: Spread Monitorがイベントログと照合し、欠損区間のBid/Askを再取得。取得不能な区間は直近ヒストリカル統計で補間し、補間フラグを付与。
-- **相関再計算**: Resyncで約定履歴が変わった場合、Account Service（M1）は単一口座のエクスポージャ履歴を更新し、Correlation Guard用の相関行列/ヒートマップを再生成。〈M2+〉ではAccount Aggregatorが複数口座の統合エクスポージャを再計算し、FR-58検証ログ（`reports/performance/portfolio/`）と突合する。
-- **マニフェスト更新**: Resync完了時に`DataManifestBuilder`が対象期間・利用データソース・ハッシュを再集計し、`reports/data_manifest.json`とZIPパッケージを更新（FR-25）。
+- **カレンダー/レート/スプレッド/相関/マニフェスト更新**: Resync完了後に各サービスが差分を検出し、必要な補完・再計算・補間フラグ付与・マニフェスト再集計を実施する。詳細は従来通りだが、Catch-up期間中に生成された代替ソースのハッシュとRunbook承認者IDを`reports/validation_log/AC-45_sla_<date>.md`へ追記する。
 
 ### 4.2 マルチタイムフレーム更新
 - トリガーTF（既定:5m）のバー確定ごとに、下記リングバッファを更新し上位TFを再構築。
