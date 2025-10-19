@@ -1,5 +1,10 @@
 # GOV-AUD-01: 監査パッケージレビュー手順
 
+> **ACカバレッジ**: AC-06, AC-40, AC-43  
+> **Runbook版数**: v1.2  
+> **最終更新日**: 2025-03-08  
+> **最終更新者**: Compliance Advisor (Doc Maintainer)
+
 ## 目的
 - `tradectl audit bundle`で生成した監査パッケージを検証し、外部税理士/監査人への提供前に完全性と指摘対応の準備を整える。
 - 指摘事項を`reports/governance/strategy_board/`やリリース計画にフィードバックし、次サイクルの改善タスクへ反映する。

@@ -1,0 +1,71 @@
+# RUN-DATA-06: 手動データ補填・Resync運用手順
+
+> **ACカバレッジ**: AC-04, AC-45  
+> **Runbook版数**: v1.0  
+> **最終更新日**: 2025-03-08  
+> **最終更新者**: Data Engineer (Doc Maintainer)
+
+## 目的
+- 自動フィードが停止した際に手動CSVを用いてデータ欠損を補填し、Resync/Catch-up処理でTTL=3×TF・ドリフト≤0.5R・減衰λ=0.1/minの要件を満たす。
+- 補填後に`data_manifest`と`HealthState`を一致させ、AC-04およびAC-45の監査証跡を整備する。
+
+## 適用範囲・トリガー
+- Runbook `docs/runbooks/RUN-DATA-05.md`でローカルキャッシュでも欠損が解消できないと判断したとき。
+- `HealthMonitor`が`data_gapped`または`manual_source=true`に遷移し、Resyncが必要と判断されたとき。
+- 週次/監査レビューで手動補填とResyncのエビデンスを提出するとき。
+
+## 事前準備
+- `data/manual/<date>/`ディレクトリを作成し、対象シンボル・タイムフレームのCSVテンプレートを`tradectl data request-template --symbol <symbol> --tf m5 --out data/manual/<date>/<symbol>.csv`で生成する。
+- CSVに必要な列: `ts,open,high,low,close,volume,spread,session_tag`。`ts`はUTC ISO8601、5分足境界にスナップ。
+- 補填対象期間のリファレンスとして`data/raw/<provider>/<symbol>/<tf>.parquet`または前回の`reports/audit/data_diff_<date>.md`を参照する。
+- Resync前に`tradectl status --detail`で`manual_source=true`が立っていること、`HealthState`が`degraded|data_gapped`であることを確認する。
+
+## 手順
+
+### 1. 欠損区間の特定
+1. `tradectl data gaps --symbol <symbol> --tf m5 --from <start> --to <end>`で欠損バー区間を抽出し、`missing_count`を記録する。
+2. `tradectl data compare --symbol <symbol> --primary dukascopy --secondary manual --window <start>/<end>`で参照データと手動データの差分を確認する。
+3. 差分結果を`reports/audit/data_diff/<YYYYMMDD>.md`に追記し、対象シンボル・バー数・想定原因を記録する。
+
+### 2. 手動CSVの投入
+1. 補填CSVを`data/manual/<date>/`配下に配置し、`tradectl data validate-csv --path data/manual/<date>/<symbol>.csv`で形式検証する。`errors=0`であること。
+2. `tradectl data reload --source manual --symbol <symbol> --tf m5 --from <start> --to <end>`を実行し、補填バーがSQLite/Parquetに取り込まれたことをログで確認する。
+3. 取り込み後に`tradectl data verify --symbol <symbol> --tf m5 --from <start> --to <end>`を実行し、`missing_count=0`かつ`checksum_status=ok`であることを確認する。
+4. すべての対象シンボルについて完了したら、`reports/performance/data_latency/<YYYYMMDD>.md`に補填所要時間・担当者・データソースを記録する。
+
+### 3. Resync/Catch-up 実行（AC-04）
+1. `tradectl resync --since <ts>`を実行し、`resync_queue`に`BackfillJob`が投入されることを確認。`logs/resync/resync_events.jsonl`に`job_started`/`job_completed`が連続して出力されることを確認する。
+2. Resync完了後に`tradectl ticket queue --summary`で保留チケットのTTL/ドリフトを再計算し、`ttl_sec>=3×tf_sec`、`drift_r<=0.5`が維持されていることを確認する。
+3. `tradectl diagnostics resync --from <start> --to <end>`で減衰λが`0.1/min`で適用されているか（`decay_lambda=0.1`）をログで確認する。
+4. `snapshots/session_<ts>.json`を再生成し、`HealthState`が`operational`へ戻ることを`tradectl status`で確認する。
+5. 結果を`reports/audit/resync/<YYYYMMDD>.md`にまとめ、
+   - Resyncコマンド実行時刻
+   - TTL/ドリフト/減衰の検証値
+   - `data_manifest`の更新ハッシュ
+   - `HealthState`遷移ログ
+   を記録する。
+
+### 4. `data_manifest`と監査ログの更新
+1. `make data-manifest`を実行し、補填後のハッシュを`data_manifest.json`に更新する。差分はGitで追跡。
+2. `tradectl audit export --type data_patch --from <start> --to <end> --out reports/audit/data_patch/<YYYYMMDD>.json`で監査ログを出力する。
+3. Validation Data Playbook表（要件定義§8.2）のAC-04/AC-45行に本作業の完了情報（Runbook版数、担当者）を更新する。
+
+### 5. 復旧後のフォロー
+1. `tradectl data resume --provider dukascopy`などで通常経路へ復帰し、`manual_source`フラグが`false`に戻ることを`tradectl status --detail`で確認する。
+2. 24時間後に`tradectl data health --symbol <symbol>`を再実行し、再発がないか監視する。
+3. 本Runbook手順で発生した課題があれば`tickets/data_quality/<symbol>_<date>.md`に記録し、是正タスクを登録する。
+
+## チェックリスト
+- [ ] 欠損区間を`tradectl data gaps`で特定し、差分ログを作成
+- [ ] `tradectl data validate-csv`/`reload`/`verify`が全て成功
+- [ ] Resync後にTTL=3×TF、ドリフト≤0.5R、減衰λ=0.1/minを確認
+- [ ] `reports/audit/resync/<date>.md`と`data_manifest.json`を更新
+- [ ] `manual_source=false`へ復帰し、フォローアップタスクを起票
+
+## エスカレーション
+- 手動CSVの検証で`errors>0`の場合はData Engineerが再作成し、時間内に復旧できない場合はプロダクトオーナーへ報告の上、該当シンボルを一時停止する。
+- Resync後も`drift_r>0.5`または`ttl_sec<3×tf_sec`が解消されない場合はQuant Leadと協議し、シグナル再生成または履歴再計算を実施する。
+
+## 履歴更新手順
+- Runbook改訂時は版数を+0.1し、最終更新者・日付を更新する。
+- `reports/governance/runbook_changelog.md`に変更履歴を追記し、Validation Data Playbook表（要件定義§8.2）のRunbook欄と版数を更新する。
