@@ -488,6 +488,8 @@ tests/
 - **公開API**: `generate_weekly(profile)`, `generate_daily(date)`, `emit_summary()`。
 - **内容**: KPI（CAGR/MaxDD/Sharpe/PF）、Spread/Correlation統計、Kill Switchログ、Config変更履歴をMarkdownで出力（FR-10）。
 - **依存**: `PerformanceStats`, `metrics/pipeline.jsonl`, `logs/events`。Live実績の突合結果は`actual_fill_import_summary`から読み取り、スリッページ分布と承認→約定遅延を週次レポートに追加する。
+- **リスク概要**: `RiskSummaryBuilder`を追加し、`risk_policy.yaml`から`daily_loss_threshold`/`weekly_loss_threshold`を取得して`reports/performance/<mode>/<date>.md`に表形式で埋め込む。`kill_switch_events.jsonl`から直近7日間の`soft_stop`/`hard_stop`を抽出し、逸脱がある場合は`[ALERT]`タグとともに表示する。閾値変更が検出された場合は`[THRESHOLD CHANGE]`バッジを自動付与し、`reports/risk/threshold_change_<date>.md`へのリンクを追加する。
+- **同期メタデータ**: レポート生成時に`threshold_version`と`kpi_snapshot_version`をヘッダへ記録し、`metrics/risk_guard.jsonl`へ同じ値を出力。`tradectl risk status`はこのメタデータを参照してレポート最終同期時刻を表示し、齟齬が48時間超継続した場合は`health.changed(reason=risk_report_mismatch)`を発火させる。
 
 #### 3.18.1 Benchmark Monitor & Feed Loader (`src/reporter/benchmark.py`, `src/interfaces/cli/benchmark.py`)
 - **目的**: 市販シグナルツールとの比較KPIを算出し、`reports/benchmark/<YYYYWW>.md`および`reports/governance/benchmark_review/<YYYYQ>.md`へ自動反映する。
@@ -1100,6 +1102,20 @@ Flag切替時は`ConfigChanged`イベントに`flag_delta`が記録され、Repo
 - ロールバック時は最新スナップショット＋`requirements.lock`＋`config`を復元し、`tradectl preflight`→`resync`で整合を取る。
 - M2でCI/CD導入後はGitHub Actionsで自動テスト→手動承認→Artifacts配布を実施する計画。
 
+### 8.9 運用スループット計測と自動化準備
+- **ワークロードメトリクス**: `ops_worklog.jsonl`を新設し、CLI操作やRunbookステップ完了時に`{"task":"manual_csv_review","duration_min":37,"owner":"ops","source":"tradectl data manual-report"}`の形式で記録する。Typerコマンドは`--log-duration`オプションで操作時間を入力できるようにし、既定は`config/ops/workload_defaults.yaml`の標準値を採用する。
+- **集計ジョブ**: `OpsWorkloadAggregator`を`src/app/telemetry.py`に追加し、毎日24:00に`ops_worklog.jsonl`を読み込んでカテゴリ別の総時間・中央値・標準偏差を計算。結果は`reports/ops/workload_<YYYYMM>.md`と`metrics/ops_workload.json`へ出力し、グラフは`tools/plot_ops_workload.py`で生成する。
+- **省力化トラッカー**: 自動化タスクの効果測定のため、`automation_effect.jsonl`に`{"task":"sla_review","before_min":60,"after_min":30,"effective_date":"2025-03-10"}`を記録。`tradectl ops automation log --task sla_review --before 60 --after 30`で更新し、削減時間が30分/週以上のものに`[PRIORITY]`タグを付与してバックログ管理する。
+- **アジェンダ生成**: `tradectl ops agenda --date <YYYY-MM-DD>`は`ops_worklog.jsonl`の最新値と未完了Runbook項目を組み合わせ、日次TODO Markdown（`docs/runbooks/daily_agenda/<date>.md`）とCLI出力を同時生成。Acceptable Degradation時は`HealthState`と連動して手動CSVチェックやKill Switchレビューを先頭に挿入する。
+- **将来拡張**: M2ではSlack通知へ`ops agenda`を送信できるようWebhook連携を追加し、作業ログ入力のリマインダを実装する。
+
+### 8.10 SLA閾値チューニングファクトリ
+- **プロファイル構造**: `config/sla_thresholds/<profile>.yaml`は`provider`×`metric`×`window`の三次元で`target`,`warning`,`critical`を定義し、`profile_version`と`generated_at`をメタデータに含める。`health.threshold_profile`でアクティブなプロファイルを指定し、未設定時は`default`を読み込む。
+- **生成スクリプト**: `tools/sla/generate_profile.py`は`metrics/data_ingestion_sla.jsonl`を入力に、(1) p50/p75/p95/p99算出、(2) 外れ値除外（IQR×1.5）、(3) 候補しきい値の提案（`warn = max(p95*1.15, p95+max(2,1σ))`、`critical = max(p99*1.25, p95+max(8,2σ))`）を行う。結果は`reports/ops/sla_review/<YYYYWW>.md`と`config/sla_thresholds/candidate_<YYYYWW>.yaml`として出力する。
+- **適用フロー**: `tradectl sla profile apply --file config/sla_thresholds/candidate_<YYYYWW>.yaml`でシンタックス・単調性（`target ≤ warning ≤ critical`）を検証後、`config/sla_thresholds/active.yaml`へコピー。適用時に`health.changed(reason=sla_profile_update)`を発火し、`metrics/data_ingestion_sla.jsonl`へ`profile_version`を追記する。
+- **逸脱検知**: `SlaDeviationMonitor`がローリング7日間で`observed_p95`が`warning`を連続3回超過した場合に`health.changed(reason=sla_threshold_mismatch)`を通知。通知には`current_profile_version`と直近のp95/p99値を含め、レビュー用URL（`reports/ops/sla_review/<YYYYWW>.md`）を添付する。
+- **将来オートチューニング**: M2ではベイズ更新で`warning`/`critical`を自動調整するために`metrics/data_ingestion_sla.jsonl`に`posterior_mean`/`posterior_std`フィールドを追加し、学習済み値との乖離を監視する。
+
 ## 9. テスト計画とカバレッジ
 
 | テストID | 関連AC/FR | 内容 | カテゴリ |
@@ -1116,6 +1132,7 @@ Flag切替時は`ConfigChanged`イベントに`flag_delta`が記録され、Repo
 | IT-RESYNC-01 | AC-04 | Resync後TTL/ドリフト整合 | 統合 |
 | IT-SPREAD-01 | AC-34 | Spread閾値→クールダウン→解除 | 統合 |
 | IT-KILL-01 | FR-05/FR-22 | Kill Switch遷移（soft/hard） | 統合 |
+| IT-RISK-02 | FR-05/FR-18 | `risk_summary`が`risk_policy`閾値とKill Switchイベントに一致するか検証 (`tradectl report weekly --since 7d`) | 統合 |
 | IT-FUND-01 | FR-28 | FundingService三倍日処理 | 統合 |
 | IT-COR-01 | FR-37 | 相関閾値でシグナル抑制 | 統合 |
 | PT-CLI-01 | AC-G1/G2 | `tradectl board`操作100件連続 | CLI |
@@ -1361,6 +1378,48 @@ SpreadCooldown: cooldown (ETA 12:15) | Snapshot hash: a1c3...
 | --- | --- | --- | --- |
 | `signal.*` | `logs/events` | シグナル生成/評価プロセス | `signal.generated`, `signal.rejected.low_score` |
 | `risk.*` | `logs/events` | リスク評価/Kill Switch関連 | `risk.reject.margin`, `risk.kill_switch.soft_stop` |
+| `report.generated` | `reports/` | レポート生成 | `weekly_report` |
+| `governance.action_item` | `reports/meetings/` | アクションアイテム | `ops_automation` |
+| `validation.playbook` | `reports/validation_log/` | Validation Data Playbookエントリ | `AC-45_20250301` |
+
+### 付録F: Validation Data Playbookテンプレート
+```
+---
+id: AC-XX-<YYYYMMDD>
+requirement: <FR/AC番号>
+dataset: <データセット名 or ファイルパス>
+hash: <SHA256>
+source: <取得元URL/Runbook手順>
+owner: <記録者>
+reviewer: <サイン者>
+due_date: <YYYY-MM-DD>
+status: pending | provisional | confirmed
+fallback_applied: true | false
+fallback_reason: <欠損補完理由>
+linked_runbook: docs/runbooks/RUN-XXXX-YY.md
+---
+
+## 1. 受け入れ条件
+- [ ] データ期間: <例: 2024-01-01〜2024-01-31>
+- [ ] 欠損率 ≤ <閾値>
+- [ ] 二重入力ハッシュ一致
+
+## 2. 検証ログ
+| チェック | 実施者 | 実施日時 | 結果 | 証跡 |
+| --- | --- | --- | --- | --- |
+| レコード件数検証 |  |  |  |  |
+| スキーマ検証 (`tools/validate_schema.py`) |  |  |  |  |
+| ハッシュ再計算 (`tradectl data hash`) |  |  |  |  |
+
+## 3. コメント
+-
+
+## 4. サインオフ
+- 運用者: <署名/日時>
+- PO: <署名/日時>
+
+```
+- テンプレートは`reports/validation_log/templates/playbook_entry.md`として保管し、`tradectl validation new`が本雛形をもとにエントリを生成する。`due_date`超過で`status∈{pending,provisional}`の場合は`tradectl validation audit`が`severity=warn`イベントを発行する。
 | `ticket.*` | `logs/audit` | HITL操作 | `ticket.approve`, `ticket.edit.sl` |
 | `cfg.*` | `logs/events` | 設定変更/検証 | `cfg.change.safe`, `cfg.reject.schema` |
 | `spread.*` | `metrics/network.jsonl` | スプレッド監視 | `spread.cooldown.start`, `spread.cooldown.clear` |
