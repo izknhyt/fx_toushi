@@ -615,3 +615,26 @@ project_root/
 - GUI (React + Tauri) の提供
 - ボラティリティターゲティング等の高度なサイジング
 - 強化学習/機械学習モデルの導入（リスク管理に合わせた段階的適用）
+
+## 13. リリース判定チェックリスト（M1）
+
+| 項目 | 判断基準 | 参照セクション | 対応AC |
+| --- | --- | --- | --- |
+| データパイプライン健全性 | `data_manifest`に全資産のハッシュが記録され、`data verify`で改ざん検知が0件 | §2.1 Data Provenance Service, §7.3 | AC-01, AC-22, AC-42, AC-45 |
+| KPI指標整合性 | Reporter出力と`reports/kpi_snapshots.json`の乖離≤0.1% | §2.1 Reporter, §7.1 | AC-01, AC-05, AC-08 |
+| リスク/Kill Switch | 1%リスク設定で`Risk Manager`が日次-3%/週次-6%到達時に`soft_stop`遷移し再開は手動承認のみ | §6.1 Risk Manager, §9 | AC-03, AC-21 |
+| HITL操作 | 100件操作ログから重大入力ミス0、監査イベント`ticket.approved/rejected`と一致 | §3 ユースケース, §6 Ticket Builder | AC-02, AC-10, AC-20 |
+| スナップショット復旧 | `snapshots/latest/`復元後に未処理チケットと`HealthState`が一致し、再稼働後に提案が再開 | §2.2 Snapshot Manager, §7.4 | AC-04, AC-18 |
+| アラート/通知 | Spreadクールダウン・データ遅延・Kill Switchでメール通知が確認できる | §2.2 Health Monitor, Alert Dispatcher | AC-34, AC-45 |
+| Runbook整備 | KPIレビュー/Kill Switch/Resync/データ署名/緊急プロトコルの手順がRunbookで更新済み | §9 運用・保守 | AC-43, AC-45 |
+
+> **判定手順**: 各項目の結果を`reports/governance/release_checklist_<YYYYMMDD>.md`に記録し、プロダクトオーナーが署名後にM1リリース完了とする。未達項目は`status=pending`で残し、改善計画（担当/期限/対応策）をRunbookの同章へ連携する。
+
+## 14. ナレッジ・ドキュメント統制
+
+- **Runbook構造**: `docs/runbook.md`を親とし、`docs/runbook/ops/*.md`に運用手順、`docs/runbook/incidents/*.md`に障害対応、`docs/runbook/governance/*.md`にレビュー記録を格納する。Git運用でレビュー体制（週次/四半期）が記録されるようPull Requestテンプレートに「Runbook更新有無」を追加。
+- **調査ログ**: 重大な戦略調整やリスク逸脱が発生した場合、`reports/audit/kpi/<ticket>.md`に背景/原因/対策/承認者を記録。データ品質インシデントは`reports/audit/data/<ticket>.md`に集約し、トレーサビリティマトリクスとリンクする。
+- **Decision Journal**: キャピタル配分・戦略昇格・Kill Switch解除など重要決定は`reports/governance/decisions/<YYYYMMDD>_<topic>.md`に記録。Decision Journalには関連する`strategy_manifest`やKPIスナップショットへのリンク、承認者、評価結果のフォローアップ予定日を含める。
+- **自動生成ドキュメント**: `make docs`でMkDocsをビルドし、`site/`にAPI/CLI/Runbook抜粋を出力。CIで差分ビルドし、未更新ドキュメントがある場合は警告を出す（NFR-13, NFR-16）。
+- **ナレッジ移管手順**: 新メンバーオンボーディング時は`docs/onboarding.md`を参照し、システム概要・主要CLI・Runbook参照先・依存ロックの扱いをカバー。1週間以内にバックテスト再現性（AC-01）とResync手順（AC-04）のハンズオンを実施する。
+
