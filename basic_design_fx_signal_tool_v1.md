@@ -161,7 +161,7 @@
 12. Signal Engineが戦略プラグインを順に評価し、候補シグナルを生成。
 13. Execution Modelがヒューマン遅延Δt・Fillモデル（Marketable Limit/IOC）・滑り分布を適用し、想定約定価格・失効条件・コストを補正（FR-27, FR-29, FR-39）。
 14. Calendar Serviceの`GateState`によりイベントや休日でブロック対象となるシグナルを除外。
-15. Scoring Serviceがハイブリッドスコアと安定性ペナルティで順位付けし、Spread Monitorがスプレッドクールダウン状態の場合はスコアを減衰（FR-41）。Funding Serviceが`swap_penalty`を供給し、保有期間が長期化するストラテジにはスワップコストをシミュレーション時のスコアに反映する。
+15. Scoring ServiceがM1では`expected_R`と`PF_all`ベースのシンプル重み付けで順位付けし、Spread Monitorがスプレッドクールダウン状態の場合はスコアを減衰（FR-41）。Funding Serviceが`swap_penalty`を供給し、保有期間が長期化するストラテジにはスワップコストをシミュレーション時のスコアに反映する。ハイブリッドスコアとStabilityペナルティは〈M2+〉で有効化し、Feature Flagで切り替える。
 16. Risk Managerが`AccountState`、`BrokerSpecs`、`SpreadMetrics`、`FundingCurve`を参照しつつリスク制約（ドローダウン/連敗/スプレッド上限/マージン/日次スワップ）をチェック。SPRTベースのライブ健全性ガードはM2以降で有効化し、適用時はHealth Monitorへステータスを送信（FR-05, FR-22〈M2+〉, FR-28, FR-36）。
 17. Correlation Guardが通貨バケット相関・シンボル相関行列を評価し、許容度を超えるシグナルを抑制。
 18. Position Sizerが`AccountState`・`BrokerSpecs`・最新レート・スプレッド・Execution Model補正を用いて推奨ロットサイズとOCO値を決定。
@@ -385,7 +385,7 @@ symbols:
 | spread | スプレッド観測・集計・クールダウン制御 | spread_metrics.parquet (Dukascopy/CSV, M1) / BrokerFeed (M2+) | SpreadMetrics, SpreadCooldownState |
 | liquidity | マルチソースレート比較・乖離Zスコア計算 | yfinance, Dukascopy, broker API/CSV | LiquiditySnapshot, LiquidityAlerts |
 | execution | Fill/滑り/Marketable Limitモデル | MarketData, SpreadMetrics, execution_model.yaml | ExecutionAdjustments |
-| scoring | Hybird最適化スコア、Stability | RawSignals, BacktestStats | RankedSignals |
+| scoring | M1: 基本スコアリング（expected\_R, PF\_all） / M2+: ハイブリッド最適化＋Stability | RawSignals, BacktestStats | RankedSignals |
 | funding | スワップレート取得・適用・三倍日処理 | swap_rates.csv(公開CSV/手入力, M1), CalendarState (M2+: broker_api) | FundingCurve, FundingEvents |
 | risk | 残余リスク計算、Kill Switch、マージン/スプレッド監視 | RankedSignals, AccountState, BrokerSpecs, SpreadMetrics, SpreadCooldownState, FundingCurve | RiskVettedSignals, HealthState |
 | correlation | 通貨/シンボル相関評価 | AccountState, MarketData | CorrelationMatrix |
@@ -403,7 +403,7 @@ symbols:
 ### 6.1 シグナル・リスク・サイジング連携
 - **Signal Engine**は`StrategyPlugin`抽象基底クラスを介してルール/モデル（FR-04）をロードし、`evaluate(context)`で`RawSignal`を返却。プラグインは`@strategy_plugin(name="donchian_breakout")`などのデコレータ登録。
 - **Execution Model**は`RawSignal`に`ExecutionAdjustments`（滑り補正、Marketable Limit保護幅、IOC有効期限、Human Delay Δt）を付与し、Backtest/Paper/Liveで整合したFill判定を行う（FR-27, FR-29, FR-39）。
-- **Scoring Service**は`RawSignal`に対して`HybridScore = w_recency·PF_recent + w_global·PF_all − λ·DD_all − γ·(1−Stability)`（FR-19, FR-21）を評価し、`Stability`は±10%摂動のドローダウン差分から算出。Spread Monitorがクールダウン中の場合は`HybridScore`を`cooldown_penalty`で縮小する（FR-41）。
+- **Scoring Service**はM1では`BaseScore = α·expected_R + β·PF_all − δ·drawdown_penalty`（既定: α=0.6, β=0.4, δ=0.1）を評価し、単純な期待リターン重み付けでランキングする。ハイブリッドスコア`HybridScore = w_recency·PF_recent + w_global·PF_all − λ·DD_all − γ·(1−Stability)`とStabilityキャッシュは〈M2+〉で有効化し、`scoring.hybrid_enabled` Feature Flagで切り替える。Spread Monitorがクールダウン中の場合はM1/M2いずれも`cooldown_penalty`で減衰させる（FR-41）。
 - **Risk Manager**は`RiskPolicy`（per_trade, daily_loss, weekly_loss, SPRT thresholds, margin guard, spread guard）を参照し、Kill SwitchやSPRTフェーズ（FR-05, FR-22, FR-36）に応じて`SignalAction`（allow/defer/block/reduce_only）を出力。
 - **Liquidity Intelligence Service**は`quote_snapshot`ストリームから`LiquiditySnapshot`を作成し、`zscore_spread`/`quote_age_ms`が閾値を超えた場合に`liquidity.alert`をRisk Managerへ送信。Risk Managerは該当シグナルを`HOLD`に設定し、解除時は`liquidity.resume`イベントで再開（FR-49, AC-38）。
 - **Correlation Guard**は`CorrelationMatrix`と`BrokerSpecs`から`R_eff`を計算し（FR-37）、超過時はリスク比重を削減またはシグナル除外。Reduce-Only Advisorへ優先クローズ候補を通知する。
@@ -503,7 +503,7 @@ project_root/
 ### 8.2 初期スプリントタスク分割（M1）
 1. **プロジェクト基盤**: Poetry/requirements設定、`src/`・`tests/`パッケージ初期化、CIワークフローに`pytest -m "not m2plus"`ジョブ追加。
 2. **データレイヤ**: ConfigRegistry＋JSON Schema検証、yfinance/Dukascopyアダプタ、`data/raw/`キャッシュ書き出し、Feature Cache基盤。
-3. **戦略パイプライン**: MA+RSI戦略、Execution Model（ヒストリカル分位滑り/Marketable Limit）、Scoring Service（ハイブリッドスコア＋Stability）。
+3. **戦略パイプライン**: MA+RSI戦略、Execution Model（ヒストリカル分位滑り/Marketable Limit）、Scoring Service（M1: 基本スコアリング / M2+: ハイブリッドスコア＋Stability）。
 4. **リスク＆チケット**: Kill Switch, Spread gate（M1仕様）、Ticket BuilderのヒューマンチェックリストとOCO補正。
 5. **CLI実装**: `tradectl board/status/events/ticket/export`、JSON Linesレンダラー、Audit Trail連携、snapshotテスト追加。
 6. **永続化・運用補助**: Audit Trail Service、Snapshot Manager、`logs/ops`書き込みユーティリティ、Runbook向けドキュメント整備。
@@ -555,7 +555,7 @@ project_root/
 | FR-15 | 2.1 Calendar Service、6. correlation_guard |
 | FR-16, FR-18 | 2.2 Snapshot Manager、4.1 Catch-upフロー |
 | FR-17, FR-38 | 3. ユースケースフロー(18〜19), 6.1 Ticket Builder |
-| FR-19, FR-21 | 6.1 Scoring Service、4.3 口座通貨換算ポリシー |
+| FR-19, FR-21 | 6.1 Scoring Service（M2+設計フック）、4.3 口座通貨換算ポリシー |
 | FR-20 | 2.1 Regime Detector、6. モジュール別機能割り当て |
 | FR-22 | 2.2 Health Monitor、4.5 スプレッド観測スケジュール |
 | FR-24 | 2.1 Broker Rules Loader、6.1 Position Sizer |
