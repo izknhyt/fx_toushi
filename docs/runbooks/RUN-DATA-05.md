@@ -17,7 +17,7 @@
 ## 手順
 1. `tradectl data health`で対象シンボルとプロバイダ、発生時刻、直近メトリクスを確認する。`metrics/data_ingestion_sla.jsonl`から前後30分のログを抽出し、`phase=fetch`/`phase=processing`それぞれの遅延を確認する。
 2. `tradectl data switch --to <provider>`または`tradectl data failover --to cache`で代替ソースへ切り替え、`FallbackRetryTask`のステータスを`tradectl data jobs --pending`で確認する。結果を`reports/audit/rates/<date>.md`に追記し、`reports/validation_log/AC-45_sla_<date>.md`へリンクを残す。
-3. フォールバック後も欠損が続く場合は`tradectl data jobs enqueue --task manual_csv --symbol <symbol>`を準備し、必要なCSVを`data/manual/<date>/`に配置する。手動モード移行時はRunbook `docs/runbooks/RUN-DATA-06.md`のチェックリストも参照する。
+3. フォールバック後も欠損が続く場合は`tradectl data jobs enqueue --task manual_csv --symbol <symbol>`を準備し、必要な双子CSVを`data/manual_fallback/<provider>/<symbol>/<YYYYMMDD>/fallback_<provider>_<symbol>_<tf>_<YYYYMMDD>_{op,review}.csv`として配置する。手動モード移行時はRunbook `docs/runbooks/RUN-DATA-06.md`のチェックリストも参照する。
 4. 原因分析としてネットワーク状態・APIレスポンス・利用規約制約を確認し、`reports/audit/license/`および`reports/quality/<date>.md`に記録する。処理遅延が原因の場合は`ProviderParseWorker`/`DataQualityGuard`のログを添付する。
 5. 復旧を確認したら`tradectl data ack --provider <name>`で承認し、`HealthMonitor.ack`を実行してKill Switchを解除する。事後分析と改善策は24時間以内に`reports/performance/<mode>/<date>.md`と`reports/validation_log/AC-45_sla_<date>.md`へ追記する。
 
