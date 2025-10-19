@@ -61,47 +61,51 @@
 ```
 
 ### 2.1 コンポーネント一覧
-| コンポーネント | 役割 | 技術/形式 |
-| --- | --- | --- |
-| CLI/Signal Board | 提案表示・操作入力 | Rich CLI（M1: `tradectl board`コマンド、JSON Lines入力）／将来React GUI |
-| Session Manager | アプリ全体の起動・終了、Catch-up調整 | Python service |
-| Mode Controller | Backtest/Paper/Liveの振る舞い切替 | Stateパターン |
-| Data Ingestion Service | データ取得・キャッシュ管理。ティッカー単位で最新取得時刻を監視し、SLA（yfinance≤60s）逸脱時は`HealthState`へ`data_latency`理由を通知、`Spread Monitor`/`Emergency Orchestrator`へ遅延イベントを伝播。フォールバックはDukascopy→ローカルキャッシュ→手動CSVの順で切替。 | yfinance, Dukascopy, CSV |
-| Data Quality Guard | 欠損/外れ値判定、再取得制御 | Pandas/Numpy |
-| Feature Engine | インジケータ計算・マルチTF合成 | pandas-ta/custom |
-| Regime Detector | レジーム分類（ADX等） | 独自ロジック |
-| Account Service | 口座別残高/証拠金/ポジション集計・相関用エクスポージャ算出。`accounts/<broker>/<account_id>.yaml`を読み込み、マルチアカウント統合と口座別Rガードを提供 | Backtest台帳, Paperログ, Live CSV/API |
-| Funding Service | スワップ/ファンディングレートの取得と適用 | broker_rules.yaml, swap_rates.csv (手入力/公開CSV, M1) |
-| FX Rate Updater | 口座通貨換算レート取得/保存 | yfinance, 手入力CSV, (M2+: ブローカーフィード) |
-| Calendar Service | 経済指標/休日スケジュール配信（出力: GateState） | ローカルCSV, 外部API同期 |
-| Broker Rules Loader | ブローカー仕様読み込み（pip値/contract等） | YAML loader (`broker_rules.yaml`) |
-| Spread Monitor | スプレッド/コスト観測・クールダウン制御 | `spread_metrics.parquet`(Dukascopy/公開CSV, M1) / Broker API(M2+) |
-| Execution Model | スリッページ/ロールオーバー/Fill判定モデル | MarketData, SpreadMetrics, broker_rules.yaml |
-| Liquidity Intelligence Service | 複数レートソースの乖離検知・板厚監視・HOLD判定 | yfinance, Dukascopy, broker API/CSV, `liquidity_monitor.parquet` |
-| Correlation Guard | 通貨/シンボル相関制御 | Rule-based filter |
-| Signal Engine | ルール/モデルプラグインIF | Strategyプラグイン |
-| Risk Manager | リスク制約・Kill Switch・スプレッド制御 | Policy engine |
-| Position Sizer | Fixed Fractionalロジック | Python class |
-| Compliance Validator | チケット承認前のレバレッジ/建玉/規制確認と代替案提示 | `broker_rules.yaml`, `risk_policy.yaml`, 監査ログ |
-| Capital Allocation Guard | VaR/ESモニタリングと提案スロットリング | Portfolio PnL, `risk_policy.yaml`, Exposure metrics |
-| Reduce-Only Advisor | 収縮提案生成（閾値到達時、M2+） | Python service |
-| Emergency Orchestrator | `emergency.yaml`に基づく緊急アクション実行（Kill Switch連携、Reduce-Only指示） | Policy/Playbook Runner |
-| Ticket Builder | 注文チケット生成・ヒューマンエラーチェック | JSON Lines |
-| Persistence & Audit | イベント/ログ/設定履歴 | SQLite/Parquet/JSON |
-| Optimizer | グリッド/ランダム/WFA | SciPy/自作 |
-| Reporter | 週次/エクイティ/メトリクス出力、アトリビューションメトリクス生成（PF/Sharpe/HitRate/R_eff寄与） | Markdown/HTML/Parquet |
-| Strategy Manifest Manager | `strategy_manifest.yaml`のSchema検証、ハッシュ生成、再検証期限監視、`deprecated`タグ付与 | Pydantic/JSON Schema/SQLite |
-| Strategy Scoreboard Service | `alpha_score`/`decay_score`算出、戦略メタ指標キャッシュ、Signal Boardへのランキング配信（FR-61） | Pandas/NumPy/SQLite |
-| Idea Pipeline Manager | `ideas/`配下の候補戦略を段階管理し、`screening_checklist`生成・必須エビデンス検証・昇格ゲート条件を統制（FR-62） | Typer CLI/Pydantic/YAML |
-| Ops Readiness Evaluator | バックアップ整合度・Runbook更新率・演習ログを収集し、`ops_readiness_score`とHealthState連携を行う（FR-63, NFR-28） | Markdown parser/SQLite/CLI |
-| Model Risk Register Service | `model_risk_register.md`の差分監視・エビデンス突合・Explainability生成チェックを実施し、`model_risk_gap`ステータスを管理（NFR-26, AC-52） | Git metadata/Markdown AST/Python |
-| Statement Reconciliation Service | ブローカー公式ステートメント（CSV/PDF→CSV）とLive/Paperログを突合し、残高差分/取引突合率を集計。差分閾値で`HealthState=degraded(reason=statement_gap)`を通知し、`reports/audit/reconciliation/`へMarkdownサマリを出力（FR-64, AC-53） | Pandas/Great Expectations/CLI |
-| Research Workspace Bridge | `research/strategies/<id>/`のノートブック/成果物を解析し、`tradectl research promote`フローで検証メトリクスを取り込む | Papermill/nbconvert/CLI |
-| Trade Journal Service | トレード/コメント管理、振り返りダッシュボード | SQLite/Markdown |
-| Benchmark Analyzer | 外部ベンチマークデータとの比較、ギャップ算出 | Pandas/Plotly |
-| Data Provenance Service | `data_manifest.json`生成・署名・検証、アーカイブ連携 | `manifest.sig`, ハッシュ計算, WORMストレージ |
-| Audit Bundle Service | `audit_pack/<period>/`への証跡束ね（シグナル・承認・約定・設定・リスク承諾・ベンチマーク差分）と署名`audit_manifest.sig`生成 | JSON/Parquet/Markdown/署名モジュール |
-| Release Governance Service | `tradectl release prepare/tag`のチェックリスト評価、Smokeテスト結果と承諾差分の検証、Kill Switchの`HOLD`制御 | CLI orchestrator, Markdown checklist |
+| コンポーネント | 役割 | 技術/形式 | Milestone |
+| --- | --- | --- | --- |
+| CLI/Signal Board | 提案表示・操作入力 | Rich CLI（M1: `tradectl board`コマンド、JSON Lines入力）／将来React GUI | M1 Core |
+| Session Manager | アプリ全体の起動・終了、Catch-up調整 | Python service | M1 Core |
+| Mode Controller | Backtest/Paper/Liveの振る舞い切替 | Stateパターン | M1 Core |
+| Data Ingestion Service | データ取得・キャッシュ管理。ティッカー単位で最新取得時刻を監視し、SLA（yfinance≤60s）逸脱時は`HealthState`へ`data_latency`理由を通知、`Spread Monitor`/`Emergency Orchestrator`へ遅延イベントを伝播。フォールバックはDukascopy→ローカルキャッシュ→手動CSVの順で切替。 | yfinance, Dukascopy, CSV | M1 Core |
+| Data Quality Guard | 欠損/外れ値判定、再取得制御 | Pandas/Numpy | M1 Core |
+| Feature Engine | インジケータ計算・マルチTF合成 | pandas-ta/custom | M1 Core |
+| Regime Detector | レジーム分類（ADX等） | 独自ロジック | M2 |
+| Account Service | 口座別残高/証拠金/ポジション集計・相関用エクスポージャ算出。`accounts/<broker>/<account_id>.yaml`を読み込み、マルチアカウント統合と口座別Rガードを提供 | Backtest台帳, Paperログ, Live CSV/API | M1 Core |
+| Funding Service | スワップ/ファンディングレートの取得と適用 | broker_rules.yaml, swap_rates.csv (手入力/公開CSV, M1) | M1 Core |
+| FX Rate Updater | 口座通貨換算レート取得/保存 | yfinance, 手入力CSV, (M2+: ブローカーフィード) | M1 Core (M2+ feed) |
+| Calendar Service | 経済指標/休日スケジュール配信（出力: GateState） | ローカルCSV, 外部API同期 | M1 Core |
+| Broker Rules Loader | ブローカー仕様読み込み（pip値/contract等） | YAML loader (`broker_rules.yaml`) | M1.1 |
+| Spread Monitor | スプレッド/コスト観測・クールダウン制御 | `spread_metrics.parquet`(Dukascopy/公開CSV, M1) / Broker API(M2+) | M1.1 (M2+ broker feed) |
+| Execution Model | スリッページ/ロールオーバー/Fill判定モデル | MarketData, SpreadMetrics, broker_rules.yaml | M1.1 |
+| Liquidity Intelligence Service | 複数レートソースの乖離検知・板厚監視・HOLD判定 | yfinance, Dukascopy, broker API/CSV, `liquidity_monitor.parquet` | M2 |
+| Correlation Guard | 通貨/シンボル相関制御 | Rule-based filter | M1.1 |
+| Signal Engine | ルール/モデルプラグインIF | Strategyプラグイン | M1 Core |
+| Risk Manager | リスク制約・Kill Switch・スプレッド制御 | Policy engine | M1 Core |
+| Position Sizer | Fixed Fractionalロジック | Python class | M1 Core |
+| Compliance Validator | チケット承認前のレバレッジ/建玉/規制確認と代替案提示 | `broker_rules.yaml`, `risk_policy.yaml`, 監査ログ | M1.1 |
+| Capital Allocation Guard | VaR/ESモニタリングと提案スロットリング | Portfolio PnL, `risk_policy.yaml`, Exposure metrics | M1.1 |
+| Reduce-Only Advisor | 収縮提案生成（閾値到達時、M2+） | Python service | M2+ |
+| Emergency Orchestrator | `emergency.yaml`に基づく緊急アクション実行（Kill Switch連携、Reduce-Only指示） | Policy/Playbook Runner | M2 |
+| Ticket Builder | 注文チケット生成・ヒューマンエラーチェック | JSON Lines | M1 Core |
+| Persistence & Audit | イベント/ログ/設定履歴 | SQLite/Parquet/JSON | M1.1 |
+| Optimizer | グリッド/ランダム/WFA | SciPy/自作 | M2 |
+| Reporter | 週次/エクイティ/メトリクス出力、アトリビューションメトリクス生成（PF/Sharpe/HitRate/R_eff寄与） | Markdown/HTML/Parquet | M1 Core |
+| Strategy Manifest Manager | `strategy_manifest.yaml`のSchema検証、ハッシュ生成、再検証期限監視、`deprecated`タグ付与 | Pydantic/JSON Schema/SQLite | M1.1 |
+| Strategy Scoreboard Service | `alpha_score`/`decay_score`算出、戦略メタ指標キャッシュ、Signal Boardへのランキング配信（FR-61） | Pandas/NumPy/SQLite | M2+ |
+| Idea Pipeline Manager | `ideas/`配下の候補戦略を段階管理し、`screening_checklist`生成・必須エビデンス検証・昇格ゲート条件を統制（FR-62） | Typer CLI/Pydantic/YAML | M2+ |
+| Ops Readiness Evaluator | バックアップ整合度・Runbook更新率・演習ログを収集し、`ops_readiness_score`とHealthState連携を行う（FR-63, NFR-28） | Markdown parser/SQLite/CLI | M2+ |
+| Model Risk Register Service | `model_risk_register.md`の差分監視・エビデンス突合・Explainability生成チェックを実施し、`model_risk_gap`ステータスを管理（NFR-26, AC-52） | Git metadata/Markdown AST/Python | M2 |
+| Statement Reconciliation Service | ブローカー公式ステートメント（CSV/PDF→CSV）とLive/Paperログを突合し、残高差分/取引突合率を集計。差分閾値で`HealthState=degraded(reason=statement_gap)`を通知し、`reports/audit/reconciliation/`へMarkdownサマリを出力（FR-64, AC-53） | Pandas/Great Expectations/CLI | M2 |
+| Research Workspace Bridge | `research/strategies/<id>/`のノートブック/成果物を解析し、`tradectl research promote`フローで検証メトリクスを取り込む | Papermill/nbconvert/CLI | M2 |
+| Trade Journal Service | トレード/コメント管理、振り返りダッシュボード | SQLite/Markdown | M2 |
+| Benchmark Analyzer | 外部ベンチマークデータとの比較、ギャップ算出 | Pandas/Plotly | M2 |
+| Data Provenance Service | `data_manifest.json`生成・署名・検証、アーカイブ連携 | `manifest.sig`, ハッシュ計算, WORMストレージ | M1.1 |
+| Audit Bundle Service | `audit_pack/<period>/`への証跡束ね（シグナル・承認・約定・設定・リスク承諾・ベンチマーク差分）と署名`audit_manifest.sig`生成 | JSON/Parquet/Markdown/署名モジュール | M1.1 |
+| Release Governance Service | `tradectl release prepare/tag`のチェックリスト評価、Smokeテスト結果と承諾差分の検証、Kill Switchの`HOLD`制御 | CLI orchestrator, Markdown checklist | M1.1 |
+| StressTest Engine | 指定シナリオの再生と感度分析、結果レポート生成 | Backtest Runner拡張 | M2 |
+| Parameter Drift Monitor | 最適化パラメータと最新指標のドリフト監視 | Numpy/Scipy | M2+ |
+| Observability Exporter | メトリクス収集とJSONL書き出し（M1）。Prometheus互換エンドポイントはM2+で有効化 | JSONL writer / future `prometheus_client` | M1 Core (M2+ HTTP) |
+| Alert Dispatcher | メール通知 | SMTPライブラリ | M1.1 |
 
 #### Data Ingestion Service 詳細
 - **ヘルスチェック/SLA監視**: ティッカー毎に最新バー取得時刻を`symbol_last_ts`として保持し、`latency_sec = (now_utc - symbol_last_ts).total_seconds()`で遅延を算出。直近30日ローリングで`latency_p95`/`latency_p99`と`success_rate`を集計し、**p95≤12秒・p99≤20秒・成功率≥99.0%**をターゲットとする。`latency_p95>12`または`latency_p99>20`または`success_rate<99.0%`で`HealthMonitor.raise(level='warning', reason='data_latency')`を送出、`latency_sec>60`または連続3回失敗で`level='critical'`を発火しKill Switchソフトストップを準備する。1分ごとに`SlaMinuteRollup`が`ops_schedule.yaml`と`maintenance_windows.yaml`を参照して`status ∈ {up, down, excluded}`を判定し、`latency_sec≤90`かつ連続失敗<3かつ`manual_stop`フラグが立っていない場合に`up`、それ以外を`down`、`manual_stop`/`planned_maintenance`中を`excluded`として`metrics/data_ingestion_sla.jsonl`へ追記する。分単位集計は`uptime_minutes`/`downtime_minutes`/`excluded_minutes`のカウンタと稼働率を持つJSON（`{window_start, window_end, uptime_ratio}`）を出力し、`tradectl data health`で稼働率とSLA逸脱理由を可視化する。
@@ -118,10 +122,6 @@
 - **統計検証**: Reporterは**BCaブートストラップ（1,000回）**で`PF_recent`/Sharpe/Sortino/年率の信頼区間を算出し、Benchmark Monitorはベンチマーク差分に対して**差分年率とSharpeギャップの95%信頼区間**を算出する。信頼区間下限が要件を割り込む場合は`benchmark_gap`イベントに`confidence_breach=true`を付加し、受け入れ基準AC-07〜AC-09の検証ログに残す。ブートストラップ実行時の失敗はリトライ戦略に従って再実行する。
 - **リトライ戦略**: KPI再計算ジョブが失敗した場合は`RetryPolicy`を継承した`KpiRecalcRetry`を使用し、**max_attempts=3, initial_delay=30s, backoff=2.0**で再実行。3回失敗時は`Reporter`が`Critical`ログを出力し、`HealthState`を`soft_stop`へ遷移させる。Benchmark Monitor側では最新成功スナップショットを保持し、復旧後に差分を自動再算出する。
 - **サンプルサイズ監視**: 90営業日ウィンドウで**取引数<60**、252営業日ウィンドウで**取引数<180**の場合はメトリクス算出結果を`insufficient_sample`フラグ付きで返し、受け入れ基準の判定を`pending`に設定する。ReporterはRunbookに自動追記して人間レビューを促す。
-| StressTest Engine | 指定シナリオの再生と感度分析、結果レポート生成 | Backtest Runner拡張 |
-| Parameter Drift Monitor | 最適化パラメータと最新指標のドリフト監視 | Numpy/Scipy |
-| Observability Exporter | メトリクス収集とJSONL書き出し（M1）。Prometheus互換エンドポイントはM2+で有効化 | JSONL writer / future `prometheus_client` |
-| Alert Dispatcher | メール通知 | SMTPライブラリ |
 
 ### 2.3 データストア/フォルダ構成（v1.3追加）
 - `scoreboard/alpha/<YYYYWW>.json`: 戦略ごとの`alpha_score`/`decay_score`と構成比、算出根拠（PF/Sharpe/Stability/Regime適合度）を保持。`scores/meta.json`で最新ウィンドウと前回比較を管理する。
