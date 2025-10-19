@@ -341,7 +341,7 @@ tests/
 - **アルゴリズム**: Cacheヒット確認→TTL超過時再取得→`ProviderFallbackPolicy`でyfinance→Dukascopy→CSVの順にフェイルオーバ。取得データはUTC整列し`quality_flag`初期化。
 - **エラーハンドリング**: Provider失敗で`ProviderError`→自動フォールバック。全失敗で`DataSourceDown`→`HealthMonitor.degraded`。再取得不能区間は欠損として扱い、Signal生成前に`DataGapWarning`を発火。
 - **設定**: `config.cache.ttl_hours`, `config.provider.retry`, `config.provider.timeout_sec`。
-- **遅延メトリクス**: プロバイダ別に`latency_sec = (now_utc - last_provider_update_ts).total_seconds()`を計算し、Prometheusへ`data_ingestion_latency_seconds{symbol,provider}`としてエクスポート。さらに`provider_slack_ratio = latency_sec / timeframe_sec`を算出して`>0.2`（5分足で60秒相当）を既定閾値とし、超過時は`HealthMonitor.raise('degraded','data_latency')`を実行する。閾値は`config.provider.max_latency_ratio`で調整可能。
+- **遅延メトリクス**: プロバイダ別に`latency_sec = (now_utc - last_provider_update_ts).total_seconds()`を計算し、Prometheusへ`data_ingestion_latency_seconds{symbol,provider}`としてエクスポート。さらに`provider_slack_ratio = latency_sec / timeframe_sec`を算出して`>0.08`（5分足で24秒相当）を既定閾値とし、超過時は`HealthMonitor.raise('degraded','data_latency')`を実行する。閾値は`config.provider.max_latency_ratio`で調整可能。
 - **Runbook連携**: 遅延アラート発生時はEventBusで`ingestion.latency_exceeded`を発火し、Runbook手順`RUN-DATA-05`（手動再取得）を通知。完了後は`tradectl data verify --symbol <symbol>`で補填を確認し、`RUN-POST-03`に従って事後レビュー（原因/再発防止）を`logs/ops/review.log`へ追記する。
 
 ### 3.2 DataQualityGuard (`src/data/quality.py`)
@@ -449,7 +449,7 @@ tests/
 - **SnapshotModel**: `{account_state, open_tickets, gate_state, health_state, cfg_hash, last_bar_ts}`。
 - **Resync手順**: `last_bar_ts`から現時刻までのバーを`fast_forward`処理し、チケットTTL/ドリフト再計算。期限切れは`TicketExpired`としてイベント化。
 - **遅延補正メトリクス**: Resync完了後に`resync_latency_sec = (resync_completed_ts - last_bar_ts)`を記録し、`resync_latency_ratio = resync_latency_sec / timeframe_sec`で評価。`ratio>24`の場合は`HealthMonitor.raise('degraded','resync_lag')`を行い、Runbookフォローアップを要求する。
-- **Runbook連携**: Resync開始時に`RUN-DATA-05`（手動再取得）ステップIDをEventBusへ通知し、完了後は`RUN-POST-03`に沿って事後レビュー（遅延原因、再発防止策、Kill Switch解除判断）を`logs/ops/review.log`へ追記。レビュー承認が完了するまで`HealthMonitor.ack`を保留し、Emergency Orchestratorが`data_latency`シナリオを監視し続ける。
+- **Runbook連携**: Resync開始時に`RUN-DATA-05`（手動再取得）ステップIDをEventBusへ通知し、完了後は`RUN-POST-03`に沿って事後レビュー（遅延原因、再発防止策、Kill Switch解除判断）を`logs/ops/review.log`へ追記。レビュー承認が完了するまで`HealthMonitor.ack`を保留する。M2+ではEmergency Orchestratorが`data_latency`シナリオを監視し、必要に応じてRunbookチェックリストを自動実行する。
 
 ### 3.16 TicketBuilder (`src/ticket/builder.py`, `src/ticket/validator.py`, `src/ticket/checklist.py`)
 - **公開API**: `build(sized_signal, execution_adjustments, gate_state)`。
@@ -466,6 +466,13 @@ tests/
 - **公開API**: `generate_weekly(profile)`, `generate_daily(date)`, `emit_summary()`。
 - **内容**: KPI（CAGR/MaxDD/Sharpe/PF）、Spread/Correlation統計、Kill Switchログ、Config変更履歴をMarkdownで出力（FR-10）。
 - **依存**: `PerformanceStats`, `metrics/pipeline.jsonl`, `logs/events`。Live実績の突合結果は`actual_fill_import_summary`から読み取り、スリッページ分布と承認→約定遅延を週次レポートに追加する。
+
+#### 3.18.1 Benchmark Monitor & Feed Loader (`src/reporter/benchmark.py`, `src/interfaces/cli/benchmark.py`)
+- **目的**: 市販シグナルツールとの比較KPIを算出し、`reports/benchmark/<YYYYWW>.md`および`reports/governance/benchmark_review/<YYYYQ>.md`へ自動反映する。
+- **データ取り込み**: `BenchmarkFeedLoader`がTradingView ICS/CSV（`--provider tradingview`）とMyfxbook CSV（`--provider myfxbook`）を受け取り、時刻→UTC、価格→口座通貨換算を行った上で`benchmark_runs/raw/<provider>/<YYYYMMDD>.parquet`へ保存する。CLI `tradectl benchmark ingest --provider <name> --file <path>`がエントリーポイントで、ヘッダ検証・重複除去・欠損補完を実施。取得不可区間は`benchmark_manual_log/<provider>/<YYYYMM>.csv`に追記し、週次ジョブが手入力値を正規化して同一Parquetへマージする。
+- **比較処理**: `BenchmarkComparator.compare(window='90d', mode='paper')`がPaper/Liveのエクイティとベンチマーク信号を同一期間に揃え、Sharpe/最大DD/HitRate/提案レイテンシ差分を算出。結果は`benchmark_runs/normalized/<YYYYMMDD>.parquet`にキャッシュし、Reporterが週次レポートへ組み込む。四半期レビュー用にはローリング252営業日分を別途算出し、`reports/benchmark/rolling_252d.md`へ出力する。
+- **CLI**: `tradectl benchmark compare --window 90d --mode paper --provider tradingview,myfxbook`で最新データに対する差分を表示。`--export`オプションでMarkdownを生成し、`--fail-on-gap`で欠損率>10%時に非ゼロ終了コードを返す。`tradectl benchmark ingest --email <mbox>`は将来拡張（M2+）としてメール添付パースを想定し、M1では未実装の警告を返す。
+- **監査/Runbook**: 取り込みログは`logs/benchmark/ingest.jsonl`、比較結果は`logs/benchmark/compare.jsonl`へ出力し、Runbook `GOV-BENCHMARK-01`のチェックリストにリンク。欠損率や差分閾値超過時は`benchmark_gap`イベントを発行し、Health Monitorへ`reason='benchmark_gap'`を追加する。
 
 ### 3.19 Configuration Governance & Alert Dispatcher (`src/infra/config.py`, `src/infra/alert.py`)
 - **ConfigRegistry**: `load(profile)`, `apply_patch(diff)`, `validate(config)`。`safe_keys`はホットリロード、`dangerous_keys`は`NextBarChangeQueue`経由で遅延適用。

@@ -5,7 +5,7 @@
 - 復旧後に事後分析を`reports/performance/`へ反映し、再発防止タスクを明確化する。
 
 ## トリガー
-- `latency_p99>5秒`または`success_rate<99.9%`の警告が`tradectl status`/メールで通知されたとき。
+- `latency_p95>12秒`または`latency_p99>20秒`、もしくは`success_rate<99.0%`の警告が`tradectl status`/メールで通知されたとき。
 - `latency_sec>60`もしくは連続3回以上の取得失敗で`critical`アラートが発生したとき。
 - SLA未達や手動CSV投入の判断を要するレビュー時。
 
