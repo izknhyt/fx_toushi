@@ -172,8 +172,9 @@
 28. Configuration Governanceが安全項目のホットリロードを配信し、Signal Engine/リスク管理へ反映。危険項目は`NextBarChangeQueue`に保留し、次バー確定時にSession Managerが適用して監査イベントを出力。
 
 ### 3.1 CLIインターフェース仕様（M1）
-- **`tradectl board`**: Signal Board表示コマンド。入力として`logs/events/signal_today.jsonl`をストリームし、最新バーごとに表形式レンダリング。出力列は`symbol, side, entry, size, sl, tp, score, ttl, badges`。`--filter symbol=USDJPY`や`--view open_tickets`などのフィルタ/ビュー切替を提供。
+- **`tradectl board`**: Signal Board表示コマンド。入力として`logs/events/signal_today.jsonl`をストリームし、最新バーごとに表形式レンダリング。出力列は`symbol, side, entry, size, sl, tp, score, ttl, badges`。`--filter symbol=USDJPY`や`--view open_tickets`などのフィルタ/ビュー切替を提供。起動時には`RiskDisclosureService`で承諾ステータスを確認し、**初回起動および四半期レビュー週の初回起動**ではリスク警告ダイアログ（投資助言禁止・主要リスク・ブローカー約款リンク）を表示する。承諾が取得できない場合はボード描画前に終了コード`103`でブロックし、承諾操作が完了すると`audit`イベント（type=`risk_consent`）を発行してからレンダリングへ遷移する。
 - **`tradectl ticket approve|reject|edit`**: チケット操作。引数は`--id <ticket_id>`とし、`edit`時は`--field sl=151.20`のように複数指定可。処理結果は`audit`イベントとして`logs/events/DATE.jsonl`に追記される。
+- **高リスク操作の警告ガード**: `tradectl ticket approve`（ライブモード、R>既定閾値）、`tradectl emergency trigger`, `tradectl reduce-only push`等の高リスクコマンドは実行前に`RiskDisclosureService`へ承諾ステータスを照会し、未承諾または四半期承諾期限切れの場合はボードと同一の警告ダイアログを表示する。ユーザーが承諾を更新すると即座に`audit`イベント（`risk_consent`)を追記し、コマンド側では`audit`イベント（`ticket_action`, `emergency_action`）に`consent_reference_id`フィールドを紐付けて監査可能性を担保する。
 - **`tradectl events tail`**: Event Bus監視。`--type`で`signal|risk|execution|health|audit`を絞り込み、デフォルトは`signal`。出力フォーマットは`[ts][type] payload_json`。
 - **`tradectl status`**: セッションのヘルスと統計を表示。`HealthState`（`status`, `reasons`）と`Snapshot`のハッシュ、現在のSpreadCooldownStateや未処理Reduce-Onlyチケット数、`benchmark_gap_pct`、直近ジャーナルハイライト（最新コメント/評価）を含む。
 - **`tradectl export --what tickets|signals|account`**: 指定リソースをCSV/JSONにエクスポート。既定は`csv`で`--format json`指定可。出力パスは`reports/export/<date>/<what>.<ext>`。
@@ -184,6 +185,7 @@
 - **`tradectl metrics serve|push`**: Prometheus互換メトリクスエンドポイントを起動/ワンショット出力。`serve`はローカルHTTPサーバを起動、`push`はJSON/Markdownレポートに埋め込む。
 - **JSON Linesインターフェース**: CLIコマンドは`stdout`にJSON Linesを返し、他ツール（例: `jq`）との連携を容易にする。例:`tradectl board --view json`で同一データをJSON Linesとして出力。
 - **エラー挙動**: コマンド実行失敗時は非ゼロ終了コードを返却し、`stderr`に`[ERROR] <message>`形式で出力。必要に応じて`--no-prompt`（確認ダイアログ無効化）や`--yes`（承認操作の即時実行）を提供し、HITL確認はデフォルトでY/Nプロンプトを表示。
+- **リスク開示と`audit`イベント連携**: `RiskDisclosureService`は承諾バージョンと期限を`consent_state.json`に保存し、承諾/拒否/期限切れイベントを`audit`イベントストアへ`risk_consent`タイプで記録する。CLI各コマンドは実行前に`consent_state`を参照し、承諾未取得時は`[WARN] Risk disclosure consent required`を出力して終了する。承諾ダイアログを通過した操作は`audit`イベントに`consent_reference_id`（最新`risk_consent`イベントID）を付与し、後続のレポートや監査エクスポートでトレースできるようにする。
 - **終了コードガイド**: `0=Success`, `10x=Validation/入力エラー`, `20x=I/O・データ欠損`, `30x=内部例外（トレース表示）` とし、Runbook・テストケースで参照する。
 
 ### 3.2 処理シーケンスと並行性
