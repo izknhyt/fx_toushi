@@ -321,6 +321,8 @@ tests/
 - **アルゴリズム**: Cacheヒット確認→TTL超過時再取得→`ProviderFallbackPolicy`でyfinance→Dukascopy→CSVの順にフェイルオーバ。取得データはUTC整列し`quality_flag`初期化。
 - **エラーハンドリング**: Provider失敗で`ProviderError`→自動フォールバック。全失敗で`DataSourceDown`→`HealthMonitor.degraded`。再取得不能区間は欠損として扱い、Signal生成前に`DataGapWarning`を発火。
 - **設定**: `config.cache.ttl_hours`, `config.provider.retry`, `config.provider.timeout_sec`。
+- **遅延メトリクス**: プロバイダ別に`latency_sec = (now_utc - last_provider_update_ts).total_seconds()`を計算し、Prometheusへ`data_ingestion_latency_seconds{symbol,provider}`としてエクスポート。さらに`provider_slack_ratio = latency_sec / timeframe_sec`を算出して`>0.2`（5分足で60秒相当）を既定閾値とし、超過時は`HealthMonitor.raise('degraded','data_latency')`を実行する。閾値は`config.provider.max_latency_ratio`で調整可能。
+- **Runbook連携**: 遅延アラート発生時はEventBusで`ingestion.latency_exceeded`を発火し、Runbook手順`RUN-DATA-05`（手動再取得）を通知。完了後は`tradectl data verify --symbol <symbol>`で補填を確認し、`RUN-POST-03`に従って事後レビュー（原因/再発防止）を`logs/ops/review.log`へ追記する。
 
 ### 3.2 DataQualityGuard (`src/data/quality.py`)
 - **公開API**: `validate(frame)`, `report()`, `compare(reference_series)`。
@@ -425,6 +427,8 @@ tests/
 - **公開API**: `persist(context)`, `restore()`, `maybe_persist(last_bar_ts)`。
 - **SnapshotModel**: `{account_state, open_tickets, gate_state, health_state, cfg_hash, last_bar_ts}`。
 - **Resync手順**: `last_bar_ts`から現時刻までのバーを`fast_forward`処理し、チケットTTL/ドリフト再計算。期限切れは`TicketExpired`としてイベント化。
+- **遅延補正メトリクス**: Resync完了後に`resync_latency_sec = (resync_completed_ts - last_bar_ts)`を記録し、`resync_latency_ratio = resync_latency_sec / timeframe_sec`で評価。`ratio>24`の場合は`HealthMonitor.raise('degraded','resync_lag')`を行い、Runbookフォローアップを要求する。
+- **Runbook連携**: Resync開始時に`RUN-DATA-05`（手動再取得）ステップIDをEventBusへ通知し、完了後は`RUN-POST-03`に沿って事後レビュー（遅延原因、再発防止策、Kill Switch解除判断）を`logs/ops/review.log`へ追記。レビュー承認が完了するまで`HealthMonitor.ack`を保留し、Emergency Orchestratorが`data_latency`シナリオを監視し続ける。
 
 ### 3.16 TicketBuilder (`src/ticket/builder.py`, `src/ticket/validator.py`, `src/ticket/checklist.py`)
 - **公開API**: `build(sized_signal, execution_adjustments, gate_state)`。

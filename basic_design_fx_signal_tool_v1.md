@@ -62,7 +62,7 @@
 | CLI/Signal Board | 提案表示・操作入力 | Rich CLI（M1: `tradectl board`コマンド、JSON Lines入力）／将来React GUI |
 | Session Manager | アプリ全体の起動・終了、Catch-up調整 | Python service |
 | Mode Controller | Backtest/Paper/Liveの振る舞い切替 | Stateパターン |
-| Data Ingestion Service | データ取得・キャッシュ管理 | yfinance, Dukascopy, CSV |
+| Data Ingestion Service | データ取得・キャッシュ管理。ティッカー単位で最新取得時刻を監視し、SLA（yfinance≤60s）逸脱時は`HealthState`へ`data_latency`理由を通知、`Spread Monitor`/`Emergency Orchestrator`へ遅延イベントを伝播。フォールバックはDukascopy→ローカルキャッシュ→手動CSVの順で切替。 | yfinance, Dukascopy, CSV |
 | Data Quality Guard | 欠損/外れ値判定、再取得制御 | Pandas/Numpy |
 | Feature Engine | インジケータ計算・マルチTF合成 | pandas-ta/custom |
 | Regime Detector | レジーム分類（ADX等） | 独自ロジック |
@@ -89,6 +89,11 @@
 | Trade Journal Service | トレード/コメント管理、振り返りダッシュボード | SQLite/Markdown |
 | Benchmark Analyzer | 外部ベンチマークデータとの比較、ギャップ算出 | Pandas/Plotly |
 | Data Provenance Service | `data_manifest.json`生成・署名・検証、アーカイブ連携 | `manifest.sig`, ハッシュ計算, WORMストレージ |
+
+#### Data Ingestion Service 詳細
+- **ヘルスチェック**: ティッカー毎に最新バー取得時刻を`symbol_last_ts`として保持し、取得遅延を`latency_sec = (now_utc - symbol_last_ts).total_seconds()`で算出。`latency_sec > 60`（yfinance）、`>180`（Dukascopy）で`HealthMonitor.raise(level='degraded', reason='data_latency', symbol=...)`を発火し、同時にPrometheusメトリクス`data_ingestion_latency_seconds{symbol,provider}`を更新する。
+- **遅延伝播シーケンス**: 遅延アラートはEvent Bus経由で`Spread Monitor`へ配信され、対象シンボルの`SpreadCooldownState`を`halt`へ強制遷移→`Emergency Orchestrator`が`emergency.yaml`の`data_latency`プレイブックを評価し、Kill Switchソフトストップ準備と通知（CLI/メール）を実行→Runbook `RUN-DATA-05`に従ってオペレータが手動確認・承認→復旧後に`HealthMonitor.ack`で解除し、Spread Monitorが通常状態へロールバックする。
+- **フェイルオーバー手順**: 1) yfinance失敗時はDukascopy高速フェッチへ切替、2) Dukascopyも不可の場合はローカルキャッシュ`data/raw/<provider>/<symbol>/<tf>.parquet`を読み出してギャップを埋め、`cache_source=fallback`をマーキング、3) それでも欠損が残る場合はRunbook `RUN-DATA-06`に従い手動CSV（`data/manual/<date>/<symbol>.csv`）を投入し、`tradectl data reload --source manual`で取り込む。手動モード中は`manual_source=true`フラグをイベントに添付し、復旧後にキャッシュを再構築して通常経路へ戻す。
 
 #### Reporter/Benchmark MonitorのKPI評価ガイド
 - **キャッシュ保持期間**: Sharpe/Sortino/最大DD/年率は要件定義の評価期間に合わせ、最低でも**直近252営業日＋安全マージン10営業日**の取引履歴・エクイティカーブ・リスクメトリクスをキャッシュする。四半期レビュー用に**直近90営業日ローリング**のサマリも常備し、`metrics/kpi_cache.parquet`に`window={252d,90d}`単位で保管する。ブートストラップ再標本化での再利用に備えて、各ウィンドウのリターン系列を`returns_{window}.parquet`として別途保持する。
