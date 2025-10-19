@@ -1,14 +1,15 @@
-# FXヒューマン・インザループ投資ツール 基本設計書 v1.3
+# FXヒューマン・インザループ投資ツール 基本設計書 v1.4
 
 ## 0. 文書情報
 - 作成日: 2025-02-20
 - 作成者: Codex AI 支援
 - 参照文書: `要件定義（テンプレ形式）v_1.md`
-- 想定リリース: マイルストーンM1（MVP）
+- 想定リリース: マイルストーンM1 Core（M1.0）
 
 ### 0.1 改訂履歴
 | 版 | 日付 | 改訂概要 |
 | --- | --- | --- |
+| v1.4 | 2025-02-25 | 要件v1.4対応。M1を「M1 Core/M1.1 Hardening」に再分解し、Signal BoardのUXフロー・データスキーマ・SQLite/Parquetインデックス設計・Validation Data Playbook連携を追記。戦略ロードマップの検証窓・担当責務と整合させ、Paper運用90日→Live移行のゲートを再定義。 |
 | v1.3 | 2025-02-24 | 要件v1.3対応。戦略スコアボード/アルファ評価、オポチュニティ・パイプライン、オペレーションレディネス/モデルリスク管理を追加し、研究レビュー/昇格ガバナンスの役割分担とデータストア構造を明文化。 |
 | v1.2 | 2025-02-23 | 要件v1.2対応。ストレステスト/ベンチマーク/ジャーナル/緊急プロトコル/可観測性強化の設計を追加し、M1〜M3の役割整理とRunbook連携を追記。 |
 | v1.1 | 2025-02-20 | 要件差分レビュー結果を反映。コスト/執行モデル、ヒューマンエラー抑止、スプレッドクールダウン、Reduce-Onlyセーフティ等の設計を具体化し、トレーサビリティを拡充。 |
@@ -24,8 +25,9 @@
 - 配布/復旧: `poetry install --sync`によるオンライン展開と、依存Wheel・SBOM・ハッシュリストを束ねた`dist/offline_bundle/<version>.tar.gz`を毎リリース生成し、DR手順`DR-LOCAL-01`で4時間以内に代替マシンへ復旧できるよう設計する。
 
 ### 1.1 マイルストーン適用範囲
-- **M1 (MVP)**: データ取得と品質監視、基礎インジケータ（MA+RSI）によるシグナル生成、最小限のリスク/Kill Switch制御、HITLチケット起票・承認フロー、Resync & Snapshot、設定ガバナンス（Schema検証/ホットリロード）、`fx_rates.parquet`によるP&L通貨正規化、Stop/Freeze距離検証、週次レポートテンプレート。緊急プロトコルや多重監査は除外し、Paper運用での稼働整合と成績計測をゴールとする。
-- **M2 (強化フェーズ)**: ハイブリッド最適化、レジーム検出、Stabilityペナルティ、SPRTによるライブ健全性自動制御、経済カレンダー動的拡張、リアルタイムスプレッド/API連携、Reduce-Onlyアドバイザ本運用、スプレッドクールダウン/イベント窓拡張の自動可変化、ストレステスト/ジャーナル/ドリフト検知自動化、戦略スコアボード算出・可視化、オペレーションレディネス指標集計、緊急プロトコル、ブローカーステートメント突合、オポチュニティ・パイプライン、モデルリスクレジスター連携、ベンチマーク差分の可視化。
+- **M1 Core (M1.0)**: FR-01〜FR-08, FR-10, FR-18にフォーカスし、データ取得/品質監視、MA+RSIベースのシグナル生成、Kill Switch・リスク制御、HITLチケット（承認/却下/編集）、Resync & Snapshot、週次レポート（AC-01〜AC-11）を実装。監査/署名/高度ガバナンスは敢えて外し、Paper 90営業日運用とオペレーションスループット測定に集中する。
+- **M1.1 Hardening**: FR-09, FR-11〜FR-18, FR-23, FR-27, FR-30, FR-38, FR-44を追加し、監査ログ冗長化、設定ガバナンス、回帰テスト、Paper-Liveパリティ、ニュースガード/Spread Cooldown、Validation Data Playbookによるデータ整備、スナップショット/バックアップ強化を完了する。AC-08およびAC-12〜AC-45をカバーし、Live少額トライアルのゲートを準備する。
+- **M2 (強化フェーズ)**: ハイブリッド最適化、レジーム検出、SPRT自動制御、リアルタイムスプレッド/API連携、Reduce-Onlyアドバイザ本運用、ストレステスト/ジャーナル自動化、戦略スコアボード算出・可視化、オペレーションレディネス指標集計、緊急プロトコル、ブローカーステートメント突合、オポチュニティ・パイプライン、モデルリスクレジスター連携、ベンチマーク差分の可視化。
 - **M3 (拡張フェーズ)**: マージン/レバレッジ自動制御の高度化、相関合算Rによるポートフォリオ制御、GUI/Tauri化、ブローカーAPIによる自動発注拡張、ベンチマークリプレイ強化、運用健全性ダッシュボード高度化、戦略スコアボードによる昇格ゲート制御、オポチュニティ・パイプラインのフルワークフロー化。
 
 ## 2. 全体構成
@@ -129,6 +131,21 @@
 - `reports/research/alpha_score/<YYYYWW>.md`: Alpha Scoreboardの算出根拠をMarkdownで保存し、トレンド/レンジ/高ボラ別のサブスコアとリスクイベントを記録（FR-61）。
 - `tickets/model_revalidate/<strategy>_<date>.md`: Alpha ScoreboardまたはModel Risk Guardが起票する再評価タスク。完了時は`status=done`に更新し、Model Risk Register Serviceが参照する。
 
+### 2.4 SQLite / Parquet スキーマ設計（M1 Core〜M1.1）
+
+| ストア | テーブル/ファイル | 主キー / インデックス | 主要カラム | 説明 | パフォーマンス要件 |
+| --- | --- | --- | --- | --- | --- |
+| SQLite `db/tradectl.db` | `signals` | `PRIMARY KEY(id)`, `CREATE INDEX idx_signals_symbol_ts ON signals(symbol, generated_ts DESC)` | `id TEXT`, `symbol TEXT`, `side TEXT`, `score REAL`, `ttl_sec INTEGER`, `badges TEXT`, `state TEXT`, `generated_ts INTEGER`, `expiry_ts INTEGER`, `cfg_hash TEXT`, `data_hash TEXT` | 最新シグナル/TTL管理。`DomainEventBus`書き込みとSignal Board読み込みを統一。 | 最新10件取得クエリ`SELECT ... ORDER BY generated_ts DESC LIMIT 10`がp95<25ms。 |
+| SQLite | `tickets` | `PRIMARY KEY(id)`, `CREATE INDEX idx_tickets_status_ts ON tickets(status, approved_ts DESC)` | `signal_id TEXT`, `entry REAL`, `size REAL`, `sl REAL`, `tp REAL`, `r_target REAL`, `status TEXT`, `approved_by TEXT`, `approved_ts INTEGER`, `latency_ms INTEGER` | HITL承認ワークフロー。Paper/Lliveレイテンシ記録。 | `WHERE status='approved' AND approved_ts BETWEEN ...`クエリp95<40ms。 |
+| SQLite | `audit_events` | `PRIMARY KEY(id)`, `CREATE INDEX idx_audit_type_ts ON audit_events(event_type, ts DESC)` | `event_type TEXT`, `ts INTEGER`, `payload JSON`, `consent_reference_id TEXT`, `sha256 TEXT` | リスク開示/承認/緊急操作ログ。`Validation Data Playbook`でAC-40/AC-43の証跡に利用。 | `tradectl audit export --type approve --from`がp95<60ms。 |
+| SQLite | `health_snapshots` | `PRIMARY KEY(ts)` | `status TEXT`, `reasons JSON`, `metrics JSON` | `tradectl status`やSLA集計の最新状態。 | `ORDER BY ts DESC LIMIT 1`がp95<5ms。 |
+| Parquet `data/research/curated/<symbol>_m5_YYYY.parquet` | n/a（列指向） | `ts`ソート、`dictionary`エンコーディング（symbol） | `ts`, `open`, `high`, `low`, `close`, `volume`, `ema21`, `ema55`, `ema55_slope`, `rsi14`, `atr14`, `spread`, `session_tag` | バックテスト・特徴量抽出用の正本データ。`Validation Data Playbook`でAC-01/AC-07の入力を保証。 | `pyarrow.dataset.Scanner`で1年分読み込み<5.5s、IS+OOS全区間でも<35s。 |
+| Parquet `reports/performance/paper/<run_id>.parquet` | `ticket_id`辞書化、`approved_ts`ソート | `ticket_id`, `signal_id`, `approved_ts`, `fill_ts`, `fill_price`, `sl_price`, `tp_price`, `r_realized`, `latency_ms`, `notes` | Paper実績ログ。AC-02/AC-10/AC-09の検証に使用。 | `approved_ts`範囲フィルタ付集計がp95<120ms。 |
+| JSONL `metrics/pipeline_latency.jsonl` | n/a | `ts`, `component`, `latency_ms`, `p95`, `p99`, `provider` | データSLAとパイプライン遅延。`make sla-report`でAC-05/AC-45を検証。 | 24h分JSONL（約17k行）読み込みで集計<4s。 |
+
+- **スナップショット/DR**: `snapshots/session_<ts>.json`（Open Tickets/HealthState/CfgHash）を1時間ごとに作成し、M1.1からは`sqlite3 .backup`でホットバックアップ。Runbook `DR-LOCAL-01`にリストア手順（4時間以内）を明記。
+- **データ整合性チェック**: `make data-verify`がParquet/SQLiteのスキーマ版数を確認し、齟齬は`HealthState=data_gapped`に遷移。`Validation Data Playbook`のサインオフログと突合し、欠損時はCIを失敗させる。
+
 ### 2.2 クロスカッティング・コンポーネント
 - **Configuration Governance**: `ConfigRegistry`（シングルトン）でYAMLプロファイルを管理し、JSON Schema検証（FR-23）とバージョンハッシュを計算。安全項目はPub/Subでホットリロードし、危険項目は`NextBarChangeQueue`で遅延適用する。
 - **Event Bus**: Domain層間の疎結合を保つために`DomainEventBus`を採用。同期処理はコアフロー、非同期処理（レポート生成、Slack通知など）はワーカーキューに委譲する。`MarketableLimitApplied`や`ReduceOnlyIssued`など執行関連イベントも同バスで配信する。イベントはJSON (`event_type`, `ts`, `payload`) 形式で`logs/events/DATE.jsonl`へ記録し、CLIの`tradectl events tail --type=signal`等で監視。主なイベントpayloadは以下の通り:
@@ -195,6 +212,22 @@
 19. Reduce-Only Advisor（M2+）が`HealthState`とマージン閾値・イベント窓情報から新規提案可否を判断し、必要時は`ReduceOnlyTicket`を生成。M1は同条件での手動レビューのみ。
 20. Ticket Builderが`BrokerSpecs`を用いた桁/最小距離検証、Marketable Limit提示、TTL/ドリフト監視設定、ヒューマンエラーチェックリスト（ダブルチェック/SLTP/OCO）を付与し、Signal Boardへ配信（FR-30, FR-38, FR-39）。
 21. ユーザーがチケットを承認/却下/編集->監査ログ記録。承認後のSL/TP未入力やTTL超過は自動アラート。
+
+### 3.4 Signal Boardオペレーションタイムライン（M1 Core〜M1.1）
+
+| フェーズ | CLI/内部処理 | 所要時間目安 | 監査・データ出力 | 備考 |
+| --- | --- | --- | --- | --- |
+| ① 起動 | `tradectl board` → `RiskDisclosureService`が承諾状態確認。未承諾ならダイアログ表示。 | 1.0〜1.5s（初期描画） | `audit_events(risk_consent)`、`consent_state.json` | 四半期ごとに承諾必須。拒否時はExit code 103。 |
+| ② シグナル描画 | `DomainEventBus`から最新イベント購読→`board_renderer.render()`。 | <150ms/更新 | `signals`テーブル（SQLite）、`metrics/cli_perf.jsonl` | 5分バー確定時に実行。`score`/`ttl`/`badges`表示。 |
+| ③ 詳細確認 | `ENTER`/`tradectl ticket show`でチケット詳細読み込み。`ui_checklist`評価。 | <80ms | `audit_events(ticket_view)` | M1.1で`ui_checklist`にOCO設置状況を追加。 |
+| ④ 承認/却下 | `tradectl ticket approve|reject`→`Ticket Builder`が`execution.ticket_approved`イベントを発火。 | 120〜250ms（SQLite書込＋監査） | `tickets`、`audit_events(approve|reject)`、`latency_ms` | 承認時に`Validation Data Playbook`用のPaperログを即時更新。 |
+| ⑤ 例外処理 | `Health Monitor`が`soft_stop`等を検知し、Boardヘッダーへ警告。`tradectl resync`や`tradectl health resume`で回復。 | `resync`1.5〜3.0s / `resume`<0.2s | `health_snapshots`、`metrics/pipeline_latency.jsonl`、`logs/events/*.jsonl` | `Kill Switch`発火時は承認コマンドを`[BLOCKED: kill_switch]`で拒否。 |
+| ⑥ レポート生成 | `tradectl report weekly --profile m1-core`→Paperログ/ジャーナルを集約。 | 6〜8s（主要4ペア） | `reports/performance/paper/<date>.md`, `reports/performance/paper/<run_id>.parquet` | 週次レビューで`Validation Data Playbook`サインオフ。 |
+| ⑦ バックアップ | `snapshot_manager.write()`→`sqlite3 .backup`（M1.1） | 0.5〜1.0s | `snapshots/session_<ts>.json`, `backup/tradectl_<ts>.db` | `DR-LOCAL-01`に沿って自動/手動で実行。 |
+
+- **異常系ガード**: `SpreadCooldownState=cooldown`時は承認コマンドに確認プロンプトを挿入。`--force`利用時は承認IDを要求し、`audit_events`へ`override_reason`を追加。`news_block_active`がtrueのチケットは`approve`実行時にExit code 118を返し、承認不可を明示する。
+- **Validation Data連携**: 承認/却下イベントは`reports/validation_log/AC-02_<date>.md`で確認チェックリスト化し、週次でQuant LeadとOps Managerが電子サイン。`tradectl audit export --type risk_consent`はAC-40テスト用に`tests/fixtures/risk_consent_sample.json`へスナップショットする。
+- **Paper→Live移行ゲート**: M1.1で`tradectl readiness review`コマンドを追加し、`ops_readiness_score`, `validation_log`のサインオフ、`Paper`整合率99%（AC-26）を満たした場合のみ`tradectl mode promote live --dry-run`が成功する。Live移行前には`Validation Data Playbook`の全項目完了が必須。 |
 22. Trade Journal Serviceが承認/却下イベントとユーザーコメントを`journal_entries.db`へ保存し、戦略/レジーム別メタデータを更新（FR-44, AC-37）。
 23. Statement Reconciliation Serviceが日次ジョブまたは`tradectl reconcile statements --from <date>`により呼び出され、ブローカーステートメントCSVを正規化してLive/Paperログと突合し、`reports/audit/reconciliation/<date>.md`へ差分を出力。残高差分>0.5Rまたは取引突合率<99%の場合は`Health Monitor`へ`statement_gap`理由を追加し、Kill Switch解除条件にRunbook調査メモを要求（FR-64, AC-53）。
 24. Parameter Drift Monitor（M2+）が最新最適化結果と現行パラメータを比較し、KLダイバージェンスしきい値を超えた場合は`benchmark_gap`同様にHealth Monitorへ理由を追加（FR-45）。
@@ -230,6 +263,8 @@
 - **`tradectl export --what tickets|signals|account`**: 指定リソースをCSV/JSONにエクスポート。既定は`csv`で`--format json`指定可。出力パスは`reports/export/<date>/<what>.<ext>`。
 - **`tradectl audit bundle --period <YYYYMM>`**: `audit_pack/<period>/`配下にシグナル履歴・承認/約定ログ・設定差分・リスク承諾ログ・ベンチマーク比較を集約し、`audit_manifest.json`と署名`audit_manifest.sig`を生成。`--verify`で署名検証を実施し、検証結果は`reports/audit/audit_pack/<period>.md`に記録。
 - **`tradectl release prepare|tag`**: `prepare`が`release_checklist.md`を生成し、Smokeテスト（Backtest回帰、データソース切替、Kill Switch動作）とリスク承諾文言差分の承認状況を記録。`tag`はチェックリスト完了と署名済み承認が揃うまで拒否し、結果を`reports/audit/release/<version>.md`へ書き出す。
+- **`tradectl readiness review`**（M1.1）: `ops_readiness_score`, `reports/validation_log/`のサインオフ状況、Paper-Liveパリティ（AC-26）の結果を集計し、Live昇格可否を判定。未完項目はExit code 121と未達リストを返す。`--export md`でRunbook添付用レポートを生成。
+- **`tradectl validation log append --ac <id>`**（M1.1）: `reports/validation_log/AC-<id>_<date>.md`に検証データの取得手順・責任者サインを追記。`--check`で最新サインの有効期限（既定=14日）を検証し、期限切れは`HealthState=data_gapped`へ通知する。
 - **`tradectl emergency trigger <scenario>` / `dry-run`**: `emergency.yaml`に定義されたシナリオを実行/検証。`--force`は確認プロンプトを無効化（Runbook承認が必要）。
 - **`tradectl journal review`**: 直近の承認チケットとユーザーコメント、戦略別KPIを表形式で表示。`--weeks 4`等で期間指定。
 - **`tradectl benchmark compare`**: ベンチマークCSVと最新エクイティを比較し、ギャップと指標差を出力。`--plot`で差分チャートを生成。
@@ -272,6 +307,7 @@
 - **テスト**: `tests/interfaces/test_cli_board.py`で`CliRunner`を用いたsnapshotテストを追加。サンプルイベントファイルは`tests/fixtures/events/`に配置。
 - **メトリクス収集**: CLIコマンド実行時間を`metrics/cli_perf.jsonl`に追記するオプション（`--metrics`) を用意し、運用時にボード表示のレスポンスを計測可能にする。
 - **設定優先順位**: `ConfigRegistry`は `CLIフラグ > 環境変数 > profile YAML > デフォルト値`の順に評価。CLIで`--profile`を指定しなければ`config/profile_live.yaml`が既定。環境変数は`CODEX_`プレフィックスで上書き。
+- **検証データ支援スクリプト**: `make data-build`でDukascopy→Parquet変換、`make sla-report`で`metrics/pipeline_latency.jsonl`のSLA集計を実行。CIでは`make validation-check`を追加し、Validation Data Playbookのサインオフとハッシュ整合を自動検査する。
 
 ## 4. データ構造と保存先
 - **マーケットデータ**: Parquet（ローカル）、キー: `{symbol}/{timeframe}`。カラム: ts, open, high, low, close, volume, spread(optional)。
