@@ -85,7 +85,9 @@
 | Ticket Builder | 注文チケット生成・ヒューマンエラーチェック | JSON Lines |
 | Persistence & Audit | イベント/ログ/設定履歴 | SQLite/Parquet/JSON |
 | Optimizer | グリッド/ランダム/WFA | SciPy/自作 |
-| Reporter | 週次/エクイティ/メトリクス出力 | Markdown/HTML |
+| Reporter | 週次/エクイティ/メトリクス出力、アトリビューションメトリクス生成（PF/Sharpe/HitRate/R_eff寄与） | Markdown/HTML/Parquet |
+| Strategy Manifest Manager | `strategy_manifest.yaml`のSchema検証、ハッシュ生成、再検証期限監視、`deprecated`タグ付与 | Pydantic/JSON Schema/SQLite |
+| Research Workspace Bridge | `research/strategies/<id>/`のノートブック/成果物を解析し、`tradectl research promote`フローで検証メトリクスを取り込む | Papermill/nbconvert/CLI |
 | Trade Journal Service | トレード/コメント管理、振り返りダッシュボード | SQLite/Markdown |
 | Benchmark Analyzer | 外部ベンチマークデータとの比較、ギャップ算出 | Pandas/Plotly |
 | Data Provenance Service | `data_manifest.json`生成・署名・検証、アーカイブ連携 | `manifest.sig`, ハッシュ計算, WORMストレージ |
@@ -112,6 +114,7 @@
 ### 2.2 クロスカッティング・コンポーネント
 - **Configuration Governance**: `ConfigRegistry`（シングルトン）でYAMLプロファイルを管理し、JSON Schema検証（FR-23）とバージョンハッシュを計算。安全項目はPub/Subでホットリロードし、危険項目は`NextBarChangeQueue`で遅延適用する。
 - **Event Bus**: Domain層間の疎結合を保つために`DomainEventBus`を採用。同期処理はコアフロー、非同期処理（レポート生成、Slack通知など）はワーカーキューに委譲する。`MarketableLimitApplied`や`ReduceOnlyIssued`など執行関連イベントも同バスで配信する。イベントはJSON (`event_type`, `ts`, `payload`) 形式で`logs/events/DATE.jsonl`へ記録し、CLIの`tradectl events tail --type=signal`等で監視。主なイベントpayloadは以下の通り:
+- **Strategy Lifecycle Governance**: Strategy Manifest ManagerとResearch Workspace Bridgeが連携し、`research.draft_created`→`research.metrics_published`→`strategy.promote_requested`→`strategy.promoted`のイベントシーケンスを管理する。Manifestに定義されたKPI・検証ウィンドウ・データセットハッシュを検証し、`last_validated_at`から90日超過で`strategy.expired`イベントを発火。`strategy.deprecated`状態ではSignal Engineがシグナル生成を抑止し、Paper整合率が復帰した場合にのみ`strategy.revalidated`で解除する。イベントは監査ログとRunbookの`GOV-STRAT-01`タスクにリンクし、Pull Requestのレビュー結果と自動突合する（NFR-20, NFR-21）。
 - **Event Bus**: Domain層間の疎結合を保つために`DomainEventBus`を採用。同期処理はコアフロー、非同期処理（レポート生成、Slack通知など）はワーカーキューに委譲する。`MarketableLimitApplied`や`ReduceOnlyIssued`など執行関連イベントも同バスで配信する。イベントはJSON (`event_type`, `ts`, `payload`) 形式で`logs/events/DATE.jsonl`へ記録し、CLIの`tradectl events tail --type=signal`等で監視。主なイベントpayload仕様は以下の通り:
 - **Liquidity Guard Pipeline**: Liquidity Intelligence Serviceが`quote_snapshot`イベントを5分足ごとに発行。`spread`, `quote_age`, `book_depth`のZスコアを算出し、閾値超過時は`liquidity.alert`イベントを発火。Risk ManagerとCompliance Validatorが同イベントをサブスクライブし、`HOLD`/サイズ縮小を同期的に適用する。
 - **Compliance & Capital Policy Layer**: Compliance ValidatorとCapital Allocation Guardは`ticket.intent`イベントをフックし、`broker_rules.yaml`と`risk_policy.yaml`を参照して承認前検証を行う。結果は`ticket.intent_validated`イベントとしてTicket Builderへ返却し、監査ログに残す。
@@ -177,7 +180,15 @@
 27. Kill Switchまたはアラート条件が発火した場合、Emergency Orchestratorが`emergency.yaml`に基づきアクション（Reduce-Only提案、通知、再接続リトライ）を実行し、Mode Controllerが新規提案を停止（FR-47）。
 28. Configuration Governanceが安全項目のホットリロードを配信し、Signal Engine/リスク管理へ反映。危険項目は`NextBarChangeQueue`に保留し、次バー確定時にSession Managerが適用して監査イベントを出力。
 
-### 3.1 CLIインターフェース仕様（M1）
+### 3.1 補足フロー: ストラテジーライフサイクル〈M2+〉
+1. **研究公開**: 研究者が`notebooks/<strategy>.ipynb`を`papermill`で実行し、`research/strategies/<id>/results.json`（PF/Sharpe/Sortino/最大DD/評価ウィンドウ/データハッシュ）と`equity.csv`を生成。`tradectl research publish <id>`で`strategy_manifest.yaml`スケルトンとRunbookテンプレート（`README.md`）を作成し、初期`promotion_checks`と`validation_windows`を宣言する（FR-55）。
+2. **メトリクス同期**: Research Workspace Bridgeが`results.json`を解析し、Manifestへ検証指標・サンプル数・`data_hash`・`code_version`を記録。`make research-sync`が共通のインジケータ/フィーチャ計算コードを同期し、研究環境と本番環境の差異が±0.5%以内かをCIで検証（FR-55, NFR-21）。
+3. **Paper昇格審査**: `tradectl research promote <id>`実行時にPaperモードでサンドボックス検証を起動し、Manifestの`promotion_checks`（PF>1.05, Sharpe>0.8, 最大DD<15%, レジーム別PF≥1.0等）を評価。合格すれば`strategy.promote_requested`→`strategy.promoted`イベントを発火し、Manifestの`last_promoted_at`/`governance_ticket_id`/`paper_alignment`を更新。未達なら`strategy.promote_rejected`イベントと理由コード（`insufficient_pf`, `drawdown_excess`, `sample_shortage`など）を出力し、Runbook `GOV-STRAT-01`へフォローアップを記録（FR-55, FR-56, AC-46）。
+4. **有効期限管理**: Strategy Manifest Managerが毎起動・日次ジョブで`last_validated_at`と`validation_ttl_days`をチェックし、90日超過（既定）またはPaper整合率<99%で`strategy.expired`イベントを発火。Signal Engineは該当戦略の提案を停止し、Signal Boardでは`deprecated`バッジを灰色表示する。`tradectl strategy renew <id>`により再検証が成功すると`strategy.revalidated`イベントと共に`deprecated=false`へ戻し、Paper整合率ログを再構築する（FR-56, AC-47）。
+5. **アトリビューション/キャピタル配分**: Reporterが週次バッチで`reports/attribution/<YYYYWW>.parquet`と`weekly.md`を生成し、PF/Sharpe/HitRate/R_eff寄与を計算（FR-57, AC-48）。Manifestの`attribution_reference`に最新レポートパスを反映し、`Capital Allocation Guard`はこのデータを用いて戦略ごとのVaR/ES寄与とReduce-Only/サイズ上限を更新する。
+6. **ガバナンス可観測性**: ManifestとRunbook議事録を`git`管理し、Pull Requestでは`strategy_manifest_check` CIが`promotion_checks`と`results.json`の整合性、`data_hash`の存在、`last_validated_at`更新を検証。`audit`イベント（`strategy_promotion`, `strategy_deprecation`, `strategy_revalidation`）は`reports/governance/`へ週次スナップショットとしてエクスポートされ、NFR-20/AC-46を満たすエビデンスとする。
+
+### 3.2 CLIインターフェース仕様（M1）
 - **`tradectl board`**: Signal Board表示コマンド。入力として`logs/events/<YYYYMMDD>.jsonl`を日付降順で探索し、最新の日次イベントファイルをストリームして最新バーごとに表形式レンダリング。出力列は`symbol, side, entry, size, sl, tp, score, ttl, badges`。`--filter symbol=USDJPY`や`--view open_tickets`などのフィルタ/ビュー切替を提供。起動時には`RiskDisclosureService`で承諾ステータスを確認し、**初回起動および四半期レビュー週の初回起動**ではリスク警告ダイアログ（投資助言禁止・主要リスク・損失可能性・想定利用範囲・ブローカー約款リンク・直近承諾ログサマリを含む）を表示する。承諾が取得できない場合はボード描画前に終了コード`103`でブロックし、承諾操作が完了すると`audit`イベント（type=`risk_consent`）へ承諾文言・表示バージョン・ユーザーID・端末識別子・コンセントハッシュを記録してからレンダリングへ遷移する。
 - **`tradectl ticket approve|reject|edit`**: チケット操作。引数は`--id <ticket_id>`とし、`edit`時は`--field sl=151.20`のように複数指定可。処理結果は`audit`イベントとして`logs/events/DATE.jsonl`に追記される。
 - **高リスク操作の警告ガード**: `tradectl ticket approve`（ライブモード、R>既定閾値）、`tradectl emergency trigger`, `tradectl reduce-only push`等の高リスクコマンドは実行前に`RiskDisclosureService`へ承諾ステータスを照会し、未承諾・期限切れ・文言更新待ち・端末変更検知の場合はボードと同一の警告ダイアログを表示する。ユーザーが承諾を更新すると即座に`audit`イベント（`risk_consent`)を追記し、コマンド側では新規`audit`イベント（`ticket_action`, `emergency_action`など）に`consent_reference_id`と`consent_version_hash`フィールドを紐付けて監査可能性を担保する。
@@ -590,6 +601,9 @@ project_root/
 | FR-50 | 2.1 Compliance Validator、2.2 Compliance & Capital Policy Layer、6 compliance |
 | FR-51 | 2.1 Capital Allocation Guard、2.2 Compliance & Capital Policy Layer、6 capital_guard |
 | FR-52 | 2.1 Data Provenance Service、2.2 Data Provenance Mesh、4 データ構造（データマニフェスト/署名）、6 data_provenance |
+| FR-55 | 2.1 Research Workspace Bridge、3.1 ストラテジーライフサイクル(1〜3)、4 データ構造（research/strategies）、6 research |
+| FR-56 | 2.1 Strategy Manifest Manager、3.1 ストラテジーライフサイクル(3〜4)、2.2 Strategy Lifecycle Governance、6 strategy_manifest |
+| FR-57 | 2.1 Reporter、3.1 ストラテジーライフサイクル(5)、10. KPI/運用ガバナンス、6 reporter |
 
 ## 11. リスクと未解決課題
 - **執行モデルの検証データ**: ブローカーAPI未接続のため、初期は過去手動記録やDukascopyティックから推定する。ライブ移行前に限定サイズでPaper/Livetrade比較検証が必要。
