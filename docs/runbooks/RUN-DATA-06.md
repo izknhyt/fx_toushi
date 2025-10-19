@@ -15,7 +15,7 @@
 - 週次/監査レビューで手動補填とResyncのエビデンスを提出するとき。
 
 ## 事前準備
-- `data/manual/<date>/`ディレクトリを作成し、対象シンボル・タイムフレームのCSVテンプレートを`tradectl data request-template --symbol <symbol> --tf m5 --out data/manual/<date>/<symbol>.csv`で生成する。
+- `data/manual_fallback/<provider>/<symbol>/<YYYYMMDD>/`ディレクトリを作成し、OPS用/POレビュー用それぞれのテンプレートを`tradectl data request-template --symbol <symbol> --tf m5 --out data/manual_fallback/<provider>/<symbol>/<YYYYMMDD>/fallback_<provider>_<symbol>_<tf>_<YYYYMMDD>_{op,review}.csv`で生成する。
 - CSVに必要な列: `ts,open,high,low,close,volume,spread,session_tag`。`ts`はUTC ISO8601、5分足境界にスナップ。
 - 補填対象期間のリファレンスとして`data/raw/<provider>/<symbol>/<tf>.parquet`または前回の`reports/audit/data_diff_<date>.md`を参照する。
 - Resync前に`tradectl status --detail`で`manual_source=true`が立っていること、`HealthState`が`degraded|data_gapped|soft_stop(processing)`であることを確認する。
@@ -29,7 +29,7 @@
 3. 差分結果を`reports/audit/data_diff/<YYYYMMDD>.md`に追記し、対象シンボル・バー数・想定原因を記録する。
 
 ### 2. 手動CSVの投入
-1. 補填CSVを`data/manual/<date>/`配下に配置し、`tradectl data validate-csv --path data/manual/<date>/<symbol>.csv`で形式検証する。`errors=0`であること。
+1. 補填CSVを`data/manual_fallback/<provider>/<symbol>/<YYYYMMDD>/`配下に配置し、`tradectl data validate-csv --path data/manual_fallback/<provider>/<symbol>/<YYYYMMDD>/fallback_<provider>_<symbol>_<tf>_<YYYYMMDD>_op.csv`でOPS版、`..._review.csv`でPOレビュー版をそれぞれ検証する。両方とも`errors=0`であること。
 2. `tradectl data jobs enqueue --task manual_csv --symbol <symbol> --tf m5 --from <start> --to <end>`を実行し、`ManualCsvIngestionTask`がキューに追加されたことを確認する。`tradectl data jobs --pending`で`status=running`→`completed`へ変化することを監視し、完了時刻を`reports/validation_log/AC-45_sla_<date>.md`に記録する。
 3. 取り込み後に`tradectl data verify --symbol <symbol> --tf m5 --from <start> --to <end>`を実行し、`missing_count=0`かつ`checksum_status=ok`であることを確認する。
 4. すべての対象シンボルについて完了したら、`reports/performance/data_latency/<YYYYMMDD>.md`および`reports/validation_log/AC-45_sla_<date>.md`に補填所要時間・担当者・データソースを記録し、`metrics/data_ingestion_sla.jsonl`の`phase=processing`に改善が反映されたことを確認する。
@@ -55,6 +55,11 @@
 1. `tradectl data resume --provider dukascopy`などで通常経路へ復帰し、`manual_source`フラグが`false`に戻ることを`tradectl status --detail`で確認する。
 2. 24時間後に`tradectl data health --symbol <symbol>`を再実行し、再発がないか監視する。
 3. 本Runbook手順で発生した課題があれば`tickets/data_quality/<symbol>_<date>.md`に記録し、是正タスクを登録する。
+
+### ディレクトリ移行ノート（v1.5）
+- 旧構成（`data/manual/<date>/`配下の単一CSV、`manual_csv/primary|review/<provider>/<YYYYMM>.csv`）は廃止対象。残存ファイルは`data/manual_fallback/<provider>/<symbol>/<YYYYMMDD>/fallback_<provider>_<symbol>_<tf>_<YYYYMMDD>_{op,review}.csv`へ移動し、`git mv`またはファイルコピー後に旧パスを削除する。
+- `tradectl benchmark validate-manual`や`tradectl data manual-report`の自動化スクリプトは`--path data/manual_fallback/...`引数へ更新する。CI/Validation Data Playbook（AC-04/AC-45）の証跡リンクも同パスへ差し替え、移行完了日を`reports/validation_log/AC-45_sla_<date>.md`に追記する。
+- Runbook更新時は`docs/runbooks/RUN-DATA-05.md`の参照箇所と`ops_worklog.jsonl`内のタスク名（`manual_fallback_review`）が新レイアウトと整合していることを確認する。
 
 ## チェックリスト
 - [ ] 欠損区間を`tradectl data gaps`で特定し、差分ログを作成
