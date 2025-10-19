@@ -73,10 +73,13 @@
 | Broker Rules Loader | ブローカー仕様読み込み（pip値/contract等） | YAML loader (`broker_rules.yaml`) |
 | Spread Monitor | スプレッド/コスト観測・クールダウン制御 | `spread_metrics.parquet`(Dukascopy/公開CSV, M1) / Broker API(M2+) |
 | Execution Model | スリッページ/ロールオーバー/Fill判定モデル | MarketData, SpreadMetrics, broker_rules.yaml |
+| Liquidity Intelligence Service | 複数レートソースの乖離検知・板厚監視・HOLD判定 | yfinance, Dukascopy, broker API/CSV, `liquidity_monitor.parquet` |
 | Correlation Guard | 通貨/シンボル相関制御 | Rule-based filter |
 | Signal Engine | ルール/モデルプラグインIF | Strategyプラグイン |
 | Risk Manager | リスク制約・Kill Switch・スプレッド制御 | Policy engine |
 | Position Sizer | Fixed Fractionalロジック | Python class |
+| Compliance Validator | チケット承認前のレバレッジ/建玉/規制確認と代替案提示 | `broker_rules.yaml`, `risk_policy.yaml`, 監査ログ |
+| Capital Allocation Guard | VaR/ESモニタリングと提案スロットリング | Portfolio PnL, `risk_policy.yaml`, Exposure metrics |
 | Reduce-Only Advisor | 収縮提案生成（閾値到達時、M2+） | Python service |
 | Emergency Orchestrator | `emergency.yaml`に基づく緊急アクション実行（Kill Switch連携、Reduce-Only指示） | Policy/Playbook Runner |
 | Ticket Builder | 注文チケット生成・ヒューマンエラーチェック | JSON Lines |
@@ -85,6 +88,7 @@
 | Reporter | 週次/エクイティ/メトリクス出力 | Markdown/HTML |
 | Trade Journal Service | トレード/コメント管理、振り返りダッシュボード | SQLite/Markdown |
 | Benchmark Analyzer | 外部ベンチマークデータとの比較、ギャップ算出 | Pandas/Plotly |
+| Data Provenance Service | `data_manifest.json`生成・署名・検証、アーカイブ連携 | `manifest.sig`, ハッシュ計算, WORMストレージ |
 | StressTest Engine | 指定シナリオの再生と感度分析、結果レポート生成 | Backtest Runner拡張 |
 | Parameter Drift Monitor | 最適化パラメータと最新指標のドリフト監視 | Numpy/Scipy |
 | Observability Exporter | メトリクス収集とPrometheus互換エンドポイント | `prometheus_client` |
@@ -94,6 +98,9 @@
 - **Configuration Governance**: `ConfigRegistry`（シングルトン）でYAMLプロファイルを管理し、JSON Schema検証（FR-23）とバージョンハッシュを計算。安全項目はPub/Subでホットリロードし、危険項目は`NextBarChangeQueue`で遅延適用する。
 - **Event Bus**: Domain層間の疎結合を保つために`DomainEventBus`を採用。同期処理はコアフロー、非同期処理（レポート生成、Slack通知など）はワーカーキューに委譲する。`MarketableLimitApplied`や`ReduceOnlyIssued`など執行関連イベントも同バスで配信する。イベントはJSON (`event_type`, `ts`, `payload`) 形式で`logs/events/DATE.jsonl`へ記録し、CLIの`tradectl events tail --type=signal`等で監視。主なイベントpayloadは以下の通り:
 - **Event Bus**: Domain層間の疎結合を保つために`DomainEventBus`を採用。同期処理はコアフロー、非同期処理（レポート生成、Slack通知など）はワーカーキューに委譲する。`MarketableLimitApplied`や`ReduceOnlyIssued`など執行関連イベントも同バスで配信する。イベントはJSON (`event_type`, `ts`, `payload`) 形式で`logs/events/DATE.jsonl`へ記録し、CLIの`tradectl events tail --type=signal`等で監視。主なイベントpayload仕様は以下の通り:
+- **Liquidity Guard Pipeline**: Liquidity Intelligence Serviceが`quote_snapshot`イベントを5分足ごとに発行。`spread`, `quote_age`, `book_depth`のZスコアを算出し、閾値超過時は`liquidity.alert`イベントを発火。Risk ManagerとCompliance Validatorが同イベントをサブスクライブし、`HOLD`/サイズ縮小を同期的に適用する。
+- **Compliance & Capital Policy Layer**: Compliance ValidatorとCapital Allocation Guardは`ticket.intent`イベントをフックし、`broker_rules.yaml`と`risk_policy.yaml`を参照して承認前検証を行う。結果は`ticket.intent_validated`イベントとしてTicket Builderへ返却し、監査ログに残す。
+- **Data Provenance Mesh**: Data Provenance ServiceはData Ingestion/Persistence/Auditから`data.asset_written`イベントを受け取り、`data_manifest.json`と`manifest.sig`を更新する。アーカイブ時は`archive.created`イベントを発火し、外部WORM媒体へのコピー状況を`ops archive status`で可視化する。
   - `signal.generated`:
     - `id: str`（`session_id`と`seq`で生成）、`symbol: str`（ISO通貨ペア）、`side: enum{LONG,SHORT}`、`entry: float`（提示価格）、`score: float[0,100]`、`ttl_sec: int`、`badges: list[str]`（`ALIGN/VOL/STAB/NEWS`等）、`extracts: dict`（根拠テキスト/指標値、任意）。
   - `risk.kill_switch`:
@@ -130,28 +137,30 @@
 3. Broker Rules Loaderが`broker_rules.yaml`をロードし、pip値/contract size/最小ロット/tick制約を`BrokerSpecs`として共有キャッシュに展開。
 4. FX Rate Updaterが口座通貨換算レート（5m最新値＋日次終値）を取得し、差分があれば`fx_rates.parquet`を更新（排他ロック付与）。
 5. Spread Monitorが`spread_metrics.parquet`（M1: Dukascopyティック/公開CSV/手入力CSVから事前集計、M2+: ブローカーフィード連携）をロード・更新し、`SpreadMetrics`としてキャッシュ。CLIからは`tradectl spread ingest`でヒストリカル分位を生成し、`tradectl spread watch`でリアルタイムポーリングを開始する（M2+）。
-6. Funding Serviceが`broker_rules.yaml`で定義されたスワップ計算ルールを読み込み、`swap_rates.csv`（M1: 手入力/公開CSV、M2+: ブローカーフィード統合）から当日分のロング/ショートスワップ（Wednesday\_NYの3倍など）を取得し、`FundingCurve`を生成。CLIは`tradectl funding sync`でCSV読み込み、`tradectl funding status`で最新値を照会。
-7. Account Serviceがモード別データソース（Backtest: シミュレーション台帳 / Paper: 仮想約定ログ / Live: ユーザー入力またはブローカーCSV）と最新レートを用いてアカウント状態を集計し、通貨バケット別エクスポージャと相関エクスポージャを算出して`AccountState`を更新。スワップは`FundingCurve`を日次で織り込んだキャッシュフローとして反映し、バックテストでも同一ロジックを適用する（FR-28）。
-8. Calendar Serviceが経済指標CSV/休日CSVをUTC基準でロードし、設定された`trading_timezone`（既定:JST）に変換した上で現在時刻に対するブロック/解除ウィンドウを判定して`GateState`を更新。イベント強度に応じた±15/30分の動的拡張ルールもここで適用する。
-9. Feature Engineが差分計算で新規バー分の指標を更新し、必要な区間のみ再計算。
-10. Regime Detectorが最新特徴量からレジームスコアを更新し、ヒステリシスを適用。
-11. Signal Engineが戦略プラグインを順に評価し、候補シグナルを生成。
-12. Execution Modelがヒューマン遅延Δt・Fillモデル（Marketable Limit/IOC）・滑り分布を適用し、想定約定価格・失効条件・コストを補正（FR-27, FR-29, FR-39）。
-13. Calendar Serviceの`GateState`によりイベントや休日でブロック対象となるシグナルを除外。
-14. Scoring Serviceがハイブリッドスコアと安定性ペナルティで順位付けし、Spread Monitorがスプレッドクールダウン状態の場合はスコアを減衰（FR-41）。Funding Serviceが`swap_penalty`を供給し、保有期間が長期化するストラテジにはスワップコストをシミュレーション時のスコアに反映する。
-15. Risk Managerが`AccountState`、`BrokerSpecs`、`SpreadMetrics`、`FundingCurve`を参照しつつリスク制約（ドローダウン/連敗/スプレッド上限/マージン/日次スワップ）をチェック。SPRTベースのライブ健全性ガードはM2以降で有効化し、適用時はHealth Monitorへステータスを送信（FR-05, FR-22〈M2+〉, FR-28, FR-36）。
-16. Correlation Guardが通貨バケット相関・シンボル相関行列を評価し、許容度を超えるシグナルを抑制。
-17. Position Sizerが`AccountState`・`BrokerSpecs`・最新レート・スプレッド・Execution Model補正を用いて推奨ロットサイズとOCO値を決定。
-18. Reduce-Only Advisor（M2+）が`HealthState`とマージン閾値・イベント窓情報から新規提案可否を判断し、必要時は`ReduceOnlyTicket`を生成。M1は同条件での手動レビューのみ。
-19. Ticket Builderが`BrokerSpecs`を用いた桁/最小距離検証、Marketable Limit提示、TTL/ドリフト監視設定、ヒューマンエラーチェックリスト（ダブルチェック/SLTP/OCO）を付与し、Signal Boardへ配信（FR-30, FR-38, FR-39）。
-20. ユーザーがチケットを承認/却下/編集->監査ログ記録。承認後のSL/TP未入力やTTL超過は自動アラート。
-21. Trade Journal Serviceが承認/却下イベントとユーザーコメントを`journal_entries.db`へ保存し、戦略/レジーム別メタデータを更新（FR-44, AC-37）。
-22. Parameter Drift Monitor（M2+）が最新最適化結果と現行パラメータを比較し、KLダイバージェンスしきい値を超えた場合は`benchmark_gap`同様にHealth Monitorへ理由を追加（FR-45）。
-23. Benchmark MonitorがベンチマークCSVとの差分を計算し、`benchmark_gap_pct`を更新。ギャップ>5%（設定値）でアラートを発火し、運用健全性ダッシュボードにハイライト（FR-46, FR-48）。
-24. Reporterが定期的にレポート/ログを出力し、Spread/Correlation/Resync/StressTest/Journal要約も含めてダッシュボードに反映（FR-10, FR-43, FR-44）。
-25. Observability Exporterが最新メトリクスを`/metrics`へ公開し、必要に応じて`tradectl metrics push`でスナップショットをRunbookへ添付（NFR-06, NFR-15）。
-26. Kill Switchまたはアラート条件が発火した場合、Emergency Orchestratorが`emergency.yaml`に基づきアクション（Reduce-Only提案、通知、再接続リトライ）を実行し、Mode Controllerが新規提案を停止（FR-47）。
-27. Configuration Governanceが安全項目のホットリロードを配信し、Signal Engine/リスク管理へ反映。危険項目は`NextBarChangeQueue`に保留し、次バー確定時にSession Managerが適用して監査イベントを出力。
+6. Liquidity Intelligence Serviceが`quote_snapshot`を生成し、二重取得レートの乖離・板厚を集計。`liquidity_monitor.parquet`へ書き込み、閾値超過時は`liquidity.alert`をRisk Managerへ送出（FR-49, AC-38）。CLIの`tradectl liquidity inspect`で可視化し、解除条件メモをRunbookに追記。
+
+7. Funding Serviceが`broker_rules.yaml`で定義されたスワップ計算ルールを読み込み、`swap_rates.csv`（M1: 手入力/公開CSV、M2+: ブローカーフィード統合）から当日分のロング/ショートスワップ（Wednesday\_NYの3倍など）を取得し、`FundingCurve`を生成。CLIは`tradectl funding sync`でCSV読み込み、`tradectl funding status`で最新値を照会。
+8. Account Serviceがモード別データソース（Backtest: シミュレーション台帳 / Paper: 仮想約定ログ / Live: ユーザー入力またはブローカーCSV）と最新レートを用いてアカウント状態を集計し、通貨バケット別エクスポージャと相関エクスポージャを算出して`AccountState`を更新。スワップは`FundingCurve`を日次で織り込んだキャッシュフローとして反映し、バックテストでも同一ロジックを適用する（FR-28）。
+9. Calendar Serviceが経済指標CSV/休日CSVをUTC基準でロードし、設定された`trading_timezone`（既定:JST）に変換した上で現在時刻に対するブロック/解除ウィンドウを判定して`GateState`を更新。イベント強度に応じた±15/30分の動的拡張ルールもここで適用する。
+10. Feature Engineが差分計算で新規バー分の指標を更新し、必要な区間のみ再計算。
+11. Regime Detectorが最新特徴量からレジームスコアを更新し、ヒステリシスを適用。
+12. Signal Engineが戦略プラグインを順に評価し、候補シグナルを生成。
+13. Execution Modelがヒューマン遅延Δt・Fillモデル（Marketable Limit/IOC）・滑り分布を適用し、想定約定価格・失効条件・コストを補正（FR-27, FR-29, FR-39）。
+14. Calendar Serviceの`GateState`によりイベントや休日でブロック対象となるシグナルを除外。
+15. Scoring Serviceがハイブリッドスコアと安定性ペナルティで順位付けし、Spread Monitorがスプレッドクールダウン状態の場合はスコアを減衰（FR-41）。Funding Serviceが`swap_penalty`を供給し、保有期間が長期化するストラテジにはスワップコストをシミュレーション時のスコアに反映する。
+16. Risk Managerが`AccountState`、`BrokerSpecs`、`SpreadMetrics`、`FundingCurve`を参照しつつリスク制約（ドローダウン/連敗/スプレッド上限/マージン/日次スワップ）をチェック。SPRTベースのライブ健全性ガードはM2以降で有効化し、適用時はHealth Monitorへステータスを送信（FR-05, FR-22〈M2+〉, FR-28, FR-36）。
+17. Correlation Guardが通貨バケット相関・シンボル相関行列を評価し、許容度を超えるシグナルを抑制。
+18. Position Sizerが`AccountState`・`BrokerSpecs`・最新レート・スプレッド・Execution Model補正を用いて推奨ロットサイズとOCO値を決定。
+19. Reduce-Only Advisor（M2+）が`HealthState`とマージン閾値・イベント窓情報から新規提案可否を判断し、必要時は`ReduceOnlyTicket`を生成。M1は同条件での手動レビューのみ。
+20. Ticket Builderが`BrokerSpecs`を用いた桁/最小距離検証、Marketable Limit提示、TTL/ドリフト監視設定、ヒューマンエラーチェックリスト（ダブルチェック/SLTP/OCO）を付与し、Signal Boardへ配信（FR-30, FR-38, FR-39）。
+21. ユーザーがチケットを承認/却下/編集->監査ログ記録。承認後のSL/TP未入力やTTL超過は自動アラート。
+22. Trade Journal Serviceが承認/却下イベントとユーザーコメントを`journal_entries.db`へ保存し、戦略/レジーム別メタデータを更新（FR-44, AC-37）。
+23. Parameter Drift Monitor（M2+）が最新最適化結果と現行パラメータを比較し、KLダイバージェンスしきい値を超えた場合は`benchmark_gap`同様にHealth Monitorへ理由を追加（FR-45）。
+24. Benchmark MonitorがベンチマークCSVとの差分を計算し、`benchmark_gap_pct`を更新。ギャップ>5%（設定値）でアラートを発火し、運用健全性ダッシュボードにハイライト（FR-46, FR-48）。
+25. Reporterが定期的にレポート/ログを出力し、Spread/Correlation/Resync/StressTest/Journal要約も含めてダッシュボードに反映（FR-10, FR-43, FR-44）。
+26. Observability Exporterが最新メトリクスを`/metrics`へ公開し、必要に応じて`tradectl metrics push`でスナップショットをRunbookへ添付（NFR-06, NFR-15）。
+27. Kill Switchまたはアラート条件が発火した場合、Emergency Orchestratorが`emergency.yaml`に基づきアクション（Reduce-Only提案、通知、再接続リトライ）を実行し、Mode Controllerが新規提案を停止（FR-47）。
+28. Configuration Governanceが安全項目のホットリロードを配信し、Signal Engine/リスク管理へ反映。危険項目は`NextBarChangeQueue`に保留し、次バー確定時にSession Managerが適用して監査イベントを出力。
 
 ### 3.1 CLIインターフェース仕様（M1）
 - **`tradectl board`**: Signal Board表示コマンド。入力として`logs/events/signal_today.jsonl`をストリームし、最新バーごとに表形式レンダリング。出力列は`symbol, side, entry, size, sl, tp, score, ttl, badges`。`--filter symbol=USDJPY`や`--view open_tickets`などのフィルタ/ビュー切替を提供。
@@ -215,6 +224,7 @@
 - **ブローカー仕様**: `config/broker_rules.yaml`でpip値、contract size、最小ロット、tick size、stop level/freeze levelを定義し、ロード結果を`BrokerSpecs`キャッシュとして全モジュールで参照。
 - **スワップテーブル**: `config/swap_rates.csv`に通貨ペア×方向（long/short）の日次スワップポイント、三倍日フラグ、ロールオーバー時刻を格納。Funding Serviceが`swap_rates.parquet`へ変換し、`positions`テーブルと突合してキャッシュフローへ反映（FR-28）。
 - **スプレッドメトリクス**: `data/spread_metrics.parquet`にスプレッド/手数料の観測結果を保存し、イベント影響や時刻別平均を蓄積してSpread Monitor/Riskが参照。バックテスト時はDukascopyティック/分足からBid/Askを再構成し、観測出来ない区間は`broker_rules.yaml`の固定スプレッドテーブルで補完。必須列は`ts(datetime[ns,UTC])`, `symbol(str)`, `bid(float)`, `ask(float)`, `spread_pips(float)`, `provider(str)`。
+- **流動性モニター**: `data/liquidity_monitor.parquet`に5分毎のBid/Ask乖離、板厚（推定）指標、更新遅延を記録。必須列は`ts`, `symbol`, `provider_primary`, `provider_secondary`, `spread_primary`, `spread_secondary`, `zscore_spread`, `zscore_depth`, `quote_age_ms`。乖離閾値超過は`liquidity.alert`イベントに記録し、解除操作の監査IDも保持する。
 - **執行モデルテーブル**: `config/execution_model.yaml`に時間帯×レジーム×シグナル種別ごとの滑り分布（p10/p50/p90）、Marketable Limit保護幅、IOC扱い可否、Human Delay分布を定義し、Execution Modelが参照。
 - **手動入力CSV（`data/account/live_account.csv`）**: ヘッダ`ticket_id, signal_id, fill_ts, fill_price, quantity, pnl, comment`を基本とし、必要に応じて`slippage_override`, `fees`, `tags`等を末尾拡張。`fill_ts`はISO8601(JST)、`quantity`はロット数。
 - **相関メトリクス**: `data/correlation/`以下に通貨バケット別エクスポージャ履歴と相関行列（Parquet/PNGヒートマップ）を保存し、リスク検証に利用。
@@ -223,7 +233,7 @@
 - **監査ログ**: `logs/events/`配下に日次ローテーション。`event_type`毎に索引ファイルを生成し、`Audit Trail Service`が二重書き込み結果をチェックサムで検証する。
 - **設定変更ガバナンス**: `logs/config/changes.jsonl`に`cfg_hash_before/after`、安全/危険分類、適用時刻を記録。週次で`ConfigDriftReport`を生成（FR-23, FR-33）。
 - **緊急プロトコル**: `config/emergency.yaml`にシナリオ/条件/アクション列を保持。`config/risk_policy.yaml`と整合性チェックし、ハッシュを`logs/config/emergency_hash.json`へ出力。
-- **データマニフェスト**: `reports/data_manifest.json`に利用データセットのハッシュ/期間/取得元/バージョンを列挙し、外部保管用ZIPを生成（FR-25）。
+- **データマニフェスト/署名**: `reports/data_manifest.json`に利用データセットのハッシュ/期間/取得元/バージョンを列挙し、`reports/data_manifest.sig`にEd25519署名を保存。`tradectl data verify`で検証し、アーカイブZIPへ両ファイルを同梱（FR-25, FR-52）。
 
 ### 4.1 Catch-up / Resync フロー
 - **開始トリガー**: 起動時・手動`tradectl resync`・データ欠損検知時にSession Managerが`resync`タスクを起動。
@@ -357,6 +367,7 @@ symbols:
 | calendar | 経済指標ブロック, 休日/ロールオーバー制御 | events.csv, holidays.csv, API同期 | GateState |
 | broker_specs | ブローカー仕様ロード | broker_rules.yaml | BrokerSpecs |
 | spread | スプレッド観測・集計・クールダウン制御 | spread_metrics.parquet (Dukascopy/CSV, M1) / BrokerFeed (M2+) | SpreadMetrics, SpreadCooldownState |
+| liquidity | マルチソースレート比較・乖離Zスコア計算 | yfinance, Dukascopy, broker API/CSV | LiquiditySnapshot, LiquidityAlerts |
 | execution | Fill/滑り/Marketable Limitモデル | MarketData, SpreadMetrics, execution_model.yaml | ExecutionAdjustments |
 | scoring | Hybird最適化スコア、Stability | RawSignals, BacktestStats | RankedSignals |
 | funding | スワップレート取得・適用・三倍日処理 | swap_rates.csv(公開CSV/手入力, M1), CalendarState (M2+: broker_api) | FundingCurve, FundingEvents |
@@ -364,27 +375,34 @@ symbols:
 | correlation | 通貨/シンボル相関評価 | AccountState, MarketData | CorrelationMatrix |
 | correlation_guard | 相関ガード・バケット制御 | RiskVettedSignals, CorrelationMatrix | CorrelationFilteredSignals |
 | sizing | Fixed Fractional、サイジング検証 | CorrelationFilteredSignals, AccountState, BrokerSpecs, FxRateCache, SpreadMetrics, ExecutionAdjustments | SizedSignals |
+| compliance | レバレッジ/建玉/規制検証と代替案提示 | TradeTickets候補, BrokerSpecs, risk_policy.yaml | ComplianceResult, AdjustedTickets |
+| capital_guard | VaR/ES監視と提案スロットリング | AccountState, RiskExposure, risk_policy.yaml | CapitalGuardState, RateLimiter |
 | reduce_only | Reduce-Only判定・提案（M2+） | SizedSignals, HealthState, GateState | ReduceOnlyTickets |
 | ticket | TTL算出、OCO値提案、ヒューマンチェック、監査追跡 | SizedSignals ∪ ReduceOnlyTickets, BrokerSpecs | TradeTickets |
 | backtester | シミュレーション、WFA | MarketData, Strategies | PerformanceStats |
 | reporter | 指標集計、グラフ化 | PerformanceStats, Logs | Reports |
 | persistence | Parquet/SQLite/JSONL管理 | 各種イベント | 永続化ファイル |
+| data_provenance | マニフェスト生成・署名・検証 | AssetWriteEvents, HashConfig | Manifest, Signature |
 
 ### 6.1 シグナル・リスク・サイジング連携
 - **Signal Engine**は`StrategyPlugin`抽象基底クラスを介してルール/モデル（FR-04）をロードし、`evaluate(context)`で`RawSignal`を返却。プラグインは`@strategy_plugin(name="donchian_breakout")`などのデコレータ登録。
 - **Execution Model**は`RawSignal`に`ExecutionAdjustments`（滑り補正、Marketable Limit保護幅、IOC有効期限、Human Delay Δt）を付与し、Backtest/Paper/Liveで整合したFill判定を行う（FR-27, FR-29, FR-39）。
 - **Scoring Service**は`RawSignal`に対して`HybridScore = w_recency·PF_recent + w_global·PF_all − λ·DD_all − γ·(1−Stability)`（FR-19, FR-21）を評価し、`Stability`は±10%摂動のドローダウン差分から算出。Spread Monitorがクールダウン中の場合は`HybridScore`を`cooldown_penalty`で縮小する（FR-41）。
 - **Risk Manager**は`RiskPolicy`（per_trade, daily_loss, weekly_loss, SPRT thresholds, margin guard, spread guard）を参照し、Kill SwitchやSPRTフェーズ（FR-05, FR-22, FR-36）に応じて`SignalAction`（allow/defer/block/reduce_only）を出力。
+- **Liquidity Intelligence Service**は`quote_snapshot`ストリームから`LiquiditySnapshot`を作成し、`zscore_spread`/`quote_age_ms`が閾値を超えた場合に`liquidity.alert`をRisk Managerへ送信。Risk Managerは該当シグナルを`HOLD`に設定し、解除時は`liquidity.resume`イベントで再開（FR-49, AC-38）。
 - **Correlation Guard**は`CorrelationMatrix`と`BrokerSpecs`から`R_eff`を計算し（FR-37）、超過時はリスク比重を削減またはシグナル除外。Reduce-Only Advisorへ優先クローズ候補を通知する。
 - **Position Sizer**はFixed Fractionalを基本に、`SpreadMetrics`/`BrokerSpecs`/`FxRateCache`/`ExecutionAdjustments`を用いてR値を整合。`min_stop_distance`未満の場合は`Ticket Builder`へ補正案を返却（FR-38）。
+- **Compliance Validator**は`TradeTickets`候補を受け取り、`broker_rules.yaml`の`max_positions`, `netting`, `fifo`, `leverage_limit`と`risk_policy.yaml`の`profile_limits`を照合。違反時は代替案（Reduce-Only/部分クローズ/サイズ調整）を生成し、承認不可としてTicket Builderへ返却（FR-50, AC-39）。
+- **Capital Allocation Guard**は`AccountState`のエクスポージャとVaR/ESを計算し、`capital_guard.yaml`または`risk_policy.yaml`の閾値と比較。超過時は`rate_limit`をRisk Managerへ渡し、提案頻度や最大サイズを減衰させる（FR-51, AC-40）。解除条件が満たされると`capital_guard.released`イベントを発行。
 - **Reduce-Only Advisor**は`HealthState`/`GateState`/`R_eff`/`free_margin`を監視し、条件一致時にポジション縮小案（Reduce-Only）を生成（FR-42）。
 - **Ticket Builder**は`HumanErrorChecklist`（桁/丸め/TP/SL/OCO/ReduceOnly分類）を評価し、未充足項目はSignal Boardで赤バッジ表示（FR-30, FR-39）。
+- **Data Provenance Service**は`AssetWriteEvents`から`data_manifest.json`と`data_manifest.sig`を更新し、`tradectl data verify`に必要なハッシュ・署名を提供。検証失敗時は`data_provenance.alert`イベントを発火してHealth Monitorへ連携（FR-52, AC-41）。
 
 ## 7. 非機能要件への対応方針
 - **性能**: pandasベース処理＋numba/ポリシー最適化と差分再計算キャッシュで5分足ストリーム遅延<100msを目標化。I/Oは非同期キューで平滑化。`perf_counter`計測を`on_bar_in`～`board_render`で常時実施し、p95/p99を`metrics/perf.json`に出力してNFR-01/AC-05を監視する。
 - **信頼性**: イベントソーシング（JSONL）＋定期スナップショットで再現性を確保し、データ品質ガードとKill Switch、Calendar Gate、FXレート補完、スプレッド監視、相関ガードを統合して異常時やイベント期間中/レート欠損時/相関過多時の自動停止・再開・補正を実現。Resyncフェーズは二相ロックで`MarketData`と`FeatureCache`を凍結し、終了後にSPRTリセット条件を評価する。
 - **運用性**: CLIコマンド `tradectl`（想定）で start/stop/status/resync を提供。Spreadクールダウン解除、Reduce-Only解除、Marketable Limit幅調整など執行関連の運用コマンドも整備する。
-- **セキュリティ/コンプラ**: HITL前提で助言表示を限定。設定変更・操作ログを全て監査保存。
+- **セキュリティ/コンプラ**: HITL前提で助言表示を限定し、`config/secret/*.yaml`はAES-256で暗号化。macOS FileVault + Keychainと連携し、復号操作をAudit Trailへ記録。Compliance Validator/Capital Guardの判定ログも`audit`へ記録し、半期ごとにルールセットをレビュー（NFR-04, NFR-17, NFR-18）。
 - **拡張性**: Strategy/Scoring/Riskをプラグイン化（`entry_points` / 自前registry）。
 - **再現性**: バックテスト/ライブの乱数seed、cfgハッシュ、データバージョンをレポート出力に埋め込み、`reports/*`のメタヘッダで差分検証可能とする（FR-25）。`FundingCurve`や`SpreadMetrics`など時系列キャッシュはハッシュ化してレポートに添付し、AC-13/AC-17とのトレーサビリティを担保する。
 - **可観測性**: SpreadCooldownStateやReduce-Only発動履歴、Execution Modelの未約定率をメトリクス化し、NFR-06/NFR-11のダッシュボードに表示する。
@@ -491,6 +509,11 @@ project_root/
 - 相関評価: 週次で`tradectl correlation report`を実行し、通貨バケット閾値の見直しや過剰相関アラートの対応を行う。
 - ブローカー仕様: 仕様変更時は`config/broker_rules.yaml`を更新後、`tradectl broker reload`で反映。差分はCLIで確認し、承認後に`BrokerSpecs`へ適用。
 - Reduce-Only対応: Reduce-Only発動時は`tradectl reduce-only status`で対象ポジションと理由を確認し、縮小後の再開可否を`tradectl reduce-only release`で操作。操作結果は監査ログに記録。
+- 流動性監視: `tradectl liquidity inspect`で乖離ZスコアとHOLD状態を確認。解除時はRunbookのステップIDと再開コメントを`logs/ops/liquidity.log`へ記録（FR-49, AC-38）。
+- コンプライアンスチェック: 新規プロファイル投入時は`tradectl compliance dry-run --profile <name>`で100件サンプル検証を行い、違反0を確認してからLive適用（FR-50, AC-39）。
+- キャピタルガード: 週次で`tradectl capital status`を確認し、RateLimiter発動中はポジション削減または資金移動方針をRunbookに追記（FR-51, AC-40）。
+- データ署名検証: 月次で`tradectl data verify --manifest reports/data_manifest.json --signature reports/data_manifest.sig`を実行し、結果を`logs/ops/data_provenance.log`へ記録（FR-52, AC-41）。
+
 - 障害対応: 重大アラートはメール。Kill Switch発動時は手動で再開判定。Spreadクールダウン中は解除条件（連続Nバー正常化）をCLIで確認可能。Funding Serviceの取得失敗時は`tradectl funding status`で直近値を確認し、手動CSV更新後に`tradectl funding reload`で再取得。
 - バージョン管理: Git + Poetry/Pip + `pip --require-hashes` で依存固定。
 - テスト: pytest + hypothesis。バックテスト再現性はAC-13遵守。
@@ -536,6 +559,10 @@ project_root/
 | FR-40 | 2.1 Calendar Service、4. データ構造（カレンダー）、9. 運用・保守 |
 | FR-41 | 3. ユースケースフロー(13)、4.5 スプレッド観測、6 spread |
 | FR-42 | 2.1 Reduce-Only Advisor（M2+）、3. ユースケースフロー(17,21※M2+)、6 reduce_only |
+| FR-49 | 2.1 Liquidity Intelligence Service、2.2 Liquidity Guard Pipeline、3. ユースケースフロー(6)、6 liquidity |
+| FR-50 | 2.1 Compliance Validator、2.2 Compliance & Capital Policy Layer、6 compliance |
+| FR-51 | 2.1 Capital Allocation Guard、2.2 Compliance & Capital Policy Layer、6 capital_guard |
+| FR-52 | 2.1 Data Provenance Service、2.2 Data Provenance Mesh、4 データ構造（データマニフェスト/署名）、6 data_provenance |
 
 ## 11. リスクと未解決課題
 - **執行モデルの検証データ**: ブローカーAPI未接続のため、初期は過去手動記録やDukascopyティックから推定する。ライブ移行前に限定サイズでPaper/Livetrade比較検証が必要。
