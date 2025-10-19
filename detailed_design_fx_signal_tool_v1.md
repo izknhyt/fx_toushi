@@ -403,7 +403,7 @@ tests/
 - **チェック順序**:
   1. `GateState`（ニュース/祝日/Spread/ReduceOnly）。
   2. Kill Switchが`STOP`ならReject。
-  3. `AccountState.running_pnl_daily/weeky`で閾値判定（日次-3%, 週次-6%）。
+  3. `AccountState.running_pnl_daily/weeky`で閾値判定（日次-2.5%, 週次-5%）。
   4. `AccountExposureCache.rebuild()`で通貨バケット別エクスポージャを算出し、`config.correlation.bucket_limits`と比較。
   5. `CorrelationMatrixBuilder.compute(exposures, history_window=30d)`でシンボル相関行列を更新し、`EffectiveRiskCalculator.calculate(ranked_signals, exposures, correlation_matrix)`から`R_eff`を取得。閾値（既定2.5）を超えたら`RiskAlert(type='r_eff')`と`RiskMetricsSnapshot`イベントを発火し、Signal Boardへ通知する。M1 Coreでも`CorrelationGuard`未導入時はRisk Managerが簡易的にR抑止（`signal.blocked_reason='r_eff'`）を付与する。
   6. `SpreadMetrics`と`RiskPolicy.spread_max_pips`比較。
@@ -506,8 +506,8 @@ tests/
 #### 3.19.1 設定パラメータ分類
 | 設定キー例 | 既定値 (profile\_live) | 区分 | 反映方式 | 備考 |
 | --- | --- | --- | --- | --- |
-| `risk.per_trade` | `0.01` | dangerous | 次バー適用 (`NextBarChangeQueue`) | M1上限1%。変更時は監査ノート必須。 |
-| `risk.daily_loss`, `risk.weekly_loss` | `-0.03`, `-0.06` | dangerous | 次バー適用 | Kill Switch閾値。解除には手動承認が必要。 |
+| `risk.per_trade` | `0.0075` | dangerous | 次バー適用 (`NextBarChangeQueue`) | M1上限0.75%。変更時は監査ノート必須。 |
+| `risk.daily_loss`, `risk.weekly_loss` | `-0.025`, `-0.05` | dangerous | 次バー適用 | Kill Switch閾値。解除には手動承認が必要。 |
 | `gates.spread_max_pips` | `1.5` | dangerous | 次バー適用 | Spread guardの即時停止を防ぐため遅延適用。 |
 | `strategies[].weight` | `0.6/0.4` | safe | 即時反映 | 変更は`StrategyRegistry`へbroadcast。 |
 | `strategies[].params` | 戦略依存 | safe | 即時反映 | 変更履歴は`ConfigChanged`に記録。 |
@@ -1187,6 +1187,7 @@ Flag切替時は`ConfigChanged`イベントに`flag_delta`が記録され、Repo
 > **保管ルール**: 生成時に`reports/data_manifest.json`へハッシュ/サイズ/取得コマンドを登録し、`reports/research/m1_baseline/validation_YYYYMMDD.md`へ`dataset_hash`を転載する。トレーダーと実装者は本表を照合して同一データセットで検証・ライブ監視を行う。
 
 #### 9.4.2 パラメータテーブル（`strategy_manifest.yaml::strategies.m1_baseline_ma_rsi.parameters`）
+> **PO/Ops合意メモ（2025-02-21）**: M1 Coreは**per-trade=0.75% / 日次=-2.5% / 週次=-5%**を正式基準とする。`risk_policy.yaml`、`config/profiles/*`, Runbook、および検証シナリオは同じ値で初期化し、逸脱時は`reports/governance/risk_policy_changes/`で承認ログを残す。
 | パラメータ | 値 | 説明 | 根拠/関連要件 |
 | --- | --- | --- | --- |
 | `entry_tf` | `5m` | トリガー足 | 要件§3.2, FR-16 |

@@ -6,7 +6,7 @@
 > **最終更新者**: Risk Manager (Doc Maintainer)
 
 ## 目的
-- 日次-3% / 週次-6%のドローダウン閾値到達時にKill Switchを確実に発火させ、再開には所定の承認手続きを強制する。
+- 日次-2.5% / 週次-5%のドローダウン閾値到達時にKill Switchを確実に発火させ、再開には所定の承認手続きを強制する。
 - R分布・同時保有数・R_eff制約を定期的に検証し、受け入れ基準AC-03およびAC-09のコンプライアンスを維持する。
 - Validation Data Playbook（AC-09）に沿って`data/correlation/`配下の相関データセットを週次で更新し、Signal BoardとRisk Managerの指標整合を保つ。
 - リスク関連インシデントのログと是正措置を`reports/audit/`配下に残し、監査対応時のトレーサビリティを確保する。
@@ -30,7 +30,7 @@
 4. 結果を`reports/validation_log/AC-09_<date>.md`へ追記し、担当者サインを残す。
 
 ### 2. ドローダウン閾値到達時の対応（AC-03）
-1. `HealthMonitor`またはアラートで`drawdown_daily>=3%`または`drawdown_weekly>=6%`が通知されたら、即座に`tradectl risk limits show --mode paper`で現在値を確認する。
+1. `HealthMonitor`またはアラートで`drawdown_daily>=2.5%`または`drawdown_weekly>=5%`が通知されたら、即座に`tradectl risk limits show --mode paper`で現在値を確認する。
 2. `tradectl kill-switch engage --mode paper --reason drawdown` を実行し、状態が`soft_stop`/`hard_stop`に遷移したことを`tradectl status`で確認する。自動発火済みの場合は二重実行しない。
 3. `reports/audit/drawdown_guard/<YYYYMMDD>.md`を作成し、
    - 発生日/時刻
