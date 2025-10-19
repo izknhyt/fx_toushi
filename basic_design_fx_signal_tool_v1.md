@@ -574,6 +574,13 @@ symbols:
 - **テストと可視化**: `tests/perf/test_pipeline_latency.py`でメトリクスJSONLを読み込み、直近500サンプルのp95/p99が閾値未満か検証。失敗時は`pytest`をFailさせ、Runbook `docs/runbooks/RUN-PERF-01.md`に貼り付けるスパークライン（`tools/render_perf_chart.py`出力）を再生成する。`tradectl metrics report --kind latency --window 7d`で集計値とSLA逸脱サマリをMarkdown化し、週次レビューに添付する。
 - **Acceptable Degradation時の運用**: `board_mode=guarded`発生時は`metrics/pipeline.jsonl`へ`board_mode`フィールドを追記し、通常値との差分を`reports/performance/pipeline_latency/<YYYYMMDD>.md`に自動集計。復旧条件は`bar_to_board.p95<100ms`かつ`cli.render_ms.p95<100ms`へ戻ることとし、解除時に`degraded_recovered`イベントへ測定値を添付する。
 
+### 7.7 SLAテレメトリ閾値バリエーション計画
+- **目的**: 実測データに基づき`HealthMonitor`の`fetch_delay`/`processing_delay`閾値を柔軟に調整し、季節性やプロバイダ変更時の過検知・過剰許容を防ぐ。
+- **しきい値プロファイル管理**: `config/sla_thresholds/<profile>.yaml`を新設し、`provider`,`metric`,`window`別に`target`,`warning`,`critical`を定義。`config/defaults.yaml`の`health.threshold_profile`で読み込むプロファイルを切替え、CLI `tradectl sla profile switch --to <profile>`で即時反映する。
+- **計測ベースライン生成**: `tools/sla/generate_profile.py`を追加し、直近30日`metrics/data_ingestion_sla.jsonl`を解析してp50/p75/p95/p99を算出。標準偏差と上限倍率（例: `warn = p95 * 1.15`, `critical = max(p99 * 1.25, p95 + 12s)`）を提示するMarkdownレポートと候補YAMLを出力する。
+- **運用フロー**: 週次レビューで`reports/ops/sla_review/<YYYYWW>.md`を更新し、`profile_candidate.yaml`との差分を確認。承認後は`tradectl sla profile apply`で`config/sla_thresholds/active.yaml`へ昇格し、旧プロファイルは`archive/`へ移す。
+- **自動チューニング準備**: M2以降に向けて`metrics/data_ingestion_sla.jsonl`へ`profile_version`を付与し、将来のオンライン学習や実績差分（`observed - target`）を蓄積。Deviationが連続3回閾値を超えた場合は`health.changed(reason=sla_threshold_mismatch)`でアラートし、手動レビューを促す。
+
 
 ### 7.1 M1テスト優先度とカバレッジ
 - **必須自動テスト（CI）**
@@ -673,6 +680,25 @@ project_root/
 - キャピタルガード: 週次で`tradectl capital status`を確認し、RateLimiter発動中はポジション削減または資金移動方針をRunbookに追記（FR-51, AC-40）。
 - データ署名検証: 月次で`tradectl data verify --manifest reports/data_manifest.json --signature reports/data_manifest.sig`を実行し、結果を`logs/ops/data_provenance.log`へ記録（FR-52, AC-41）。
 
+### 9.1 運用スループット試算と自動化ロードマップ
+| 作業カテゴリ | 想定頻度 (M1 Core) | 基準タスク | 手作業時間目安 | 自動化/省力化候補 |
+| --- | --- | --- | --- | --- |
+| データ品質監査 | 平日毎日 | `manual_csv`二重入力レビュー、`health.changed`承認、`reports/validation_log`更新 | 35〜45分/日 | `tradectl data manual-report --template`でCSVチェックリスト自動生成、Slack/メール通知のドラフト化 |
+| SLAレビュー | 週1回 | `metrics/data_ingestion_sla.jsonl`集計、逸脱コメント記入 | 60分/週 | `tools/sla/generate_profile.py`によるMarkdown自動生成、`tradectl sla report --window 7d`で差分強調 |
+| Kill Switch監視 | 平日毎日 | `Risk Dashboard`確認、`reports/risk/daily_guard.md`更新、承認サイン | 20分/日 | CLI `tradectl risk digest --daily`で自動ドラフト、`board_mode=guarded`時の自動TODO発行 |
+| 週次レポート | 週1回 | `Reporter`実行、コメント追記、PO共有 | 90分/週 | `reports/weekly/templates/m1_core.md`への自動差分ハイライト、コメント定型文`snippets/`化 |
+| Runbook更新 | 月2回 | インシデント記録、手順差分反映 | 45分/更新 | `docs/runbooks/update_index.py`で差分検出、PRテンプレ連携 |
+
+- **キャパシティ算出**: 上表の作業量を30日ローリングで集計し、運用者が1日あたり約2.2h、週あたり約10.5hを確保できるかチェックする。`reports/ops/workload_<YYYYMM>.md`に実績値を記録し、許容超過時は自動化対象を優先度付けする。
+- **アクションアイテム化**: 省力化候補ごとにIssueテンプレ`docs/templates/automation_request.md`を用いて起票し、対象バージョン（M1 Core/M1.1/M2）と期待削減時間を明記する。削減効果>30分/週が見込まれるものから着手し、実績は`reports/ops/automation_effect.md`に追記する。
+- **日次TODO生成**: `tradectl ops agenda --date <YYYY-MM-DD>`コマンドを追加し、上表の基準タスクとSLA逸脱/Kill Switch状態をもとに日次TODOをMarkdown出力。CLIは`--export docs/runbooks/daily_agenda/<date>.md`オプションでRunbookにリンクし、手動作業漏れを防止する。
+
+### 9.2 Kill Switchとレポート整合性の強化
+- **レポート出力**: 週次レポート（M1 Coreテンプレート）に`daily_loss_threshold`/`weekly_loss_threshold`と実績損失、Kill Switch遷移履歴（`soft_stop/hard_stop`）を自動埋め込み、逸脱時は`[ALERT]`タグを付与する。`Reporter`の`render_weekly_report()`へ`risk_summary`セクションを追加し、`reports/performance/<mode>/<YYYYMMDD>.md`にも同様の表を出力する。
+- **Dashboard整合**: `tradectl risk status`に`report_last_synced_at`と`kpi_snapshot_version`を表示し、報告済みしきい値とリアルタイム指標の乖離を運用者が即確認できるようにする。Kill Switch解除時は`risk_summary`を再生成してRunbook `docs/runbooks/RUN-RISK-01.md`へ貼り付ける。
+- **承認ワークフロー**: Kill Switch閾値の変更は`config/risk_policy.yaml`修正と同時に`reports/risk/threshold_change_<YYYYMMDD>.md`へ承認サインを残し、週次レポートに変更履歴を引用する。閾値変更後最初の週次レポートには`[THRESHOLD CHANGE]`バナーを表示し、POレビューで差分確認を義務化する。
+- **テレメトリ同期**: `metrics/risk_guard.jsonl`に`threshold_version`と`report_reference`を記録し、差分がある状態（例: `threshold_version != report_reference`）が48時間以上継続した場合は`health.changed(reason=risk_report_mismatch)`を発火。Acceptable Degradation中も報告指標が同期されるようにする。
+
 - 障害対応: 重大アラートはメール。Kill Switch発動時は手動で再開判定。Spreadクールダウン中は解除条件（連続Nバー正常化）をCLIで確認可能。Funding Serviceの取得失敗時は`tradectl funding status`で直近値を確認し、手動CSV更新後に`tradectl funding reload`で再取得。
 - バージョン管理: Git + Poetry/Pip + `pip --require-hashes` で依存固定。
 - テスト: pytest + hypothesis。バックテスト再現性はAC-13遵守。
@@ -770,4 +796,45 @@ project_root/
 - **Decision Journal**: キャピタル配分・戦略昇格・Kill Switch解除など重要決定は`reports/governance/decisions/<YYYYMMDD>_<topic>.md`に記録。Decision Journalには関連する`strategy_manifest`やKPIスナップショットへのリンク、承認者、評価結果のフォローアップ予定日を含める。
 - **自動生成ドキュメント**: `make docs`でMkDocsをビルドし、`site/`にAPI/CLI/Runbook抜粋を出力。CIで差分ビルドし、未更新ドキュメントがある場合は警告を出す（NFR-13, NFR-16）。
 - **ナレッジ移管手順**: 新メンバーオンボーディング時は`docs/onboarding.md`を参照し、システム概要・主要CLI・Runbook参照先・依存ロックの扱いをカバー。1週間以内にバックテスト再現性（AC-01）とResync手順（AC-04）のハンズオンを実施する。
+- Validation Data Playbookはテンプレートを共有し、各AC/FRに対応した必須フィールドを事前定義して証跡品質を均一化する。
+
+### 14.1 Validation Data Playbookテンプレート雛形
+```
+---
+id: AC-XX-<YYYYMMDD>
+requirement: <FR/AC番号>
+dataset: <データセット名 or ファイルパス>
+hash: <SHA256>
+source: <取得元URL/Runbook手順>
+owner: <記録者>
+reviewer: <サイン者>
+due_date: <YYYY-MM-DD>
+status: pending | provisional | confirmed
+fallback_applied: true | false
+fallback_reason: <欠損補完理由>
+linked_runbook: docs/runbooks/RUN-XXXX-YY.md
+---
+
+## 1. 受け入れ条件
+- [ ] データ期間: <例: 2024-01-01〜2024-01-31>
+- [ ] 欠損率 ≤ <閾値>
+- [ ] 二重入力ハッシュ一致
+
+## 2. 検証ログ
+| チェック | 実施者 | 実施日時 | 結果 | 証跡 |
+| --- | --- | --- | --- | --- |
+| レコード件数検証 |  |  |  |  |
+| スキーマ検証 (`tools/validate_schema.py`) |  |  |  |  |
+| ハッシュ再計算 (`tradectl data hash`) |  |  |  |  |
+
+## 3. コメント
+-
+
+## 4. サインオフ
+- 運用者: <署名/日時>
+- PO: <署名/日時>
+
+```
+- 上記テンプレートを`reports/validation_log/templates/playbook_entry.md`に配置し、`tradectl validation new --requirement AC-45 --dataset usdjpy_m5_core`でプレイブックエントリを生成するCLIを追加する。
+- `status`が`pending`/`provisional`のまま`due_date`を超過した場合、`tradectl validation audit --window 7d`で一覧に赤字表示し、週次レビューで是正アクションを起票する。
 
