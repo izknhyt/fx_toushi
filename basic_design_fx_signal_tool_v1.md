@@ -46,7 +46,7 @@
 | 分類 | 具体例 | M1 Coreでの扱い | 根拠 |
 | --- | --- | --- | --- |
 | ドメイン中核 | Data Ingestion / Feature Pipeline / Signal Engine / Risk Manager / Ticket Builder（承認UI必須部のみ） | 実装対象。将来拡張ポイントは`TODO(m2)`コメントで封じ、IFは変更しない。 | FR-01〜FR-08, FR-10, FR-18 |
-| ガバナンス | Strategy Scoreboard / Idea Pipeline / Model Risk Register / Ops Readiness Evaluator | **ディレクトリ非作成**。必要なインターフェースは`src/domain/governance/contracts.py`に小さく定義し、DI登録はスタブの空クラスのみ。 | スコープ圧縮、レビュー指摘#2 |
+| ガバナンス | Strategy Scoreboard / Idea Pipeline / Model Risk Register / Ops Readiness Evaluator | **最小スタブのみ配置**。必要なインターフェースは`src/domain/governance/contracts.py`に小さく定義し、DI登録はスタブの空クラスのみ。 | スコープ圧縮、レビュー指摘#2 |
 | レポーティング拡張 | Enhanced weekly report, Benchmark差分, Bootstrap CI | Feature Flagを既定`false`とし、テンプレート/処理を削除。`tradectl report`はM1テンプレのみをバンドル。 | FR-18最小要件のみに集中 |
 | オペレーション演習 | Emergency Orchestrator / Reduce-Only自動化 / Ops drill | Runbookとチェックリストのみ整備。コード実装はM1.1以降のFollow-up Issueとして分離。 | M1.1 Hardening以降のFR |
 | 可観測性拡張 | Prometheus Exporter / GUI WebSocket / SLAダッシュボード | `ObservabilityExporter`に`GuardedMetricsSink`を実装し、JSONL出力のみ提供。HTTPサーバや外部連携は`NotImplementedError`で明示。 | NFR-06, NFR-15最小限 |
@@ -163,12 +163,13 @@
 - **サンプルサイズ監視**: Paperローンチから90営業日までは90営業日ウィンドウで**取引数<30（45営業日時点は<15）**の場合に`metric_state=provisional`とし、252営業日ウィンドウは一律で`metric_state=pending`とする。90営業日を経過した後は従来閾値（90営業日ウィンドウで取引数<60、252営業日ウィンドウで<180）を適用し、未達時は`metric_state=pending`を付与する。Reporterは`metric_state`を`reports/weekly/<YYYY-WW>.md`へ埋め込み、Runbookチェックリストに自動コメントを追加して人間レビューを促す。
 
 ### 2.3 データストア/フォルダ構成（v1.3追加）
-- `scoreboard/alpha/<YYYYWW>.json`: 戦略ごとの`alpha_score`/`decay_score`と構成比、算出根拠（PF/Sharpe/Stability/Regime適合度）を保持。`scores/meta.json`で最新ウィンドウと前回比較を管理する。
-- `ideas/<idea_id>/manifest.yaml`: アイデアのデータソース、検証期間、想定リスク、現ステージ（`draft|screening|paper|ready`）を記述。`ideas/<idea_id>/checklists/<stage>.md`に必須エビデンスの進捗をMarkdownタスクで保持。
-- `reports/model_risk/<strategy>.md`: 各戦略のモデルリスク評価、Explainability添付リンク、緩和策のトラッキング。`model_risk_register.md`のインデックスと突合する。
-- `reports/governance/ops_readiness_<YYYYWW>.md`: オペレーションレディネス評価の詳細。Ops Readiness Evaluatorがスコア算出に参照し、Runbook `OPS-READINESS-01`（docs/runbooks/OPS-READINESS-01.md）のチェックリストIDを埋め込む。
-- `reports/research/alpha_score/<YYYYWW>.md`: Alpha Scoreboardの算出根拠をMarkdownで保存し、トレンド/レンジ/高ボラ別のサブスコアとリスクイベントを記録（FR-61）。
-- `tickets/model_revalidate/<strategy>_<date>.md`: Alpha ScoreboardまたはModel Risk Guardが起票する再評価タスク。完了時は`status=done`に更新し、Model Risk Register Serviceが参照する。
+※ M1 Coreでは以下ディレクトリは作成せず、必要に応じてM2以降で**最小スタブのみ配置**していく。存在しない段階では`docs/`およびRunbookで証跡管理する。
+- `scoreboard/alpha/<YYYYWW>.json`（M2+）: 戦略ごとの`alpha_score`/`decay_score`と構成比、算出根拠（PF/Sharpe/Stability/Regime適合度）を保持。`scores/meta.json`で最新ウィンドウと前回比較を管理する。
+- `ideas/<idea_id>/manifest.yaml`（M2+）: アイデアのデータソース、検証期間、想定リスク、現ステージ（`draft|screening|paper|ready`）を記述。`ideas/<idea_id>/checklists/<stage>.md`に必須エビデンスの進捗をMarkdownタスクで保持。
+- `reports/model_risk/<strategy>.md`（M2+）: 各戦略のモデルリスク評価、Explainability添付リンク、緩和策のトラッキング。`model_risk_register.md`のインデックスと突合する。
+- `reports/governance/ops_readiness_<YYYYWW>.md`（M2+）: オペレーションレディネス評価の詳細。Ops Readiness Evaluatorがスコア算出に参照し、Runbook `OPS-READINESS-01`（docs/runbooks/OPS-READINESS-01.md）のチェックリストIDを埋め込む。
+- `reports/research/alpha_score/<YYYYWW>.md`（M2+）: Alpha Scoreboardの算出根拠をMarkdownで保存し、トレンド/レンジ/高ボラ別のサブスコアとリスクイベントを記録（FR-61）。
+- `tickets/model_revalidate/<strategy>_<date>.md`（M2+）: Alpha ScoreboardまたはModel Risk Guardが起票する再評価タスク。完了時は`status=done`に更新し、Model Risk Register Serviceが参照する。
 
 ### 2.4 SQLite / Parquet スキーマ設計（M1 Core〜M1.1）
 
