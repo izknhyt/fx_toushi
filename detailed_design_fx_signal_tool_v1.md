@@ -276,7 +276,7 @@ tests/
 - **主要クラス**: `SessionManager`, `ModeController`, `SessionHandle`。
 - **公開API**: `start(profile, mode)`, `catch_up(from_ts=None)`, `shutdown(graceful=True)`, `status()`, `reset_kill_switch()`。
 - **状態管理**: `SessionState`に`mode`, `health`, `active_jobs`, `cfg_hash`, `last_bar_ts`を保持。`ModeController`は`ModeContext`（バックテスト: in-memory fill, Paper: 仮想 fills, Live: ユーザー入力CSV）を提供。
-- **Catch-up**: `resync_queue`へ`BackfillJob`を投入し、完了時に`ResyncCompleted`イベントを発火（FR-16, AC-04）。
+- **Catch-up**: `resync_queue`へ`BackfillJob`を投入し、欠損ウィンドウの長さと影響ティッカー数から`priority ∈ {critical, high, normal}`を決定して登録。主要4ペアで60分超欠損が発生した場合は自動的に`critical`を付与し、`provider_priority`を`{cache > dukascopy > yfinance}`へ強制切替する。処理中は`metrics/data_ingestion_sla.jsonl`へ`catch_up_lag_minutes`を追記し、60分超で`HealthMonitor.raise(level='critical', reason='data_latency_catch_up')`を発火。`BackfillJob`が連続3回失敗した場合は24時間ウィンドウを最大4時間単位に分割し直し、再投入前に`ManualCsvIngestionTask`へ手動CSV要求フラグを設定する。完了時は`ResyncCompleted(catch_up_elapsed_sec, recovered_symbols, failover_used)`イベントを発行し、Runbookチェックリストに承認者IDと代替ソース解除時刻を記録する（FR-16, AC-04）。
 - **エラーハンドリング**: 重大例外は`HealthMonitor.raise("hard_stop", reason)`を経由しKill Switchを`STOP`に遷移。`graceful=False`でshutdownした場合、再起動時に`soft_stop(manual_review)`から開始。
 - **設定依存**: `config.profile_<name>.yaml`と`cfg.schema.json`。Profile切替時は`cfg_hash`を再計算し監査ログへ出力。
 
@@ -411,6 +411,7 @@ tests/
   - `fetch_delay_p95>config.ingestion.sla.fetch_p95_sec`で`HealthState=degraded(fetch)`へ遷移。`FallbackRetryTask`が成功するか`bar_ready_queue`が安定すると自動で`ok`へ戻る。
   - `processing_delay_p95>config.ingestion.sla.processing_p95_sec`、もしくは`processing_timeout_sec`超過が連続3回で`HealthState=soft_stop(processing)`としKill Switchを保守。`DataQualityGuard`が`status=reconciled`を連続10バー確認すると解除候補に降格。
   - 取得が停止し`fetch_gap_sec>config.ingestion.fetch_timeout_sec`のときのみKill Switchへ`STOP(data_feed_unavailable)`を伝搬。処理遅延のみでは`STOP`へ到達しない。
+  - `catch_up_lag_minutes>config.ingestion.catch_up_warn_minutes`が30分超過で`HealthState=degraded(reason='data_latency_catch_up')`、60分超過で`soft_stop(data_latency_catch_up)`に遷移。遷移時はAcceptable Degradation運用へ切替え、Runbook `RUN-DATA-05/06`に沿って代替ソースの投入/解除ログを取得する。`catch_up_lag_minutes<10`が連続3回確認できたら復旧候補とみなす。
 - **メトリクス**: `health_state_transitions.jsonl`に`reason`, `phase`, `prev_state`, `next_state`, `trigger_metric`を記録し、`make sla-report`がData Ingestion遅延メトリクスと突合する。Kill Switch発火は`kill_switch_events.jsonl`に別途記録し、不要なSTOP判定をレビューできるようにする。
 
 ### 3.10 CorrelationGuard (`src/risk/correlation_guard.py`, `src/account/exposure.py`)
