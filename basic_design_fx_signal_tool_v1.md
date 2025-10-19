@@ -91,7 +91,7 @@
 | Data Provenance Service | `data_manifest.json`生成・署名・検証、アーカイブ連携 | `manifest.sig`, ハッシュ計算, WORMストレージ |
 
 #### Data Ingestion Service 詳細
-- **ヘルスチェック**: ティッカー毎に最新バー取得時刻を`symbol_last_ts`として保持し、取得遅延を`latency_sec = (now_utc - symbol_last_ts).total_seconds()`で算出。`latency_sec > 60`（yfinance）、`>180`（Dukascopy）で`HealthMonitor.raise(level='degraded', reason='data_latency', symbol=...)`を発火し、同時にPrometheusメトリクス`data_ingestion_latency_seconds{symbol,provider}`を更新する。
+- **ヘルスチェック**: ティッカー毎に最新バー取得時刻を`symbol_last_ts`として保持し、取得遅延を`latency_sec = (now_utc - symbol_last_ts).total_seconds()`で算出。`latency_sec > 60`（yfinance）、`>180`（Dukascopy）で`HealthMonitor.raise(level='degraded', reason='data_latency', symbol=...)`を発火し、同時にJSONLへPrometheus互換ラベルで`data_ingestion_latency_seconds{symbol,provider}`レコードを書き込む。
 - **遅延伝播シーケンス**: 遅延アラートはEvent Bus経由で`Spread Monitor`へ配信され、対象シンボルの`SpreadCooldownState`を`halt`へ強制遷移→`Emergency Orchestrator`が`emergency.yaml`の`data_latency`プレイブックを評価し、Kill Switchソフトストップ準備と通知（CLI/メール）を実行→Runbook `RUN-DATA-05`に従ってオペレータが手動確認・承認→復旧後に`HealthMonitor.ack`で解除し、Spread Monitorが通常状態へロールバックする。
 - **フェイルオーバー手順**: 1) yfinance失敗時はDukascopy高速フェッチへ切替、2) Dukascopyも不可の場合はローカルキャッシュ`data/raw/<provider>/<symbol>/<tf>.parquet`を読み出してギャップを埋め、`cache_source=fallback`をマーキング、3) それでも欠損が残る場合はRunbook `RUN-DATA-06`に従い手動CSV（`data/manual/<date>/<symbol>.csv`）を投入し、`tradectl data reload --source manual`で取り込む。手動モード中は`manual_source=true`フラグをイベントに添付し、復旧後にキャッシュを再構築して通常経路へ戻す。
 
@@ -105,7 +105,7 @@
 - **サンプルサイズ監視**: 90営業日ウィンドウで**取引数<60**、252営業日ウィンドウで**取引数<180**の場合はメトリクス算出結果を`insufficient_sample`フラグ付きで返し、受け入れ基準の判定を`pending`に設定する。ReporterはRunbookに自動追記して人間レビューを促す。
 | StressTest Engine | 指定シナリオの再生と感度分析、結果レポート生成 | Backtest Runner拡張 |
 | Parameter Drift Monitor | 最適化パラメータと最新指標のドリフト監視 | Numpy/Scipy |
-| Observability Exporter | メトリクス収集とPrometheus互換エンドポイント | `prometheus_client` |
+| Observability Exporter | メトリクス収集とJSONL書き出し（M1）。Prometheus互換エンドポイントはM2+で有効化 | JSONL writer / future `prometheus_client` |
 | Alert Dispatcher | メール通知 | SMTPライブラリ |
 
 ### 2.2 クロスカッティング・コンポーネント
@@ -142,7 +142,7 @@
 - **Trade Journal Service**: チケット承認イベントと実績（Backtest/Paper/Live）を`journal_entries.db`へ保存し、週次レポート生成時にMarkdownテンプレートへレンダリング（FR-44）。CLIは`tradectl journal add-note --ticket <id>`でコメント追記、`tradectl journal review`で直近レビューを表示。
 - **StressTest Orchestrator**: `scenarios/*.yaml`のイベントセットと感度パラメータ（spread_multiplier, slip_bias, decision_delay）をBacktest Runnerへ注入し、結果を`reports/stress/<scenario>/index.md`へまとめる（FR-43, AC-36）。
 - **Benchmark Monitor**: `benchmark_feeds/*.csv`を取り込み、自戦略のエクイティ・KPIと差分チャートを生成。`tradectl benchmark compare --from 2023-01-01`で比較実行し、差分が閾値超過の場合はHealth Monitorへ`benchmark_gap`理由を追加（FR-46, FR-48）。
-- **Observability Exporter**: `prometheus_client`で`/metrics`（ローカルHTTPサーバ、デフォルト`127.0.0.1:9108`）を公開し、`signal_latency_ms`, `spread_guard_state`, `benchmark_gap_pct`などのGauge/Histogramを登録（NFR-06, NFR-15）。CLIから`tradectl metrics push`で手動スナップショット出力も可能。
+- **Observability Exporter**: M1は`metrics/pipeline.jsonl`/`metrics/cli_perf.jsonl`をストリーム書き出しし、`tradectl metrics report`でRunbook添付用スナップショット（Markdown/JSON）を生成する。Prometheus互換ExporterはM2+で`/metrics`（予定ポート`127.0.0.1:9108`）を公開する計画とし、M1ではExporterインターフェースとメトリクス登録コードをスタブ化しておく（NFR-06, NFR-15）。
 
 ## 3. ユースケースフロー（MVP）
 ※ 本節ではM2以降に有効となる機能を〈M2+〉と明記しています。
@@ -172,7 +172,7 @@
 23. Parameter Drift Monitor（M2+）が最新最適化結果と現行パラメータを比較し、KLダイバージェンスしきい値を超えた場合は`benchmark_gap`同様にHealth Monitorへ理由を追加（FR-45）。
 24. Benchmark MonitorがベンチマークCSVとの差分を計算し、`benchmark_gap_pct`を更新。ギャップ>5%（設定値）でアラートを発火し、運用健全性ダッシュボードにハイライト（FR-46, FR-48）。
 25. Reporterが定期的にレポート/ログを出力し、Spread/Correlation/Resync/StressTest/Journal要約も含めてダッシュボードに反映（FR-10, FR-43, FR-44）。
-26. Observability Exporterが最新メトリクスを`/metrics`へ公開し、必要に応じて`tradectl metrics push`でスナップショットをRunbookへ添付（NFR-06, NFR-15）。
+26. Observability Exporterが最新メトリクスをJSONLへ書き出し、必要に応じて`tradectl metrics report`でサマリースナップショットを生成してRunbookへ添付（NFR-06, NFR-15）。
 27. Kill Switchまたはアラート条件が発火した場合、Emergency Orchestratorが`emergency.yaml`に基づきアクション（Reduce-Only提案、通知、再接続リトライ）を実行し、Mode Controllerが新規提案を停止（FR-47）。
 28. Configuration Governanceが安全項目のホットリロードを配信し、Signal Engine/リスク管理へ反映。危険項目は`NextBarChangeQueue`に保留し、次バー確定時にSession Managerが適用して監査イベントを出力。
 
@@ -187,7 +187,7 @@
 - **`tradectl journal review`**: 直近の承認チケットとユーザーコメント、戦略別KPIを表形式で表示。`--weeks 4`等で期間指定。
 - **`tradectl benchmark compare`**: ベンチマークCSVと最新エクイティを比較し、ギャップと指標差を出力。`--plot`で差分チャートを生成。
 - **`tradectl stress run <scenario>`**: ストレステストシナリオを実行し、結果を`reports/stress/<scenario>/index.md`へ書き出す。`--sensitivity spread=1.5`等で感度上書き。
-- **`tradectl metrics serve|push`**: Prometheus互換メトリクスエンドポイントを起動/ワンショット出力。`serve`はローカルHTTPサーバを起動、`push`はJSON/Markdownレポートに埋め込む。
+- **`tradectl metrics report`**: JSONLメトリクスから統計を集計し、Markdown/JSONサマリーを出力。`--window`（既定24h）、`--format {md,json}`、`--output`をサポート。Prometheus互換エンドポイントを起動する`serve`サブコマンドはM2でFeature Flag経由で追加予定。
 - **JSON Linesインターフェース**: CLIコマンドは`stdout`にJSON Linesを返し、他ツール（例: `jq`）との連携を容易にする。例:`tradectl board --view json`で同一データをJSON Linesとして出力。
 - **エラー挙動**: コマンド実行失敗時は非ゼロ終了コードを返却し、`stderr`に`[ERROR] <message>`形式で出力。必要に応じて`--no-prompt`（確認ダイアログ無効化）や`--yes`（承認操作の即時実行）を提供し、HITL確認はデフォルトでY/Nプロンプトを表示。
 - **リスク開示と`audit`イベント連携**: `RiskDisclosureService`は承諾バージョンと期限を`consent_state.json`に保存し、承諾/拒否/期限切れイベントを`audit`イベントストアへ`risk_consent`タイプで記録する。CLI各コマンドは実行前に`consent_state`を参照し、承諾未取得時は`[WARN] Risk disclosure consent required`を出力して終了する。承諾ダイアログを通過した操作は`audit`イベントに`consent_reference_id`（最新`risk_consent`イベントID）を付与し、後続のレポートや監査エクスポートでトレースできるようにする。
@@ -199,7 +199,7 @@
 3. **Event Dispatcher**: パイプライン結果を非同期タスクに渡し、Event Bus publish、JSONL書き込み、メール送信を行う。`asyncio.create_task`でバックグラウンド実行。
 4. **Snapshot Writer**: パイプライン完了後に`Snapshot Manager`が更新された`AccountState`と未処理チケットを保存。CLIはこのスナップショット/ログを参照するため、パイプラインとは疎結合。
 5. **並列性ポリシー**: M1は順次実行（1ワーカー）で整合性優先。将来はステージごとに並列化を検討し、`Signal Engine`を非同期化、`Risk Manager`で排他制御を行う。
-6. **サイドタスク**: Emergency Orchestratorは`asyncio.create_task`で常駐し、`HealthState`と`emergency.yaml`監視を行う。Observability Exporterは別スレッドのHTTPサーバでメトリクスを公開し、StressTest/Benchmarkジョブは`asyncio.Queue`ベースのワーカーで逐次処理する。
+6. **サイドタスク**: Emergency Orchestratorは`asyncio.create_task`で常駐し、`HealthState`と`emergency.yaml`監視を行う。Observability ExporterはM1ではバックグラウンドワーカーとしてJSONL書き出しとサマリー生成を担当し、M2+で有効化するHTTPサーバはスタブを保持する。StressTest/Benchmarkジョブは`asyncio.Queue`ベースのワーカーで逐次処理する。
 
 ### 3.3 チケット状態遷移（M1）
 ```
@@ -415,7 +415,7 @@ symbols:
 - **Data Provenance Service**は`AssetWriteEvents`から`data_manifest.json`と`data_manifest.sig`を更新し、`tradectl data verify`に必要なハッシュ・署名を提供。検証失敗時は`data_provenance.alert`イベントを発火してHealth Monitorへ連携（FR-52, AC-41）。
 
 ## 7. 非機能要件への対応方針
-- **性能**: pandasベース処理＋numba/ポリシー最適化と差分再計算キャッシュで5分足ストリーム遅延<100msを目標化。I/Oは非同期キューで平滑化。`perf_counter`計測を`on_bar_in`～`board_render`で常時実施し、p95/p99を`metrics/perf.json`に出力してNFR-01/AC-05を監視する。
+- **性能**: pandasベース処理＋numba/ポリシー最適化と差分再計算キャッシュで5分足ストリーム遅延<100msを目標化。I/Oは非同期キューで平滑化。`perf_counter`計測を`on_bar_in`～`board_render`で常時実施し、p95/p99を`metrics/pipeline.jsonl`へ記録して`tradectl metrics report`で集計しNFR-01/AC-05を監視する。
 - **信頼性**: イベントソーシング（JSONL）＋定期スナップショットで再現性を確保し、データ品質ガードとKill Switch、Calendar Gate、FXレート補完、スプレッド監視、相関ガードを統合して異常時やイベント期間中/レート欠損時/相関過多時の自動停止・再開・補正を実現。Resyncフェーズは二相ロックで`MarketData`と`FeatureCache`を凍結し、終了後にSPRTリセット条件を評価する。
 - **運用性**: CLIコマンド `tradectl`（想定）で start/stop/status/resync を提供。Spreadクールダウン解除、Reduce-Only解除、Marketable Limit幅調整など執行関連の運用コマンドも整備する。
 - **セキュリティ/コンプラ**: HITL前提で助言表示を限定し、`config/secret/*.yaml`はAES-256で暗号化。macOS FileVault + Keychainと連携し、復号操作をAudit Trailへ記録。Compliance Validator/Capital Guardの判定ログも`audit`へ記録し、半期ごとにルールセットをレビュー（NFR-04, NFR-17, NFR-18）。
