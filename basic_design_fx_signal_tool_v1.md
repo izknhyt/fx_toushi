@@ -89,6 +89,14 @@
 | Trade Journal Service | トレード/コメント管理、振り返りダッシュボード | SQLite/Markdown |
 | Benchmark Analyzer | 外部ベンチマークデータとの比較、ギャップ算出 | Pandas/Plotly |
 | Data Provenance Service | `data_manifest.json`生成・署名・検証、アーカイブ連携 | `manifest.sig`, ハッシュ計算, WORMストレージ |
+
+#### Reporter/Benchmark MonitorのKPI評価ガイド
+- **キャッシュ保持期間**: Sharpe/Sortino/最大DD/年率は要件定義の評価期間に合わせ、最低でも**直近252営業日＋安全マージン10営業日**の取引履歴とエクイティカーブをキャッシュする。四半期レビュー用に**直近90営業日ローリング**のサマリも常備し、`metrics/kpi_cache.parquet`に`window={252d,90d}`単位で保管する。
+- **前処理ルール**: ReporterとBenchmark Monitorは共通のData Qualityフィルタを適用し、**欠損バー率≤0.5%/日・連続欠損≤3バー・異常イベント（`flash_crash`, `manual_exclusion`タグ）除外**後のデータセットのみをメトリクス計算に渡す。閾値を超えた場合は当該期間をドロップし、`data_quality_report.md`を添付した上で`HealthState`へ`data_gapped`理由を通知する。
+- **再計算トリガー**: 週次レポート生成（`Reporter.run(schedule=weekly)`）と四半期レビュー（`calendar.quarter_review`イベントまたは`tradectl benchmark compare --quarterly`）の2系統で再計算を走らせる。どちらも**最新バー更新時（5分足確定）→キャッシュ更新→メトリクス再集計**の順に非同期ジョブを投入し、完了後に`kpi_snapshot.json`を上書きする。
+- **統計検証**: Reporterは**BCaブートストラップ（1,000回）**で`PF_recent`/Sharpe/Sortino/年率の信頼区間を算出し、Benchmark Monitorはベンチマーク差分に対して**差分年率とSharpeギャップの95%信頼区間**を算出する。信頼区間下限が要件を割り込む場合は`benchmark_gap`イベントに`confidence_breach=true`を付加し、受け入れ基準AC-07〜AC-09の検証ログに残す。
+- **リトライ戦略**: KPI再計算ジョブが失敗した場合は`RetryPolicy`を継承した`KpiRecalcRetry`を使用し、**max_attempts=3, initial_delay=30s, backoff=2.0**で再実行。3回失敗時は`Reporter`が`Critical`ログを出力し、`HealthState`を`soft_stop`へ遷移させる。Benchmark Monitor側では最新成功スナップショットを保持し、復旧後に差分を自動再算出する。
+- **サンプルサイズ監視**: 90営業日ウィンドウで**取引数<60**、252営業日ウィンドウで**取引数<180**の場合はメトリクス算出結果を`insufficient_sample`フラグ付きで返し、受け入れ基準の判定を`pending`に設定する。ReporterはRunbookに自動追記して人間レビューを促す。
 | StressTest Engine | 指定シナリオの再生と感度分析、結果レポート生成 | Backtest Runner拡張 |
 | Parameter Drift Monitor | 最適化パラメータと最新指標のドリフト監視 | Numpy/Scipy |
 | Observability Exporter | メトリクス収集とPrometheus互換エンドポイント | `prometheus_client` |
