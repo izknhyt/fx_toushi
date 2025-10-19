@@ -144,9 +144,9 @@ src/
     stability.py         # 摂動テスト
     ranking.py           # ランキング/閾値
   scoreboard/
-    service.py           # Strategy Scoreboard Service (FR-61, AC-49)
-    jobs.py              # 週次スケジューラ/イベント発火
-    repository.py        # KPIキャッシュ/JSONL読み書き
+    service_stub.py      # StrategyScoreboardServiceStub (M1, no-op; M2+本実装は付録G)
+    jobs_stub.py         # 週次ジョブスタブ（ログ出力のみ）
+    repository_stub.py   # KPIキャッシュ参照スタブ（固定レスポンス）
   risk/
     policy.py            # RiskPolicy構造体
     manager.py           # Kill Switch/制約評価
@@ -163,22 +163,22 @@ src/
     service.py           # FundingCurve
     loaders.py           # swap_rates.csv / APIローダ
   ideas/
-    manager.py           # Idea Pipeline Manager
-    schema.py            # manifest/checklist検証
-    checklist.py         # ステージ別チェックリスト生成
+    manager_stub.py      # IdeaPipelineManagerStub (M1, ガバナンスAPIスタブ)
+    schema_stub.py       # manifest/checklist検証スタブ
+    checklist_stub.py    # ステージ別チェックリスト生成スタブ（常にTODO保留）
   calendar/
     service.py           # 経済指標/休日ゲート
     adapters.py          # CSV/外部API同期
   ops_readiness/
-    evaluator.py         # Ops Readiness Evaluator (FR-63, AC-51)
-    evidence.py          # 証跡ハッシュ/欠損検知
+    evaluator_stub.py    # OpsReadinessEvaluatorStub (M1, スコア=Not Assessed)
+    evidence_stub.py     # 証跡ハッシュ検証スタブ
   governance/
-    model_risk.py        # Model Risk Register Service (FR-62, AC-49)
-    registry.py          # model_risk_register.mdトラッキング
+    model_risk_stub.py   # ModelRiskRegisterServiceStub (M1, ギャップ検出無効)
+    registry_stub.py     # Register参照スタブ
   reconciliation/
-    service.py           # Statement Reconciliation Service (FR-64, AC-53)
-    normalizer.py        # ブローカーステートメント正規化
-    matcher.py           # 取引/残高突合と差分検知
+    service_stub.py      # StatementReconciliationServiceStub (M1, 証跡未対応)
+    normalizer_stub.py   # ブローカーステートメント正規化スタブ
+    matcher_stub.py      # 取引/残高突合スタブ
   ticket/
     builder.py           # TradeTicket構築
     validator.py         # Broker検証/TTL/Drift
@@ -571,46 +571,55 @@ tests/
 - 各スクリプトには`--dry-run`オプションを持たせ、運用前に影響を確認できるようにする。
 - ドキュメントテンプレートはリポジトリに保存し、Pull Requestテンプレート(`.github/PULL_REQUEST_TEMPLATE.md`)から参照する。
 
-### 3.25 Strategy Scoreboard Service (`src/scoreboard/service.py`)
-- **公開API**: `generate_weekly_snapshot(week_ending)`, `get_latest()`, `trigger_watchlist(strategy_id)`。
-- **入力データ**: `data/returns/returns_24w.parquet`, `metrics/kpi_cache.parquet`, `reports/research/alpha_score/<YYYYWW>.md`, 戦略ごとの`reports/strategy_review_<id>.md`。
-- **主要ロジック**: KPIキャッシュからPF/Sharpe/Stabilityを標準化→`decay_score`は24週リニア回帰から傾きを算出。`alpha_score`<`config.scoreboard.alpha_threshold`または`decay_score`>`config.scoreboard.decay_threshold`で`strategy.watchlist`イベントをEventBusへ送信（AC-49, FR-61）。
-- **イベント/連携**: `scoreboard.generated`でJSONサマリを`scoreboard/alpha/<YYYYWW>.json`と`reports/research/alpha_score/<YYYYWW>.md`へ書き込み。`strategy.watchlist`受信時にTicketBuilderへウォーニングバッジを追加、Model Risk Register Serviceへ`watchlist=true`を通知。
-- **異常系**: KPI計算失敗→`ScoreboardComputationFailed`イベント→`HealthMonitor.degraded(scoreboard)`。証跡Markdown欠損時は`evidence_missing`フラグを立て、Ops Readiness Evaluatorにも不足として反映。
-- **設定ファイル**: `config/scoreboard.yaml`（閾値、重み、対象戦略リスト、runbookリンク）。週次ジョブは`config.scheduler.jobs.scoreboard`で定義し、SessionManager起動時に`AsyncOneShotJob`として登録。
+#### ガバナンス系サービスのM1スコープガード
+- `src/scoreboard/`, `src/ideas/`, `src/ops_readiness/`, `src/governance/`, `src/reconciliation/`配下のサービスはM1ではスタブとしてのみ配置する。
+- 共通ポリシー: ①公開APIは存在するが戻り値は`None`や`NotAssessed`等の安全な定数、②EventBus publish/subscribeは無効化、③設定ファイルは`config/*.yaml`の存在チェックのみ行い内容参照はしない、④ログに`logger.info("<service> noop (M1)")`を残す。
+- 依存箇所（Workflow OrchestratorやCLIコマンド）はFeature Flag `governance.enable_<service>`が`True`の場合のみ本実装をDIし、M1では既定`False`で`*Stub`が注入される。
+- テストベースライン: M1ではスタブが副作用を発生させないこと、呼び出し側が安全なデフォルトハンドリングを行うことを確認するユニットテストのみを実施する。FR-61/62/63/64およびAC-49/51/53はM2+承認後に有効化。
 
-### 3.26 Idea Pipeline Manager (`src/ideas/manager.py`)
-- **公開API**: `load_manifest(idea_id)`, `transition_stage(idea_id, target_stage, actor)`, `validate_evidence(idea_id)`。
-- **入力データ**: `ideas/<id>/manifest.yaml`, `ideas/<id>/evidence/*.md`, `ideas/<id>/metrics/*.json`, チェックリストテンプレート`ideas/templates/checklists/<stage>.md`。
-- **主要ロジック**: `manifest`を`schema.py`で検証し、`stage`遷移要求ごとにチェックリスト完了率とPaper整合ログを評価。Paper移行には4週連続で`consistency_score`>=`config.ideas.paper_gate.min_consistency`を要求し、未達時は`stage.blocked`イベントを返却し`ideas/<id>/actions.md`へTODOを追記（FR-62, AC-49）。
-- **イベント/連携**: `stage.changed`でReporterに通知し、Strategy Scoreboard Serviceへ新規戦略登録を要求。Model Risk Register Serviceは`stage=live_candidate`到達時に初回評価タスクを起票。
-- **異常系**: 必須ファイル欠損→`IdeaEvidenceMissing`で`HealthMonitor.degraded(idea_pipeline)`、Ops Readiness Evaluatorにも不足が反映。`manifest`スキーマ違反は`ConfigRejected`同様に扱い、ステージはロールバック。
-- **設定ファイル**: `config/ideas.yaml`（ステージ順序、必須証跡種別、整合度閾値、Runbook ID）。CLI `tradectl research stage`は`manager.transition_stage`を呼び出し監査ログに記録。
+### 3.25 Strategy Scoreboard Service Stub (M2+)
+- **M1実装**: `StrategyScoreboardServiceStub`（`src/scoreboard/service_stub.py`）。
+  - `generate_weekly_snapshot(week_ending)`は`None`を返し、`logger.info("scoreboard.generate noop (M1)")`のみ出力。
+  - `get_latest()`は`StrategyScoreboardSnapshot(status="not_available", generated_at=None, metrics=[])`等の固定値を返す。
+  - `trigger_watchlist(strategy_id)`はEventBusを呼ばず`False`を返却。
+- **イベント/連携**: すべて無効化。`EventBus.publish`は呼び出さないことをユニットテストで保証する。
+- **依存関係**: `core/workflow.py`からの呼び出しはFeature Flag `governance.enable_scoreboard`にラップし、M1ではスタブのみ解決される。Reporter/Model Risk連携も未配線。
+- **M2+実装**: KPI算出・watchlist連携などの完全ロジックは付録G.1を参照。M2+承認後に`service.py`へ実装し、スタブは残置して再現性を担保する。
 
-### 3.27 Ops Readiness Evaluator (`src/ops_readiness/evaluator.py`)
-- **公開API**: `evaluate(period)`, `explain(period)`, `record_override(reason, actor)`。
-- **入力データ**: `reports/governance/ops_readiness_<YYYYWW>.md`, `logs/ops/backup.log`, `docs/runbook/*.md`, `ops_readiness/evidence/*.json`, バックアップ検証結果`reports/drill/*.md`。
-- **主要ロジック**: 証跡ファイルの存在・ハッシュを`evidence.py`で検証し、バックアップ整合度/Runbook更新率/演習完遂率/緊急プロトコル検証スコアを加重平均。`ops_readiness_score`<`config.ops_readiness.min_score`で`health.changed(status=degraded, reason="ops_readiness_low")`を発火しKill Switchを`soft_stop`へ誘導（FR-63, AC-51）。
-- **イベント/連携**: `ops_readiness.evaluated`でスコアと欠損証跡リストをEventBusに出力。ScoreboardジョブはOpsスコア<閾値の場合に`alpha_score`を最大70へクリップしリリースを防止。Idea Pipeline ManagerはOps低下中に新規Paper昇格を保留。
-- **異常系**: 証跡が404またはハッシュ不一致→該当項目スコア0かつ`OpsEvidenceMissing`イベント。評価実行中にIO例外が連続した場合は`health.changed(reason="ops_readiness_blocked")`でKill Switchを維持し、手動確認をRunbook `OPS-READINESS-01`に記録。
-- **設定ファイル**: `config/ops_readiness.yaml`（重み、閾値、必須証跡パス、Runbook ID、評価スケジュール）。週次自動実行ジョブをSchedulerに登録し、CLI `tradectl ops readiness --explain`で内訳を取得。
+### 3.26 Idea Pipeline Manager Stub (M2+)
+- **M1実装**: `IdeaPipelineManagerStub`（`src/ideas/manager_stub.py`）。
+  - `load_manifest(idea_id)`は`IdeaManifestStub(status="not_applicable")`を返却し、ファイルアクセスは行わない。
+  - `transition_stage(...)`は`IdeaStageResult(accepted=False, reason="governance_disabled")`を返す。
+  - `validate_evidence(idea_id)`は`IdeaEvidenceStatus(not_assessed=True)`を返し、欠損イベントを発火しない。
+- **イベント/連携**: `stage.changed`等のEventBus発火は実施しない。Reporter/Scoreboard/ModelRiskとの連携呼び出しもログ出力のみに留める。
+- **依存関係**: CLI `tradectl research stage`はFeature Flag `governance.enable_ideas`が有効な場合のみ有効化し、M1ではヘルプ表示に`(M2+)`を追加して案内する。
+- **M2+実装**: ステージ遷移や証跡検証の詳細は付録G.2に移設。M2+承認までは本節のスタブ仕様に従う。
 
-### 3.28 Model Risk Register Service (`src/governance/model_risk.py`)
-- **公開API**: `scan_register()`, `open_gap(strategy_id, reason)`, `resolve_gap(gap_id, evidence_paths)`。
-- **入力データ**: `model_risk_register.md`, `reports/model_risk/<strategy>.md`, `tickets/model_revalidate/*.md`, Scoreboardの`watchlist`フラグ。
-- **主要ロジック**: `scan_register`が`model_risk_register.md`をAST解析し、各戦略の最終評価日/担当/エビデンスリンクを抽出。未更新>90日、Explainability添付欠落、`watchlist=true`でタスク未完了の場合は`model_risk_gap`を生成しEventBusへ通知（FR-62, AC-49）。
-- **イベント/連携**: `model_risk.gap_opened`でOps Readiness Evaluatorへ通知しOpsスコアからペナルティ。`resolve_gap`完了時は`model_risk.gap_resolved`を発火し、Scoreboardへ解除を通知。Kill Switch解除条件に`gap_status=closed`が追加される。
-- **異常系**: Registerファイル解析失敗→`ModelRiskRegisterCorrupted`で`HealthMonitor.soft_stop(model_risk)`。証跡リンク無効時は`OpsEvidenceMissing`と同じ扱いでOpsスコアを強制減点。
-- **設定ファイル**: `config/model_risk.yaml`（評価周期、必須ドキュメント、担当者マッピング、ギャップ閾値）。CLI `tradectl model risk resolve <id>`は`resolve_gap`を呼び出し監査ログにエビデンスハッシュを記録。
+### 3.27 Ops Readiness Evaluator Stub (M2+)
+- **M1実装**: `OpsReadinessEvaluatorStub`（`src/ops_readiness/evaluator_stub.py`）。
+  - `evaluate(period)`は`OpsReadinessScore(status="not_assessed", score=None)`を返す。
+  - `explain(period)`は空の`OpsReadinessBreakdown(entries=[])`を返す。
+  - `record_override(...)`は`False`を返しEventBusへ通知しない。
+- **イベント/連携**: 健全性変更やScoreboard連携は行わない。Kill SwitchやReporterとの連携もスタブ。
+- **依存関係**: Scheduler登録は`jobs_stub.py`で`logger.info("ops_readiness job skipped (M1)")`を出力するのみ。HealthMonitorはこのスコアを参照しない。
+- **M2+実装**: 証跡評価やKill Switch連携のロジックは付録G.3を参照。
 
-### 3.29 Statement Reconciliation Service (`src/reconciliation/service.py`)
-- **公開API**: `reconcile(from_date, to_date, mode)`, `load_statement(path)`, `export_summary(result)`。
-- **入力データ**: ブローカーステートメント（CSV/PDF→CSV）、`logs/audit/*.jsonl`, `reports/audit/trade_log.parquet`, `account/balances.parquet`, Idea/Ticket履歴。
-- **主要ロジック**: `normalizer.py`でステートメント形式を標準化し、`matcher.py`でLive/Paperログと突合。残高差分> `config.reconciliation.max_balance_delta_r`または取引突合率<`config.reconciliation.min_match_pct`で`HealthMonitor.degraded(statement_gap)`および`reconciliation.discrepancy`イベントを発火（FR-64, AC-53）。
-- **イベント/連携**: 正常終了時は`reconciliation.completed`でOps Readiness Evaluatorへスコア加点、Reporterが`reports/audit/reconciliation/<date>.md`を生成。差分時はKill Switchを`soft_stop`に遷移し、Idea Pipeline Managerが新規昇格を停止。
-- **異常系**: ステートメントファイル欠損/解析失敗→`StatementImportError`でリトライ案内。差分特定不可の場合は`reconciliation.escalated`を発火しRunbook `AUD-REC-02`手順へ誘導。証跡出力失敗はOps Readiness Evaluatorの証跡欠損として扱う。
-- **設定ファイル**: `config/reconciliation.yaml`（ブローカー別カラムマッピング、差分閾値、フェイルセーフ条件、Kill Switchハンドリング）。CLI `tradectl reconcile statements --from <date>`が`reconcile`を呼び出し監査に結果を追記。
+### 3.28 Model Risk Register Service Stub (M2+)
+- **M1実装**: `ModelRiskRegisterServiceStub`（`src/governance/model_risk_stub.py`）。
+  - `scan_register()`は空リストを返す。
+  - `open_gap(...)`/`resolve_gap(...)`はどちらも`False`を返し、副作用なし。
+- **イベント/連携**: `model_risk.*`イベントは発火しない。Kill Switch条件やScoreboard watchlist同期も行わない。
+- **依存関係**: Ops Readinessとの連携、CLI `tradectl model risk ...`はFeature Flag `governance.enable_model_risk`を前提にM2+まで無効化。
+- **M2+実装**: Register解析・ギャップ管理の詳細は付録G.4へ移設。
 
+### 3.29 Statement Reconciliation Service Stub (M2+)
+- **M1実装**: `StatementReconciliationServiceStub`（`src/reconciliation/service_stub.py`）。
+  - `reconcile(...)`は`StatementReconciliationResult(status="not_available")`を返し、ファイル読み込みを行わない。
+  - `load_statement(path)`は`None`を返し、IO例外を握りつぶさない。
+  - `export_summary(result)`は`logger.info("reconciliation summary noop (M1)")`を出力するのみ。
+- **イベント/連携**: `reconciliation.completed`/`discrepancy`等のイベントは発火しない。Ops ReadinessやHealthMonitorとの接続は未配線。
+- **依存関係**: CLI `tradectl reconcile statements`はM1では`Feature disabled (M2+)`メッセージを返し、Schedulerにも登録しない。
+- **M2+実装**: ステートメント突合やKill Switch連携の詳細は付録G.5を参照。
 ## 4. データモデル
 
 ### 4.1 時系列フレーム
@@ -808,6 +817,7 @@ ModeController遷移: `BACKTEST ↔ PAPER ↔ LIVE`は`active_jobs=0`かつ未�
 - 自動起動時はcron/LaunchAgentでプレフライト→アプリ起動の順に実行する。
 
 ### 5.11 週次スコアボード更新フロー（AC-49, FR-61）
+> **M2+想定**: Appendix G.1に従う本実装フロー。M1では`StrategyScoreboardServiceStub`が即時`noop`で復帰し、本シーケンスは実行されない。
 ```
 Scheduler(job=scoreboard_weekly)
     │ trigger (週次, 月曜 06:00 JST)
@@ -833,6 +843,7 @@ Kill Switch条件更新（解除要件に「戦略レビュー完了」追加）
 ```
 
 ### 5.12 Opsレディネス評価→HealthState制御（AC-51, FR-63）
+> **M2+想定**: Appendix G.3参照。M1では`OpsReadinessEvaluatorStub`が`status="not_assessed"`を返し、以下のフローはスキップされる。
 ```
 Scheduler(job=ops_readiness_weekly)
     │ trigger (週次, 金曜 19:00 JST)
@@ -867,6 +878,7 @@ Kill Switch解除 & Scoreboard閾値通常運用へ復帰
 3. **テスト**: `tests/perf/test_pipeline_latency.py`がメトリクスJSONLを解析し、直近500サンプルのp95/p99が閾値未満か検証。失敗時は`pytest`失敗とし、`docs/runbooks/RUN-PERF-01.md`に貼り付けるスパークラインを`tools/render_perf_chart.py`で再生成。
 4. **レポート生成**: `tradectl metrics report --kind latency --window 7d`が`metrics/pipeline.jsonl`/`metrics/cli_perf.jsonl`を集計し、`reports/performance/pipeline_latency/<YYYYMMDD>.md`へ`board_mode`別統計とSLA逸脱ログを出力。Acceptable Degradation解除時は同コマンドの出力を`degraded_recovered`イベントに添付する。
 
+> **M2+想定**: Appendix G.5参照。M1では`StatementReconciliationServiceStub`が`status="not_available"`を返し、下記フローは監査用ログのみ残す。
 ```
 Operator or Scheduler(job=reconciliation_daily)
     │ `tradectl reconcile statements --from <date>` / 日次トリガ
@@ -931,6 +943,10 @@ HealthMonitor.ack()
 | `tradectl resync` | Catch-up/バックフィル操作 | `--since <ts>`, `--force` | Resyncジョブ投入→進捗バー表示→完了時`ResyncCompleted`イベント確認 | 他ジョブ競合: `WARN resync.busy`。Resync失敗で`ERROR resync.failed`＋再試行提案。 |
 | `tradectl spread inspect` | Spreadメトリクス確認/解除条件確認 | `--window`, `--symbol` | `data/spread_metrics.parquet`統計を表示、クールダウン解除条件を提示 | ファイル欠損: `WARN spread.data_missing`→再計測を促す。 |
 | `tradectl reduce-only status|release`(M2+) | Reduce-Only提案の管理 | `--id`, `--all` | 対象ポジションと理由を表示/解除 | Reduce-Only未対応時は`INFO reduce_only.disabled`。 |
+| `tradectl research stage` (M2+) | Idea Pipeline | `--id`, `--stage`, `--note` | M1: Feature Flag既定`False`→`Feature disabled (M2+)`メッセージのみ。M2+: Appendix G.2記載の`manager.transition_stage`を呼び出し監査ログに記録 | M1: INFOログ`research.disabled`。M2+: バリデーションNGで`IdeaPromotionDenied`、Ops低下時は`IdeaPromotionDenied(ops_readiness_low)` |
+| `tradectl ops readiness --explain` (M2+) | Opsヘルス可視化 | `--period`, `--output` | M1: `OpsReadinessEvaluatorStub`が`status=not_assessed`を返し、CLIは`(M2+)`案内のみ表示。M2+: Appendix G.3記載の証跡内訳を表示 | M1: `ops_readiness.disabled`ログ。M2+: 証跡欠損時は`OpsEvidenceMissing`を列挙 |
+| `tradectl model risk resolve` (M2+) | モデルリスクギャップ対応 | `--id`, `--evidence` | M1: Feature Flag既定`False`で`Feature disabled (M2+)`のみ出力。M2+: Appendix G.4のギャップ解消フローを実行 | M1: `model_risk.disabled`ログ。M2+: 必須エビデンス欠落で`ModelRiskEvidenceMissing` |
+| `tradectl reconcile statements --from <date>` (M2+) | ステートメント突合 | `--to`, `--mode`, `--dry-run` | M1: `StatementReconciliationServiceStub`が`status=not_available`を返し、CLIは`Feature disabled (M2+)`とログのみ。M2+: Appendix G.5の照合処理を実行 | M1: `reconciliation.disabled`情報ログ。M2+: CSV欠損で`StatementImportError`、差分特定不可で`reconciliation.escalated` |
 
 ### 6.6 ネットワーク・セキュリティ制約
 | 項目 | 要件/制限 | 対応策 |
@@ -999,24 +1015,17 @@ HealthMonitor.ack()
 #### 7.3 テスト計画（スコアボード/ガバナンス/照合サービス）
 | テストID | 対象サービス | カテゴリ | シナリオ/目的 | 関連FR/AC | 期待結果 |
 | --- | --- | --- | --- | --- | --- |
-| UT-SCB-01 | Strategy Scoreboard | 単体 | 正常系。24週データから`alpha_score`/`decay_score`算出しJSON/Markdown生成 | FR-61 | `scoreboard.generated`イベント発火、`alpha_score`が設定重みに基づき再現 |
-| UT-SCB-02 | Strategy Scoreboard | 単体 | KPI欠損（PF列欠落）時のフォールバック | FR-61, AC-49 | `ScoreboardComputationFailed`イベント発生、`HealthMonitor.degraded(scoreboard)`が呼ばれる |
-| IT-GOV-01 | Scoreboard × Model Risk | 統合 | `strategy.watchlist`発火時にModel Risk Registerがギャップ起票 | FR-61, FR-62, AC-49 | `model_risk.gap_opened`イベントと`tickets/model_revalidate/*.md`生成を確認 |
-| UT-IDEA-01 | Idea Pipeline | 単体 | `manifest.yaml`のステージ遷移でチェックリスト未完了 | FR-62 | `stage.blocked`が返却され、`actions.md`にTODO追記 |
-| IT-IDEA-02 | Idea Pipeline × Ops Readiness | 統合 | Opsスコア<閾値時にPaper昇格が拒否される | FR-62, FR-63, AC-51 | `tradectl research stage`実行時に`IdeaPromotionDenied(ops_readiness_low)`が返る |
-| UT-OPS-01 | Ops Readiness | 単体 | 証跡JSONのハッシュ不一致 | FR-63, AC-51 | `OpsEvidenceMissing`イベントとスコア0割当、`health.changed`が`reason=ops_readiness_low`で呼ばれる |
-| IT-OPS-02 | Ops Readiness × Scoreboard | 統合 | Opsスコア70時にScoreboardが`alpha_score`をクリップ | FR-61, FR-63 | Scoreboard結果の`alpha_score`が70上限に制限される |
-| UT-MR-01 | Model Risk Register | 単体 | 90日超未更新の戦略検出 | FR-62, AC-49 | `model_risk_gap`が生成され`gap_status=open`、Kill Switch解除条件に記録 |
-| RG-MR-02 | Model Risk Register | 回帰 | `tradectl model risk resolve`でEvidence追加後にギャップ解消 | FR-62, AC-49 | `model_risk.gap_resolved`イベント、`gap_status=closed`、Scoreboard watchlist解除 |
-| UT-REC-01 | Statement Reconciliation | 単体 | 取引突合率98%（閾値未満） | FR-64, AC-53 | `reconciliation.discrepancy`イベント、`HealthState=degraded(statement_gap)`へ遷移 |
-| IT-REC-02 | Reconciliation × HealthMonitor | 統合 | 差分解消後の再実行 | FR-64, AC-53 | `reconciliation.completed`でKill Switch解除条件が満たされる |
-| RG-REC-03 | Reconciliation | 回帰 | 連続3日分の差分比較でドリフト検出 | FR-64 | `reports/audit/reconciliation/`に差分サマリを生成し、差分推移グラフが更新 |
+| UT-SCB-Stub-01 | Strategy Scoreboard Stub | 単体 | `generate_weekly_snapshot`が副作用なしで終了することを確認 | M1 Scope Guard | 戻り値`None`、EventBus publish未発火、`logger`に`noop`が記録される |
+| UT-IDEA-Stub-01 | Idea Pipeline Stub | 単体 | `transition_stage`が`governance_disabled`理由で拒否することを確認 | M1 Scope Guard | `accepted=False`かつ`reason="governance_disabled"`、監査ログ書込を試みない |
+| UT-OPS-Stub-01 | Ops Readiness Stub | 単体 | `evaluate`/`explain`が`status="not_assessed"`を返すことを確認 | M1 Scope Guard | 戻り値が固定値、`HealthMonitor`やEventBusに通知しない |
+| UT-MR-Stub-01 | Model Risk Stub | 単体 | `scan_register`が空リストを返し、副作用が無いことを確認 | M1 Scope Guard | `[]`を返し、`model_risk.*`イベントが発火しない |
+| UT-REC-Stub-01 | Statement Reconciliation Stub | 単体 | `reconcile`が`status="not_available"`を返しファイルI/Oを行わないことを確認 | M1 Scope Guard | `StatementReconciliationResult.status == "not_available"`、ファイルアクセスがモック検証で0回 |
+| IT-GOV-Stub-FF-01 | Feature Flag Integration | 統合 | Feature Flag既定`False`でDIがスタブを注入しCLI/Workflowが`(M2+)`案内を表示することを確認 | M1 Scope Guard | `governance.enable_*`が`False`のとき、依存解決が`*Stub`型になり、CLIヘルプに`(M2+)`ラベルが出力される |
 
-- **テストデータ**: `tests/fixtures/scoreboard/returns_24w.parquet`, `tests/fixtures/ideas/sample_manifest.yaml`, `tests/fixtures/ops/evidence_missing.json`, `tests/fixtures/reconciliation/broker_statement_sample.csv`を追加。証跡欠損テスト用に`ops_readiness/evidence/missing_case.json`を意図的に生成。
-- **CIフック**: `pytest -k "scoreboard or ideas or ops_readiness or model_risk or reconciliation"`をPR必須テストに追加し、`--cov=src/scoreboard,src/ideas,src/ops_readiness,src/governance,src/reconciliation`でカバレッジ計測。
-- **回帰ライン**: 週次運用では`tradectl governance verify --since last_week`（将来CLI）でIT/回帰テストをバッチ実行し、`reports/governance/test_results_<YYYYWW>.md`に署名。Ops Readiness Evaluatorは結果を参照しスコアに反映する。
-
-
+- **M2+テスト**: Appendix G.1〜G.5に記載したシナリオ（FR-61/62/63/64, AC-49/51/53対応）は該当マイルストーン承認後に有効化する。
+- **テストデータ**: スタブ検証では軽量モックのみ使用。`tests/fixtures/scoreboard/returns_24w.parquet`等のデータセットはM2+用として保持し、M1ではロードしない。
+- **CIフック**: `pytest -k "governance_stub"`をPR必須テストに追加し、副作用ゼロを担保する。M2+テスト用コマンドは`pytest -k "(scoreboard or ideas or ops_readiness or model_risk or reconciliation)"`としてコメントアウト状態で`ci/config.yml`にプレースホルダ記載。
+- **回帰ライン**: M1期間中はFeature Flagを`False`で維持することを`docs/governance/feature_flag_register.md`で監査。承認後にFlagを切り替える際はAppendix G記載の統合テストを再実施する。
 ## 8. 非機能要件への対応
 
 ### 8.1 性能 (NFR-07, NFR-08)
@@ -1432,3 +1441,44 @@ linked_runbook: docs/runbooks/RUN-XXXX-YY.md
 - ログは`orjson`で出力し、`tag`フィールドを必須化。タグプレフィックスでフィルタリングを容易にする。
 - メトリクスはJSONLのほか、M2でPrometheus Exporterを実装する際に同タグをラベルに使用する。
 
+### 付録G: ガバナンスサービス（M2+実装ガイド）
+
+#### 付録G.1 Strategy Scoreboard Service (`src/scoreboard/service.py`)
+- **公開API**: `generate_weekly_snapshot(week_ending)`, `get_latest()`, `trigger_watchlist(strategy_id)`。
+- **入力データ**: `data/returns/returns_24w.parquet`, `metrics/kpi_cache.parquet`, `reports/research/alpha_score/<YYYYWW>.md`, 戦略ごとの`reports/strategy_review_<id>.md`。
+- **主要ロジック**: KPIキャッシュからPF/Sharpe/Stabilityを標準化→`decay_score`は24週リニア回帰から傾きを算出。`alpha_score`<`config.scoreboard.alpha_threshold`または`decay_score`>`config.scoreboard.decay_threshold`で`strategy.watchlist`イベントをEventBusへ送信（AC-49, FR-61）。
+- **イベント/連携**: `scoreboard.generated`でJSONサマリを`scoreboard/alpha/<YYYYWW>.json`と`reports/research/alpha_score/<YYYYWW>.md`へ書き込み。`strategy.watchlist`受信時にTicketBuilderへウォーニングバッジを追加、Model Risk Register Serviceへ`watchlist=true`を通知。
+- **異常系**: KPI計算失敗→`ScoreboardComputationFailed`イベント→`HealthMonitor.degraded(scoreboard)`。証跡Markdown欠損時は`evidence_missing`フラグを立て、Ops Readiness Evaluatorにも不足として反映。
+- **設定ファイル**: `config/scoreboard.yaml`（閾値、重み、対象戦略リスト、runbookリンク）。週次ジョブは`config.scheduler.jobs.scoreboard`で定義し、SessionManager起動時に`AsyncOneShotJob`として登録。
+
+#### 付録G.2 Idea Pipeline Manager (`src/ideas/manager.py`)
+- **公開API**: `load_manifest(idea_id)`, `transition_stage(idea_id, target_stage, actor)`, `validate_evidence(idea_id)`。
+- **入力データ**: `ideas/<id>/manifest.yaml`, `ideas/<id>/evidence/*.md`, `ideas/<id>/metrics/*.json`, チェックリストテンプレート`ideas/templates/checklists/<stage>.md`。
+- **主要ロジック**: `manifest`を`schema.py`で検証し、`stage`遷移要求ごとにチェックリスト完了率とPaper整合ログを評価。Paper移行には4週連続で`consistency_score`>=`config.ideas.paper_gate.min_consistency`を要求し、未達時は`stage.blocked`イベントを返却し`ideas/<id>/actions.md`へTODOを追記（FR-62, AC-49）。
+- **イベント/連携**: `stage.changed`でReporterに通知し、Strategy Scoreboard Serviceへ新規戦略登録を要求。Model Risk Register Serviceは`stage=live_candidate`到達時に初回評価タスクを起票。
+- **異常系**: 必須ファイル欠損→`IdeaEvidenceMissing`で`HealthMonitor.degraded(idea_pipeline)`、Ops Readiness Evaluatorにも不足が反映。`manifest`スキーマ違反は`ConfigRejected`同様に扱い、ステージはロールバック。
+- **設定ファイル**: `config/ideas.yaml`（ステージ順序、必須証跡種別、整合度閾値、Runbook ID）。CLI `tradectl research stage`は`manager.transition_stage`を呼び出し監査ログに記録。
+
+#### 付録G.3 Ops Readiness Evaluator (`src/ops_readiness/evaluator.py`)
+- **公開API**: `evaluate(period)`, `explain(period)`, `record_override(reason, actor)`。
+- **入力データ**: `reports/governance/ops_readiness_<YYYYWW>.md`, `logs/ops/backup.log`, `docs/runbook/*.md`, `ops_readiness/evidence/*.json`, バックアップ検証結果`reports/drill/*.md`。
+- **主要ロジック**: 証跡ファイルの存在・ハッシュを`evidence.py`で検証し、バックアップ整合度/Runbook更新率/演習完遂率/緊急プロトコル検証スコアを加重平均。`ops_readiness_score`<`config.ops_readiness.min_score`で`health.changed(status=degraded, reason="ops_readiness_low")`を発火しKill Switchを`soft_stop`へ誘導（FR-63, AC-51）。
+- **イベント/連携**: `ops_readiness.evaluated`でスコアと欠損証跡リストをEventBusに出力。ScoreboardジョブはOpsスコア<閾値の場合に`alpha_score`を最大70へクリップしリリースを防止。Idea Pipeline ManagerはOps低下中に新規Paper昇格を保留。
+- **異常系**: 証跡が404またはハッシュ不一致→該当項目スコア0かつ`OpsEvidenceMissing`イベント。評価実行中にIO例外が連続した場合は`health.changed(reason="ops_readiness_blocked")`でKill Switchを維持し、手動確認をRunbook `OPS-READINESS-01`に記録。
+- **設定ファイル**: `config/ops_readiness.yaml`（重み、閾値、必須証跡パス、Runbook ID、評価スケジュール）。週次自動実行ジョブをSchedulerに登録し、CLI `tradectl ops readiness --explain`で内訳を取得。
+
+#### 付録G.4 Model Risk Register Service (`src/governance/model_risk.py`)
+- **公開API**: `scan_register()`, `open_gap(strategy_id, reason)`, `resolve_gap(gap_id, evidence_paths)`。
+- **入力データ**: `model_risk_register.md`, `reports/model_risk/<strategy>.md`, `tickets/model_revalidate/*.md`, Scoreboardの`watchlist`フラグ。
+- **主要ロジック**: `scan_register`が`model_risk_register.md`をAST解析し、各戦略の最終評価日/担当/エビデンスリンクを抽出。未更新>90日、Explainability添付欠落、`watchlist=true`でタスク未完了の場合は`model_risk_gap`を生成しEventBusへ通知（FR-62, AC-49）。
+- **イベント/連携**: `model_risk.gap_opened`でOps Readiness Evaluatorへ通知しOpsスコアからペナルティ。`resolve_gap`完了時は`model_risk.gap_resolved`を発火し、Scoreboardへ解除を通知。Kill Switch解除条件に`gap_status=closed`が追加される。
+- **異常系**: Registerファイル解析失敗→`ModelRiskRegisterCorrupted`で`HealthMonitor.soft_stop(model_risk)`。証跡リンク無効時は`OpsEvidenceMissing`と同じ扱いでOpsスコアを強制減点。
+- **設定ファイル**: `config/model_risk.yaml`（評価周期、必須ドキュメント、担当者マッピング、ギャップ閾値）。CLI `tradectl model risk resolve <id>`は`resolve_gap`を呼び出し監査ログにエビデンスハッシュを記録。
+
+#### 付録G.5 Statement Reconciliation Service (`src/reconciliation/service.py`)
+- **公開API**: `reconcile(from_date, to_date, mode)`, `load_statement(path)`, `export_summary(result)`。
+- **入力データ**: ブローカーステートメント（CSV/PDF→CSV）、`logs/audit/*.jsonl`, `reports/audit/trade_log.parquet`, `account/balances.parquet`, Idea/Ticket履歴。
+- **主要ロジック**: `normalizer.py`でステートメント形式を標準化し、`matcher.py`でLive/Paperログと突合。残高差分> `config.reconciliation.max_balance_delta_r`または取引突合率<`config.reconciliation.min_match_pct`で`HealthMonitor.degraded(statement_gap)`および`reconciliation.discrepancy`イベントを発火（FR-64, AC-53）。
+- **イベント/連携**: 正常終了時は`reconciliation.completed`でOps Readiness Evaluatorへスコア加点、Reporterが`reports/audit/reconciliation/<date>.md`を生成。差分時はKill Switchを`soft_stop`に遷移し、Idea Pipeline Managerが新規昇格を停止。
+- **異常系**: ステートメントファイル欠損/解析失敗→`StatementImportError`でリトライ案内。差分特定不可の場合は`reconciliation.escalated`を発火しRunbook `AUD-REC-02`手順へ誘導。証跡出力失敗はOps Readiness Evaluatorの証跡欠損として扱う。
+- **設定ファイル**: `config/reconciliation.yaml`（ブローカー別カラムマッピング、差分閾値、フェイルセーフ条件、Kill Switchハンドリング）。CLI `tradectl reconcile statements --from <date>`が`reconcile`を呼び出し監査に結果を追記。
