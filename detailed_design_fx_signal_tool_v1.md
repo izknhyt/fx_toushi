@@ -360,11 +360,12 @@ tests/
 - **出力**: `ExecutionAdjustments`（expected_entry, expected_slippage, fill_style, ttl_seconds, drift_guard_R）、`SpreadState`。
 - **エラーハンドリング**: Spreadデータ欠損で`SpreadDataDegraded`→`HealthMonitor.degraded`。Market snapshot不足は該当シグナルを拒否。
 
-### 3.7 ScoringService (`src/scoring/hybrid.py`, `src/scoring/stability.py`, `src/scoring/ranking.py`)
+### 3.7 ScoringService (`src/scoring/basic.py`, `src/scoring/hybrid.py`, `src/scoring/stability.py`, `src/scoring/ranking.py`)
 - **公開API**: `rank(raw_signals, performance_stats, penalties)`。
-- **アルゴリズム**: `score = w_recency*PF_recent + w_global*PF_all - λ*DD_all - γ*(1-Stability) - δ*swap_penalty - ε*spread_penalty`。`Stability`は±10%パラメータ摂動で再計算し、キャッシュに保持。
-- **制約**: `config.scoring.max_signals_per_symbol`で上限管理。スコア閾値未満は`RejectedSignal(low_score)`として破棄。
-- **モニタリング**: スコア構成要素を`RankedSignal.hybrid_components`に格納し、監査ログとレポートで可視化。
+- **アルゴリズム（M1）**: `base_score = α·expected_R + β·PF_all − δ·drawdown_penalty − ε·spread_penalty`。既定係数は`α=0.6, β=0.4, δ=0.1, ε=0.05`。`drawdown_penalty`はバックテスト統計の最大DDから算出し、`spread_penalty`はSpread Monitorから供給。
+- **アルゴリズム（M2+）**: `hybrid_score = w_recency·PF_recent + w_global·PF_all − λ·DD_all − γ·(1-Stability) − δ·swap_penalty − ε·spread_penalty`。`Stability`は±10%パラメータ摂動で再計算し、`stability_cache.parquet`に保持。Feature Flag `scoring.hybrid_enabled`が真の時のみ適用。
+- **制約**: `config.scoring.max_signals_per_symbol`で上限管理。スコア閾値未満は`RejectedSignal(low_score)`として破棄。ハイブリッド有効時は`RankedSignal.hybrid_components`を監査ログへ出力し、M1では`base_components`のみ出力。
+- **モニタリング**: M1は`metrics/scoring_base.jsonl`にランキング結果と係数を記録。M2+では`metrics/scoring_hybrid.jsonl`へ構成要素を出力し、AC-07〜AC-09/AC-16用の統計値（PF_recent, PF_all, Stability Score, ランク反転率）をダッシュボードへ提供。
 
 ### 3.8 RiskManager (`src/risk/manager.py`)
 - **公開API**: `evaluate(ranked_signals, context)`, `kill_switch_state()`, `apply_sp`。
@@ -915,6 +916,8 @@ Flag切替時は`ConfigChanged`イベントに`flag_delta`が記録され、Repo
 | PT-CLI-01 | AC-G1/G2 | `tradectl board`操作100件連続 | CLI |
 | PT-BT-01 | AC-13 | Backtest再現性（hash固定） | Property |
 | FUT-SPRT-01 | FR-22(M2) | SPRTしきい値で提案停止 | 拡張 |
+| FUT-SCORE-01 | AC-07/AC-08 (M2+) | `scoring.hybrid_enabled`時にPF_recent/PF_all/レジーム別PFが閾値を満たすか検証 | 拡張 |
+| FUT-SCORE-02 | AC-09/AC-16 (M2+) | Stabilityスコアと±5〜10%摂動時ランク反転率をリグレッションテスト | 拡張 |
 
 ### 9.1 テストデータ戦略
 - `tests/fixtures/market/`に代表的OHLCVサンプル（高ボラ/低ボラ/欠損）を配置。
@@ -966,7 +969,7 @@ Flag切替時は`ConfigChanged`イベントに`flag_delta`が記録され、Repo
 | FR-15 | §3.13 |
 | FR-16, FR-18 | §2.1, §2.4, §3.15, §5.1 |
 | FR-17 | §3.16, §5.5 |
-| FR-19, FR-21 | §3.7, §3.17 |
+| FR-19, FR-21 | §3.7（M2+ハイブリッド設計）, §3.17 |
 | FR-20 | §3.4 |
 | FR-22 | §3.8, §3.9, §7 (M2フック含む) |
 | FR-23 | §3.19, §5.6 |
