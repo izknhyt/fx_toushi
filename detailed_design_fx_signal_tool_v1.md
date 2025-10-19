@@ -405,10 +405,21 @@ tests/
 
 ### 3.14 AccountService & FxRateCache (`src/account/service.py`, `src/account/fx_rates.py`)
 - **公開API**: `refresh_state(mode_context)`, `apply_ticket_action(action)`, `sync_from_csv(path)`。
-- **データソース**: Backtest=仮想 fills、Paper=Paper Logs、Live=ユーザーCSV。`fx_rates.parquet`で口座通貨換算（FR-31）。
+- **データソース**: Backtest=仮想 fills、Paper=Paper Logs、Live=ユーザーCSV（`data/account/live_account.csv`）。`fx_rates.parquet`で口座通貨換算（FR-31）。
 - **出力**: `AccountState`（balance, equity, margin, running_pnl, swap_realized, open_positions[]）。
+- **Live取込要件**: CSVヘッダに`ticket_id, signal_id, fill_ts, fill_price, quantity, pnl, comment`を最低限含める。`sync_from_csv`は必須列を検証し、不足時は`AccountSyncError`をraise。
+- **突合処理**: `TicketRepository`（監査ログ由来の承認済チケット）と`ticket_id`/`signal_id`でJoinし、（1）未承認チケットの実績→`WARN account.unmatched_ticket`、（2）承認済だがCSV未掲載→`WARN account.missing_fill`としてアラート。整合済レコードには`proposed_entry`と比較したスリッページ、実際の`fill_ts`と承認時刻差分を算出。
+- **監査イベント**: 正常に取り込んだレコードごとに`actual_fill_imported`イベントを生成し`logs/audit/live.jsonl`へ追記。メタデータとして`slippage_pips`, `fill_delay_sec`, `reconciled=true/false`, `csv_hash`を記録する。
 - **相関用エクスポージャ**: `ExposureByCurrency`で通貨別Rを保持し`CorrelationGuard`へ提供。
-- **エラーハンドリング**: CSV整合性NGで`AccountSyncError`→`HealthMonitor.soft_stop(account)`。
+- **エラーハンドリング**: CSV整合性NGで`AccountSyncError`→`HealthMonitor.soft_stop(account)`。監査書き込み失敗時は`AuditWriterError`を再throwしKill Switch=hard_stop。
+
+#### 3.14.1 Trade Journal（Live実績CSV）
+1. CLIまたはスケジュールジョブから`AccountService.sync_from_csv('data/account/live_account.csv')`を起動。
+2. CSV読込→ヘッダ検証→`ticket_id`/`signal_id`/`fill_ts`/`fill_price`の欠損チェック。NG時は即座に`AccountSyncError`をraiseし、監査ログへ`actual_fill_import_failed`を書き込む。
+3. `TicketRepository.fetch_approved(range=csv.fill_ts_span)`で承認済チケットを取得し、`ticket_id`/`signal_id`キーで突合。未一致レコードは`unmatched_rows`リストに保持し`WARN account.unmatched_ticket`を発行。
+4. 突合成功レコードに対し、`slippage = fill_price - proposed_entry`（買いは正方向、売りは逆符号）と`fill_delay = fill_ts - approved_ts`を算出。スリッページ統計を`TradeJournalStats`に集計（p50/p90, 平均R換算）。
+5. `AccountState`を更新し、`actual_fill_imported`イベントをレコード単位でAuditWriterへ送信。イベントには`ticket_id`, `signal_id`, `fill_ts`, `fill_price`, `quantity`, `pnl`, `slippage_pips`, `fill_delay_sec`, `reconciled`フラグを含める。
+6. 集計結果を`logs/audit/live.jsonl`にサマリイベント（`actual_fill_import_summary`）として追記し、Reporterが週次レポートへ差し替える（FR-10）。
 
 ### 3.15 SnapshotManager & Resync (`src/core/snapshot.py`)
 - **公開API**: `persist(context)`, `restore()`, `maybe_persist(last_bar_ts)`。
@@ -429,7 +440,7 @@ tests/
 ### 3.18 Reporter (`src/reporter/generator.py`)
 - **公開API**: `generate_weekly(profile)`, `generate_daily(date)`, `emit_summary()`。
 - **内容**: KPI（CAGR/MaxDD/Sharpe/PF）、Spread/Correlation統計、Kill Switchログ、Config変更履歴をMarkdownで出力（FR-10）。
-- **依存**: `PerformanceStats`, `metrics/pipeline.jsonl`, `logs/events`。
+- **依存**: `PerformanceStats`, `metrics/pipeline.jsonl`, `logs/events`。Live実績の突合結果は`actual_fill_import_summary`から読み取り、スリッページ分布と承認→約定遅延を週次レポートに追加する。
 
 ### 3.19 Configuration Governance & Alert Dispatcher (`src/infra/config.py`, `src/infra/alert.py`)
 - **ConfigRegistry**: `load(profile)`, `apply_patch(diff)`, `validate(config)`。`safe_keys`はホットリロード、`dangerous_keys`は`NextBarChangeQueue`経由で遅延適用。
@@ -456,7 +467,7 @@ tests/
 
 ### 3.20 Persistence & Audit (`src/persistence/*.py`)
 - **EventsWriter**: DomainEvent→`logs/events/YYYYMMDD.jsonl`。書込失敗で`EventWriteError`をリトライ3回。その後`hard_stop(audit)`。
-- **AuditWriter**: HITL操作を`logs/audit/YYYYMMDD.jsonl`へ。`ticket_id`, `action`, `user`, `delta`, `note`, `cfg_hash`。
+- **AuditWriter**: HITL操作を`logs/audit/YYYYMMDD.jsonl`へ。`ticket_id`, `action`, `user`, `delta`, `note`, `cfg_hash`。Live実績取込時は`actual_fill_imported`/`actual_fill_import_summary`イベントを受け取り、`slippage_pips`や`reconciled`フラグを含めて永続化する。
 - **SQLite (拡張)**: `logs/audit.db`にテーブルを保持（M1 optional, M2+で強化）。
 
 ### 3.21 Metrics & Telemetry (`src/infra/metrics.py`)
@@ -570,6 +581,9 @@ class GateState:
 | `config_changed` | `ts`, `profile`, `diff_summary`, `cfg_hash` |
 | `spread_state_changed` | `ts`, `symbol`, `from`, `to`, `threshold`, `cooldown_eta` |
 | `resync_completed` | `ts`, `bars_processed`, `data_hash`, `snapshot_hash` |
+| `actual_fill_imported` | `ts`, `ticket_id`, `signal_id`, `fill_ts`, `fill_price`, `quantity`, `slippage_pips`, `fill_delay_sec`, `reconciled`, `csv_hash` |
+| `actual_fill_import_summary` | `ts`, `imported_count`, `unmatched_count`, `slippage_stats`, `csv_path`, `csv_hash` |
+| `actual_fill_import_failed` | `ts`, `csv_path`, `missing_columns`, `error`, `csv_hash` |
 
 ### 4.6 スナップショットファイル
 - `account_state.json`: `AccountState`シリアライズ。
@@ -634,8 +648,9 @@ ModeController遷移: `BACKTEST ↔ PAPER ↔ LIVE`は`active_jobs=0`かつ未�
 1. `TicketIssued` → CLI表示。
 2. ユーザー操作（approve/reject/edit）→ `TicketAction` → 監査ログ。
 3. `approve`後: `TicketApproved`イベント、`AccountService`がポジション同期を待つ。
-4. TTL経過/Drift超過: `TicketExpired`→CLIで失効表示。
-5. Kill Switch `STOP`: 未承認チケットを`TicketForceCancelled`として整理。
+4. Liveモード: `tradectl account import --csv data/account/live_account.csv`等で実績CSVを取り込み、`actual_fill_imported`/`actual_fill_import_summary`イベントを生成。承認済チケットと突合し、スリッページ統計と監査ログを更新。
+5. TTL経過/Drift超過: `TicketExpired`→CLIで失効表示。
+6. Kill Switch `STOP`: 未承認チケットを`TicketForceCancelled`として整理。
 
 ### 5.6 Config変更フロー
 1. `config/profile_<name>.yaml`更新→`ConfigRegistry.apply_patch`。
@@ -721,6 +736,7 @@ ModeController遷移: `BACKTEST ↔ PAPER ↔ LIVE`は`active_jobs=0`かつ未�
 | `tradectl status` | Health/Kill Switch/Snapshot確認 | `--verbose` | `HealthState`, `KillSwitch`, Spread/News gate、Snapshot hashを表示 | Health取得失敗で`WARN status.fetch`。`--verbose`時に内部例外を表示。 |
 | `tradectl events tail` | Domain/Auditイベントのリアルタイム追跡 | `--type`, `--since`, `--follow` | JSONL tailをストリーム表示 | ファイル存在なし: `ERROR events.tail`。`--follow`時にファイルローテーションで自動再open。 |
 | `tradectl export` | チケット/シグナル/アカウントのエクスポート | `--what`, `--format csv|json`, `--out` | `reports/export/<date>/`に出力しパスを表示 | 出力先書込不可: `ERROR export.write`。リトライ指示を表示。 |
+| `tradectl account import` | Live実績CSVの取り込み・突合 | `--csv <path>`, `--dry-run`, `--since` | `AccountService.sync_from_csv`を呼び出し、突合結果とスリッページ統計を表示。成功時は`actual_fill_imported`イベント数と`unmatched`件数をサマリ表示 | 必須列欠落: `ERROR account.csv_missing_columns`。監査書込失敗: `CRITICAL account.audit_failed`でKill Switch=hard_stop。 |
 | `tradectl resync` | Catch-up/バックフィル操作 | `--since <ts>`, `--force` | Resyncジョブ投入→進捗バー表示→完了時`ResyncCompleted`イベント確認 | 他ジョブ競合: `WARN resync.busy`。Resync失敗で`ERROR resync.failed`＋再試行提案。 |
 | `tradectl spread inspect` | Spreadメトリクス確認/解除条件確認 | `--window`, `--symbol` | `data/spread_metrics.parquet`統計を表示、クールダウン解除条件を提示 | ファイル欠損: `WARN spread.data_missing`→再計測を促す。 |
 | `tradectl reduce-only status|release`(M2+) | Reduce-Only提案の管理 | `--id`, `--all` | 対象ポジションと理由を表示/解除 | Reduce-Only未対応時は`INFO reduce_only.disabled`。 |
@@ -886,7 +902,7 @@ Flag切替時は`ConfigChanged`イベントに`flag_delta`が記録され、Repo
 | UT-SIZE-01 | FR-06 | サイジング単調性・ロット丸め property | ユニット |
 | UT-TKT-01 | FR-07/FR-38 | TicketBuilderチェックリスト生成 | ユニット |
 | UT-CFG-01 | FR-14/FR-33 | Configホットリロード/遅延適用 | ユニット |
-| IT-PIPE-01 | AC-10 | データ→チケット統合フロー（モックデータ） | 統合 |
+| IT-PIPE-01 | AC-10 | データ→チケット統合フロー（モックデータ）＋Live実績CSV突合（`actual_fill_imported`/`summary`検証） | 統合 |
 | IT-RESYNC-01 | AC-04 | Resync後TTL/ドリフト整合 | 統合 |
 | IT-SPREAD-01 | AC-34 | Spread閾値→クールダウン→解除 | 統合 |
 | IT-KILL-01 | FR-05/FR-22 | Kill Switch遷移（soft/hard） | 統合 |

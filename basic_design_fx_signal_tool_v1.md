@@ -207,7 +207,7 @@
 - **バックテスト結果**: SQLiteまたはParquetで保存し、メタ情報（期間・戦略ハッシュ）を付与。
 - **レポート**: Markdown/HTML/PDF生成を想定。MVPはMarkdown。
 - **ストレステスト結果**: `reports/stress/<scenario>/index.md`および`metrics.json`を出力し、感度別チャート（Plotly PNG）を保存。
-- **アカウント台帳**: モード別に保存形式を切替。Backtestは`backtests/results.db`内に`equity_curve`/`positions`テーブル、Paperは`logs/paper_account.jsonl`、Liveはユーザー入力CSVを`data/account/live_account.csv`で管理し、`AccountState`再構築時の入力とする。
+- **アカウント台帳**: モード別に保存形式を切替。Backtestは`backtests/results.db`内に`equity_curve`/`positions`テーブル、Paperは`logs/paper_account.jsonl`、Liveはユーザー入力CSVを`data/account/live_account.csv`で管理し、`AccountState`再構築時の入力とする。Live CSVのヘッダは`ticket_id, signal_id, fill_ts, fill_price, quantity, pnl, comment, ...`（将来拡張列は末尾追加）とし、HITLチケットの承認ログと約定実績を`ticket_id`/`signal_id`で突合。取り込み時に監査ログ（`logs/audit/live.jsonl`）へ`actual_fill_imported`/`actual_fill_import_summary`（失敗時は`actual_fill_import_failed`）イベントを追記し、スリッページ（提案価格との差分）や整合結果を保存する。
 - **トレードジャーナル**: `data/journal/journal_entries.db`（SQLite）に`tickets`, `notes`, `metrics`テーブルを持ち、コメント/評価/スクリーンショットパスを保存。Markdown出力は`reports/journal/<week>.md`。
 - **カレンダーデータ**: `config/calendar/high_impact_events.csv`（経済指標）と`config/calendar/market_holidays.csv`（休日/ロールオーバー/Fix時間帯ルール）。週次で外部API同期（任意）しつつ、最新版CSVを起動時にロードし、Fixは影響度に応じて±15/30分の自動禁止窓を生成（FR-34, FR-40）。
 - **カレンダーデータ基準**: CSVは全てUTCで記録し、`config/profile.yaml`の`trading_timezone`（例:JST/NY）へ変換して適用。DSTを持つタイムゾーンは`zoneinfo`で自動補正。
@@ -216,7 +216,7 @@
 - **スワップテーブル**: `config/swap_rates.csv`に通貨ペア×方向（long/short）の日次スワップポイント、三倍日フラグ、ロールオーバー時刻を格納。Funding Serviceが`swap_rates.parquet`へ変換し、`positions`テーブルと突合してキャッシュフローへ反映（FR-28）。
 - **スプレッドメトリクス**: `data/spread_metrics.parquet`にスプレッド/手数料の観測結果を保存し、イベント影響や時刻別平均を蓄積してSpread Monitor/Riskが参照。バックテスト時はDukascopyティック/分足からBid/Askを再構成し、観測出来ない区間は`broker_rules.yaml`の固定スプレッドテーブルで補完。必須列は`ts(datetime[ns,UTC])`, `symbol(str)`, `bid(float)`, `ask(float)`, `spread_pips(float)`, `provider(str)`。
 - **執行モデルテーブル**: `config/execution_model.yaml`に時間帯×レジーム×シグナル種別ごとの滑り分布（p10/p50/p90）、Marketable Limit保護幅、IOC扱い可否、Human Delay分布を定義し、Execution Modelが参照。
-- **手動入力CSV（`data/account/live_account.csv`）**: ヘッダ`timestamp, symbol, side, quantity, avg_price, pnl, comment`。`timestamp`はISO8601(JST)、`quantity`はロット数。
+- **手動入力CSV（`data/account/live_account.csv`）**: ヘッダ`ticket_id, signal_id, fill_ts, fill_price, quantity, pnl, comment`を基本とし、必要に応じて`slippage_override`, `fees`, `tags`等を末尾拡張。`fill_ts`はISO8601(JST)、`quantity`はロット数。
 - **相関メトリクス**: `data/correlation/`以下に通貨バケット別エクスポージャ履歴と相関行列（Parquet/PNGヒートマップ）を保存し、リスク検証に利用。
 - **パラメータ履歴**: `data/optimization/history/`配下に最適化設定と結果をJSONで保存し、`parameter_drift.parquet`に主要パラメータの時系列を記録。ドリフト検知はここを参照する。
 - **ベンチマークデータ**: `data/benchmark_feeds/*.csv`に外部シグナル/指数の履歴を格納。必須列は`timestamp, equity, metric_sharpe, metric_dd`など。取り込み時に`benchmark_registry.json`へメタデータを書き込む。
