@@ -90,7 +90,7 @@
 | Liquidity Intelligence Service | 複数レートソースの乖離検知・板厚監視・HOLD判定 | yfinance, Dukascopy, broker API/CSV, `liquidity_monitor.parquet` | M2 |
 | Correlation Guard | 通貨/シンボル相関制御 | Rule-based filter | M1.1 |
 | Signal Engine | ルール/モデルプラグインIF | Strategyプラグイン | M1 Core |
-| Risk Manager | リスク制約・Kill Switch・スプレッド制御 | Policy engine | M1 Core |
+| Risk Manager | リスク制約・Kill Switch・スプレッド制御。通貨バケットエクスポージャ算出と相関行列生成で`R_eff`を評価し、M1 Coreでも`RiskMetricsSnapshot`をSignal Boardへ送信。 | Policy engine | M1 Core |
 | Position Sizer | Fixed Fractionalロジック | Python class | M1 Core |
 | Compliance Validator | チケット承認前のレバレッジ/建玉/規制確認と代替案提示 | `broker_rules.yaml`, `risk_policy.yaml`, 監査ログ | M1.1 |
 | Capital Allocation Guard | VaR/ESモニタリングと提案スロットリング | Portfolio PnL, `risk_policy.yaml`, Exposure metrics | M1.1 |
@@ -318,7 +318,7 @@
 ### 3.2 CLI実装ガイド
 - **構成**: `src/interfaces/cli/`配下に`__init__.py`と`board.py`, `tickets.py`, `events.py`, `status.py`, `export.py`を配置。`typer`でコマンドグループ化し、`tradectl/__main__.py`でエントリポイントを提供。
 - **データアクセス層**: JSON Lines読み込みは`src/infrastructure/log_store.py`で共通化。`iter_events(path: Path, event_type: str | None)`ジェネレータを定義。
-- **Board描画**: `rich.table.Table`を利用。共通フォーマッタは`src/interfaces/renderers.py`にまとめ、スコア強調・TTLカラーリングの関数を用意。イベント入力は`logs/events/<YYYYMMDD>.jsonl`命名の最新ファイルを`src/interfaces/cli/board.py`で日付ソートして解決し、見つからない場合は明示的なエラーを返す。
+- **Board描画**: `rich.table.Table`を利用。共通フォーマッタは`src/interfaces/renderers.py`にまとめ、スコア強調・TTLカラーリングの関数を用意。イベント入力は`logs/events/<YYYYMMDD>.jsonl`命名の最新ファイルを`src/interfaces/cli/board.py`で日付ソートして解決し、見つからない場合は明示的なエラーを返す。`RiskMetricsSnapshot`を受け取った際はヘッダに`R_eff`バナーと通貨バケット別エクスポージャのサマリテーブルを差し込み、Correlation Guard本体（M1.1予定）が同ペイロードを拡張できるよう`correlation_snapshot`構造体を先行導入する。
 - **承認系コマンド**: `tickets.py`で `TicketRepository`（persistenceレイヤ）をDI。承認結果を`AuditTrailService.log()`に渡し、成功時はCLIに`Approved ticket <id>`を表示。
 - **イベント監視**: `events.py`では`watchdog`等に依存せず、5秒間隔でファイル末尾をtailする簡易実装。M2以降でWebSocket通知に切替可能な構造にする。
 - **テスト**: `tests/interfaces/test_cli_board.py`で`CliRunner`を用いたsnapshotテストを追加。サンプルイベントファイルは`tests/fixtures/events/`に配置。
@@ -345,7 +345,7 @@
 - **流動性モニター**: `data/liquidity_monitor.parquet`に5分毎のBid/Ask乖離、板厚（推定）指標、更新遅延を記録。必須列は`ts`, `symbol`, `provider_primary`, `provider_secondary`, `spread_primary`, `spread_secondary`, `zscore_spread`, `zscore_depth`, `quote_age_ms`。乖離閾値超過は`liquidity.alert`イベントに記録し、解除操作の監査IDも保持する。
 - **執行モデルテーブル**: `config/execution_model.yaml`に時間帯×レジーム×シグナル種別ごとの滑り分布（p10/p50/p90）、Marketable Limit保護幅、IOC扱い可否、Human Delay分布を定義し、Execution Modelが参照。
 - **手動入力CSV（`data/account/live_account.csv`）**: ヘッダ`ticket_id, signal_id, fill_ts, fill_price, quantity, pnl, comment`を基本とし、必要に応じて`slippage_override`, `fees`, `tags`等を末尾拡張。`fill_ts`はISO8601(JST)、`quantity`はロット数。
-- **相関メトリクス**: `data/correlation/`以下に通貨バケット別エクスポージャ履歴と相関行列（Parquet/PNGヒートマップ）を保存し、リスク検証に利用。
+- **相関メトリクス**: `data/correlation/`以下に通貨バケット別エクスポージャ履歴と相関行列（Parquet/PNGヒートマップ）を保存し、リスク検証に利用。初期データセットはValidation Data Playbook（要件定義§8.2, AC-09）で指定した直近30営業日を`data/correlation/initial/bootstrap.parquet`として固定し、Paper運用中は週次（日曜JST）で`tradectl correlation snapshot --window 30d`を実行して`<YYYYWW>_correlation.parquet`/`heatmap.png`を追加する。更新ログは`reports/validation_log/AC-09_<date>.md`に貼り付け、Runbook `docs/runbooks/RUN-RISK-01.md`のチェックリストでサインオフする。
 - **パラメータ履歴**: `data/optimization/history/`配下に最適化設定と結果をJSONで保存し、`parameter_drift.parquet`に主要パラメータの時系列を記録。ドリフト検知はここを参照する。
 - **ベンチマークデータ**: `data/benchmark_feeds/*.csv`に外部シグナル/指数の履歴を格納。必須列は`timestamp, equity, metric_sharpe, metric_dd`など。取り込み時に`benchmark_registry.json`へメタデータを書き込む。
 - **監査ログ**: `logs/events/`配下に日次ローテーション。`event_type`毎に索引ファイルを生成し、`Audit Trail Service`が二重書き込み結果をチェックサムで検証する。

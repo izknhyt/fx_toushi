@@ -1,13 +1,14 @@
 # RUN-RISK-01: Kill Switch・リスク監視運用手順
 
 > **ACカバレッジ**: AC-03, AC-09  
-> **Runbook版数**: v1.0  
-> **最終更新日**: 2025-03-08  
+> **Runbook版数**: v1.1
+> **最終更新日**: 2025-03-09
 > **最終更新者**: Risk Manager (Doc Maintainer)
 
 ## 目的
 - 日次-3% / 週次-6%のドローダウン閾値到達時にKill Switchを確実に発火させ、再開には所定の承認手続きを強制する。
 - R分布・同時保有数・R_eff制約を定期的に検証し、受け入れ基準AC-03およびAC-09のコンプライアンスを維持する。
+- Validation Data Playbook（AC-09）に沿って`data/correlation/`配下の相関データセットを週次で更新し、Signal BoardとRisk Managerの指標整合を保つ。
 - リスク関連インシデントのログと是正措置を`reports/audit/`配下に残し、監査対応時のトレーサビリティを確保する。
 
 ## 適用範囲・トリガー
@@ -45,9 +46,9 @@
 6. 条件が満たされたら`tradectl kill-switch release --mode paper --ticket <issue_id>`を実行し、解除ログを記録する。解除後24時間は`tradectl diagnostics risk --from -1d --interval 1h`で監視を継続する。
 
 ### 3. R_eff監視とアラート処理（AC-09）
-1. `tradectl diagnostics risk --from -1d --mode paper --detail`で`R_eff`のピーク値を確認し、`max_r_eff`が`≤2.5`であることを確認する。
-2. `R_eff`が閾値を超過した場合は`tradectl risk override --block --reason r_eff_breach --duration 60m`で新規シグナル投入を停止し、Ticket Builderへ通知する。
-3. `reports/diagnostics/risk/<YYYYMMDD>.json`を更新し、閾値逸脱のグラフ/統計を添付する。`reports/validation_log/AC-09_<date>.md`にエビデンスを追記。
+1. `tradectl diagnostics risk --from -1d --mode paper --detail`で`R_eff`のピーク値を確認し、`max_r_eff`が`≤2.5`であることを確認する。Signal Boardヘッダの`R_eff`バナー（Risk Metrics Snapshot）が同値であるか突合する。
+2. `R_eff`が閾値を超過した場合は`tradectl risk override --block --reason r_eff_breach --duration 60m`で新規シグナル投入を停止し、Ticket Builderへ通知する。Signal Boardの赤バナーが消えるまで（連続2バー≒10分）Kill Switchを維持し、解除時は`reason=r_eff_guard`で記録する。
+3. `reports/diagnostics/risk/<YYYYMMDD>.json`を更新し、閾値逸脱のグラフ/統計と`RiskMetricsSnapshot`のハッシュを添付する。`reports/validation_log/AC-09_<date>.md`にエビデンスを追記。
 4. 逸脱原因を調査し、ポジションサイズの異常・設定不整合があれば`risk_policy.yaml`修正を提案。対応完了までKill Switchを保持する。
 
 ### 4. 週次レビュー
@@ -55,11 +56,18 @@
 2. 週次Ops会議でRunbook手順の完了チェックリストを確認し、未完了項目があれば`reports/governance/ops_readiness_<YYYYWW>.md`に記載する。
 3. `reports/validation_log/AC-03_<date>.md`に週次レビュー結果と参加者サインを残す。
 
+### 5. 通貨バケット・相関データセット更新（週次 / Paper運用期間）
+1. 日曜JST 22:00（マーケットクローズ後）に`tradectl correlation snapshot --window 30d --out data/correlation/$(date +%G%V)_correlation.parquet --heatmap data/correlation/$(date +%G%V)_heatmap.png`を実行する。成功終了コードを確認し、生成ファイルのSHA256を`reports/validation_log/AC-09_<date>.md`に追記する。
+2. `tradectl board --view risk`でSignal Boardの`R_eff`バナー時刻が最新スナップショットと一致しているかを確認する。バナーが更新されない場合は`tradectl events tail --type risk_metrics_snapshot --since -15m`でイベント遅延を確認し、必要に応じて`tradectl board`を再起動して反映させる。
+3. `tradectl diagnostics risk --from -30d --mode paper --export reports/diagnostics/risk/<YYYYWW>.json`を実行し、`r_eff_time_series`と`bucket_exposures`が新しいParquetと一致していることを確認する。
+4. Validation Data Playbook（要件定義§8.2, AC-09行）に従い、Risk ManagerとOps Managerが`reports/validation_log/AC-09_<date>.md`へ更新者・実行コマンド・ファイルハッシュ・差分要約を記録する。必要に応じて`tradectl correlation diff --base data/correlation/initial/bootstrap.parquet --target data/correlation/$(date +%G%V)_correlation.parquet`で基準データとの差分を確認し、バケット閾値の逸脱があれば是正タスクを起票する。
+
 ## チェックリスト
-- [ ] 日次`tradectl diagnostics risk`でR分布/同時保有数の基準確認
+- [ ] 日次`tradectl diagnostics risk`でR分布/同時保有数の基準確認（Signal Boardバナーと突合）
 - [ ] Kill Switch発火時に`reports/audit/drawdown_guard/<date>.md`を作成
 - [ ] 解除前に是正タスクと`tradectl diagnostics risk --from -30d`の結果を確認
-- [ ] `R_eff`逸脱時のブロック操作と原因分析ログを保存
+- [ ] `R_eff`逸脱時のブロック操作と原因分析ログを保存（`RiskMetricsSnapshot`ハッシュ添付）
+- [ ] 週次`tradectl correlation snapshot`実行とValidation Data Playbookへの更新記録
 - [ ] 週次レビューでRunbook完了をサインオフ
 
 ## エスカレーション

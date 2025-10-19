@@ -309,7 +309,7 @@ tests/
 - **運用対応**: CLI `tradectl status`で理由/解除条件を表示。`--ack <id>`で承認ログを取った後Kill Switch解除可能。
 
 ### 2.6 CLI (`src/interfaces/cli/*.py`)
-- `tradectl board`: EventBus購読でTicket表示。`--filter`, `--view`, `--format json`（将来）を提供。TTL/ドリフトをリアルタイム更新し、Spreadクールダウンやニュースブロック理由をバッジ表示。
+- `tradectl board`: EventBus購読でTicket表示。`--filter`, `--view`, `--format json`（将来）を提供。TTL/ドリフトをリアルタイム更新し、Spreadクールダウンやニュースブロック理由をバッジ表示。`RiskMetricsSnapshot`を購読し、`R_eff`超過時はヘッダに赤バナー（`R_eff=2.8 (>2.5)`等）と通貨バケット別エクスポージャ表を表示する。将来のCorrelation Guard本体と整合させるため`correlation_snapshot`ペイロードをそのまま`board`へ受け渡すIFを先行実装し、M1.1ではReduce-Only提案リンクを追加するだけで済む構造とする。
 - `tradectl ticket approve|reject|edit`: `TicketAction`イベントと監査ログ追記。`edit`は複数フィールド同時更新を許可し、バリデーションエラー時は差分と原因を表示。
 - `tradectl status`: HealthState, Kill Switch, Snapshot Hash, SpreadCooldown, 未処理リスクフlagを表示。
 - `tradectl events tail`: event_type絞り込みと`--since`指定。
@@ -389,16 +389,19 @@ tests/
 - **モニタリング**: M1は`metrics/scoring_base.jsonl`にランキング結果と係数を記録。M2+では`metrics/scoring_hybrid.jsonl`へ構成要素を出力し、AC-07〜AC-09/AC-16用の統計値（PF_recent, PF_all, Stability Score, ランク反転率）をダッシュボードへ提供。
 
 ### 3.8 RiskManager (`src/risk/manager.py`)
-- **公開API**: `evaluate(ranked_signals, context)`, `kill_switch_state()`, `apply_sp`。
+- **公開API**: `evaluate(ranked_signals, context)`, `kill_switch_state()`, `capture_snapshot()`。
+- **内部状態**: `CurrencyBucketExposure`（`{bucket, gross_R, net_R, position_count}`）、`CorrelationMatrix`（30日ローリング）、`RiskMetrics`（`r_eff`, `max_bucket`, `drawdown`, `margin_buffer`）。`capture_snapshot()`は`data/correlation/<YYYYMMDD>/risk_snapshot.parquet`へ書き出し、最新行を`data/correlation/latest.parquet`へハードリンクする。
 - **チェック順序**:
   1. `GateState`（ニュース/祝日/Spread/ReduceOnly）。
   2. Kill Switchが`STOP`ならReject。
   3. `AccountState.running_pnl_daily/weeky`で閾値判定（日次-3%, 週次-6%）。
-  4. `SpreadMetrics`と`RiskPolicy.spread_max_pips`比較。
-  5. `margin_estimate` vs `available_margin`。
-  6. SPRT（M2+）。
-- **出力**: `RiskVettedSignal`と`RiskAlert`イベント。Reject理由は`risk_flags`に列挙。
-- **Kill Switch**: 連続ドローダウンで`soft_stop(drawdown)`→Spread/CorrelationによるReduce-Only提案（M2+）を指示。
+  4. `AccountExposureCache.rebuild()`で通貨バケット別エクスポージャを算出し、`config.correlation.bucket_limits`と比較。
+  5. `CorrelationMatrixBuilder.compute(exposures, history_window=30d)`でシンボル相関行列を更新し、`EffectiveRiskCalculator.calculate(ranked_signals, exposures, correlation_matrix)`から`R_eff`を取得。閾値（既定2.5）を超えたら`RiskAlert(type='r_eff')`と`RiskMetricsSnapshot`イベントを発火し、Signal Boardへ通知する。M1 Coreでも`CorrelationGuard`未導入時はRisk Managerが簡易的にR抑止（`signal.blocked_reason='r_eff'`）を付与する。
+  6. `SpreadMetrics`と`RiskPolicy.spread_max_pips`比較。
+  7. `margin_estimate` vs `available_margin`。
+  8. SPRT（M2+）。
+- **出力**: `RiskVettedSignal`、`RiskAlert`（`drawdown`, `bucket_limit`, `r_eff`, `margin`）、`RiskMetricsSnapshot`（`bucket_exposures`, `correlation_matrix_hash`, `r_eff`, `ts`）。Reject理由は`risk_flags`に列挙し、Signal Boardがインラインで表示できるよう`ui_hints`（`severity`, `bucket`, `r_eff_delta`）を添付する。
+- **Kill Switch**: 連続ドローダウンで`soft_stop(drawdown)`→Spread/CorrelationによるReduce-Only提案（M2+）を指示。`r_eff`逸脱が継続する場合はKill Switchへ`reason='r_eff_guard'`を伝搬し、解除時は`RiskMetricsSnapshot`の`r_eff<=threshold`が2バー連続で確認できたことを条件とする。
 
 ### 3.9 HealthMonitor (`src/core/health.py`)
 - **公開API**: `raise(level, reason)`, `snapshot()`, `ack(alert_id)`。
@@ -411,8 +414,9 @@ tests/
 - **メトリクス**: `health_state_transitions.jsonl`に`reason`, `phase`, `prev_state`, `next_state`, `trigger_metric`を記録し、`make sla-report`がData Ingestion遅延メトリクスと突合する。Kill Switch発火は`kill_switch_events.jsonl`に別途記録し、不要なSTOP判定をレビューできるようにする。
 
 ### 3.10 CorrelationGuard (`src/risk/correlation_guard.py`, `src/account/exposure.py`)
-- **公開API**: `filter(signals, account_state, correlation_matrix)`。
-- **アルゴリズム**: 通貨バケット別にRを集計し、`config.correlation.bucket_limits`を超える場合は信号を抑制。シンボル相関>閾値（既定0.7）で同方向ポジションを抑制。
+- **公開API**: `filter(signals, account_state, correlation_snapshot)`。
+- **入力**: Risk Managerが生成した`CorrelationSnapshot`（`bucket_exposures`, `correlation_matrix`, `r_eff`, `ts`）。M1 Coreでは`correlation_guard`が無効なため、Risk ManagerがR抑止を担当するが、Signal Boardへ渡すインターフェースは同一構造を使用しM1.1で差し替え可能にする。
+- **アルゴリズム**: 通貨バケット別にRを集計し、`config.correlation.bucket_limits`を超える場合は信号を抑制。シンボル相関>閾値（既定0.7）で同方向ポジションを抑制し、`CorrelationSnapshot.ui_hints`をSignal Boardへ引き渡す。
 - **出力**: `CorrelationFilteredSignals`, `CorrelationAlert`（M2+でReduce-Only候補に利用）。
 
 ### 3.11 PositionSizer (`src/sizing/fractional.py`, `src/sizing/rounding.py`)
@@ -656,7 +660,8 @@ class GateState:
 | `signal_generated` | `ts`, `strategy_id`, `symbol`, `score`, `components`, `cfg_hash` |
 | `ticket_issued` | `ts`, `ticket_id`, `symbol`, `entry`, `size`, `ttl_sec`, `badges`, `cfg_hash`, `data_hash` |
 | `ticket_action` | `ts`, `ticket_id`, `action`, `user`, `delta`, `note` |
-| `risk_alert` | `ts`, `reason`, `severity`, `signal_ref` |
+| `risk_alert` | `ts`, `type`, `reason`, `severity`, `r_eff`, `bucket`, `signal_ref`, `ui_hints` |
+| `risk_metrics_snapshot` | `ts`, `mode`, `r_eff`, `threshold`, `bucket_exposures`, `correlation_matrix_hash`, `ui_hints` |
 | `health_state_changed` | `ts`, `from`, `to`, `reason`, `alert_id` |
 | `config_changed` | `ts`, `profile`, `diff_summary`, `cfg_hash` |
 | `spread_state_changed` | `ts`, `symbol`, `from`, `to`, `threshold`, `cooldown_eta` |
@@ -665,7 +670,12 @@ class GateState:
 | `actual_fill_import_summary` | `ts`, `imported_count`, `unmatched_count`, `slippage_stats`, `csv_path`, `csv_hash` |
 | `actual_fill_import_failed` | `ts`, `csv_path`, `missing_columns`, `error`, `csv_hash` |
 
-### 4.6 スナップショットファイル
+### 4.6 リスクスナップショット (`RiskMetricsSnapshot`)
+- **スキーマ**: `ts`, `mode`, `r_eff`, `threshold`, `bucket_exposures`（JSON: `{bucket: {gross_R, net_R, position_count}}`）, `correlation_matrix_path`, `correlation_matrix_hash`, `top_pairs`（相関上位3組）, `ui_hints`（Signal Board表示用）。
+- **保存先**: `data/correlation/<YYYYMMDD>/risk_snapshot.parquet`（日次追記）と`data/correlation/<YYYYWW>_correlation.parquet`（週次サマリ）。ヒートマップPNGは`data/correlation/<YYYYWW>_heatmap.png`に出力する。
+- **初期データセット**: Validation Data Playbook（要件定義§8.2, AC-09行）で指定した対象期間（直近30営業日）と責任者（Risk Manager/Ops Manager）を基に`data/correlation/initial/bootstrap.parquet`を生成し、Paper移行前のレビューでサインオフする。週次更新はRunbook `docs/runbooks/RUN-RISK-01.md`の「通貨バケット・相関データセット更新」節を参照し、更新ログを`reports/validation_log/AC-09_<date>.md`へ追記する。
+
+### 4.7 スナップショットファイル
 - `account_state.json`: `AccountState`シリアライズ。
 - `open_tickets.json`: 未失効チケット一覧（`ticket_id`, `expires_at`, `drift_guard`, `status`）。
 - `gate_state.json`: 最新`GateState`。
@@ -695,8 +705,8 @@ class GateState:
 9. `StrategyEngine.run_all`。
 10. `ExecutionModel.apply_adjustments`。
 11. `ScoringService.rank`。
-12. `RiskManager.evaluate`。
-13. `CorrelationGuard.filter`。
+12. `RiskManager.evaluate`（通貨バケットエクスポージャ更新→相関行列算出→`R_eff`評価→`RiskMetricsSnapshot`発行）。
+13. `CorrelationGuard.filter`（M1.1で有効化、M1 CoreはRisk ManagerがR抑止を兼務）。
 14. `PositionSizer.size`。
 15. `TicketBuilder.build`。
 16. `EventBus.publish(TicketIssued)`。
