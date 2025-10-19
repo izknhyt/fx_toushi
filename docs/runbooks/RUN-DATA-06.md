@@ -18,7 +18,8 @@
 - `data/manual/<date>/`ディレクトリを作成し、対象シンボル・タイムフレームのCSVテンプレートを`tradectl data request-template --symbol <symbol> --tf m5 --out data/manual/<date>/<symbol>.csv`で生成する。
 - CSVに必要な列: `ts,open,high,low,close,volume,spread,session_tag`。`ts`はUTC ISO8601、5分足境界にスナップ。
 - 補填対象期間のリファレンスとして`data/raw/<provider>/<symbol>/<tf>.parquet`または前回の`reports/audit/data_diff_<date>.md`を参照する。
-- Resync前に`tradectl status --detail`で`manual_source=true`が立っていること、`HealthState`が`degraded|data_gapped`であることを確認する。
+- Resync前に`tradectl status --detail`で`manual_source=true`が立っていること、`HealthState`が`degraded|data_gapped|soft_stop(processing)`であることを確認する。
+- `FallbackRetryTask`が完了済みでキューが空であることを`tradectl data jobs --pending`で確認する。
 
 ## 手順
 
@@ -29,15 +30,15 @@
 
 ### 2. 手動CSVの投入
 1. 補填CSVを`data/manual/<date>/`配下に配置し、`tradectl data validate-csv --path data/manual/<date>/<symbol>.csv`で形式検証する。`errors=0`であること。
-2. `tradectl data reload --source manual --symbol <symbol> --tf m5 --from <start> --to <end>`を実行し、補填バーがSQLite/Parquetに取り込まれたことをログで確認する。
+2. `tradectl data jobs enqueue --task manual_csv --symbol <symbol> --tf m5 --from <start> --to <end>`を実行し、`ManualCsvIngestionTask`がキューに追加されたことを確認する。`tradectl data jobs --pending`で`status=running`→`completed`へ変化することを監視し、完了時刻を`reports/validation_log/AC-45_sla_<date>.md`に記録する。
 3. 取り込み後に`tradectl data verify --symbol <symbol> --tf m5 --from <start> --to <end>`を実行し、`missing_count=0`かつ`checksum_status=ok`であることを確認する。
-4. すべての対象シンボルについて完了したら、`reports/performance/data_latency/<YYYYMMDD>.md`に補填所要時間・担当者・データソースを記録する。
+4. すべての対象シンボルについて完了したら、`reports/performance/data_latency/<YYYYMMDD>.md`および`reports/validation_log/AC-45_sla_<date>.md`に補填所要時間・担当者・データソースを記録し、`metrics/data_ingestion_sla.jsonl`の`phase=processing`に改善が反映されたことを確認する。
 
 ### 3. Resync/Catch-up 実行（AC-04）
 1. `tradectl resync --since <ts>`を実行し、`resync_queue`に`BackfillJob`が投入されることを確認。`logs/resync/resync_events.jsonl`に`job_started`/`job_completed`が連続して出力されることを確認する。
 2. Resync完了後に`tradectl ticket queue --summary`で保留チケットのTTL/ドリフトを再計算し、`ttl_sec>=3×tf_sec`、`drift_r<=0.5`が維持されていることを確認する。
 3. `tradectl diagnostics resync --from <start> --to <end>`で減衰λが`0.1/min`で適用されているか（`decay_lambda=0.1`）をログで確認する。
-4. `snapshots/session_<ts>.json`を再生成し、`HealthState`が`operational`へ戻ることを`tradectl status`で確認する。
+4. `snapshots/session_<ts>.json`を再生成し、`HealthState`が`ok`または`degraded(fetch)`へ戻ることを`tradectl status`で確認する。
 5. 結果を`reports/audit/resync/<YYYYMMDD>.md`にまとめ、
    - Resyncコマンド実行時刻
    - TTL/ドリフト/減衰の検証値
