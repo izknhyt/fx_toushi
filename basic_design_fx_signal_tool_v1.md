@@ -1,4 +1,4 @@
-# FXヒューマン・インザループ投資ツール 基本設計書 v1.1
+# FXヒューマン・インザループ投資ツール 基本設計書 v1.2
 
 ## 0. 文書情報
 - 作成日: 2025-02-20
@@ -9,20 +9,22 @@
 ### 0.1 改訂履歴
 | 版 | 日付 | 改訂概要 |
 | --- | --- | --- |
+| v1.2 | 2025-02-23 | 要件v1.2対応。ストレステスト/ベンチマーク/ジャーナル/緊急プロトコル/可観測性強化の設計を追加し、M1〜M3の役割整理とRunbook連携を追記。 |
 | v1.1 | 2025-02-20 | 要件差分レビュー結果を反映。コスト/執行モデル、ヒューマンエラー抑止、スプレッドクールダウン、Reduce-Onlyセーフティ等の設計を具体化し、トレーサビリティを拡充。 |
 | v1.0 | 2025-02-15 | 初版作成 |
 
 ## 1. システム概要
 - 目的: 主要FXペアに対する裁量支援（HITL）トレードを自動化された分析と提案で補助し、Sharpe/Sortino/最大DDなどのKPIを達成する。
+- 競争優位: 市販FXシグナルツールをベンチマークとし、Sharpe/最大DD/提案レイテンシで常時上回ること、ストレスシナリオでも崩れにくい運用体制を実現する。
 - ユーザー: 個人トレーダー（プロダクトオーナー）
 - 運用形態: macOS上でPython 3.11アプリケーションとして稼働。PC稼働時のみオンライン。
 - 稼働モード: Backtest / PaperTrade / LiveTrade の3モードを共通コードベースで提供。
 - 投資対象: USDJPY, EURUSD, GBPUSD, EURJPY (MVP)。
 
 ### 1.1 マイルストーン適用範囲
-- **M1 (MVP)**: データ取得/品質管理、基礎インジケータ、MA+RSI中心の戦略、リスク/Kill Switch、HITLチケット、Resync & Snapshot、設定ガバナンス（Schema検証/ホットリロード）、ヒストリカル分位に基づくコスト・スリッページモデル、`fx_rates.parquet`によるP&L通貨正規化、Stop/Freeze距離検証。
-- **M2 (強化フェーズ)**: ハイブリッド最適化、レジーム検出、Stabilityペナルティ、SPRTによるライブ健全性自動制御、経済カレンダー動的拡張、リアルタイムスプレッド/API連携、Reduce-Onlyアドバイザ本運用、スプレッドクールダウン/イベント窓拡張の自動可変化。
-- **M3 (拡張フェーズ)**: マージン/レバレッジ自動制御の高度化、相関合算Rによるポートフォリオ制御、GUI/Tauri化、ブローカーAPIによる自動発注への拡張。
+- **M1 (MVP)**: データ取得/品質管理、基礎インジケータ、MA+RSI中心の戦略、リスク/Kill Switch、HITLチケット、Resync & Snapshot、設定ガバナンス（Schema検証/ホットリロード）、ヒストリカル分位に基づくコスト・スリッページモデル、`fx_rates.parquet`によるP&L通貨正規化、Stop/Freeze距離検証、`emergency.yaml`ベースの即時停止ハンドラ、運用健全性サマリ表示（CLI）。
+- **M2 (強化フェーズ)**: ハイブリッド最適化、レジーム検出、Stabilityペナルティ、SPRTによるライブ健全性自動制御、経済カレンダー動的拡張、リアルタイムスプレッド/API連携、Reduce-Onlyアドバイザ本運用、スプレッドクールダウン/イベント窓拡張の自動可変化、ストレステスト/ジャーナル/ドリフト検知の自動化。
+- **M3 (拡張フェーズ)**: マージン/レバレッジ自動制御の高度化、相関合算Rによるポートフォリオ制御、GUI/Tauri化、ブローカーAPIによる自動発注への拡張、ベンチマークリプレイ+差分可視化、運用健全性ダッシュボードの高度化。
 
 ## 2. 全体構成
 ```
@@ -40,8 +42,9 @@
 │              Domain Core Layer          │
 │  Data Ingestion -> Feature Pipeline     │
 │  Regime Detector -> Signal Engine       │
-│  FX Rate Updater -> Spread Monitor -> Execution Model -> Calendar Gate -> Scoring -> Risk Manager -> Correlation Guard -> Position Sizer -> Reduce-Only Advisor │
-│  Ticket Builder -> Audit & Persistence  │
+│  FX Rate Updater -> Spread Monitor -> Execution Model -> Calendar Gate -> Scoring -> Risk Manager -> Correlation Guard -> Position Sizer -> Reduce-Only Advisor -> Emergency Orchestrator │
+│  Ticket Builder -> Trade Journal -> Benchmark Monitor -> Audit & Persistence -> Observability Exporter │
+│  StressTest Engine -> Optimizer (Scenario) │
 └───────────────┬────────────────────────┘
                 │Time-series Cache / Stores
 ┌───────────────┴────────────────────────┐
@@ -75,10 +78,16 @@
 | Risk Manager | リスク制約・Kill Switch・スプレッド制御 | Policy engine |
 | Position Sizer | Fixed Fractionalロジック | Python class |
 | Reduce-Only Advisor | 収縮提案生成（閾値到達時、M2+） | Python service |
+| Emergency Orchestrator | `emergency.yaml`に基づく緊急アクション実行（Kill Switch連携、Reduce-Only指示） | Policy/Playbook Runner |
 | Ticket Builder | 注文チケット生成・ヒューマンエラーチェック | JSON Lines |
 | Persistence & Audit | イベント/ログ/設定履歴 | SQLite/Parquet/JSON |
 | Optimizer | グリッド/ランダム/WFA | SciPy/自作 |
 | Reporter | 週次/エクイティ/メトリクス出力 | Markdown/HTML |
+| Trade Journal Service | トレード/コメント管理、振り返りダッシュボード | SQLite/Markdown |
+| Benchmark Analyzer | 外部ベンチマークデータとの比較、ギャップ算出 | Pandas/Plotly |
+| StressTest Engine | 指定シナリオの再生と感度分析、結果レポート生成 | Backtest Runner拡張 |
+| Parameter Drift Monitor | 最適化パラメータと最新指標のドリフト監視 | Numpy/Scipy |
+| Observability Exporter | メトリクス収集とPrometheus互換エンドポイント | `prometheus_client` |
 | Alert Dispatcher | メール通知 | SMTPライブラリ |
 
 ### 2.2 クロスカッティング・コンポーネント
@@ -108,6 +117,11 @@
 - **Audit Trail Service**: 監査イベント（FR-11）を受け取ってJSONL/SQLiteへ二重書き込みし、書き込み失敗時はWrite-Aheadログでロールフォワード可能にする（ERROR-C04対策）。`HumanCheckFailed`等のヒューマンエラー検知もここで証跡化する。CLIからは`tradectl audit export --date 2025-02-20`で抽出。
 - **Logging Strategy**: `logging.config.dictConfig`を用い、モジュール別ロガーを定義（例: `core.signal`, `infrastructure.ingestion`, `interfaces.cli`）。デフォルトレベルINFO、`metrics`/`debug`チャンネルは`logs/app.log`へ、監査・イベントはJSONLへ出力。例外は`logger.exception`でトレースを記録し、再試行が必要なケースはRetryPolicyへ委譲。
 - **RetryPolicy**: インフラ層でユニット化し、yfinance/Dukascopy取得は`max_attempts=3`, `backoff=1.5`倍増。取得失敗は`DataDegraded`イベントで通知し、閾値超えでKill Switchへ連携。CLIコマンドは即時エラーとし、非ゼロ終了コードでユーザーへ通知。
+- **Emergency Orchestrator**: `emergency.yaml`を`pydantic`でロードし、シナリオ→アクション（Kill Switch遷移、Reduce-Only提案、通知、再接続リトライ）を状態マシンとして実行（FR-47, AC-38）。`tradectl emergency dry-run`で手順検証、`tradectl emergency trigger <scenario>`で手動発火（保護付き）。
+- **Trade Journal Service**: チケット承認イベントと実績（Backtest/Paper/Live）を`journal_entries.db`へ保存し、週次レポート生成時にMarkdownテンプレートへレンダリング（FR-44）。CLIは`tradectl journal add-note --ticket <id>`でコメント追記、`tradectl journal review`で直近レビューを表示。
+- **StressTest Orchestrator**: `scenarios/*.yaml`のイベントセットと感度パラメータ（spread_multiplier, slip_bias, decision_delay）をBacktest Runnerへ注入し、結果を`reports/stress/<scenario>/index.md`へまとめる（FR-43, AC-36）。
+- **Benchmark Monitor**: `benchmark_feeds/*.csv`を取り込み、自戦略のエクイティ・KPIと差分チャートを生成。`tradectl benchmark compare --from 2023-01-01`で比較実行し、差分が閾値超過の場合はHealth Monitorへ`benchmark_gap`理由を追加（FR-46, FR-48）。
+- **Observability Exporter**: `prometheus_client`で`/metrics`（ローカルHTTPサーバ、デフォルト`127.0.0.1:9108`）を公開し、`signal_latency_ms`, `spread_guard_state`, `benchmark_gap_pct`などのGauge/Histogramを登録（NFR-06, NFR-15）。CLIから`tradectl metrics push`で手動スナップショット出力も可能。
 
 ## 3. ユースケースフロー（MVP）
 ※ 本節ではM2以降に有効となる機能を〈M2+〉と明記しています。
@@ -131,16 +145,25 @@
 18. Reduce-Only Advisor（M2+）が`HealthState`とマージン閾値・イベント窓情報から新規提案可否を判断し、必要時は`ReduceOnlyTicket`を生成。M1は同条件での手動レビューのみ。
 19. Ticket Builderが`BrokerSpecs`を用いた桁/最小距離検証、Marketable Limit提示、TTL/ドリフト監視設定、ヒューマンエラーチェックリスト（ダブルチェック/SLTP/OCO）を付与し、Signal Boardへ配信（FR-30, FR-38, FR-39）。
 20. ユーザーがチケットを承認/却下/編集->監査ログ記録。承認後のSL/TP未入力やTTL超過は自動アラート。
-21. Reporterが定期的にレポート/ログを出力し、Spread/Correlation/Resync結果も含めてダッシュボードに反映。
-22. Kill Switchまたはアラート条件が発火した場合、Mode Controllerが新規提案を停止し、（M2+では）Reduce-Only Advisorへ縮小提案を指示。
-23. Configuration Governanceが安全項目のホットリロードを配信し、Signal Engine/リスク管理へ反映。危険項目は`NextBarChangeQueue`に保留し、次バー確定時にSession Managerが適用して監査イベントを出力。
+21. Trade Journal Serviceが承認/却下イベントとユーザーコメントを`journal_entries.db`へ保存し、戦略/レジーム別メタデータを更新（FR-44, AC-37）。
+22. Parameter Drift Monitor（M2+）が最新最適化結果と現行パラメータを比較し、KLダイバージェンスしきい値を超えた場合は`benchmark_gap`同様にHealth Monitorへ理由を追加（FR-45）。
+23. Benchmark MonitorがベンチマークCSVとの差分を計算し、`benchmark_gap_pct`を更新。ギャップ>5%（設定値）でアラートを発火し、運用健全性ダッシュボードにハイライト（FR-46, FR-48）。
+24. Reporterが定期的にレポート/ログを出力し、Spread/Correlation/Resync/StressTest/Journal要約も含めてダッシュボードに反映（FR-10, FR-43, FR-44）。
+25. Observability Exporterが最新メトリクスを`/metrics`へ公開し、必要に応じて`tradectl metrics push`でスナップショットをRunbookへ添付（NFR-06, NFR-15）。
+26. Kill Switchまたはアラート条件が発火した場合、Emergency Orchestratorが`emergency.yaml`に基づきアクション（Reduce-Only提案、通知、再接続リトライ）を実行し、Mode Controllerが新規提案を停止（FR-47）。
+27. Configuration Governanceが安全項目のホットリロードを配信し、Signal Engine/リスク管理へ反映。危険項目は`NextBarChangeQueue`に保留し、次バー確定時にSession Managerが適用して監査イベントを出力。
 
 ### 3.1 CLIインターフェース仕様（M1）
 - **`tradectl board`**: Signal Board表示コマンド。入力として`logs/events/signal_today.jsonl`をストリームし、最新バーごとに表形式レンダリング。出力列は`symbol, side, entry, size, sl, tp, score, ttl, badges`。`--filter symbol=USDJPY`や`--view open_tickets`などのフィルタ/ビュー切替を提供。
 - **`tradectl ticket approve|reject|edit`**: チケット操作。引数は`--id <ticket_id>`とし、`edit`時は`--field sl=151.20`のように複数指定可。処理結果は`audit`イベントとして`logs/events/DATE.jsonl`に追記される。
 - **`tradectl events tail`**: Event Bus監視。`--type`で`signal|risk|execution|health|audit`を絞り込み、デフォルトは`signal`。出力フォーマットは`[ts][type] payload_json`。
-- **`tradectl status`**: セッションのヘルスと統計を表示。`HealthState`（`status`, `reasons`）と`Snapshot`のハッシュ、現在のSpreadCooldownStateや未処理Reduce-Onlyチケット数を含む。
+- **`tradectl status`**: セッションのヘルスと統計を表示。`HealthState`（`status`, `reasons`）と`Snapshot`のハッシュ、現在のSpreadCooldownStateや未処理Reduce-Onlyチケット数、`benchmark_gap_pct`、直近ジャーナルハイライト（最新コメント/評価）を含む。
 - **`tradectl export --what tickets|signals|account`**: 指定リソースをCSV/JSONにエクスポート。既定は`csv`で`--format json`指定可。出力パスは`reports/export/<date>/<what>.<ext>`。
+- **`tradectl emergency trigger <scenario>` / `dry-run`**: `emergency.yaml`に定義されたシナリオを実行/検証。`--force`は確認プロンプトを無効化（Runbook承認が必要）。
+- **`tradectl journal review`**: 直近の承認チケットとユーザーコメント、戦略別KPIを表形式で表示。`--weeks 4`等で期間指定。
+- **`tradectl benchmark compare`**: ベンチマークCSVと最新エクイティを比較し、ギャップと指標差を出力。`--plot`で差分チャートを生成。
+- **`tradectl stress run <scenario>`**: ストレステストシナリオを実行し、結果を`reports/stress/<scenario>/index.md`へ書き出す。`--sensitivity spread=1.5`等で感度上書き。
+- **`tradectl metrics serve|push`**: Prometheus互換メトリクスエンドポイントを起動/ワンショット出力。`serve`はローカルHTTPサーバを起動、`push`はJSON/Markdownレポートに埋め込む。
 - **JSON Linesインターフェース**: CLIコマンドは`stdout`にJSON Linesを返し、他ツール（例: `jq`）との連携を容易にする。例:`tradectl board --view json`で同一データをJSON Linesとして出力。
 - **エラー挙動**: コマンド実行失敗時は非ゼロ終了コードを返却し、`stderr`に`[ERROR] <message>`形式で出力。必要に応じて`--no-prompt`（確認ダイアログ無効化）や`--yes`（承認操作の即時実行）を提供し、HITL確認はデフォルトでY/Nプロンプトを表示。
 - **終了コードガイド**: `0=Success`, `10x=Validation/入力エラー`, `20x=I/O・データ欠損`, `30x=内部例外（トレース表示）` とし、Runbook・テストケースで参照する。
@@ -151,6 +174,7 @@
 3. **Event Dispatcher**: パイプライン結果を非同期タスクに渡し、Event Bus publish、JSONL書き込み、メール送信を行う。`asyncio.create_task`でバックグラウンド実行。
 4. **Snapshot Writer**: パイプライン完了後に`Snapshot Manager`が更新された`AccountState`と未処理チケットを保存。CLIはこのスナップショット/ログを参照するため、パイプラインとは疎結合。
 5. **並列性ポリシー**: M1は順次実行（1ワーカー）で整合性優先。将来はステージごとに並列化を検討し、`Signal Engine`を非同期化、`Risk Manager`で排他制御を行う。
+6. **サイドタスク**: Emergency Orchestratorは`asyncio.create_task`で常駐し、`HealthState`と`emergency.yaml`監視を行う。Observability Exporterは別スレッドのHTTPサーバでメトリクスを公開し、StressTest/Benchmarkジョブは`asyncio.Queue`ベースのワーカーで逐次処理する。
 
 ### 3.3 チケット状態遷移（M1）
 ```
@@ -182,7 +206,9 @@
 - **設定**: YAML (`config/*.yaml`) + JSON Schema (`cfg.schema.json`)で検証。
 - **バックテスト結果**: SQLiteまたはParquetで保存し、メタ情報（期間・戦略ハッシュ）を付与。
 - **レポート**: Markdown/HTML/PDF生成を想定。MVPはMarkdown。
+- **ストレステスト結果**: `reports/stress/<scenario>/index.md`および`metrics.json`を出力し、感度別チャート（Plotly PNG）を保存。
 - **アカウント台帳**: モード別に保存形式を切替。Backtestは`backtests/results.db`内に`equity_curve`/`positions`テーブル、Paperは`logs/paper_account.jsonl`、Liveはユーザー入力CSVを`data/account/live_account.csv`で管理し、`AccountState`再構築時の入力とする。
+- **トレードジャーナル**: `data/journal/journal_entries.db`（SQLite）に`tickets`, `notes`, `metrics`テーブルを持ち、コメント/評価/スクリーンショットパスを保存。Markdown出力は`reports/journal/<week>.md`。
 - **カレンダーデータ**: `config/calendar/high_impact_events.csv`（経済指標）と`config/calendar/market_holidays.csv`（休日/ロールオーバー/Fix時間帯ルール）。週次で外部API同期（任意）しつつ、最新版CSVを起動時にロードし、Fixは影響度に応じて±15/30分の自動禁止窓を生成（FR-34, FR-40）。
 - **カレンダーデータ基準**: CSVは全てUTCで記録し、`config/profile.yaml`の`trading_timezone`（例:JST/NY）へ変換して適用。DSTを持つタイムゾーンは`zoneinfo`で自動補正。
 - **換算レート**: `data/account/fx_rates.parquet` に口座通貨換算用レート（5m最新値と日次終値）を保存し、リアルタイム評価と日次集計で使い分ける。
@@ -192,8 +218,12 @@
 - **執行モデルテーブル**: `config/execution_model.yaml`に時間帯×レジーム×シグナル種別ごとの滑り分布（p10/p50/p90）、Marketable Limit保護幅、IOC扱い可否、Human Delay分布を定義し、Execution Modelが参照。
 - **手動入力CSV（`data/account/live_account.csv`）**: ヘッダ`timestamp, symbol, side, quantity, avg_price, pnl, comment`。`timestamp`はISO8601(JST)、`quantity`はロット数。
 - **相関メトリクス**: `data/correlation/`以下に通貨バケット別エクスポージャ履歴と相関行列（Parquet/PNGヒートマップ）を保存し、リスク検証に利用。
+- **パラメータ履歴**: `data/optimization/history/`配下に最適化設定と結果をJSONで保存し、`parameter_drift.parquet`に主要パラメータの時系列を記録。ドリフト検知はここを参照する。
+- **ベンチマークデータ**: `data/benchmark_feeds/*.csv`に外部シグナル/指数の履歴を格納。必須列は`timestamp, equity, metric_sharpe, metric_dd`など。取り込み時に`benchmark_registry.json`へメタデータを書き込む。
 - **監査ログ**: `logs/events/`配下に日次ローテーション。`event_type`毎に索引ファイルを生成し、`Audit Trail Service`が二重書き込み結果をチェックサムで検証する。
 - **設定変更ガバナンス**: `logs/config/changes.jsonl`に`cfg_hash_before/after`、安全/危険分類、適用時刻を記録。週次で`ConfigDriftReport`を生成（FR-23, FR-33）。
+- **緊急プロトコル**: `config/emergency.yaml`にシナリオ/条件/アクション列を保持。`config/risk_policy.yaml`と整合性チェックし、ハッシュを`logs/config/emergency_hash.json`へ出力。
+- **データマニフェスト**: `reports/data_manifest.json`に利用データセットのハッシュ/期間/取得元/バージョンを列挙し、外部保管用ZIPを生成（FR-25）。
 
 ### 4.1 Catch-up / Resync フロー
 - **開始トリガー**: 起動時・手動`tradectl resync`・データ欠損検知時にSession Managerが`resync`タスクを起動。
@@ -207,6 +237,7 @@
 - **レート更新**: Resync対象期間に為替レート欠損があればFX Rate Updaterが再取得し、`fx_rates.parquet`を補完。フォールバック経路を用いたクロスレート再計算も同タイミングで実施。
 - **スプレッド補完**: Spread Monitorがイベントログと照合し、欠損区間のBid/Askを再取得。取得不能な区間は直近ヒストリカル統計で補間し、補間フラグを付与。
 - **相関再計算**: Resyncで約定履歴が変わった場合、Account Serviceが通貨バケット別エクスポージャ履歴を再構築し、Correlation Guard用の相関行列/ヒートマップを更新。
+- **マニフェスト更新**: Resync完了時に`DataManifestBuilder`が対象期間・利用データソース・ハッシュを再集計し、`reports/data_manifest.json`とZIPパッケージを更新（FR-25）。
 
 ### 4.2 マルチタイムフレーム更新
 - トリガーTF（既定:5m）のバー確定ごとに、下記リングバッファを更新し上位TFを再構築。
