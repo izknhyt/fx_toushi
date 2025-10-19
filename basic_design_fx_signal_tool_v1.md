@@ -30,6 +30,15 @@
 - **M2 (強化フェーズ)**: ハイブリッド最適化、レジーム検出、SPRT自動制御、リアルタイムスプレッド/API連携、Reduce-Onlyアドバイザ本運用、ストレステスト/ジャーナル自動化、戦略スコアボード算出・可視化、オペレーションレディネス指標集計、緊急プロトコル、ブローカーステートメント突合、オポチュニティ・パイプライン、モデルリスクレジスター連携、ベンチマーク差分の可視化。
 - **M3 (拡張フェーズ)**: マージン/レバレッジ自動制御の高度化、相関合算Rによるポートフォリオ制御、GUI/Tauri化、ブローカーAPIによる自動発注拡張、ベンチマークリプレイ強化、運用健全性ダッシュボード高度化、戦略スコアボードによる昇格ゲート制御、オポチュニティ・パイプラインのフルワークフロー化。
 
+#### 1.1.1 前提ファイルと準備タイミング
+| マイルストーン | ファイル/ディレクトリ | 主な用途 | 推奨準備時期 |
+| --- | --- | --- | --- |
+| M1.1 Hardening | `config/broker_rules.yaml` | Broker Rules Loader/Spread Monitor/Execution Modelが参照するブローカー仕様の正本。 | M1 CoreのPaperレビュー（ローンチ後4週）完了までに作成・レビューを終える。 |
+| M1.1 Hardening | `reports/validation_log/AC-*.md` | Validation Data Playbookの証跡として受け入れテストとサインオフを保管。 | M1.1回帰テスト開始の1週間前までにテンプレート整備と初期サインを完了。 |
+| M2 | `data/liquidity_monitor.parquet` | Liquidity Intelligence Serviceの閾値計測・乖離監視データ。 | M2流動性演習（FR-49）に着手する3週間前からデータ取得ジョブを常時稼働させる。 |
+| M2 | `config/emergency.yaml` | Emergency Orchestrator/Reduce-Only Advisorのシナリオとアクション定義。 | M2緊急対応ドリルの初回実施（月次レビュー前）までにドラフトを確定し、Runbook承認を得る。 |
+| M2 | `reports/governance/ops_readiness_<YYYYWW>.md` | Ops Readiness Evaluator用の週次スコアシートと証跡リンク。 | M2リリースゲート適用の4週間前から毎週金曜に更新し、不足項目を翌週の準備タスクへ反映する。 |
+
 ## 2. 全体構成
 ```
 ┌────────────────────────────────────────┐
@@ -202,60 +211,49 @@
 - **Observability Exporter**: M1は`metrics/pipeline.jsonl`/`metrics/cli_perf.jsonl`をストリーム書き出しし、`tradectl metrics report`でRunbook添付用スナップショット（Markdown/JSON）を生成する。Prometheus互換ExporterはM2+で`/metrics`（予定ポート`127.0.0.1:9108`）を公開する計画とし、M1ではExporterインターフェースとメトリクス登録コードをスタブ化しておく（NFR-06, NFR-15）。
 
 ## 3. ユースケースフロー（MVP）
-※ 本節ではM2以降に有効となる機能を〈M2+〉と明記しています。
-1. アプリ起動 -> Session Managerが設定読み込み・Catch-upキュー投入->履歴データ同期。
-2. Data Ingestionが所定ティッカーの新規バーを取得し、キャッシュを更新。
-3. Broker Rules Loaderが`broker_rules.yaml`をロードし、pip値/contract size/最小ロット/tick制約を`BrokerSpecs`として共有キャッシュに展開。
-4. FX Rate Updaterが口座通貨換算レート（5m最新値＋日次終値）を取得し、差分があれば`fx_rates.parquet`を更新（排他ロック付与）。
-5. Spread Monitorが`spread_metrics.parquet`（M1: Dukascopyティック/公開CSV/手入力CSVから事前集計、M2+: ブローカーフィード連携）をロード・更新し、`SpreadMetrics`としてキャッシュ。CLIからは`tradectl spread ingest`でヒストリカル分位を生成し、`tradectl spread watch`でリアルタイムポーリングを開始する（M2+）。
-6. Liquidity Intelligence Serviceが`quote_snapshot`を生成し、二重取得レートの乖離・板厚を集計。`liquidity_monitor.parquet`へ書き込み、閾値超過時は`liquidity.alert`をRisk Managerへ送出（FR-49, AC-38）。CLIの`tradectl liquidity inspect`で可視化し、解除条件メモをRunbookに追記。
+※ 本節ではM2以降に有効となる機能を〈M2+〉と明記し、各ステップにマイルストーン注記（例: 〔M1〕）を付与しています。
 
-7. Funding Serviceが`broker_rules.yaml`で定義されたスワップ計算ルールを読み込み、`swap_rates.csv`（M1: 手入力/公開CSV、M2+: ブローカーフィード統合）から当日分のロング/ショートスワップ（Wednesday\_NYの3倍など）を取得し、`FundingCurve`を生成。CLIは`tradectl funding sync`でCSV読み込み、`tradectl funding status`で最新値を照会。
-8. Account Serviceがモード別データソース（Backtest: シミュレーション台帳 / Paper: 仮想約定ログ / Live: ユーザー入力またはブローカーCSV/API）と最新レートを用いてアカウント状態を集計し、`accounts/<broker>/<account_id>.yaml`で定義された複数口座を統合。口座別Rガードと統合R_effを算出して`AccountState`を更新し、未入力口座（`status=manual`）はSignal Boardへ警告を送る。スワップは`FundingCurve`を日次で織り込んだキャッシュフローとして反映し、バックテストでも同一ロジックを適用する（FR-28, FR-58）。
-9. Calendar Serviceが経済指標CSV/休日CSVをUTC基準でロードし、設定された`trading_timezone`（既定:JST）に変換した上で現在時刻に対するブロック/解除ウィンドウを判定して`GateState`を更新。イベント強度に応じた±15/30分の動的拡張ルールもここで適用する。
-10. Feature Engineが差分計算で新規バー分の指標を更新し、必要な区間のみ再計算。M1ベース戦略では5分足のインジケータ更新後に`multi_tf_joiner`が1時間足EMA(55)と日足Zスコアを参照し、`FeatureFrame`へ`ema55_slope`/`htf_bias_zscore`を追加する。
-11. Regime Detectorが最新特徴量からレジームスコアを更新し、ヒステリシスを適用。トレンド/レンジ/高ボラ分類は`ATR_Z`と`ema55_slope`を入力にしてSignal Engineのフィルタ条件へ渡す。
-12. Signal Engineが戦略プラグインを順に評価し、候補シグナルを生成。`m1_baseline_ma_rsi`プラグインは5分足EMA(21/55)クロス＋RSIゾーンの条件に加えて、1時間足EMA(55)の傾きがエントリー方向と一致した場合のみ`RawSignal`を返却し、日足Zスコアは`badges`に反映される。
-13. Execution Modelがヒューマン遅延Δt・Fillモデル（Marketable Limit/IOC）・滑り分布を適用し、想定約定価格・失効条件・コストを補正（FR-27, FR-29, FR-39）。ΔtはM1ベース戦略の検証値（Triangular(30,45,75)秒）をデフォルトとして`execution.adjustments.latency_ms`に埋め込み、Backtest/Paperは遅延後価格を用いたOCO距離を算出する。
-14. Calendar Serviceの`GateState`によりイベントや休日でブロック対象となるシグナルを除外。
-15. Scoring ServiceがM1では`expected_R`と`PF_all`ベースのシンプル重み付けで順位付けし、Spread Monitorがスプレッドクールダウン状態の場合はスコアを減衰（FR-41）。Funding Serviceが`swap_penalty`を供給し、保有期間が長期化するストラテジにはスワップコストをシミュレーション時のスコアに反映する。ハイブリッドスコアとStabilityペナルティは〈M2+〉で有効化し、Feature Flagで切り替える。
-16. Risk Managerが`AccountState`、`BrokerSpecs`、`SpreadMetrics`、`FundingCurve`を参照しつつリスク制約（ドローダウン/連敗/スプレッド上限/マージン/日次スワップ）をチェック。SPRTベースのライブ健全性ガードはM2以降で有効化し、適用時はHealth Monitorへステータスを送信（FR-05, FR-22〈M2+〉, FR-28, FR-36）。
-17. Correlation Guardが通貨バケット相関・シンボル相関行列を評価し、許容度を超えるシグナルを抑制。
-18. Position Sizerが`AccountState`・`BrokerSpecs`・最新レート・スプレッド・Execution Model補正を用いて推奨ロットサイズとOCO値を決定。M1ではATR(14)をpips換算した`atr_pips`から`sl_pips = max(atr_pips×1.2, broker.min_stop_distance)`、`tp_pips = sl_pips×2.0`を導出し、Marketable Limit採用時は`protect_pips`を加算した指値を提示する。結果は`Ticket Builder`へ`oco_recommendation`として渡され、Signal Boardのチケットに根拠（ATR係数/ブローカールール差分）が併記される。
-19. Reduce-Only Advisor（M2+）が`HealthState`とマージン閾値・イベント窓情報から新規提案可否を判断し、必要時は`ReduceOnlyTicket`を生成。M1は同条件での手動レビューのみ。
-20. Ticket Builderが`BrokerSpecs`を用いた桁/最小距離検証、Marketable Limit提示、TTL/ドリフト監視設定、ヒューマンエラーチェックリスト（ダブルチェック/SLTP/OCO）を付与し、Signal Boardへ配信（FR-30, FR-38, FR-39）。
-21. ユーザーがチケットを承認/却下/編集->監査ログ記録。承認後のSL/TP未入力やTTL超過は自動アラート。
+1. アプリ起動 -> Session Managerが設定読み込み・Catch-upキュー投入->履歴データ同期。〔M1〕[^ms-core]
+2. Data Ingestionが所定ティッカーの新規バーを取得し、キャッシュを更新。〔M1〕[^ms-core]
+3. Broker Rules Loaderが`broker_rules.yaml`をロードし、pip値/contract size/最小ロット/tick制約を`BrokerSpecs`として共有キャッシュに展開。〔M1.1〕[^ms-hardening]
+4. FX Rate Updaterが口座通貨換算レート（5m最新値＋日次終値）を取得し、差分があれば`fx_rates.parquet`を更新（排他ロック付与）。〔M1〕[^ms-core]
+5. Spread Monitorが`spread_metrics.parquet`（M1: Dukascopyティック/公開CSV/手入力CSVから事前集計、M2+: ブローカーフィード連携）をロード・更新し、`SpreadMetrics`としてキャッシュ。CLIからは`tradectl spread ingest`でヒストリカル分位を生成し、`tradectl spread watch`でリアルタイムポーリングを開始する（M2+）。〔M1.1〕[^ms-hardening]
+6. Funding Serviceが`broker_rules.yaml`で定義されたスワップ計算ルールを読み込み、`swap_rates.csv`（M1: 手入力/公開CSV、M2+: ブローカーフィード統合）から当日分のロング/ショートスワップ（Wednesday_NYの3倍など）を取得し、`FundingCurve`を生成。CLIは`tradectl funding sync`でCSV読み込み、`tradectl funding status`で最新値を照会。〔M1〕[^ms-core]
+7. Account Serviceがモード別データソース（Backtest: シミュレーション台帳 / Paper: 仮想約定ログ / Live: ユーザー入力またはブローカーCSV/API）と最新レートを用いてアカウント状態を集計し、`accounts/<broker>/<account_id>.yaml`で定義された複数口座を統合。口座別Rガードと統合R_effを算出して`AccountState`を更新し、未入力口座（`status=manual`）はSignal Boardへ警告を送る。スワップは`FundingCurve`を日次で織り込んだキャッシュフローとして反映し、バックテストでも同一ロジックを適用する。〔M1〕[^ms-core]
+8. Calendar Serviceが経済指標CSV/休日CSVをUTC基準でロードし、設定された`trading_timezone`（既定:JST）に変換した上で現在時刻に対するブロック/解除ウィンドウを判定して`GateState`を更新。イベント強度に応じた±15/30分の動的拡張ルールもここで適用する。〔M1〕[^ms-core]
+9. Feature Engineが差分計算で新規バー分の指標を更新し、必要な区間のみ再計算。M1ベース戦略では5分足のインジケータ更新後に`multi_tf_joiner`が1時間足EMA(55)と日足Zスコアを参照し、`FeatureFrame`へ`ema55_slope`/`htf_bias_zscore`を追加する。〔M1〕[^ms-core]
+10. Regime Detectorが最新特徴量からレジームスコアを更新し、ヒステリシスを適用。トレンド/レンジ/高ボラ分類は`ATR_Z`と`ema55_slope`を入力にしてSignal Engineのフィルタ条件へ渡す。〔M2+〕[^ms-m2]
+11. Signal Engineが戦略プラグインを順に評価し、候補シグナルを生成。`m1_baseline_ma_rsi`プラグインは5分足EMA(21/55)クロス＋RSIゾーンの条件に加えて、1時間足EMA(55)の傾きがエントリー方向と一致した場合のみ`RawSignal`を返却し、日足Zスコアは`badges`に反映される。〔M1〕[^ms-core]
+12. Execution Modelがヒューマン遅延Δt・Fillモデル（Marketable Limit/IOC）・滑り分布を適用し、想定約定価格・失効条件・コストを補正（FR-27, FR-29, FR-39）。ΔtはM1ベース戦略の検証値（Triangular(30,45,75)秒）をデフォルトとして`execution.adjustments.latency_ms`に埋め込み、Backtest/Paperは遅延後価格を用いたOCO距離を算出する。〔M1.1〕[^ms-hardening]
+13. Calendar Serviceの`GateState`によりイベントや休日でブロック対象となるシグナルを除外。〔M1〕[^ms-core]
+14. Scoring ServiceがM1では`expected_R`と`PF_all`ベースのシンプル重み付けで順位付けし、Spread Monitorがスプレッドクールダウン状態の場合はスコアを減衰（FR-41）。Funding Serviceが`swap_penalty`を供給し、保有期間が長期化するストラテジにはスワップコストをシミュレーション時のスコアに反映する。ハイブリッドスコアとStabilityペナルティは〈M2+〉で有効化し、Feature Flagで切り替える。〔M1〕[^ms-core]
+15. Risk Managerが`AccountState`、`BrokerSpecs`、`SpreadMetrics`、`FundingCurve`を参照しつつリスク制約（ドローダウン/連敗/スプレッド上限/マージン/日次スワップ）をチェック。SPRTベースのライブ健全性ガードはM2以降で有効化し、適用時はHealth Monitorへステータスを送信（FR-05, FR-22〈M2+〉, FR-28, FR-36）。〔M1〕[^ms-core]
+16. Correlation Guardが通貨バケット相関・シンボル相関行列を評価し、許容度を超えるシグナルを抑制。〔M1.1〕[^ms-hardening]
+17. Position Sizerが`AccountState`・`BrokerSpecs`・最新レート・スプレッド・Execution Model補正を用いて推奨ロットサイズとOCO値を決定。M1ではATR(14)をpips換算した`atr_pips`から`sl_pips = max(atr_pips×1.2, broker.min_stop_distance)`、`tp_pips = sl_pips×2.0`を導出し、Marketable Limit採用時は`protect_pips`を加算した指値を提示する。結果は`Ticket Builder`へ`oco_recommendation`として渡され、Signal Boardのチケットに根拠（ATR係数/ブローカールール差分）が併記される。〔M1〕[^ms-core]
+18. Ticket Builderが`BrokerSpecs`を用いた桁/最小距離検証、Marketable Limit提示、TTL/ドリフト監視設定、ヒューマンエラーチェックリスト（ダブルチェック/SLTP/OCO）を付与し、Signal Boardへ配信（FR-30, FR-38, FR-39）。〔M1.1〕[^ms-hardening]
+19. ユーザーがチケットを承認/却下/編集->監査ログ記録。承認後のSL/TP未入力やTTL超過は自動アラート。〔M1〕[^ms-core]
+20. Trade Journal Serviceが承認/却下イベントとユーザーコメントを`journal_entries.db`へ保存し、戦略/レジーム別メタデータを更新（FR-44, AC-37）。〔M1.1〕[^ms-hardening]
+21. Statement Reconciliation Serviceが日次ジョブまたは`tradectl reconcile statements --from <date>`により呼び出され、ブローカーステートメントCSVを正規化してLive/Paperログと突合し、`reports/audit/reconciliation/<date>.md`へ差分を出力。残高差分>0.5Rまたは取引突合率<99%の場合は`Health Monitor`へ`statement_gap`理由を追加し、Kill Switch解除条件にRunbook調査メモを要求（FR-64, AC-53）。〔M2+〕[^ms-m2]
+22. Parameter Drift Monitor（M2+）が最新最適化結果と現行パラメータを比較し、KLダイバージェンスしきい値を超えた場合は`benchmark_gap`同様にHealth Monitorへ理由を追加（FR-45）。〔M2+〕[^ms-m2]
+23. Benchmark MonitorがベンチマークCSVとの差分を計算し、`benchmark_gap_pct`を更新。ギャップ>5%（設定値）でアラートを発火し、運用健全性ダッシュボードにハイライト（FR-46, FR-48）。〔M2+〕[^ms-m2]
+24. Reporterが定期的にレポート/ログを出力し、Spread/Correlation/Resync/StressTest/Journal要約も含めてダッシュボードに反映（FR-10, FR-43, FR-44）。〔M1〕[^ms-core]
+25. Observability Exporterが最新メトリクスをJSONLへ書き出し、必要に応じて`tradectl metrics report`でサマリースナップショットを生成してRunbookへ添付（NFR-06, NFR-15）。〔M1.1〕[^ms-hardening]
+26. Audit Bundle Serviceが月次/四半期スケジュールまたは`tradectl audit bundle --period`コマンドに応じて、シグナル履歴・承認/約定ログ・設定差分・リスク承諾・ベンチマーク比較を`audit_pack/<period>/`へ束ね、`audit_manifest.json`と署名`audit_manifest.sig`を生成（FR-59）。〔M2+〕[^ms-m2]
+27. Release Governance Serviceが`tradectl release prepare/tag`でSmokeテスト結果とリスク承諾差分を検証し、未完了チェック項目があればKill Switchを`HOLD`固定として新規配信を抑止。承認結果は`reports/audit/release/<version>.md`に記録（FR-60）。〔M2+〕[^ms-m2]
+28. Kill Switchまたはアラート条件が発火した場合、Emergency Orchestratorが`emergency.yaml`に基づきアクション（Reduce-Only提案、通知、再接続リトライ）を実行し、Mode Controllerが新規提案を停止（FR-47）。〔M2+〕[^ms-m2]
+29. Configuration Governanceが安全項目のホットリロードを配信し、Signal Engine/リスク管理へ反映。危険項目は`NextBarChangeQueue`に保留し、次バー確定時にSession Managerが適用て監査イベントを出力。〔M1.1〕[^ms-hardening]
+30. Strategy Scoreboard Serviceが週次ジョブとして`returns_24w.parquet`を集計し、PF/Sharpe/Stability/Regime適合度を標準化して`alpha_score`を算出。`decay_score`は指数移動平均の傾きから求め、`scoreboard/alpha/<YYYYWW>.json`と`reports/research/alpha_score/<YYYYWW>.md`へ出力。24週未満やメトリクス欠損が検知された場合は`alpha_score_status=pending`で暫定スコアと注意文（`insufficient_sample_notice`）を同梱し、Signal Boardはフォールバック表示へ切り替える。このステータス中は自動昇格ブロックを抑制し、前回確定スコアを参照する。閾値割れ戦略には`strategy.watchlist`イベントを発火し、Signal Boardで昇格ゲートを閉じる（FR-61, AC-49）。〔M2+〕[^ms-m2]
+31. Idea Pipeline Managerが`tradectl research stage`イベントを処理し、`ideas/<id>/checklists/`の必須タスク完了を検証。Paper移行には4週分の整合ログが必要で、未達成なら`stage.blocked`を返しRunbookへTODOを追記（FR-62, AC-50）。〔M2+〕[^ms-m2]
+32. Model Risk Register Serviceが`model_risk_register.md`の更新を監視し、未更新>90日またはExplainability添付不足で`model_risk_gap`をRaise。`tradectl model risk resolve <id>`の完了時にタスクを`tickets/model_revalidate/`からクローズし、`HealthState`をクリアする（NFR-26, AC-52）。〔M2+〕[^ms-m2]
 
-### 3.4 Signal Boardオペレーションタイムライン（M1 Core〜M1.1）
+#### 〈M2+〉拡張フロー
+1. Liquidity Intelligence Serviceが`quote_snapshot`を生成し、二重取得レートの乖離・板厚を集計。`liquidity_monitor.parquet`へ書き込み、閾値超過時は`liquidity.alert`をRisk Managerへ送出（FR-49, AC-38）。CLIの`tradectl liquidity inspect`で可視化し、解除条件メモをRunbookに追記。〔M2+〕[^ms-m2]
+2. Reduce-Only Advisorが`HealthState`とマージン閾値・イベント窓情報から新規提案可否を判断し、必要時は`ReduceOnlyTicket`を生成。M1は同条件での手動レビューのみ。〔M2+〕[^ms-m2]
+3. Ops Readiness Evaluatorが`reports/governance/ops_readiness_<YYYYWW>.md`とRunbookチェックリストを読み込み、スコア<75の場合は`health.changed`（reason=`ops_readiness_low`）でKill Switchを`soft_stop`とし、新規リリース・戦略昇格を保留。復旧時は証跡リンクを検証しスコアを再計算（FR-63, NFR-28, AC-51）。〔M2+〕[^ms-m2]
 
-| フェーズ | CLI/内部処理 | 所要時間目安 | 監査・データ出力 | 備考 |
-| --- | --- | --- | --- | --- |
-| ① 起動 | `tradectl board` → `RiskDisclosureService`が承諾状態確認。未承諾ならダイアログ表示。 | 1.0〜1.5s（初期描画） | `audit_events(risk_consent)`、`consent_state.json` | 四半期ごとに承諾必須。拒否時はExit code 103。 |
-| ② シグナル描画 | `DomainEventBus`から最新イベント購読→`board_renderer.render()`。 | <150ms/更新 | `signals`テーブル（SQLite）、`metrics/cli_perf.jsonl` | 5分バー確定時に実行。`score`/`ttl`/`badges`表示。 |
-| ③ 詳細確認 | `ENTER`/`tradectl ticket show`でチケット詳細読み込み。`ui_checklist`評価。 | <80ms | `audit_events(ticket_view)` | M1.1で`ui_checklist`にOCO設置状況を追加。 |
-| ④ 承認/却下 | `tradectl ticket approve|reject`→`Ticket Builder`が`execution.ticket_approved`イベントを発火。 | 120〜250ms（SQLite書込＋監査） | `tickets`、`audit_events(approve|reject)`、`latency_ms` | 承認時に`Validation Data Playbook`用のPaperログを即時更新。 |
-| ⑤ 例外処理 | `Health Monitor`が`soft_stop`等を検知し、Boardヘッダーへ警告。`tradectl resync`や`tradectl health resume`で回復。 | `resync`1.5〜3.0s / `resume`<0.2s | `health_snapshots`、`metrics/pipeline_latency.jsonl`、`logs/events/*.jsonl` | `Kill Switch`発火時は承認コマンドを`[BLOCKED: kill_switch]`で拒否。 |
-| ⑥ レポート生成 | `tradectl report weekly --profile m1-core`→Paperログ/ジャーナルを集約。 | 6〜8s（主要4ペア） | `reports/performance/paper/<date>.md`, `reports/performance/paper/<run_id>.parquet` | 週次レビューで`Validation Data Playbook`サインオフ。 |
-| ⑦ バックアップ | `snapshot_manager.write()`→`sqlite3 .backup`（M1.1） | 0.5〜1.0s | `snapshots/session_<ts>.json`, `backup/tradectl_<ts>.db` | `DR-LOCAL-01`に沿って自動/手動で実行。 |
-
-- **異常系ガード**: `SpreadCooldownState=cooldown`時は承認コマンドに確認プロンプトを挿入。`--force`利用時は承認IDを要求し、`audit_events`へ`override_reason`を追加。`news_block_active`がtrueのチケットは`approve`実行時にExit code 118を返し、承認不可を明示する。
-- **Validation Data連携**: 承認/却下イベントは`reports/validation_log/AC-02_<date>.md`で確認チェックリスト化し、週次でQuant LeadとOps Managerが電子サイン。`tradectl audit export --type risk_consent`はAC-40テスト用に`tests/fixtures/risk_consent_sample.json`へスナップショットする。
-- **Paper→Live移行ゲート**: M1.1で`tradectl readiness review`コマンドを追加し、`ops_readiness_score`, `validation_log`のサインオフ、`Paper`整合率99%（AC-26）を満たした場合のみ`tradectl mode promote live --dry-run`が成功する。Live移行前には`Validation Data Playbook`の全項目完了が必須。 |
-22. Trade Journal Serviceが承認/却下イベントとユーザーコメントを`journal_entries.db`へ保存し、戦略/レジーム別メタデータを更新（FR-44, AC-37）。
-23. Statement Reconciliation Serviceが日次ジョブまたは`tradectl reconcile statements --from <date>`により呼び出され、ブローカーステートメントCSVを正規化してLive/Paperログと突合し、`reports/audit/reconciliation/<date>.md`へ差分を出力。残高差分>0.5Rまたは取引突合率<99%の場合は`Health Monitor`へ`statement_gap`理由を追加し、Kill Switch解除条件にRunbook調査メモを要求（FR-64, AC-53）。
-24. Parameter Drift Monitor（M2+）が最新最適化結果と現行パラメータを比較し、KLダイバージェンスしきい値を超えた場合は`benchmark_gap`同様にHealth Monitorへ理由を追加（FR-45）。
-25. Benchmark MonitorがベンチマークCSVとの差分を計算し、`benchmark_gap_pct`を更新。ギャップ>5%（設定値）でアラートを発火し、運用健全性ダッシュボードにハイライト（FR-46, FR-48）。
-26. Reporterが定期的にレポート/ログを出力し、Spread/Correlation/Resync/StressTest/Journal要約も含めてダッシュボードに反映（FR-10, FR-43, FR-44）。
-27. Observability Exporterが最新メトリクスをJSONLへ書き出し、必要に応じて`tradectl metrics report`でサマリースナップショットを生成してRunbookへ添付（NFR-06, NFR-15）。
-28. Audit Bundle Serviceが月次/四半期スケジュールまたは`tradectl audit bundle --period`コマンドに応じて、シグナル履歴・承認/約定ログ・設定差分・リスク承諾・ベンチマーク比較を`audit_pack/<period>/`へ束ね、`audit_manifest.json`と署名`audit_manifest.sig`を生成（FR-59）。
-29. Release Governance Serviceが`tradectl release prepare/tag`でSmokeテスト結果とリスク承諾差分を検証し、未完了チェック項目があればKill Switchを`HOLD`固定として新規配信を抑止。承認結果は`reports/audit/release/<version>.md`に記録（FR-60）。
-30. Kill Switchまたはアラート条件が発火した場合、Emergency Orchestratorが`emergency.yaml`に基づきアクション（Reduce-Only提案、通知、再接続リトライ）を実行し、Mode Controllerが新規提案を停止（FR-47）。
-31. Configuration Governanceが安全項目のホットリロードを配信し、Signal Engine/リスク管理へ反映。危険項目は`NextBarChangeQueue`に保留し、次バー確定時にSession Managerが適用して監査イベントを出力。
-32. Strategy Scoreboard Serviceが週次ジョブとして`returns_24w.parquet`を集計し、PF/Sharpe/Stability/Regime適合度を標準化して`alpha_score`を算出。`decay_score`は指数移動平均の傾きから求め、`scoreboard/alpha/<YYYYWW>.json`と`reports/research/alpha_score/<YYYYWW>.md`へ出力。24週未満やメトリクス欠損が検知された場合は`alpha_score_status=pending`で暫定スコアと注意文（`insufficient_sample_notice`）を同梱し、Signal Boardはフォールバック表示へ切り替える。このステータス中は自動昇格ブロックを抑制し、前回確定スコアを参照する。閾値割れ戦略には`strategy.watchlist`イベントを発火し、Signal Boardで昇格ゲートを閉じる（FR-61, AC-49）。
-33. Idea Pipeline Managerが`tradectl research stage`イベントを処理し、`ideas/<id>/checklists/`の必須タスク完了を検証。Paper移行には4週分の整合ログが必要で、未達成なら`stage.blocked`を返しRunbookへTODOを追記（FR-62, AC-50）。
-34. Ops Readiness Evaluatorが`reports/governance/ops_readiness_<YYYYWW>.md`とRunbookチェックリストを読み込み、スコア<75の場合は`health.changed`（reason=`ops_readiness_low`）でKill Switchを`soft_stop`とし、新規リリース・戦略昇格を保留。復旧時は証跡リンクを検証しスコアを再計算（FR-63, NFR-28, AC-51）。
-35. Model Risk Register Serviceが`model_risk_register.md`の更新を監視し、未更新>90日またはExplainability添付不足で`model_risk_gap`をRaise。`tradectl model risk resolve <id>`の完了時にタスクを`tickets/model_revalidate/`からクローズし、`HealthState`をクリアする（NFR-26, AC-52）。
-
+[^ms-core]: `要件定義（テンプレ形式）v_1.md` §3.1「マイルストーン別優先度（Functional Requirements）」M1 Core (M1.0) 参照。
+[^ms-hardening]: `要件定義（テンプレ形式）v_1.md` §3.1「マイルストーン別優先度（Functional Requirements）」M1.1 Hardening 参照。
+[^ms-m2]: `要件定義（テンプレ形式）v_1.md` §3.1「マイルストーン別優先度（Functional Requirements）」M2 (強化フェーズ) 参照。
 ### 3.1 補足フロー: ストラテジーライフサイクル〈M2+〉
 1. **研究公開**: 研究者が`notebooks/<strategy>.ipynb`を`papermill`で実行し、`research/strategies/<id>/results.json`（PF/Sharpe/Sortino/最大DD/評価ウィンドウ/データハッシュ）と`equity.csv`を生成。`tradectl research publish <id>`で`strategy_manifest.yaml`スケルトンとRunbookテンプレート（`README.md`）を作成し、初期`promotion_checks`と`validation_windows`を宣言する（FR-55）。
 2. **メトリクス同期**: Research Workspace Bridgeが`results.json`を解析し、Manifestへ検証指標・サンプル数・`data_hash`・`code_version`を記録。`make research-sync`が共通のインジケータ/フィーチャ計算コードを同期し、研究環境と本番環境の差異が±0.5%以内かをCIで検証（FR-55, NFR-21）。
@@ -685,8 +683,8 @@ project_root/
 | FR-39 | 3. ユースケースフロー(11,18)、4.5 スプレッド観測、6 execution |
 | FR-40 | 2.1 Calendar Service、4. データ構造（カレンダー）、9. 運用・保守 |
 | FR-41 | 3. ユースケースフロー(13)、4.5 スプレッド観測、6 spread |
-| FR-42 | 2.1 Reduce-Only Advisor（M2+）、3. ユースケースフロー(17,21※M2+)、6 reduce_only |
-| FR-49 | 2.1 Liquidity Intelligence Service、2.2 Liquidity Guard Pipeline、3. ユースケースフロー(6)、6 liquidity |
+| FR-42 | 2.1 Reduce-Only Advisor（M2+）、3. ユースケースフロー〈M2+〉(2)、6 reduce_only |
+| FR-49 | 2.1 Liquidity Intelligence Service、2.2 Liquidity Guard Pipeline、3. ユースケースフロー〈M2+〉(1)、6 liquidity |
 | FR-50 | 2.1 Compliance Validator、2.2 Compliance & Capital Policy Layer、6 compliance |
 | FR-51 | 2.1 Capital Allocation Guard、2.2 Compliance & Capital Policy Layer、6 capital_guard |
 | FR-52 | 2.1 Data Provenance Service、2.2 Data Provenance Mesh、4 データ構造（データマニフェスト/署名）、6 data_provenance |
