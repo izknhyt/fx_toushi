@@ -20,6 +20,7 @@
 - 運用形態: macOS上でPython 3.11アプリケーションとして稼働。PC稼働時のみオンライン。
 - 稼働モード: Backtest / PaperTrade / LiveTrade の3モードを共通コードベースで提供。
 - 投資対象: USDJPY, EURUSD, GBPUSD, EURJPY (MVP)。
+- 配布/復旧: `poetry install --sync`によるオンライン展開と、依存Wheel・SBOM・ハッシュリストを束ねた`dist/offline_bundle/<version>.tar.gz`を毎リリース生成し、DR手順`DR-LOCAL-01`で4時間以内に代替マシンへ復旧できるよう設計する。
 
 ### 1.1 マイルストーン適用範囲
 - **M1 (MVP)**: データ取得/品質管理、基礎インジケータ、MA+RSI中心の戦略、リスク/Kill Switch、HITLチケット、Resync & Snapshot、設定ガバナンス（Schema検証/ホットリロード）、ヒストリカル分位に基づくコスト・スリッページモデル、`fx_rates.parquet`によるP&L通貨正規化、Stop/Freeze距離検証、`emergency.yaml`ベースの即時停止ハンドラ、運用健全性サマリ表示（CLI）。
@@ -66,7 +67,7 @@
 | Data Quality Guard | 欠損/外れ値判定、再取得制御 | Pandas/Numpy |
 | Feature Engine | インジケータ計算・マルチTF合成 | pandas-ta/custom |
 | Regime Detector | レジーム分類（ADX等） | 独自ロジック |
-| Account Service | 残高/証拠金/ポジション集計・相関用エクスポージャ算出 | Backtest台帳, Paperログ, Live CSV |
+| Account Service | 口座別残高/証拠金/ポジション集計・相関用エクスポージャ算出。`accounts/<broker>/<account_id>.yaml`を読み込み、マルチアカウント統合と口座別Rガードを提供 | Backtest台帳, Paperログ, Live CSV/API |
 | Funding Service | スワップ/ファンディングレートの取得と適用 | broker_rules.yaml, swap_rates.csv (手入力/公開CSV, M1) |
 | FX Rate Updater | 口座通貨換算レート取得/保存 | yfinance, 手入力CSV, (M2+: ブローカーフィード) |
 | Calendar Service | 経済指標/休日スケジュール配信（出力: GateState） | ローカルCSV, 外部API同期 |
@@ -91,6 +92,8 @@
 | Trade Journal Service | トレード/コメント管理、振り返りダッシュボード | SQLite/Markdown |
 | Benchmark Analyzer | 外部ベンチマークデータとの比較、ギャップ算出 | Pandas/Plotly |
 | Data Provenance Service | `data_manifest.json`生成・署名・検証、アーカイブ連携 | `manifest.sig`, ハッシュ計算, WORMストレージ |
+| Audit Bundle Service | `audit_pack/<period>/`への証跡束ね（シグナル・承認・約定・設定・リスク承諾・ベンチマーク差分）と署名`audit_manifest.sig`生成 | JSON/Parquet/Markdown/署名モジュール |
+| Release Governance Service | `tradectl release prepare/tag`のチェックリスト評価、Smokeテスト結果と承諾差分の検証、Kill Switchの`HOLD`制御 | CLI orchestrator, Markdown checklist |
 
 #### Data Ingestion Service 詳細
 - **ヘルスチェック/SLA監視**: ティッカー毎に最新バー取得時刻を`symbol_last_ts`として保持し、`latency_sec = (now_utc - symbol_last_ts).total_seconds()`で遅延を算出。直近30日ローリングで`latency_p95`/`latency_p99`と`success_rate`を集計し、**p99≤5秒・成功率≥99.9%**をターゲットとする。`latency_p99>5`または`success_rate<99.9%`で`HealthMonitor.raise(level='warning', reason='data_latency')`を送出、`latency_sec>60`または連続3回失敗で`level='critical'`を発火しKill Switchソフトストップを準備する。メトリクスは`data_ingestion_latency_seconds{symbol,provider}`/`data_ingestion_success_total{provider}`としてJSONLに追記し、`tradectl data health`で可視化する。
@@ -158,7 +161,7 @@
 6. Liquidity Intelligence Serviceが`quote_snapshot`を生成し、二重取得レートの乖離・板厚を集計。`liquidity_monitor.parquet`へ書き込み、閾値超過時は`liquidity.alert`をRisk Managerへ送出（FR-49, AC-38）。CLIの`tradectl liquidity inspect`で可視化し、解除条件メモをRunbookに追記。
 
 7. Funding Serviceが`broker_rules.yaml`で定義されたスワップ計算ルールを読み込み、`swap_rates.csv`（M1: 手入力/公開CSV、M2+: ブローカーフィード統合）から当日分のロング/ショートスワップ（Wednesday\_NYの3倍など）を取得し、`FundingCurve`を生成。CLIは`tradectl funding sync`でCSV読み込み、`tradectl funding status`で最新値を照会。
-8. Account Serviceがモード別データソース（Backtest: シミュレーション台帳 / Paper: 仮想約定ログ / Live: ユーザー入力またはブローカーCSV）と最新レートを用いてアカウント状態を集計し、通貨バケット別エクスポージャと相関エクスポージャを算出して`AccountState`を更新。スワップは`FundingCurve`を日次で織り込んだキャッシュフローとして反映し、バックテストでも同一ロジックを適用する（FR-28）。
+8. Account Serviceがモード別データソース（Backtest: シミュレーション台帳 / Paper: 仮想約定ログ / Live: ユーザー入力またはブローカーCSV/API）と最新レートを用いてアカウント状態を集計し、`accounts/<broker>/<account_id>.yaml`で定義された複数口座を統合。口座別Rガードと統合R_effを算出して`AccountState`を更新し、未入力口座（`status=manual`）はSignal Boardへ警告を送る。スワップは`FundingCurve`を日次で織り込んだキャッシュフローとして反映し、バックテストでも同一ロジックを適用する（FR-28, FR-58）。
 9. Calendar Serviceが経済指標CSV/休日CSVをUTC基準でロードし、設定された`trading_timezone`（既定:JST）に変換した上で現在時刻に対するブロック/解除ウィンドウを判定して`GateState`を更新。イベント強度に応じた±15/30分の動的拡張ルールもここで適用する。
 10. Feature Engineが差分計算で新規バー分の指標を更新し、必要な区間のみ再計算。
 11. Regime Detectorが最新特徴量からレジームスコアを更新し、ヒステリシスを適用。
@@ -177,8 +180,10 @@
 24. Benchmark MonitorがベンチマークCSVとの差分を計算し、`benchmark_gap_pct`を更新。ギャップ>5%（設定値）でアラートを発火し、運用健全性ダッシュボードにハイライト（FR-46, FR-48）。
 25. Reporterが定期的にレポート/ログを出力し、Spread/Correlation/Resync/StressTest/Journal要約も含めてダッシュボードに反映（FR-10, FR-43, FR-44）。
 26. Observability Exporterが最新メトリクスをJSONLへ書き出し、必要に応じて`tradectl metrics report`でサマリースナップショットを生成してRunbookへ添付（NFR-06, NFR-15）。
-27. Kill Switchまたはアラート条件が発火した場合、Emergency Orchestratorが`emergency.yaml`に基づきアクション（Reduce-Only提案、通知、再接続リトライ）を実行し、Mode Controllerが新規提案を停止（FR-47）。
-28. Configuration Governanceが安全項目のホットリロードを配信し、Signal Engine/リスク管理へ反映。危険項目は`NextBarChangeQueue`に保留し、次バー確定時にSession Managerが適用して監査イベントを出力。
+27. Audit Bundle Serviceが月次/四半期スケジュールまたは`tradectl audit bundle --period`コマンドに応じて、シグナル履歴・承認/約定ログ・設定差分・リスク承諾・ベンチマーク比較を`audit_pack/<period>/`へ束ね、`audit_manifest.json`と署名`audit_manifest.sig`を生成（FR-59）。
+28. Release Governance Serviceが`tradectl release prepare/tag`でSmokeテスト結果とリスク承諾差分を検証し、未完了チェック項目があればKill Switchを`HOLD`固定として新規配信を抑止。承認結果は`reports/audit/release/<version>.md`に記録（FR-60）。
+29. Kill Switchまたはアラート条件が発火した場合、Emergency Orchestratorが`emergency.yaml`に基づきアクション（Reduce-Only提案、通知、再接続リトライ）を実行し、Mode Controllerが新規提案を停止（FR-47）。
+30. Configuration Governanceが安全項目のホットリロードを配信し、Signal Engine/リスク管理へ反映。危険項目は`NextBarChangeQueue`に保留し、次バー確定時にSession Managerが適用して監査イベントを出力。
 
 ### 3.1 補足フロー: ストラテジーライフサイクル〈M2+〉
 1. **研究公開**: 研究者が`notebooks/<strategy>.ipynb`を`papermill`で実行し、`research/strategies/<id>/results.json`（PF/Sharpe/Sortino/最大DD/評価ウィンドウ/データハッシュ）と`equity.csv`を生成。`tradectl research publish <id>`で`strategy_manifest.yaml`スケルトンとRunbookテンプレート（`README.md`）を作成し、初期`promotion_checks`と`validation_windows`を宣言する（FR-55）。
@@ -198,6 +203,8 @@
 - **`tradectl spread watch|switch|resume|ack|report`**: `watch`はリアルタイム観測、`switch`でソース切替、`resume`でフェイルオーバー解除、`ack`でアラート承認。`report`は直近24hのスプレッドSLA、フェイルオーバー履歴、ライセンスチェック状況をMarkdownで出力し、Runbookレビューに添付する。
 - **`tradectl status`**: セッションのヘルスと統計を表示。`HealthState`（`status`, `reasons`）と`Snapshot`のハッシュ、現在のSpreadCooldownStateや未処理Reduce-Onlyチケット数、`benchmark_gap_pct`、直近ジャーナルハイライト（最新コメント/評価）を含む。
 - **`tradectl export --what tickets|signals|account`**: 指定リソースをCSV/JSONにエクスポート。既定は`csv`で`--format json`指定可。出力パスは`reports/export/<date>/<what>.<ext>`。
+- **`tradectl audit bundle --period <YYYYMM>`**: `audit_pack/<period>/`配下にシグナル履歴・承認/約定ログ・設定差分・リスク承諾ログ・ベンチマーク比較を集約し、`audit_manifest.json`と署名`audit_manifest.sig`を生成。`--verify`で署名検証を実施し、検証結果は`reports/audit/audit_pack/<period>.md`に記録。
+- **`tradectl release prepare|tag`**: `prepare`が`release_checklist.md`を生成し、Smokeテスト（Backtest回帰、データソース切替、Kill Switch動作）とリスク承諾文言差分の承認状況を記録。`tag`はチェックリスト完了と署名済み承認が揃うまで拒否し、結果を`reports/audit/release/<version>.md`へ書き出す。
 - **`tradectl emergency trigger <scenario>` / `dry-run`**: `emergency.yaml`に定義されたシナリオを実行/検証。`--force`は確認プロンプトを無効化（Runbook承認が必要）。
 - **`tradectl journal review`**: 直近の承認チケットとユーザーコメント、戦略別KPIを表形式で表示。`--weeks 4`等で期間指定。
 - **`tradectl benchmark compare`**: ベンチマークCSVと最新エクイティを比較し、ギャップと指標差を出力。`--plot`で差分チャートを生成。
@@ -458,7 +465,14 @@ symbols:
 - **バックアップ**: `data/`と`logs/events/`を日次インクリメンタル（rsync等）で取得し7世代保管。週次でフルバックアップを外部ドライブ/クラウドへ退避。
 - **ローテーション**: `logs/events`は30日で圧縮（gz）し`archive/`へ移動。`reports/`は月次でアーカイブ、`snapshots/`は最新3世代を保持。
 - **検証**: バックアップ後にSHA256チェックサムを比較し`logs/checksums/`に記録。復元テストは月1回、Runbookに従って実施。
+- **オフラインバンドル**: `make bundle-offline`で`dist/offline_bundle/<version>.tar.gz`を生成し、SBOM/ハッシュ/署名を`bundles/<version>/manifest.json`へ記録。`make bundle-verify`でDR演習を行い、結果を`reports/audit/dr/<YYYYMM>.md`に保存する。
+
+### 7.5 設定差分ガバナンス（NFR-25）
+- **差分検証コマンド**: `tradectl config diff --profile prod --baseline main`で`dev|paper|prod`の差分を出力し、リスク関連パラメータの±10%超変更に`[WARN]`バッジを付与。`--require-signed`オプションは`config/signatures/<profile>.sig`を照合し、署名不一致時は終了コード`104`で拒否する。
+- **CI連携**: `config_diff_test`ジョブがPull Requestで`tradectl config diff --profile prod --baseline origin/main --json`を実行し、リスク・マージン・Kill Switch関連フィールドに±10%超の変更があれば`policy_violation`を返す。承認者は`tradectl config sign --profile prod --approver <name>`で電子署名を更新。
+- **監査出力**: 差分結果は`reports/audit/config/<YYYYMMDD>_<profile>.md`に保存し、電子署名メタデータを`config/signatures/ledger.json`に追記。Runbook `GOV-CONFIG-01`でレビュー手順と承認フローを定義する。
 - **復元時整合性チェック**: スナップショット復元時は`cfg_hash`/`data_hash`の一致、未処理チケットと監査ログ最終イベントの整合、`HealthState`が`soft_stop`以上の場合の解除手順を確認し、Runbookへ結果をフィードバックする。
+- **オフラインバンドル**: リリースごとに`dist/offline_bundle/<version>.tar.gz`を生成し、Wheel/SBOM/ハッシュリスト/`requirements.lock`を同梱。`make bundle-offline`で生成し、`bundles/<version>/manifest.json`にハッシュと作成者を記録。Bundleは暗号化メディアへ二重保管し、`make bundle-verify`でRPO/RTOテスト（4時間以内復旧）を月次実施する（NFR-24）。
 
 ### 7.1 M1テスト優先度とカバレッジ
 - **必須自動テスト（CI）**
