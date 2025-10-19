@@ -91,9 +91,10 @@
 | Data Provenance Service | `data_manifest.json`生成・署名・検証、アーカイブ連携 | `manifest.sig`, ハッシュ計算, WORMストレージ |
 
 #### Data Ingestion Service 詳細
-- **ヘルスチェック**: ティッカー毎に最新バー取得時刻を`symbol_last_ts`として保持し、取得遅延を`latency_sec = (now_utc - symbol_last_ts).total_seconds()`で算出。`latency_sec > 60`（yfinance）、`>180`（Dukascopy）で`HealthMonitor.raise(level='degraded', reason='data_latency', symbol=...)`を発火し、同時にJSONLへPrometheus互換ラベルで`data_ingestion_latency_seconds{symbol,provider}`レコードを書き込む。
-- **遅延伝播シーケンス**: 遅延アラートはEvent Bus経由で`Spread Monitor`へ配信され、対象シンボルの`SpreadCooldownState`を`halt`へ強制遷移→`Emergency Orchestrator`が`emergency.yaml`の`data_latency`プレイブックを評価し、Kill Switchソフトストップ準備と通知（CLI/メール）を実行→Runbook `RUN-DATA-05`に従ってオペレータが手動確認・承認→復旧後に`HealthMonitor.ack`で解除し、Spread Monitorが通常状態へロールバックする。
-- **フェイルオーバー手順**: 1) yfinance失敗時はDukascopy高速フェッチへ切替、2) Dukascopyも不可の場合はローカルキャッシュ`data/raw/<provider>/<symbol>/<tf>.parquet`を読み出してギャップを埋め、`cache_source=fallback`をマーキング、3) それでも欠損が残る場合はRunbook `RUN-DATA-06`に従い手動CSV（`data/manual/<date>/<symbol>.csv`）を投入し、`tradectl data reload --source manual`で取り込む。手動モード中は`manual_source=true`フラグをイベントに添付し、復旧後にキャッシュを再構築して通常経路へ戻す。
+- **ヘルスチェック/SLA監視**: ティッカー毎に最新バー取得時刻を`symbol_last_ts`として保持し、`latency_sec = (now_utc - symbol_last_ts).total_seconds()`で遅延を算出。直近30日ローリングで`latency_p95`/`latency_p99`と`success_rate`を集計し、**p99≤5秒・成功率≥99.9%**をターゲットとする。`latency_p99>5`または`success_rate<99.9%`で`HealthMonitor.raise(level='warning', reason='data_latency')`を送出、`latency_sec>60`または連続3回失敗で`level='critical'`を発火しKill Switchソフトストップを準備する。メトリクスは`data_ingestion_latency_seconds{symbol,provider}`/`data_ingestion_success_total{provider}`としてJSONLに追記し、`tradectl data health`で可視化する。
+- **プロバイダ別更新頻度/再接続ポリシー**: yfinanceはHTTPポーリングを**5秒間隔+ランダムジッタ1秒**で実施し、`RetryPolicy(max_attempts=3, backoff=1.5)`を適用。連続失敗時は60秒クールダウン後に再接続、`tradectl data switch --to dukascopy`で手動切替を指示できる。DukascopyはWeb APIを**2秒間隔**でチェックし、失敗時は`retry<=5`の指数バックオフ（最大間隔20秒）を実施。WebSocketモード（M2+）は`ping_interval=15s`、`pong_timeout=5s`で監視し、`tradectl data reconnect --provider dukascopy`で強制リセット可能。手動CSVモードは`manual_source=true`で健康監視を除外するが、`tradectl data resume --provider <name>`で既定経路に戻す。
+- **遅延伝播シーケンス**: `warning`レベルの遅延はEvent Bus経由で`Spread Monitor`へ配信され、対象シンボルの`SpreadCooldownState`を`halt`へ強制遷移し、`tradectl status`/メールへアラートを送出する。`critical`レベル（>60秒または連続失敗）は`Emergency Orchestrator`が`emergency.yaml`の`data_latency`プレイブックを評価し、Kill Switchソフトストップ準備と通知（CLI/メール）を実行。オペレータはRunbook `RUN-DATA-05`に従って`tradectl data ack --provider <name>`で承認し、復旧後に`HealthMonitor.ack`で解除してSpread Monitorを通常状態へロールバックする。
+- **フェイルオーバー手順/ログ**: 1) `latency_sec>60`または`HealthMonitor`の`critical`シグナルでDukascopy高速フェッチへ自動切替（`failover_stage=primary->secondary`）。2) Dukascopyも不可の場合はローカルキャッシュ`data/raw/<provider>/<symbol>/<tf>.parquet`を読み出してギャップを埋め、`cache_source=fallback`をマーキングし、`tradectl data failover --to cache`で明示化。3) それでも欠損が残る場合はRunbook `RUN-DATA-06`に従い手動CSV（`data/manual/<date>/<symbol>.csv`）を投入し、`tradectl data reload --source manual`で取り込む。4) フェイルオーバー実行ごとに`failover_trigger_ts`/`failover_reason`/`stabilization_elapsed`をJSONLへ記録し、復旧後5分間安定性を監視してから`tradectl data resume --provider <name>`で主経路へ復帰する。手動モード中は`manual_source=true`フラグをイベントに添付し、ライセンス制約（配信範囲、商用可否）チェックリストの実施結果を`reports/audit/license/`へ保存する。
 
 #### Reporter/Benchmark MonitorのKPI評価ガイド
 - **キャッシュ保持期間**: Sharpe/Sortino/最大DD/年率は要件定義の評価期間に合わせ、最低でも**直近252営業日＋安全マージン10営業日**の取引履歴・エクイティカーブ・リスクメトリクスをキャッシュする。四半期レビュー用に**直近90営業日ローリング**のサマリも常備し、`metrics/kpi_cache.parquet`に`window={252d,90d}`単位で保管する。ブートストラップ再標本化での再利用に備えて、各ウィンドウのリターン系列を`returns_{window}.parquet`として別途保持する。
@@ -181,6 +182,9 @@
 - **`tradectl ticket approve|reject|edit`**: チケット操作。引数は`--id <ticket_id>`とし、`edit`時は`--field sl=151.20`のように複数指定可。処理結果は`audit`イベントとして`logs/events/DATE.jsonl`に追記される。
 - **高リスク操作の警告ガード**: `tradectl ticket approve`（ライブモード、R>既定閾値）、`tradectl emergency trigger`, `tradectl reduce-only push`等の高リスクコマンドは実行前に`RiskDisclosureService`へ承諾ステータスを照会し、未承諾または四半期承諾期限切れの場合はボードと同一の警告ダイアログを表示する。ユーザーが承諾を更新すると即座に`audit`イベント（`risk_consent`)を追記し、コマンド側では`audit`イベント（`ticket_action`, `emergency_action`）に`consent_reference_id`フィールドを紐付けて監査可能性を担保する。
 - **`tradectl events tail`**: Event Bus監視。`--type`で`signal|risk|execution|health|audit`を絞り込み、デフォルトは`signal`。出力フォーマットは`[ts][type] payload_json`。
+- **`tradectl data health|switch|reconnect|failover|resume|ack`**: データプロバイダのメトリクスを一覧表示（SLA達成率、p95/p99、失敗回数）。`switch --to <provider>`で優先プロバイダを変更し、`reconnect`でセッション再確立、`failover --to cache|manual`で即時切替、`resume`で主経路に復帰。`ack`はRunbook承認後に遅延アラートを解除し、`reports/audit/license/`へ記録する。
+- **`tradectl fx-rate status|switch|reconnect|ack|resume`**: `status`で為替レート取得状況（最新取得時刻、p99、成功率、使用中ソース）を表示。`switch`/`reconnect`/`resume`はData Ingestionと同じ操作フローを踏襲し、`ack`でアラート解除と監査ログ追記を行う。WebSocket（M2+）では`status --debug`でPing/Pong状況を確認。
+- **`tradectl spread watch|switch|resume|ack|report`**: `watch`はリアルタイム観測、`switch`でソース切替、`resume`でフェイルオーバー解除、`ack`でアラート承認。`report`は直近24hのスプレッドSLA、フェイルオーバー履歴、ライセンスチェック状況をMarkdownで出力し、Runbookレビューに添付する。
 - **`tradectl status`**: セッションのヘルスと統計を表示。`HealthState`（`status`, `reasons`）と`Snapshot`のハッシュ、現在のSpreadCooldownStateや未処理Reduce-Onlyチケット数、`benchmark_gap_pct`、直近ジャーナルハイライト（最新コメント/評価）を含む。
 - **`tradectl export --what tickets|signals|account`**: 指定リソースをCSV/JSONにエクスポート。既定は`csv`で`--format json`指定可。出力パスは`reports/export/<date>/<what>.<ext>`。
 - **`tradectl emergency trigger <scenario>` / `dry-run`**: `emergency.yaml`に定義されたシナリオを実行/検証。`--force`は確認プロンプトを無効化（Runbook承認が必要）。
@@ -284,13 +288,18 @@
 
 ### 4.4 レート更新スケジュール
 - **5分更新**: トリガー足確定時にFX Rate Updaterが必要通貨ペアの最新値を取得し、差異>0.02%または1時間経過で`fx_rates.parquet`を上書き。
+- **プロバイダ別更新頻度/再接続**: yfinanceは5秒間隔でHTTPポーリングし、失敗時は`RetryPolicy(max_attempts=3, backoff=1.5)`で最大約17秒まで再試行。連続失敗3回で`HealthMonitor`へ`rates_warning`、10回で`rates_critical`を通知し、`tradectl fx-rate reconnect --provider yfinance`または自動切替でDukascopyへ移行する。Dukascopyは2秒間隔でREST呼び出し、`retry<=5`の指数バックオフ（最大20秒）、WebSocket（M2+）は`ping_interval=15s`/`pong_timeout=5s`で監視し、`tradectl fx-rate reconnect --provider dukascopy`で手動再接続。手動CSVモード時は更新を5分周期に限定し、Runbook承認後に`tradectl fx-rate resume`で自動更新へ戻す。
+
 - **日次補正**: ロールオーバー後に終値ベースのレートを取得し、当日のリアルタイム値との差異を記録。補正後に`AccountState`の過去分も再計算。
-- **ソース優先度**: 1) yfinance 2) 直近成功値（`fx_rates.parquet`キャッシュ）3) 手動CSV。M2以降でブローカーAPIを追加ソースとして統合し、優先順位はユーザー設定で切替可能。
+- **ソース優先度/手動切替**: 1) yfinance 2) 直近成功値（`fx_rates.parquet`キャッシュ）3) 手動CSV（Runbook承認必要）を既定とし、M2以降はブローカーAPIを追加。`tradectl fx-rate switch --to <provider>`で優先度を一時変更でき、切替操作は`reports/audit/rates/<date>.md`へ記録する。ライセンスや利用制限の確認チェックリストは切替ワークフロー内で必須。
 - **ロック戦略**: レート更新は専用`RatesLock`を取得したFX Rate Updaterのみが実行。Spread MonitorとCorrelationバッチも同一ロックを共有し、Resync/バックフィル中は収集タスクを一時停止（ロック待機）して整合性を確保。更新失敗時はロールバックしてロック解放。
-- **ヘルスチェック**: 連続失敗回数が閾値を超えた場合はHealth Monitorへ`RATES_DEGRADED`を送信し、Reduce-Only Advisorへ新規縮小提案フラグを通知。解除後は監査ログに回復イベントを記録。
+- **ヘルスチェック/SLA**: `rates_metrics.jsonl`へ`rates_latency_seconds{provider}`/`rates_success_total{provider}`を記録し、30日ローリングで**p99≤5秒・成功率99.9%**を達成できているか監視。`p99>5`または成功率低下で`HealthMonitor.raise('warning','rates_latency')`、`latency_sec>60`や10連続失敗で`raise('critical', ...)`を発行し、Reduce-Only Advisorへ縮小提案フラグを通知する。解除後は`tradectl fx-rate ack`でオペレータ承認を記録し、監査ログに回復イベントを残す。
 
 ### 4.5 スプレッド観測スケジュール
-- **観測ソース**: M1はDukascopyティック/公開CSV/手入力CSVから事前集計したヒストリカル分位を利用し、Spread Monitorは`spread_metrics.parquet`を更新。M2以降はブローカーフィードを60秒間隔でポーリングしてリアルタイム追記。
+- **観測ソース/更新間隔**: M1はDukascopyティック/公開CSV/手入力CSVから事前集計したヒストリカル分位を利用し、Spread Monitorは`spread_metrics.parquet`を更新。ライブ時はyfinance/TWAP補助を**5秒間隔**でチェックし、ブローカーフィード（M2+）は**1秒ポーリング**またはWebSocket購読で追記。各ソースは`provider`列で識別し、更新間隔・最終取得時刻を`spread_provider_health.jsonl`に記録する。
+- **ヘルスチェック/SLA**: `spread_provider_health.jsonl`に`spread_latency_seconds{provider}`と`spread_success_total{provider}`を記録し、30日ローリングで**p99≤5秒・成功率99.9%**を監視。閾値超過で`HealthMonitor.raise('warning','spread_latency')`、60秒超停止や連続10失敗で`raise('critical', ...)`を発行し、`tradectl spread ack --provider <name>`による承認が完了するまでSpread Monitorは`halt`状態を維持する。
+- **フェイルオーバー/手動切替**: `critical`イベント発火時はDukascopy→ブローカーフィード→ローカル統計の順に自動切替し、各ステージを`spread_failover_stage`でトラッキングする。手動で代替ソースへ切り替える場合は`tradectl spread switch --to <provider>`を使用し、理由・承認者を`reports/audit/spread/<date>.md`へ記録する。フェイルオーバー解除は安定化確認（5分連続で閾値内）後に`tradectl spread resume`で実施。
+- **アラート/Runbook連携**: `warning`イベントはCLI通知＋メール（M2: Slack）で即時共有し、Runbook `RUN-SPREAD-03`のチェックリストを案内。`critical`イベント時はKill Switchと連動し、新規提案を凍結したうえでオペレータに`tradectl spread ack`とRunbook記録を要求する。毎週の`tradectl spread report`でSLA達成率・フェイルオーバー履歴・ライセンスチェック完了状況をレビューする。
 - **イベントタグ付与**: カレンダーイベント発生前後±60分のデータにタグを付け、分析時にイベント影響を評価できるようにする。
 - **バックフィル**: Spreadデータ欠損時は公開CSV/自前記録を再取得し、欠損区間の平均/分散を補完。ブローカーフィードが利用可能な環境では補完候補に追加。バックテストではDukascopyティックから再構築し、該当データが無い場合は固定スプレッドで代替。
 - **長期集計**: 日次で時間帯別（東京/ロンドン/NY）平均とp95を集計し、Risk/Position Sizerがスプレッドシナリオ検証に利用。バックテストレポートにも同じ集計を出力し、ライブとの差分を監視。
