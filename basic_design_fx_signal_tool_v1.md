@@ -25,7 +25,7 @@
 - 配布/復旧: `poetry install --sync`によるオンライン展開と、依存Wheel・SBOM・ハッシュリストを束ねた`dist/offline_bundle/<version>.tar.gz`を毎リリース生成し、DR手順`DR-LOCAL-01`で4時間以内に代替マシンへ復旧できるよう設計する。
 
 ### 1.1 マイルストーン適用範囲
-- **M1 Core (M1.0)**: FR-01〜FR-08, FR-10, FR-18にフォーカスし、データ取得/品質監視、MA+RSIベースのシグナル生成、Kill Switch・リスク制御、HITLチケット（承認/却下/編集）、Resync & Snapshot、週次レポート（AC-01〜AC-11）を実装。監査/署名/高度ガバナンスは敢えて外し、Paper 90営業日運用とオペレーションスループット測定に集中する。
+- **M1 Core (M1.0)**: FR-01〜FR-08, FR-10, FR-18にフォーカスし、データ取得/品質監視、MA+RSIベースのシグナル生成、Kill Switch・リスク制御、HITLチケット（承認/却下/編集）、Resync & Snapshot、週次レポート（AC-01〜AC-11）を実装。監査/署名/高度ガバナンスは敢えて外し、Paper 90営業日運用とオペレーションスループット測定に集中する。Alpha Scoreboard/Idea Pipeline等のM2ガバナンス機構はスタブ化し、Feature Flagを既定OFFで維持して初期リリースの複雑化を避ける。
 - **M1.1 Hardening**: FR-09, FR-11〜FR-18, FR-23, FR-27, FR-30, FR-38, FR-44を追加し、監査ログ冗長化、設定ガバナンス、回帰テスト、Paper-Liveパリティ、ニュースガード/Spread Cooldown、Validation Data Playbookによるデータ整備、スナップショット/バックアップ強化を完了する。AC-08およびAC-12〜AC-45をカバーし、Live少額トライアルのゲートを準備する。
 - **M2 (強化フェーズ)**: ハイブリッド最適化、レジーム検出、SPRT自動制御、リアルタイムスプレッド/API連携、Reduce-Onlyアドバイザ本運用、ストレステスト/ジャーナル自動化、戦略スコアボード算出・可視化、オペレーションレディネス指標集計、緊急プロトコル、ブローカーステートメント突合、オポチュニティ・パイプライン、モデルリスクレジスター連携、ベンチマーク差分の可視化。
 - **M3 (拡張フェーズ)**: マージン/レバレッジ自動制御の高度化、相関合算Rによるポートフォリオ制御、GUI/Tauri化、ブローカーAPIによる自動発注拡張、ベンチマークリプレイ強化、運用健全性ダッシュボード高度化、戦略スコアボードによる昇格ゲート制御、オポチュニティ・パイプラインのフルワークフロー化。
@@ -91,8 +91,8 @@
 | Optimizer | グリッド/ランダム/WFA | SciPy/自作 | M2 |
 | Reporter | 週次/エクイティ/メトリクス出力、アトリビューションメトリクス生成（PF/Sharpe/HitRate/R_eff寄与） | Markdown/HTML/Parquet | M1 Core |
 | Strategy Manifest Manager | `strategy_manifest.yaml`のSchema検証、ハッシュ生成、再検証期限監視、`deprecated`タグ付与 | Pydantic/JSON Schema/SQLite | M1.1 |
-| Strategy Scoreboard Service | `alpha_score`/`decay_score`算出、戦略メタ指標キャッシュ、Signal Boardへのランキング配信（FR-61） | Pandas/NumPy/SQLite | M2+ |
-| Idea Pipeline Manager | `ideas/`配下の候補戦略を段階管理し、`screening_checklist`生成・必須エビデンス検証・昇格ゲート条件を統制（FR-62） | Typer CLI/Pydantic/YAML | M2+ |
+| Strategy Scoreboard Service | `alpha_score`/`decay_score`算出、戦略メタ指標キャッシュ、Signal Boardへのランキング配信（FR-61）。M1では`StrategyScoreboardServiceStub`をDomain Event Busに登録し、Feature Flag `governance.alpha_scoreboard`で実装切替。 | Pandas/NumPy/SQLite | M2+ |
+| Idea Pipeline Manager | `ideas/`配下の候補戦略を段階管理し、`screening_checklist`生成・必須エビデンス検証・昇格ゲート条件を統制（FR-62）。M1では`IdeaPipelineStub`を介して昇格ゲート通知を抑止し、Feature Flag `governance.idea_pipeline`でオンボード。 | Typer CLI/Pydantic/YAML | M2+ |
 | Ops Readiness Evaluator | バックアップ整合度・Runbook更新率・演習ログを収集し、`ops_readiness_score`とHealthState連携を行う（FR-63, NFR-28） | Markdown parser/SQLite/CLI | M2+ |
 | Model Risk Register Service | `model_risk_register.md`の差分監視・エビデンス突合・Explainability生成チェックを実施し、`model_risk_gap`ステータスを管理（NFR-26, AC-52） | Git metadata/Markdown AST/Python | M2 |
 | Statement Reconciliation Service | ブローカー公式ステートメント（CSV/PDF→CSV）とLive/Paperログを突合し、残高差分/取引突合率を集計。差分閾値で`HealthState=degraded(reason=statement_gap)`を通知し、`reports/audit/reconciliation/`へMarkdownサマリを出力（FR-64, AC-53） | Pandas/Great Expectations/CLI | M2 |
@@ -106,6 +106,15 @@
 | Parameter Drift Monitor | 最適化パラメータと最新指標のドリフト監視 | Numpy/Scipy | M2+ |
 | Observability Exporter | メトリクス収集とJSONL書き出し（M1）。Prometheus互換エンドポイントはM2+で有効化 | JSONL writer / future `prometheus_client` | M1 Core (M2+ HTTP) |
 | Alert Dispatcher | メール通知 | SMTPライブラリ | M1.1 |
+
+### 2.1.1 ガバナンス機構のスタブ/Feature Flag方針 (M1 Core)
+- **目的**: Alpha Scoreboard/Idea Pipeline等のガバナンス機構がDomain層へ既に結合されているが、M1リリースでは実装を遅延させ、基盤を簡潔に保つ。
+- **スタブ配置**: `domain/governance/alpha_scoreboard_stub.py`と`domain/governance/idea_pipeline_stub.py`を用意し、`DomainEventBus`へ既定登録。両スタブはイベントを受信しても副作用を発生させず、ログに`noop`を記録する。
+- **Feature Flag**: `config/feature_flags.yaml`に`governance.alpha_scoreboard=false`, `governance.idea_pipeline=false`を既定値として追加。`ConfigRegistry.get_flag()`経由で参照し、アプリ起動時にスタブ/実装のDIを切り替える。CLI `tradectl config flags --set governance.alpha_scoreboard=true`などで将来切替可能。
+- **テレメトリ**: スタブ状態でも`governance.flag_state`イベントを5分間隔で発火し、`health_snapshots`に`governance_disabled`理由を残す。これによりM2移行時に切替漏れを検出できる。
+- **テスト方針**: M1ではスタブに対して`test_governance_stubs.py`を作成し、Feature Flag ON/OFFでのDI/イベント挙動を検証。将来実装時は同テストを拡張し、スタブと実装双方の契約を維持する。
+- **リリースゲート**: Release Governance ServiceはM1で`governance.alpha_scoreboard`と`governance.idea_pipeline`が`false`であることを検証し、誤って有効化された場合は`release.blocked(reason=flag_mismatch)`を発火する。
+
 
 #### Data Ingestion Service 詳細
 - **ヘルスチェック/SLA監視**: ティッカー毎に最新バー取得時刻を`symbol_last_ts`として保持し、`latency_sec = (now_utc - symbol_last_ts).total_seconds()`で遅延を算出。直近30日ローリングで`latency_p95`/`latency_p99`と`success_rate`を集計し、**p95≤12秒・p99≤20秒・成功率≥99.0%**をターゲットとする。`latency_p95>12`または`latency_p99>20`または`success_rate<99.0%`で`HealthMonitor.raise(level='warning', reason='data_latency')`を送出、`latency_sec>60`または連続3回失敗で`level='critical'`を発火しKill Switchソフトストップを準備する。1分ごとに`SlaMinuteRollup`が`ops_schedule.yaml`と`maintenance_windows.yaml`を参照して`status ∈ {up, down, excluded}`を判定し、`latency_sec≤90`かつ連続失敗<3かつ`manual_stop`フラグが立っていない場合に`up`、それ以外を`down`、`manual_stop`/`planned_maintenance`中を`excluded`として`metrics/data_ingestion_sla.jsonl`へ追記する。分単位集計は`uptime_minutes`/`downtime_minutes`/`excluded_minutes`のカウンタと稼働率を持つJSON（`{window_start, window_end, uptime_ratio}`）を出力し、`tradectl data health`で稼働率とSLA逸脱理由を可視化する。
@@ -150,8 +159,8 @@
 - **Configuration Governance**: `ConfigRegistry`（シングルトン）でYAMLプロファイルを管理し、JSON Schema検証（FR-23）とバージョンハッシュを計算。安全項目はPub/Subでホットリロードし、危険項目は`NextBarChangeQueue`で遅延適用する。
 - **Event Bus**: Domain層間の疎結合を保つために`DomainEventBus`を採用。同期処理はコアフロー、非同期処理（レポート生成、Slack通知など）はワーカーキューに委譲する。`MarketableLimitApplied`や`ReduceOnlyIssued`など執行関連イベントも同バスで配信する。イベントはJSON (`event_type`, `ts`, `payload`) 形式で`logs/events/DATE.jsonl`へ記録し、CLIの`tradectl events tail --type=signal`等で監視。主なイベントpayloadは以下の通り:
 - **Strategy Lifecycle Governance**: Strategy Manifest ManagerとResearch Workspace Bridgeが連携し、`research.draft_created`→`research.metrics_published`→`strategy.promote_requested`→`strategy.promoted`のイベントシーケンスを管理する。Manifestに定義されたKPI・検証ウィンドウ・データセットハッシュを検証し、`last_validated_at`から90日超過で`strategy.expired`イベントを発火。`strategy.deprecated`状態ではSignal Engineがシグナル生成を抑止し、Paper整合率が復帰した場合にのみ`strategy.revalidated`で解除する。イベントは監査ログとRunbookの`GOV-STRAT-01`タスクにリンクし、Pull Requestのレビュー結果と自動突合する（NFR-20, NFR-21）。
-- **Alpha Scoreboard Loop**: Strategy Scoreboard Serviceが週次ジョブで`returns_24w.parquet`/`metrics/kpi_cache.parquet`を読み込み、PF/Sharpe/Stability/Regime適合度を標準化して`alpha_score`を算出。リニア回帰から直近24週のドリフト勾配を算出し`decay_score`を導出する。結果は`scoreboard/alpha/<YYYYWW>.json`として保存し、Signal BoardへWebSocket/CLI経由で送信する。`alpha_score<75`または`decay_score>35`の場合は`strategy.watchlist`イベントを発火し、承認UIで昇格ブロックとウォーニングバナーを表示する（FR-61, AC-49）。データが24週に満たない場合は`status=pending`とし、直近で利用可能なウィンドウから算出した暫定メトリクスを`provisional=true`フラグ付きで返却、Signal Boardは「サンプル不足のため参考値」のフォールバックメッセージを表示する。暫定期間中は昇格ゲートを自動ブロックせず、前回確定スコアを参照する。
-- **Opportunity Pipeline Workflow**: Idea Pipeline Managerが`tradectl research stage`操作ごとに`ideas/<id>/manifest.yaml`をSchema検証し、`stage`遷移に応じて`checklists/<stage>.md`を生成。未完了項目がある場合は`stage.blocked`イベントを返してPaper移行を阻止する。PaperステージではResearch Workspace Bridgeが整合率ログを監視し、4週連続未達で`strategy.promote`を拒否して`ideas/<id>/actions.md`へTODOを追記する（FR-62, AC-50）。
+- **Alpha Scoreboard Loop**: Strategy Scoreboard Serviceが週次ジョブで`returns_24w.parquet`/`metrics/kpi_cache.parquet`を読み込み、PF/Sharpe/Stability/Regime適合度を標準化して`alpha_score`を算出。リニア回帰から直近24週のドリフト勾配を算出し`decay_score`を導出する。結果は`scoreboard/alpha/<YYYYWW>.json`として保存し、Signal BoardへWebSocket/CLI経由で送信する。`alpha_score<75`または`decay_score>35`の場合は`strategy.watchlist`イベントを発火し、承認UIで昇格ブロックとウォーニングバナーを表示する（FR-61, AC-49）。データが24週に満たない場合は`status=pending`とし、直近で利用可能なウィンドウから算出した暫定メトリクスを`provisional=true`フラグ付きで返却、Signal Boardは「サンプル不足のため参考値」のフォールバックメッセージを表示する。暫定期間中は昇格ゲートを自動ブロックせず、前回確定スコアを参照する。M1 CoreではFeature Flag `governance.alpha_scoreboard=false`が既定となり、`StrategyScoreboardServiceStub`が同イベントを`noop`で受け止める。
+- **Opportunity Pipeline Workflow**: Idea Pipeline Managerが`tradectl research stage`操作ごとに`ideas/<id>/manifest.yaml`をSchema検証し、`stage`遷移に応じて`checklists/<stage>.md`を生成。未完了項目がある場合は`stage.blocked`イベントを返してPaper移行を阻止する。PaperステージではResearch Workspace Bridgeが整合率ログを監視し、4週連続未達で`strategy.promote`を拒否して`ideas/<id>/actions.md`へTODOを追記する（FR-62, AC-50）。M1 CoreではFeature Flag `governance.idea_pipeline=false`により`IdeaPipelineStub`が`stage.blocked`等のイベントを発火せず、研究作業ログのみ記録する。
 - **Operations Readiness Loop**: Ops Readiness Evaluatorが`reports/governance/`, `reports/drill/`, `dist/offline_bundle/`のメタデータを収集し、バックアップ整合度・Runbook更新率・演習完遂率・緊急プロトコル検証の達成度を加重平均して`ops_readiness_score`を算出。スコア<75で`health.changed`（reason=`ops_readiness_low`）を発火し、新規リリース/戦略昇格コマンドをロックする。CLI `tradectl ops readiness --explain`でスコア構成と証跡ファイルを提示し、証跡欠損はスコア0扱いとする（FR-63, NFR-28, AC-51）。
 - **Model Risk Register Guard**: Model Risk Register Serviceが`model_risk_register.md`および`reports/model_risk/<strategy>.md`をウォッチし、未更新>90日またはExplainability添付不足で`model_risk_gap`をRaiseする。解消は`tradectl model risk resolve <id>`で再評価メモとSHAP/Feature Importanceレポートのハッシュを登録することで実施し、Alpha Scoreboard側も`watchlist`解除には`model_risk_gap=false`を要求する（NFR-26, AC-52）。
 - **Event Bus**: Domain層間の疎結合を保つために`DomainEventBus`を採用。同期処理はコアフロー、非同期処理（レポート生成、Slack通知など）はワーカーキューに委譲する。`MarketableLimitApplied`や`ReduceOnlyIssued`など執行関連イベントも同バスで配信する。イベントはJSON (`event_type`, `ts`, `payload`) 形式で`logs/events/DATE.jsonl`へ記録し、CLIの`tradectl events tail --type=signal`等で監視。主なイベントpayload仕様は以下の通り:
