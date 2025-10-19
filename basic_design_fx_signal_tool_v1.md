@@ -79,7 +79,8 @@
 | Data Quality Guard | 欠損/外れ値判定、再取得制御 | Pandas/Numpy | M1 Core |
 | Feature Engine | インジケータ計算・マルチTF合成 | pandas-ta/custom | M1 Core |
 | Regime Detector | レジーム分類（ADX等） | 独自ロジック | M2 |
-| Account Service | 口座別残高/証拠金/ポジション集計・相関用エクスポージャ算出。`accounts/<broker>/<account_id>.yaml`を読み込み、マルチアカウント統合と口座別Rガードを提供 | Backtest台帳, Paperログ, Live CSV/API | M1 Core |
+| Account Service（単一口座集計） | Paper/Backtest/Live各モードの残高・証拠金・保有ポジションを単一口座単位で再構築し、R計算と証拠金余力をSignal/Risk/Reportへ提供する。入力は`reports/performance/paper/<run_id>.parquet`、`db/tradectl.db`（`tickets`）、`data/account/live_account.csv`等の単一口座ログに限定 | Paper実績Parquet, Backtest台帳, Live CSV/API | M1 Core |
+| Account Aggregator（複数口座統合） | `accounts/<broker>/<account_id>.yaml`を基にブローカー横断の口座プロファイルとウェイトを読み込み、残高・証拠金・有効レバレッジを統合。口座別Rガードと相関用エクスポージャ（FR-58）を算出し、複数口座の引当/警告ワークフローを提供 | Live/Paper統合CSV, Broker API, `accounts/<broker>/<account_id>.yaml` | M2+ |
 | Funding Service | スワップ/ファンディングレートの取得と適用 | broker_rules.yaml, swap_rates.csv (手入力/公開CSV, M1) | M1 Core |
 | FX Rate Updater | 口座通貨換算レート取得/保存 | yfinance, 手入力CSV, (M2+: ブローカーフィード) | M1 Core (M2+ feed) |
 | Calendar Service | 経済指標/休日スケジュール配信（出力: GateState） | ローカルCSV, 外部API同期 | M1 Core |
@@ -219,7 +220,7 @@
 4. FX Rate Updaterが口座通貨換算レート（5m最新値＋日次終値）を取得し、差分があれば`fx_rates.parquet`を更新（排他ロック付与）。〔M1〕[^ms-core]
 5. Spread Monitorが`spread_metrics.parquet`（M1: Dukascopyティック/公開CSV/手入力CSVから事前集計、M2+: ブローカーフィード連携）をロード・更新し、`SpreadMetrics`としてキャッシュ。CLIからは`tradectl spread ingest`でヒストリカル分位を生成し、`tradectl spread watch`でリアルタイムポーリングを開始する（M2+）。〔M1.1〕[^ms-hardening]
 6. Funding Serviceが`broker_rules.yaml`で定義されたスワップ計算ルールを読み込み、`swap_rates.csv`（M1: 手入力/公開CSV、M2+: ブローカーフィード統合）から当日分のロング/ショートスワップ（Wednesday_NYの3倍など）を取得し、`FundingCurve`を生成。CLIは`tradectl funding sync`でCSV読み込み、`tradectl funding status`で最新値を照会。〔M1〕[^ms-core]
-7. Account Serviceがモード別データソース（Backtest: シミュレーション台帳 / Paper: 仮想約定ログ / Live: ユーザー入力またはブローカーCSV/API）と最新レートを用いてアカウント状態を集計し、`accounts/<broker>/<account_id>.yaml`で定義された複数口座を統合。口座別Rガードと統合R_effを算出して`AccountState`を更新し、未入力口座（`status=manual`）はSignal Boardへ警告を送る。スワップは`FundingCurve`を日次で織り込んだキャッシュフローとして反映し、バックテストでも同一ロジックを適用する。〔M1〕[^ms-core]
+7. Account Serviceがモード別データソース（Backtest: シミュレーション台帳 / Paper: `reports/performance/paper/<run_id>.parquet` / Live: ユーザー入力CSV/API）と最新レートを用いて単一口座の残高・証拠金・含み損益を集計。口座単位のR計算と証拠金余力を`AccountState`へ反映し、欠損データや算出不能時はSignal Boardへ警告を送る。スワップは`FundingCurve`を日次で織り込んだキャッシュフローとして反映し、バックテストでも同一ロジックを適用する。〔M1〕[^ms-core]
 8. Calendar Serviceが経済指標CSV/休日CSVをUTC基準でロードし、設定された`trading_timezone`（既定:JST）に変換した上で現在時刻に対するブロック/解除ウィンドウを判定して`GateState`を更新。イベント強度に応じた±15/30分の動的拡張ルールもここで適用する。〔M1〕[^ms-core]
 9. Feature Engineが差分計算で新規バー分の指標を更新し、必要な区間のみ再計算。M1ベース戦略では5分足のインジケータ更新後に`multi_tf_joiner`が1時間足EMA(55)と日足Zスコアを参照し、`FeatureFrame`へ`ema55_slope`/`htf_bias_zscore`を追加する。〔M1〕[^ms-core]
 10. Regime Detectorが最新特徴量からレジームスコアを更新し、ヒステリシスを適用。トレンド/レンジ/高ボラ分類は`ATR_Z`と`ema55_slope`を入力にしてSignal Engineのフィルタ条件へ渡す。〔M2+〕[^ms-m2]
@@ -248,8 +249,9 @@
 
 #### 〈M2+〉拡張フロー
 1. Liquidity Intelligence Serviceが`quote_snapshot`を生成し、二重取得レートの乖離・板厚を集計。`liquidity_monitor.parquet`へ書き込み、閾値超過時は`liquidity.alert`をRisk Managerへ送出（FR-49, AC-38）。CLIの`tradectl liquidity inspect`で可視化し、解除条件メモをRunbookに追記。〔M2+〕[^ms-m2]
-2. Reduce-Only Advisorが`HealthState`とマージン閾値・イベント窓情報から新規提案可否を判断し、必要時は`ReduceOnlyTicket`を生成。M1は同条件での手動レビューのみ。〔M2+〕[^ms-m2]
-3. Ops Readiness Evaluatorが`reports/governance/ops_readiness_<YYYYWW>.md`とRunbookチェックリストを読み込み、スコア<75の場合は`health.changed`（reason=`ops_readiness_low`）でKill Switchを`soft_stop`とし、新規リリース・戦略昇格を保留。復旧時は証跡リンクを検証しスコアを再計算（FR-63, NFR-28, AC-51）。〔M2+〕[^ms-m2]
+2. Account Aggregatorが`accounts/<broker>/<account_id>.yaml`と複数口座のログ（Paper: `reports/performance/paper/<run_id>.parquet`、Live: ブローカーCSV/API）を読み込み、残高・証拠金・R_effを統合。FR-58の受け入れ基準で定義するポートフォリオ整合率を`reports/performance/portfolio/<date>.parquet`で検証し、Risk/Correlation/Capital Guardへ統合`AccountState`を提供。〔M2+〕[^ms-m2]
+3. Reduce-Only Advisorが`HealthState`とマージン閾値・イベント窓情報から新規提案可否を判断し、必要時は`ReduceOnlyTicket`を生成。M1は同条件での手動レビューのみ。〔M2+〕[^ms-m2]
+4. Ops Readiness Evaluatorが`reports/governance/ops_readiness_<YYYYWW>.md`とRunbookチェックリストを読み込み、スコア<75の場合は`health.changed`（reason=`ops_readiness_low`）でKill Switchを`soft_stop`とし、新規リリース・戦略昇格を保留。復旧時は証跡リンクを検証しスコアを再計算（FR-63, NFR-28, AC-51）。〔M2+〕[^ms-m2]
 
 [^ms-core]: `要件定義（テンプレ形式）v_1.md` §3.1「マイルストーン別優先度（Functional Requirements）」M1 Core (M1.0) 参照。
 [^ms-hardening]: `要件定義（テンプレ形式）v_1.md` §3.1「マイルストーン別優先度（Functional Requirements）」M1.1 Hardening 参照。
@@ -358,7 +360,7 @@
 - **カレンダー更新**: Resync完了後にCalendar ServiceがCSVの更新日時を確認し、差分があれば`GateState`を再生成。外部API同期は日次タスクで実行し、成功時にCSVを上書きする。DST境界のイベントはUTC→`trading_timezone`再変換で再評価。
 - **レート更新**: Resync対象期間に為替レート欠損があればFX Rate Updaterが再取得し、`fx_rates.parquet`を補完。フォールバック経路を用いたクロスレート再計算も同タイミングで実施。
 - **スプレッド補完**: Spread Monitorがイベントログと照合し、欠損区間のBid/Askを再取得。取得不能な区間は直近ヒストリカル統計で補間し、補間フラグを付与。
-- **相関再計算**: Resyncで約定履歴が変わった場合、Account Serviceが通貨バケット別エクスポージャ履歴を再構築し、Correlation Guard用の相関行列/ヒートマップを更新。
+- **相関再計算**: Resyncで約定履歴が変わった場合、Account Service（M1）は単一口座のエクスポージャ履歴を更新し、Correlation Guard用の相関行列/ヒートマップを再生成。〈M2+〉ではAccount Aggregatorが複数口座の統合エクスポージャを再計算し、FR-58検証ログ（`reports/performance/portfolio/`）と突合する。
 - **マニフェスト更新**: Resync完了時に`DataManifestBuilder`が対象期間・利用データソース・ハッシュを再集計し、`reports/data_manifest.json`とZIPパッケージを更新（FR-25）。
 
 ### 4.2 マルチタイムフレーム更新
@@ -480,7 +482,8 @@ symbols:
 | indicators | 時間足変換、テクニカル指標 | MarketDataFrame | FeatureFrame |
 | strategies | ルールストラテジ、スコアリング | FeatureFrame, RegimeState | RawSignals |
 | regime | レジーム検出、ヒステリシス | FeatureFrame | RegimeState |
-| account | 残高・証拠金・ポジション集計 | TradeLogs, BrokerSnapshot | AccountState |
+| account | 残高・証拠金・ポジション集計（単一口座）。R計算と余力算出を各モード共通ロジックで提供 | TradeLogs, `reports/performance/paper/<run_id>.parquet`, BrokerSnapshot | AccountState |
+| account_aggregator | 複数口座統合、口座別Rガード、相関用エクスポージャ算出（FR-58, M2+） | `accounts/<broker>/<account_id>.yaml`, Broker API, Portfolio Parquet | AggregatedAccountState |
 | fx_rates | レート取得・クロス計算 | yfinance, fx_rates.parquet, 手入力CSV (M2+: BrokerFeed) | FxRateCache |
 | calendar | 経済指標ブロック, 休日/ロールオーバー制御 | events.csv, holidays.csv, API同期 | GateState |
 | broker_specs | ブローカー仕様ロード | broker_rules.yaml | BrokerSpecs |
@@ -691,6 +694,7 @@ project_root/
 | FR-55 | 2.1 Research Workspace Bridge、3.1 ストラテジーライフサイクル(1〜3)、4 データ構造（research/strategies）、6 research |
 | FR-56 | 2.1 Strategy Manifest Manager、3.1 ストラテジーライフサイクル(3〜4)、2.2 Strategy Lifecycle Governance、6 strategy_manifest |
 | FR-57 | 2.1 Reporter、3.1 ストラテジーライフサイクル(5)、10. KPI/運用ガバナンス、6 reporter |
+| FR-58 | 2.1 Account Aggregator（M2+）、3. ユースケースフロー〈M2+〉(2)、6 account_aggregator、12.1 FR-58設計タスク |
 
 ## 11. リスクと未解決課題
 - **執行モデルの検証データ**: ブローカーAPI未接続のため、初期は過去手動記録やDukascopyティックから推定する。ライブ移行前に限定サイズでPaper/Livetrade比較検証が必要。
@@ -702,6 +706,17 @@ project_root/
 - GUI (React + Tauri) の提供
 - ボラティリティターゲティング等の高度なサイジング
 - 強化学習/機械学習モデルの導入（リスク管理に合わせた段階的適用）
+
+### 12.1 M2設計タスク: FR-58 複数口座統合
+- **実装対象**: Account Aggregatorモジュール、`accounts/<broker>/<account_id>.yaml`スキーマ、統合`AccountState`のイベント/監査出力、およびRisk/Correlation/Capital Guardとの連携拡張。
+- **受け入れ基準（M2）**:
+  - `reports/performance/portfolio/<date>.parquet`で算出した統合残高・証拠金・R_effが、各口座ログ（Paper: `reports/performance/paper/<run_id>.parquet`、Live: ブローカーCSV/API）の合計と±0.05R以内で一致する。
+  - `accounts/<broker>/<account_id>.yaml`の`weight`, `currency`, `margin_mode`定義に従い、通貨換算後の有効レバレッジと証拠金維持率が`capital_guard`/`risk`モジュールで同一値となることを自動検証（`make verify-fr58`想定）。
+  - 3口座構成（例: USDJPY Paper、EURUSD Live、GBPUSD Paper）のエクスポージャ差分が`reports/performance/portfolio/verification_<date>.md`に記録され、Correlation Guardのバケット警告が統合R_effのしきい値（要件定義FR-58）に基づき発火する。
+- **検証データ/証跡**:
+  - `reports/performance/portfolio/<date>.parquet`および`verification_<date>.md`をValidation Data Playbookへリンクし、`reports/validation_log/FR-58_<date>.md`にサインオフ（M2）を記録する。
+  - `logs/audit/account_aggregator/<date>.jsonl`に統合計算の入力ハッシュ・結果・警告を残し、`tradectl account aggregate --dry-run`実行ログを添付する。
+- **運用タスクリード**: M1では単一口座のみを対象とし、複数口座対応のRunbook（`docs/runbooks/RUN-ACCOUNT-02.md`想定）はM2スプリントで策定する。M1のリリースチェックリストやAC-03/AC-11等にはFR-58関連項目を含めない。
 
 ## 13. リリース判定チェックリスト（M1）
 
