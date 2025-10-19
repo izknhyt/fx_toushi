@@ -96,16 +96,18 @@
 src/
   app/
     main.py              # CLIエントリ / Graceful shutdown
-    cli.py               # Typerアプリ登録
     telemetry.py         # 起動時メトリクス初期化
-  cli/
-    board.py             # tradectl board
-    tickets.py           # approve/reject/edit
-    status.py            # health/snapshot表示
-    events.py            # Event tail
-    export.py            # CSV/JSON export
-    resync.py            # Catch-up操作
-    spread.py            # Spread監視補助
+  interfaces/
+    cli/
+      __init__.py        # Typerアプリ登録
+      board.py           # tradectl board
+      tickets.py         # approve/reject/edit
+      status.py          # health/snapshot表示
+      events.py          # Event tail
+      export.py          # CSV/JSON export
+      resync.py          # Catch-up操作
+      spread.py          # Spread監視補助
+    renderers.py        # CLI共通フォーマッタ
   core/
     session.py           # SessionManager, ModeController
     workflow.py          # Pipeline orchestrator
@@ -288,7 +290,7 @@ tests/
 - **SPRT (M2+)**: `SPRTAlert`受信時に`soft_stop`へ移行しReduce-Onlyを発動。
 - **運用対応**: CLI `tradectl status`で理由/解除条件を表示。`--ack <id>`で承認ログを取った後Kill Switch解除可能。
 
-### 2.6 CLI (`src/cli/*.py`)
+### 2.6 CLI (`src/interfaces/cli/*.py`)
 - `tradectl board`: EventBus購読でTicket表示。`--filter`, `--view`, `--format json`（将来）を提供。TTL/ドリフトをリアルタイム更新し、Spreadクールダウンやニュースブロック理由をバッジ表示。
 - `tradectl ticket approve|reject|edit`: `TicketAction`イベントと監査ログ追記。`edit`は複数フィールド同時更新を許可し、バリデーションエラー時は差分と原因を表示。
 - `tradectl status`: HealthState, Kill Switch, Snapshot Hash, SpreadCooldown, 未処理リスクフlagを表示。
