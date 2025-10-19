@@ -33,7 +33,7 @@
 #### 1.1.1 前提ファイルと準備タイミング
 | マイルストーン | ファイル/ディレクトリ | 主な用途 | 推奨準備時期 |
 | --- | --- | --- | --- |
-| M1.1 Hardening | `config/broker_rules.yaml` | Broker Rules Loader/Spread Monitor/Execution Modelが参照するブローカー仕様の正本。 | M1 CoreのPaperレビュー（ローンチ後4週）完了までに作成・レビューを終える。 |
+| M1 Core | `config/broker_rules.yaml` | Broker Rules Loader/Spread Monitor/Execution Modelが参照するブローカー仕様の正本。 | M1 Coreローンチ前1週間までに整備とレビューを完了し、AC-11サインオフを支援する。 |
 | M1.1 Hardening | `reports/validation_log/AC-*.md` | Validation Data Playbookの証跡として受け入れテストとサインオフを保管。 | M1.1回帰テスト開始の1週間前までにテンプレート整備と初期サインを完了。 |
 | M2 | `data/liquidity_monitor.parquet` | Liquidity Intelligence Serviceの閾値計測・乖離監視データ。 | M2流動性演習（FR-49）に着手する3週間前からデータ取得ジョブを常時稼働させる。 |
 | M2 | `config/emergency.yaml` | Emergency Orchestrator/Reduce-Only Advisorのシナリオとアクション定義。 | M2緊急対応ドリルの初回実施（月次レビュー前）までにドラフトを確定し、Runbook承認を得る。 |
