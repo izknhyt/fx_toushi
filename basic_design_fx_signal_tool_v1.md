@@ -182,15 +182,15 @@
 7. Funding Serviceが`broker_rules.yaml`で定義されたスワップ計算ルールを読み込み、`swap_rates.csv`（M1: 手入力/公開CSV、M2+: ブローカーフィード統合）から当日分のロング/ショートスワップ（Wednesday\_NYの3倍など）を取得し、`FundingCurve`を生成。CLIは`tradectl funding sync`でCSV読み込み、`tradectl funding status`で最新値を照会。
 8. Account Serviceがモード別データソース（Backtest: シミュレーション台帳 / Paper: 仮想約定ログ / Live: ユーザー入力またはブローカーCSV/API）と最新レートを用いてアカウント状態を集計し、`accounts/<broker>/<account_id>.yaml`で定義された複数口座を統合。口座別Rガードと統合R_effを算出して`AccountState`を更新し、未入力口座（`status=manual`）はSignal Boardへ警告を送る。スワップは`FundingCurve`を日次で織り込んだキャッシュフローとして反映し、バックテストでも同一ロジックを適用する（FR-28, FR-58）。
 9. Calendar Serviceが経済指標CSV/休日CSVをUTC基準でロードし、設定された`trading_timezone`（既定:JST）に変換した上で現在時刻に対するブロック/解除ウィンドウを判定して`GateState`を更新。イベント強度に応じた±15/30分の動的拡張ルールもここで適用する。
-10. Feature Engineが差分計算で新規バー分の指標を更新し、必要な区間のみ再計算。
-11. Regime Detectorが最新特徴量からレジームスコアを更新し、ヒステリシスを適用。
-12. Signal Engineが戦略プラグインを順に評価し、候補シグナルを生成。
-13. Execution Modelがヒューマン遅延Δt・Fillモデル（Marketable Limit/IOC）・滑り分布を適用し、想定約定価格・失効条件・コストを補正（FR-27, FR-29, FR-39）。
+10. Feature Engineが差分計算で新規バー分の指標を更新し、必要な区間のみ再計算。M1ベース戦略では5分足のインジケータ更新後に`multi_tf_joiner`が1時間足EMA(55)と日足Zスコアを参照し、`FeatureFrame`へ`ema55_slope`/`htf_bias_zscore`を追加する。
+11. Regime Detectorが最新特徴量からレジームスコアを更新し、ヒステリシスを適用。トレンド/レンジ/高ボラ分類は`ATR_Z`と`ema55_slope`を入力にしてSignal Engineのフィルタ条件へ渡す。
+12. Signal Engineが戦略プラグインを順に評価し、候補シグナルを生成。`m1_baseline_ma_rsi`プラグインは5分足EMA(21/55)クロス＋RSIゾーンの条件に加えて、1時間足EMA(55)の傾きがエントリー方向と一致した場合のみ`RawSignal`を返却し、日足Zスコアは`badges`に反映される。
+13. Execution Modelがヒューマン遅延Δt・Fillモデル（Marketable Limit/IOC）・滑り分布を適用し、想定約定価格・失効条件・コストを補正（FR-27, FR-29, FR-39）。ΔtはM1ベース戦略の検証値（Triangular(30,45,75)秒）をデフォルトとして`execution.adjustments.latency_ms`に埋め込み、Backtest/Paperは遅延後価格を用いたOCO距離を算出する。
 14. Calendar Serviceの`GateState`によりイベントや休日でブロック対象となるシグナルを除外。
 15. Scoring ServiceがM1では`expected_R`と`PF_all`ベースのシンプル重み付けで順位付けし、Spread Monitorがスプレッドクールダウン状態の場合はスコアを減衰（FR-41）。Funding Serviceが`swap_penalty`を供給し、保有期間が長期化するストラテジにはスワップコストをシミュレーション時のスコアに反映する。ハイブリッドスコアとStabilityペナルティは〈M2+〉で有効化し、Feature Flagで切り替える。
 16. Risk Managerが`AccountState`、`BrokerSpecs`、`SpreadMetrics`、`FundingCurve`を参照しつつリスク制約（ドローダウン/連敗/スプレッド上限/マージン/日次スワップ）をチェック。SPRTベースのライブ健全性ガードはM2以降で有効化し、適用時はHealth Monitorへステータスを送信（FR-05, FR-22〈M2+〉, FR-28, FR-36）。
 17. Correlation Guardが通貨バケット相関・シンボル相関行列を評価し、許容度を超えるシグナルを抑制。
-18. Position Sizerが`AccountState`・`BrokerSpecs`・最新レート・スプレッド・Execution Model補正を用いて推奨ロットサイズとOCO値を決定。
+18. Position Sizerが`AccountState`・`BrokerSpecs`・最新レート・スプレッド・Execution Model補正を用いて推奨ロットサイズとOCO値を決定。M1ではATR(14)をpips換算した`atr_pips`から`sl_pips = max(atr_pips×1.2, broker.min_stop_distance)`、`tp_pips = sl_pips×2.0`を導出し、Marketable Limit採用時は`protect_pips`を加算した指値を提示する。結果は`Ticket Builder`へ`oco_recommendation`として渡され、Signal Boardのチケットに根拠（ATR係数/ブローカールール差分）が併記される。
 19. Reduce-Only Advisor（M2+）が`HealthState`とマージン閾値・イベント窓情報から新規提案可否を判断し、必要時は`ReduceOnlyTicket`を生成。M1は同条件での手動レビューのみ。
 20. Ticket Builderが`BrokerSpecs`を用いた桁/最小距離検証、Marketable Limit提示、TTL/ドリフト監視設定、ヒューマンエラーチェックリスト（ダブルチェック/SLTP/OCO）を付与し、Signal Boardへ配信（FR-30, FR-38, FR-39）。
 21. ユーザーがチケットを承認/却下/編集->監査ログ記録。承認後のSL/TP未入力やTTL超過は自動アラート。
@@ -319,6 +319,7 @@
   - 日足（将来拡張）等も同様に`TF_ratio`を用いた集約を準備。
 - Feature Engineは`changed_timeframes`セットを保持し、変化したTFのみテクニカル指標を再計算する。
 - 欠損や遡り更新が発生した場合は影響範囲（例えば1時間足なら直近3本）を再計算し、その他はキャッシュ値を保持する。
+- M1ベース戦略では5分足パーケットと1時間足キャッシュを`data/research/curated/<symbol>/`配下で共通ハッシュ管理し、Backtest時に同一の`multi_tf_joiner`が再利用される。ライブ運用時は直近1時間足バーの確定値が`FeatureFrame.htf_filters`へ差し込まれ、遅延判定（Δt）の補正対象時刻としてExecution Modelへ引き継がれる。
 
 ### 4.3 口座通貨換算ポリシー
 - **リアルタイム評価**: Live/Paperモードでは最新5分足の終値またはブローカー提供のBid/Ask中央値を使用し、`AccountState`内の証拠金・含み損益を口座通貨へ換算。
@@ -454,9 +455,9 @@ symbols:
 | data_provenance | マニフェスト生成・署名・検証 | AssetWriteEvents, HashConfig | Manifest, Signature |
 
 ### 6.1 シグナル・リスク・サイジング連携
-- **Signal Engine**は`StrategyPlugin`抽象基底クラスを介してルール/モデル（FR-04）をロードし、`evaluate(context)`で`RawSignal`を返却。プラグインは`@strategy_plugin(name="donchian_breakout")`などのデコレータ登録。
-- **Execution Model**は`RawSignal`に`ExecutionAdjustments`（滑り補正、Marketable Limit保護幅、IOC有効期限、Human Delay Δt）を付与し、Backtest/Paper/Liveで整合したFill判定を行う（FR-27, FR-29, FR-39）。
-- **Scoring Service**はM1では`BaseScore = α·expected_R + β·PF_all − δ·drawdown_penalty`（既定: α=0.6, β=0.4, δ=0.1）を評価し、単純な期待リターン重み付けでランキングする。ハイブリッドスコア`HybridScore = w_recency·PF_recent + w_global·PF_all − λ·DD_all − γ·(1−Stability)`とStabilityキャッシュは〈M2+〉で有効化し、`scoring.hybrid_enabled` Feature Flagで切り替える。Spread Monitorがクールダウン中の場合はM1/M2いずれも`cooldown_penalty`で減衰させる（FR-41）。
+- **Signal Engine**は`StrategyPlugin`抽象基底クラスを介してルール/モデル（FR-04）をロードし、`evaluate(context)`で`RawSignal`を返却。プラグインは`@strategy_plugin(name="donchian_breakout")`などのデコレータ登録。`m1_baseline_ma_rsi`は`context.features['ema21']`/`['ema55']`/`['rsi14']`/`['ema55_slope']`/`['htf_bias_zscore']`を参照し、IS/OOS検証で固定したパラメータセット（`strategy_manifest.yaml::parameters`）をロードする。評価時に`dataset_hash`が現行Runと不一致の場合は`SignalValidationWarning`を返し、誤ったデータセットでの運用を防ぐ。
+- **Execution Model**は`RawSignal`に`ExecutionAdjustments`（滑り補正、Marketable Limit保護幅、IOC有効期限、Human Delay Δt）を付与し、Backtest/Paper/Liveで整合したFill判定を行う（FR-27, FR-29, FR-39）。M1ではTriangular(30,45,75)秒の疑似遅延を既定とし、ライブ承認ログを`latency_samples.jsonl`へ追記してΔt分布を更新する。遅延後の`delayed_entry_price`を基点にATR由来のSL/TP距離を再計算し、OCO提案へ引き継ぐ。
+- **Scoring Service**はM1では`BaseScore = α·expected_R + β·PF_all − δ·drawdown_penalty`（既定: α=0.6, β=0.4, δ=0.1）を評価し、単純な期待リターン重み付けでランキングする。`PF_all`は`reports/research/m1_baseline/validation_*.md`の値をキャッシュし、`dataset_hash`と`config_hash`が現行Runと一致しない場合は`score_status=pending`で順位から除外する。ハイブリッドスコア`HybridScore = w_recency·PF_recent + w_global·PF_all − λ·DD_all − γ·(1−Stability)`とStabilityキャッシュは〈M2+〉で有効化し、`scoring.hybrid_enabled` Feature Flagで切り替える。Spread Monitorがクールダウン中の場合はM1/M2いずれも`cooldown_penalty`で減衰させる（FR-41）。
 - **Risk Manager**は`RiskPolicy`（per_trade, daily_loss, weekly_loss, SPRT thresholds, margin guard, spread guard）を参照し、Kill SwitchやSPRTフェーズ（FR-05, FR-22, FR-36）に応じて`SignalAction`（allow/defer/block/reduce_only）を出力。
 - **Liquidity Intelligence Service**は`quote_snapshot`ストリームから`LiquiditySnapshot`を作成し、`zscore_spread`/`quote_age_ms`が閾値を超えた場合に`liquidity.alert`をRisk Managerへ送信。Risk Managerは該当シグナルを`HOLD`に設定し、解除時は`liquidity.resume`イベントで再開（FR-49, AC-38）。
 - **Correlation Guard**は`CorrelationMatrix`と`BrokerSpecs`から`R_eff`を計算し（FR-37）、超過時はリスク比重を削減またはシグナル除外。Reduce-Only Advisorへ優先クローズ候補を通知する。
@@ -464,7 +465,7 @@ symbols:
 - **Compliance Validator**は`TradeTickets`候補を受け取り、`broker_rules.yaml`の`max_positions`, `netting`, `fifo`, `leverage_limit`と`risk_policy.yaml`の`profile_limits`を照合。違反時は代替案（Reduce-Only/部分クローズ/サイズ調整）を生成し、承認不可としてTicket Builderへ返却（FR-50, AC-39）。
 - **Capital Allocation Guard**は`AccountState`のエクスポージャとVaR/ESを計算し、`capital_guard.yaml`または`risk_policy.yaml`の閾値と比較。超過時は`rate_limit`をRisk Managerへ渡し、提案頻度や最大サイズを減衰させる（FR-51, AC-40）。解除条件が満たされると`capital_guard.released`イベントを発行。
 - **Reduce-Only Advisor**は`HealthState`/`GateState`/`R_eff`/`free_margin`を監視し、条件一致時にポジション縮小案（Reduce-Only）を生成（FR-42）。
-- **Ticket Builder**は`HumanErrorChecklist`（桁/丸め/TP/SL/OCO/ReduceOnly分類）を評価し、未充足項目はSignal Boardで赤バッジ表示（FR-30, FR-39）。
+- **Ticket Builder**は`HumanErrorChecklist`（桁/丸め/TP/SL/OCO/ReduceOnly分類）を評価し、未充足項目はSignal Boardで赤バッジ表示（FR-30, FR-39）。M1では`oco_recommendation`（ATR倍率・min_stop_distance補正・protect_pips）と`latency_hint_sec`をチケットJSONに含め、Paper/Liveで計測した承認→OCO設定時間を`reports/performance/<mode>/latency_stats.json`へ蓄積しAC-09の判定に利用する。
 - **Data Provenance Service**は`AssetWriteEvents`から`data_manifest.json`と`data_manifest.sig`を更新し、`tradectl data verify`に必要なハッシュ・署名を提供。検証失敗時は`data_provenance.alert`イベントを発火してHealth Monitorへ連携（FR-52, AC-41）。
 
 ## 7. 非機能要件への対応方針
