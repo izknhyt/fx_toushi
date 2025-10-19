@@ -26,6 +26,7 @@
 | GateState | カレンダー、スプレッド、Kill Switch等のブロック条件を統合した状態構造体。 |
 | SpreadCooldownState | Spread Monitorが算出する状態。`normal | watch | cooldown | halt`（M1は`normal`/`cooldown`を使用）。 |
 | HealthState | リスク/データ/コンフィグ健全性を統合した状態。`ok | degraded | soft_stop | hard_stop`。 |
+| BoardMode | Signal Boardの提案挙動。`normal | guarded | halted`。`guarded`はAcceptable Degradation時に主要4ペアのみ承認可、`halted`はKill Switch作動中。 |
 | ModeContext | Backtest/Paper/Liveごとの副作用差分を吸収する実行コンテキスト。 |
 | PipelineStep | ワークフロー各段階が実装する共通インターフェース。`execute(context) -> context`。 |
 | Snapshot | 再起動用ステート（AccountState/OpenTickets/ConfigHash/HealthState/LastBar）。`snapshots/latest/`に保存。 |
@@ -85,6 +86,8 @@
 │  Notification (SMTP, Slack future)           │
 └──────────────────────────────────────────────┘
 ```
+- **M1 Coreスコープガード**: 上記ディレクトリのうち`scoreboard/`, `ideas/`, `ops_readiness/`, `governance/`, `reconciliation/`はM1 Coreではディレクトリ自体を生成せず、必要なIFは`src/domain/governance/contracts.py`などの軽量スタブに限定する。Feature Flag `governance.alpha_scoreboard`等は`False`を既定とし、スタブは`pass`実装＋`logging.getLogger(__name__).info('noop')`に留める。将来有効化時は本設計書に追補する。
+
 
 ### 1.2 レイヤー責務
 - **Application Service**: ランタイム管理（起動/停止/モード切替/Catch-up）、スケジューリング、イベント配信、CLI連携。副作用はEventBus/Alert/Snapshotへ委譲し、Fail-FastでKill Switchに連携する。
@@ -253,6 +256,9 @@ tests/
 | 監査バックアップ | 週次フルバックアップ(外部デバイス) + 日次増分 | 復元テストを月次実施。 |
 
 - 起動スクリプトはプレフライトでPython/Poetryバージョン、ディスク残量、NTP同期、SMTP疎通を検査し、NG項目があれば`HealthState=degraded(preflight)`を設定する。
+- `TimeSyncGuard`は`tradectl preflight`内で`systemsetup -getnetworktimeserver`を確認し、未設定の場合は`config.time.ntp_server`を案内。NTP疎通は`/usr/sbin/sntp -sS <server>`のdry-runで確認し、`clock_drift_ms`が500ms超で`health.changed(reason='clock_out_of_sync')`と`BoardMode=guarded`を発行する。結果は`metrics/time_sync.jsonl`に追記し、偏差が1500ms/3000msで段階的にアラートレベルを引き上げる。
+- ランタイムでは`AsyncIntervalJob`（10分間隔）が同じ検査を実施し、偏差が閾値内に戻った場合は`degraded_recovered`イベントとともに`BoardMode`を`normal`へ自動復帰させる。復帰条件は`clock_drift_ms<200ms`かつ直近30分のNTP応答率100%。
+- Manual CSV取込では`utc_iso`列のタイムゾーンを`pandas.to_datetime(..., utc=True)`で強制し、`ManualCsvReconciler`が`timezone != UTC`を検出した場合は`ManualCsvError(code='clock_mismatch')`で拒否する。拒否ログは`reports/validation_log/AC-45_sla_<date>.md`と`metrics/time_sync.jsonl`へ記録し、再入力要求にはRunbook `RUN-TIME-01`を参照させる。
 - VPN/テザリング使用時はSpread遅延が見込まれるため、`config.provider.timeout_sec`や`retry`値を引き上げ、`AlertDispatcher`でWARNを送信する。
 
 ### 1.8 運用体制・RACI
@@ -303,14 +309,15 @@ tests/
 
 ### 2.5 HealthMonitor / Kill Switch (`src/core/health.py`)
 - **状態遷移**: `ok → degraded → soft_stop → hard_stop`。戻りは手動または自動回復条件で制御。Kill Switchは`RUNNING | STOP`。
+- **BoardMode遷移**: `normal`（既定）→`guarded`（`HealthState=degraded`またはClock/NTP逸脱）→`halted`（Kill Switch stop）。`guarded`では主要4ペアの承認のみ許可し、承認ログに`degraded_ack`が必須。`ResyncCompleted`または`health.resume`で`normal`へ自動復帰。
 - **入力イベント**: `RiskAlert`, `DataQualityAlert`, `SpreadCooldown`, `ConfigRejected`, `SnapshotCorrupted`, `HeartbeatTimeout`。
 - **出力**: `HealthStateChanged`, `KillSwitchChanged`, `AlertEvent`。
 - **SPRT (M2+)**: `SPRTAlert`受信時に`soft_stop`へ移行しReduce-Onlyを発動。
 - **運用対応**: CLI `tradectl status`で理由/解除条件を表示。`--ack <id>`で承認ログを取った後Kill Switch解除可能。
-- **Acceptable Degradation管理**: `health.status=degraded`が**連続3営業日**または**ローリング30日で2回**発生したら`health.escalate`イベントを発火し、Ops ManagerがRunbook `RUN-DATA-05`のEscalationタスクを起動する。`degraded`が**5営業日**超継続または週次KPIレビュー2回連続で未解消の場合は`KillSwitchChanged(mode='hard_stop', reason='data_latency')`を自動発火し、新規シグナルを遮断・手動CSV運用に限定する。復帰時は`catch_up_lag_minutes<10`、`metrics/data_ingestion_sla.jsonl`で`fetch_p95`/`processing_p95`が目標以内、`tradectl benchmark validate-manual`結果が一致——の3条件を満たしたうえで、POとOps Managerのダブルサインを`reports/validation_log/AC-45_sla_<date>.md`へ追記する。
+- **Acceptable Degradation管理**: `health.status=degraded`が発火すると`BoardMode=guarded`へ切り替え、主要4ペアの提案のみを継続する。`board_mode=guarded`中は承認時にダブルチェックと代替ソース選択を必須化し、`audit`へ`degraded_ack`イベントを記録する。`health.status=degraded`が**連続3営業日**または**ローリング30日で2回**発生したら`health.escalate`イベントを発火し、Ops ManagerがRunbook `RUN-DATA-05`のEscalationタスクを起動する。`degraded`が**5営業日**超継続または週次KPIレビュー2回連続で未解消の場合は`KillSwitchChanged(mode='hard_stop', reason='data_latency')`を自動発火し、`BoardMode=halted`で新規シグナルを遮断・手動CSV運用に限定する。復帰時は`catch_up_lag_minutes<10`、`metrics/data_ingestion_sla.jsonl`で`fetch_p95`/`processing_p95`が目標以内、`tradectl benchmark validate-manual`結果が一致——の3条件を満たしたうえで、POとOps Managerのダブルサインを`reports/validation_log/AC-45_sla_<date>.md`へ追記する。
 
 ### 2.6 CLI (`src/interfaces/cli/*.py`)
-- `tradectl board`: EventBus購読でTicket表示。`--filter`, `--view`, `--format json`（将来）を提供。TTL/ドリフトをリアルタイム更新し、Spreadクールダウンやニュースブロック理由をバッジ表示。`RiskMetricsSnapshot`を購読し、`R_eff`超過時はヘッダに赤バナー（`R_eff=2.8 (>2.5)`等）と通貨バケット別エクスポージャ表を表示する。将来のCorrelation Guard本体と整合させるため`correlation_snapshot`ペイロードをそのまま`board`へ受け渡すIFを先行実装し、M1.1ではReduce-Only提案リンクを追加するだけで済む構造とする。
+- `tradectl board`: EventBus購読でTicket表示。`--filter`, `--view`, `--format json`（将来）を提供。TTL/ドリフトをリアルタイム更新し、Spreadクールダウンやニュースブロック理由をバッジ表示。`RiskMetricsSnapshot`を購読し、`R_eff`超過時はヘッダに赤バナー（`R_eff=2.8 (>2.5)`等）と通貨バケット別エクスポージャ表を表示する。Acceptable Degradation中は`BoardMode=guarded`として橙色バナーと代替ソース（dukascopy/yfinance/manual_csv）バッジ、ダブルチェック入力を強制し、承認時に`degraded_ack`イベントを自動追記する。将来のCorrelation Guard本体と整合させるため`correlation_snapshot`ペイロードをそのまま`board`へ受け渡すIFを先行実装し、M1.1ではReduce-Only提案リンクを追加するだけで済む構造とする。
 - `tradectl ticket approve|reject|edit`: `TicketAction`イベントと監査ログ追記。`edit`は複数フィールド同時更新を許可し、バリデーションエラー時は差分と原因を表示。
 - `tradectl status`: HealthState, Kill Switch, Snapshot Hash, SpreadCooldown, 未処理リスクフlagを表示。
 - `tradectl events tail`: event_type絞り込みと`--since`指定。
@@ -412,9 +419,9 @@ tests/
 - **出力**: `HealthStateChanged`, `AlertEvent`（メール送信対象）。
 - **遷移ポリシー更新**: `data_latency_fetch`と`data_latency_processing`を独立評価し、
   - `fetch_delay_p95>config.ingestion.sla.fetch_p95_sec`で`HealthState=degraded(fetch)`へ遷移。`FallbackRetryTask`が成功するか`bar_ready_queue`が安定すると自動で`ok`へ戻る。
-  - `processing_delay_p95>config.ingestion.sla.processing_p95_sec`、もしくは`processing_timeout_sec`超過が連続3回で`HealthState=soft_stop(processing)`としKill Switchを保守。`DataQualityGuard`が`status=reconciled`を連続10バー確認すると解除候補に降格。
+  - `processing_delay_p95>config.ingestion.sla.processing_p95_sec`、もしくは`processing_timeout_sec`超過が連続3回で`HealthState=degraded(reason='data_latency_processing')`とし`BoardMode=guarded`を維持。Kill Switchは維持したまま`ManualCsvIngestionTask`や代替ソース適用が完了するまで監視し、`DataQualityGuard`が`status=reconciled`を連続10バー確認すると解除候補に降格する。
   - 取得が停止し`fetch_gap_sec>config.ingestion.fetch_timeout_sec`のときのみKill Switchへ`STOP(data_feed_unavailable)`を伝搬。処理遅延のみでは`STOP`へ到達しない。
-  - `catch_up_lag_minutes>config.ingestion.catch_up_warn_minutes`が30分超過で`HealthState=degraded(reason='data_latency_catch_up')`、60分超過で`soft_stop(data_latency_catch_up)`に遷移。遷移時はAcceptable Degradation運用へ切替え、Runbook `RUN-DATA-05/06`に沿って代替ソースの投入/解除ログを取得する。`catch_up_lag_minutes<10`が連続3回確認できたら復旧候補とみなす。
+  - `catch_up_lag_minutes>config.ingestion.catch_up_warn_minutes`が30分超過で`HealthState=degraded(reason='data_latency_catch_up')`、60分超過で`board_mode=guarded`を強制。Kill Switchは維持しつつAcceptable Degradation運用へ切替え、Runbook `RUN-DATA-05/06`に沿って代替ソースの投入/解除ログを取得する。`catch_up_lag_minutes<10`が連続3回確認できたら復旧候補とみなし、解除時に`degraded_recovered`イベントへ測定値を添付する。
   - `health.status=degraded`が`business_days_since(last_ok)≥3`または`rolling_30d_degraded_count≥2`を満たした時点で`health.escalate`イベントを発火し、Ops Managerがエスカレーションレビュー（Runbook `RUN-DATA-05`）を開始する。`business_days_since(last_ok)≥5`または週次KPIレビュー2回連続で`degraded`が解消されない場合は自動で`KillSwitchChanged(mode='hard_stop', reason='data_latency')`を送出して新規シグナルを遮断し、手動CSVモードに限定する。復帰は`catch_up_lag_minutes<10`とSLAメトリクス復帰、二重入力CSVハッシュ一致の3条件を満たした上で`tradectl health ack`により完了ログを記録する。
 - **メトリクス**: `health_state_transitions.jsonl`に`reason`, `phase`, `prev_state`, `next_state`, `trigger_metric`を記録し、`make sla-report`がData Ingestion遅延メトリクスと突合する。Kill Switch発火は`kill_switch_events.jsonl`に別途記録し、不要なSTOP判定をレビューできるようにする。
 
@@ -720,14 +727,14 @@ class GateState:
 19. `SnapshotManager.maybe_persist`（`config.snapshot.interval_bars`ごと）。
 
 ### 5.3 Kill Switch / Health State遷移
-- `ok → degraded`: Spread/Funding欠損、軽微なデータ欠損。新規シグナルは継続。
-- `degraded → soft_stop`: 日次損失, 連続エラー, Heartbeat断、Manual stop。新規シグナル停止、Reduce-Only準備。
+- `ok → degraded`: Spread/Funding欠損、軽微なデータ欠損、NTPドリフト検知。`BoardMode=guarded`で主要4ペアのみ承認継続。
+- `degraded → soft_stop`: 日次損失, 連続エラー, Heartbeat断、Manual stopなどリスクイベント。データ遅延のみでは遷移せず、Kill Switchを`STOP`にして新規シグナル停止・Reduce-Only準備。
 - `soft_stop → hard_stop`: 監査ログ書込失敗、データ破損など重大障害。全処理停止。
 - `解除条件`: 原因解消後にCLIで`ack`しKill Switch `STOP → RUNNING`。`hard_stop`解除は再起動必須。
 | from | to | トリガー | 自動アクション | 解除条件 |
 | --- | --- | --- | --- | --- |
-| ok | degraded | Spreadデータ欠損、軽微なDataQualityAlert、SchedulerLagWarning | `HealthState=degraded`, メールWARN, 新規シグナル継続 | 自動（回復検知）またはオペレータ確認 |
-| degraded | soft_stop | 日次/週次ドローダウン閾値超、SpreadCooldown長期化、HeartbeatTimeout、手動`tradectl killswitch stop` | 新規シグナル停止、Reduce-Only準備、Kill Switch=STOP | CLIで`ack`し原因解消を記録 |
+| ok | degraded | Spreadデータ欠損、軽微なDataQualityAlert、NTPドリフト、SchedulerLagWarning | `HealthState=degraded`, `BoardMode=guarded`, メールWARN, 主要4ペアのみ承認継続 | 自動（回復検知）またはオペレータ確認 |
+| degraded | soft_stop | 日次/週次ドローダウン閾値超、SpreadCooldown長期化、HeartbeatTimeout、手動`tradectl killswitch stop` | 新規シグナル停止、Reduce-Only準備、Kill Switch=STOP (`BoardMode=halted`) | CLIで`ack`し原因解消を記録 |
 | soft_stop | hard_stop | AuditWriter失敗、Snapshot破損、Config不整合、重大例外 | 全イベント停止、Alert CRITICAL送信、再起動待ち | 原因除去後にプロセス再起動しResync完了 |
 | any | ok | 手動`ack` + 状態確認 | 新規シグナル再開、Alert履歴更新 | `HealthMonitor.ack`でアラートクローズ |
 
@@ -852,6 +859,12 @@ Kill Switch解除 & Scoreboard閾値通常運用へ復帰
 ```
 
 ### 5.13 ステートメント照合→Kill Switch条件（AC-53, FR-64）
+### 5.14 パフォーマンス計測とSLA検証（NFR-01/AC-05）
+1. **パイプライン計測**: `core/workflow.py`で`perf_counter_ns`を用いて`on_bar_in`→`features_ready`→`signal_ranked`→`ticket_emitted`→`board_render`の区間ごとにメトリクスを取得。`metrics/pipeline.jsonl`へ`{"phase":"bar_to_board","elapsed_ms":...,"board_mode":...}`を追記し、`BoardMode=guarded`時も計測を継続する。
+2. **CLI応答計測**: `interfaces/cli/board.py`と`tickets.py`に`@measure_cli_latency`デコレータを実装し、`metrics/cli_perf.jsonl`へ`render_ms`/`fetch_ms`/`persist_ms`を記録。`p95(render_ms)<100ms`, `p99<180ms`、`board_mode=guarded`中は`p95<140ms`を閾値とする。`tools/measure_cli_perf.py`で自動測定し、CIジョブ`perf-check`で週次実行。
+3. **テスト**: `tests/perf/test_pipeline_latency.py`がメトリクスJSONLを解析し、直近500サンプルのp95/p99が閾値未満か検証。失敗時は`pytest`失敗とし、`docs/runbooks/RUN-PERF-01.md`に貼り付けるスパークラインを`tools/render_perf_chart.py`で再生成。
+4. **レポート生成**: `tradectl metrics report --kind latency --window 7d`が`metrics/pipeline.jsonl`/`metrics/cli_perf.jsonl`を集計し、`reports/performance/pipeline_latency/<YYYYMMDD>.md`へ`board_mode`別統計とSLA逸脱ログを出力。Acceptable Degradation解除時は同コマンドの出力を`degraded_recovered`イベントに添付する。
+
 ```
 Operator or Scheduler(job=reconciliation_daily)
     │ `tradectl reconcile statements --from <date>` / 日次トリガ
