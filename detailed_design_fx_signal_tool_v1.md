@@ -335,14 +335,15 @@ tests/
 以下、主要サービスごとに公開API・入力/出力・主アルゴリズム・エラーハンドリング・設定項目を記載する。
 
 ### 3.1 DataIngestionService (`src/data/service.py`)
-- **公開API**: `fetch_latest(symbols, timeframe)`, `backfill(symbols, timeframe, start, end)`, `warm_cache()`。
-- **入力**: `MarketRequest`（symbol, timeframe, start, end, provider_priority）、`config.provider.*`。
-- **出力**: `MarketFrame`（5分/1時間）。1時間足は5分足を集約して生成。
-- **アルゴリズム**: Cacheヒット確認→TTL超過時再取得→`ProviderFallbackPolicy`でyfinance→Dukascopy→CSVの順にフェイルオーバ。取得データはUTC整列し`quality_flag`初期化。
-- **エラーハンドリング**: Provider失敗で`ProviderError`→自動フォールバック。全失敗で`DataSourceDown`→`HealthMonitor.degraded`。再取得不能区間は欠損として扱い、Signal生成前に`DataGapWarning`を発火。
-- **設定**: `config.cache.ttl_hours`, `config.provider.retry`, `config.provider.timeout_sec`。
-- **遅延メトリクス**: プロバイダ別に`latency_sec = (now_utc - last_provider_update_ts).total_seconds()`を計算し、Prometheusへ`data_ingestion_latency_seconds{symbol,provider}`としてエクスポート。さらに`provider_slack_ratio = latency_sec / timeframe_sec`を算出して`>0.08`（5分足で24秒相当）を既定閾値とし、超過時は`HealthMonitor.raise('degraded','data_latency')`を実行する。閾値は`config.provider.max_latency_ratio`で調整可能。
-- **Runbook連携**: 遅延アラート発生時はEventBusで`ingestion.latency_exceeded`を発火し、Runbook手順`RUN-DATA-05`（手動再取得）を通知。完了後は`tradectl data verify --symbol <symbol>`で補填を確認し、`RUN-POST-03`に従って事後レビュー（原因/再発防止）を`logs/ops/review.log`へ追記する。
+- **公開API**: `fetch_latest(symbols, timeframe)`, `backfill(symbols, timeframe, start, end)`, `warm_cache()`に加え、起動/停止時に`spawn_provider_workers()`/`drain_buffers()`を呼び出す。
+- **入力**: `MarketRequest`（symbol, timeframe, start, end, provider_priority）、`config.provider.*`、`config.ingestion.buffer_maxsize`、`config.ingestion.buffer_timeout_sec`。
+- **出力**: `MarketFrame`（5分/1時間）。1時間足は5分足を集約して生成し、**整合済みバーのみ**が`Workflow Orchestrator`の`bar_ready_queue`へ投入される。
+- **アルゴリズム**: symbol×provider単位で`asyncio.Queue(maxsize>1)`を保持し、`ProviderFetchWorker`がAPI取得→生データをキューへ投入。`ProviderParseWorker`が内部`AsyncBuffer`で整形・UTC整列し、`DataQualityGuard`チェック合格までバッファに保持する。`BufferCoordinator`が`Queue.get()`にタイムアウトを付与し、取得/パースが滞留した場合は`fetch_delay`と`processing_delay`を分離記録する。フォールバックは`ProviderFallbackPolicy`が**再試行間隔と手動CSV移行をそれぞれ`FallbackRetryTask`/`ManualCsvIngestionTask`へ委譲**し、メインパイプラインから分離する。
+- **内部バッファ**: `AsyncBufferSlot`は最新バーと`quality_flag`を保持し、Quality Guardで`status=reconciled`となったものだけが`bar_ready_queue`へコミットされる。未整合バーは`AsyncBuffer`内で再検証するため、シグナル側での欠損判定は不要。
+- **エラーハンドリング**: Provider失敗で`ProviderError`→`FallbackRetryTask`が指数バックオフで再取得をスケジュール。全失敗で`DataSourceDown`→`HealthMonitor.degraded(fetch_delay)`。パース失敗やQuality Guard不合格は`processing_delay`として記録され、`processing_timeout`超過時にのみKill Switchへ伝搬する。
+- **設定**: `config.cache.ttl_hours`, `config.provider.retry`, `config.provider.timeout_sec`, `config.ingestion.buffer_maxsize`, `config.ingestion.fetch_timeout_sec`, `config.ingestion.processing_timeout_sec`。
+- **遅延メトリクス**: `fetch_delay_sec = (queue_enqueue_ts - request_ts)`、`processing_delay_sec = (bar_ready_ts - queue_enqueue_ts)`を算出し、`metrics/data_ingestion_sla.jsonl`に`phase=fetch|processing`ラベルで記録。閾値（既定: fetch≤18秒、processing≤12秒）は`config.ingestion.sla.fetch_p95_sec`/`config.ingestion.sla.processing_p95_sec`で制御し、超過時は`HealthMonitor.raise('degraded','data_latency_fetch|process')`を行う。Prometheus Exporterでは`data_ingestion_delay_seconds{phase,symbol,provider}`として公開。
+- **Runbook連携**: 遅延アラート発生時はEventBusで`ingestion.latency_exceeded`を発火し、Runbook手順`RUN-DATA-05`（フォールバック調整）/`RUN-DATA-06`（手動補填）を通知。`FallbackRetryTask`/`ManualCsvIngestionTask`の完了を`tradectl data jobs --pending`で確認し、`make sla-report`出力（`reports/validation_log/AC-45_sla_<date>.md`）と合わせて`RUN-POST-03`に従い事後レビュー（原因/再発防止）を`logs/ops/review.log`へ追記する。
 
 ### 3.2 DataQualityGuard (`src/data/quality.py`)
 - **公開API**: `validate(frame)`, `report()`, `compare(reference_series)`。
@@ -403,6 +404,11 @@ tests/
 - **公開API**: `raise(level, reason)`, `snapshot()`, `ack(alert_id)`。
 - **入力**: Risk/Data/Config/Spread/Funding/Heartbeat/Manual。`alert_id`を生成しCLIで承認。
 - **出力**: `HealthStateChanged`, `AlertEvent`（メール送信対象）。
+- **遷移ポリシー更新**: `data_latency_fetch`と`data_latency_processing`を独立評価し、
+  - `fetch_delay_p95>config.ingestion.sla.fetch_p95_sec`で`HealthState=degraded(fetch)`へ遷移。`FallbackRetryTask`が成功するか`bar_ready_queue`が安定すると自動で`ok`へ戻る。
+  - `processing_delay_p95>config.ingestion.sla.processing_p95_sec`、もしくは`processing_timeout_sec`超過が連続3回で`HealthState=soft_stop(processing)`としKill Switchを保守。`DataQualityGuard`が`status=reconciled`を連続10バー確認すると解除候補に降格。
+  - 取得が停止し`fetch_gap_sec>config.ingestion.fetch_timeout_sec`のときのみKill Switchへ`STOP(data_feed_unavailable)`を伝搬。処理遅延のみでは`STOP`へ到達しない。
+- **メトリクス**: `health_state_transitions.jsonl`に`reason`, `phase`, `prev_state`, `next_state`, `trigger_metric`を記録し、`make sla-report`がData Ingestion遅延メトリクスと突合する。Kill Switch発火は`kill_switch_events.jsonl`に別途記録し、不要なSTOP判定をレビューできるようにする。
 
 ### 3.10 CorrelationGuard (`src/risk/correlation_guard.py`, `src/account/exposure.py`)
 - **公開API**: `filter(signals, account_state, correlation_matrix)`。
@@ -503,11 +509,11 @@ tests/
 - **SQLite (拡張)**: `logs/audit.db`にテーブルを保持（M1 optional, M2+で強化）。
 
 ### 3.21 Metrics & Telemetry (`src/infra/metrics.py`)
-- **収集対象**: パイプライン処理時間、SpreadCooldown滞留時間、Kill Switch遷移、CLIレスポンス。
-- **フォーマット**: JSON Lines (`metrics/pipeline.jsonl`, `metrics/cli_perf.jsonl`)でローリング1日ごとにローテーション。レコードは`ts, metric, value, labels`を共通スキーマとする。
+- **収集対象**: パイプライン処理時間、SpreadCooldown滞留時間、Kill Switch遷移、CLIレスポンス、**Data Ingestionのfetch/processing遅延**。
+- **フォーマット**: JSON Lines (`metrics/pipeline.jsonl`, `metrics/cli_perf.jsonl`, `metrics/data_ingestion_sla.jsonl`)でローリング1日ごとにローテーション。レコードは`ts, metric, value, labels`を共通スキーマとし、Data Ingestionは`metric=data_ingestion_delay_sec`、`labels={phase,provider,symbol}`を付与する。
 - **M1出力経路**: `JSONLMetricsWriter`がバックグラウンドワーカーで書き込み、`tradectl metrics report --window 24h`がJSONLから集計してMarkdown/JSONサマリーを`reports/metrics/<timestamp>/summary.{md,json}`へ出力（Runbook添付用）。
 - **Exporterインターフェース**: `PrometheusExporter`クラスを定義し`register_histogram/register_gauge`でメトリクスを登録できるようにするが、M1では`start_http()`はFeature Flag無効時にNo-OpとなりHTTPサーバを起動しない。M2で`127.0.0.1:9108/metrics`を公開する実装を追加予定。
-- **アラート**: 閾値（pipeline p95>250ms, spread mismatch>5%）超過で`AlertDispatcher`へ通知し、CLIにもWARNを表示する。
+- **アラート**: 閾値（pipeline p95>250ms, spread mismatch>5%, fetch_delay_p95>fetch目標, processing_delay_p95>processing目標）超過で`AlertDispatcher`へ通知し、CLIにもWARNを表示する。
 
 ### 3.22 依存ライブラリとバージョン管理
 - **パッケージ管理**: Poetry (Python 3.11)。`pyproject.toml`に厳格バージョンとハッシュ (`poetry.lock`) を保持し、`poetry install --no-root`を標準化。
