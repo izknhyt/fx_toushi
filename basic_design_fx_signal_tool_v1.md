@@ -256,7 +256,7 @@
 12. Execution Modelがヒューマン遅延Δt・Fillモデル（Marketable Limit/IOC）・滑り分布を適用し、想定約定価格・失効条件・コストを補正（FR-27, FR-29, FR-39）。ΔtはM1ベース戦略の検証値（Triangular(30,45,75)秒）をデフォルトとして`execution.adjustments.latency_ms`に埋め込み、Backtest/Paperは遅延後価格を用いたOCO距離を算出する。〔M1.1〕[^ms-hardening]
 13. Calendar Serviceの`GateState`によりイベントや休日でブロック対象となるシグナルを除外。〔M1〕[^ms-core]
 14. Scoring ServiceがM1では`expected_R`と`PF_all`ベースのシンプル重み付けで順位付けし、Spread Monitorがスプレッドクールダウン状態の場合はスコアを減衰（FR-41）。Funding Serviceが`swap_penalty`を供給し、保有期間が長期化するストラテジにはスワップコストをシミュレーション時のスコアに反映する。ハイブリッドスコアとStabilityペナルティは〈M2+〉で有効化し、Feature Flagで切り替える。〔M1〕[^ms-core]
-15. Risk Managerが`AccountState`、`BrokerSpecs`、`SpreadMetrics`、`FundingCurve`を参照しつつリスク制約（ドローダウン/連敗/スプレッド上限/マージン/日次スワップ）をチェック。SPRTベースのライブ健全性ガードはM2以降で有効化し、適用時はHealth Monitorへステータスを送信（FR-05, FR-22〈M2+〉, FR-28, FR-36）。〔M1〕[^ms-core] Paper 90日評価では**1トレード0.75%リスク＋日次-3%/週次-6%停止**の組み合わせが提案頻度を阻害しないかを週次ダッシュボードで再計算し、連敗即日停止が発生した場合は`reports/diagnostics/risk/`にドリフト分析とReduce-Only暫定運用（§6.1）を添付する。
+15. Risk Managerが`AccountState`、`BrokerSpecs`、`SpreadMetrics`、`FundingCurve`を参照しつつリスク制約（ドローダウン/連敗/スプレッド上限/マージン/日次スワップ）をチェック。SPRTベースのライブ健全性ガードはM2以降で有効化し、適用時はHealth Monitorへステータスを送信（FR-05, FR-22〈M2+〉, FR-28, FR-36）。〔M1〕[^ms-core] Paper 90日評価では**1トレード0.75%リスク＋日次-2.5%/週次-5%停止**の組み合わせが提案頻度を阻害しないかを週次ダッシュボードで再計算し、連敗即日停止が発生した場合は`reports/diagnostics/risk/`にドリフト分析とReduce-Only暫定運用（§6.1）を添付する。
 16. Correlation Guardが通貨バケット相関・シンボル相関行列を評価し、許容度を超えるシグナルを抑制。〔M1.1〕[^ms-hardening]
 17. Position Sizerが`AccountState`・`BrokerSpecs`・最新レート・スプレッド・Execution Model補正を用いて推奨ロットサイズとOCO値を決定。M1ではATR(14)をpips換算した`atr_pips`から`sl_pips = max(atr_pips×1.2, broker.min_stop_distance)`、`tp_pips = sl_pips×2.0`を導出し、Marketable Limit採用時は`protect_pips`を加算した指値を提示する。結果は`Ticket Builder`へ`oco_recommendation`として渡され、Signal Boardのチケットに根拠（ATR係数/ブローカールール差分）が併記される。〔M1〕[^ms-core]
 18. Ticket Builderが`BrokerSpecs`を用いた桁/最小距離検証、Marketable Limit提示、TTL/ドリフト監視設定、ヒューマンエラーチェックリスト（ダブルチェック/SLTP/OCO）を付与し、Signal Boardへ配信（FR-30, FR-38, FR-39）。〔M1.1〕[^ms-hardening]
@@ -787,7 +787,7 @@ project_root/
 | --- | --- | --- | --- |
 | データパイプライン健全性 | `data_manifest`に全資産のハッシュが記録され、`data verify`で改ざん検知が0件 | §2.1 Data Provenance Service, §7.3 | AC-01, AC-22, AC-42, AC-45 |
 | KPI指標整合性 | Reporter出力と`reports/kpi_snapshots.json`の乖離≤0.1% | §2.1 Reporter, §7.1 | AC-01, AC-05, AC-08 |
-| リスク/Kill Switch | 1%リスク設定で`Risk Manager`が日次-3%/週次-6%到達時に`soft_stop`遷移し再開は手動承認のみ | §6.1 Risk Manager, §9 | AC-03, AC-21 |
+| リスク/Kill Switch | 0.75%リスク設定で`Risk Manager`が日次-2.5%/週次-5%到達時に`soft_stop`遷移し再開は手動承認のみ | §6.1 Risk Manager, §9 | AC-03, AC-21 |
 | HITL操作 | 100件操作ログから重大入力ミス0、監査イベント`ticket.approved/rejected`と一致 | §3 ユースケース, §6 Ticket Builder | AC-02, AC-10, AC-20 |
 | スナップショット復旧 | `snapshots/latest/`復元後に未処理チケットと`HealthState`が一致し、再稼働後に提案が再開 | §2.2 Snapshot Manager, §7.4 | AC-04, AC-18 |
 | アラート/通知 | Spreadクールダウン・データ遅延・Kill Switchでメール通知が確認できる | §2.2 Health Monitor, Alert Dispatcher | AC-34, AC-45 |
