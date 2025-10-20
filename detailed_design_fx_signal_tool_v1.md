@@ -1,7 +1,7 @@
-# FXヒューマン・インザループ投資ツール 詳細設計書 v1.8
+# FXヒューマン・インザループ投資ツール 詳細設計書 v1.9
 
 ## 0. 文書情報
-- 作成日: 2025-02-20
+- 作成日: 2025-02-25
 - 作成者: Codex AI 支援
 - 参照文書: 要件定義（テンプレ形式）v_1.md, basic_design_fx_signal_tool_v1.md
 - 対象スコープ: マイルストーンM1（Backtest/Paper/Live 共通基盤）。M2以降で有効化される機能は拡張ポイントとして明示し、実装フックと制約を記載する。
@@ -9,6 +9,7 @@
 ### 0.1 改訂履歴
 | 版 | 日付 | 改訂概要 |
 | --- | --- | --- |
+| v1.9 | 2025-02-25 | 要件v1.4/基本設計v1.4の差分（RateLimitGuard段階評価、Acceptable Degradation手動運用ログ、Validation Data Playbookリンク強化）を反映。Codex実装前提のプロンプト/テスト指示を更新し、SLA計測とRunbookトレーサビリティを拡充。 |
 | v1.8 | 2025-02-20 | Codex実装前提の開発オペレーション/プロンプト設計/テストシナリオを体系化。ヒューマン・トレーダー視点の期待KPI/UXと整合させた。 |
 | v1.7 | 2025-02-20 | KPI検証/性能モニタリング強化、戦略ガバナンス、データ品質上限対策、運用冗長化を追補し、勝率達成への実効性を高めた。 |
 | v1.6 | 2025-02-20 | 運用責任分掌、BCP/DR指針、QAゲート、リスクログ、サポートツール等を追補し、プロジェクト/運用一体の整合を強化。 |
@@ -95,7 +96,7 @@
 #### 0.6.3 実装優先度マトリクス（M1）
 | トラック | 主担当モジュール | Codex作業エピック | 期待成果物 | 受入基準 |
 | --- | --- | --- | --- | --- |
-| データSLA | `src/data/service.py`, `src/data/quality.py` | `EP-01 DataLag Mitigation` | Fetch/Processing遅延計測・フォールバック導線強化 | `metrics/data_ingestion_sla.jsonl`のp95が閾値内、`tests/integration/test_data_pipeline.py`合格 |
+| データSLA | `src/data/service.py`, `src/data/quality.py`, `src/data/rate_limit.py` | `EP-01 DataLag Mitigation` | Fetch/Processing遅延計測・フォールバック導線強化＋RateLimitステージ運用 | `metrics/data_ingestion_sla.jsonl`のp95が閾値内、`metrics/rate_limit_window.jsonl`にStage記録が残る、`tests/integration/test_data_pipeline.py`と`tests/unit/test_rate_limit_guard.py`合格 |
 | シグナル | `src/features/pipeline.py`, `src/strategies/registry.py` | `EP-02 Strategy Determinism` | 特徴量リプレイ一致、戦略プラグインの決定論テスト | Backtest/Liveで同一入力→同一出力、`pytest -k strategy_determinism`合格 |
 | リスク/ヘルス | `src/core/health.py`, `src/risk/manager.py` | `EP-03 Guardrails` | Kill Switch/Board Mode遷移ロジック、リスクアラート配線 | 状態遷移テスト（`tests/unit/test_health_state.py`）合格、CLI `tradectl status`に理由表示 |
 | チケットUX | `src/ticket/builder.py`, `src/interfaces/cli/board.py` | `EP-04 Ticket Clarity` | チケットJSON整形、チェックリスト/バッジ表示、監査ログ項目 | `pytest -k ticket_builder`合格、サンプルCLIスナップショット承認 |
@@ -187,6 +188,7 @@ src/
     snapshot.py          # SnapshotManager
   data/
     service.py           # DataIngestionService
+    rate_limit.py        # RateLimitGuard & PollingStageEvaluator（M1 Core: 手動段階評価, M1.1+: 自動化再検討）
     cache.py             # Parquet/Arrowキャッシュ
     quality.py           # DataQualityGuard
     providers/
@@ -393,6 +395,8 @@ tests/
   - `jobs --pending/--all`: `ManualCsvIngestionTask`キューの状態を表示し、`ManualCsvReconciler`が未完了のシグナル（`status=pending_review`）を強調。Runbook `RUN-DATA-05.step3`で要求される「手動補填中の通貨ペア一覧」をCLI出力から転記できるよう、`--export-json`で`reports/validation_log/manual_jobs_<date>.json`を生成する。
   - `manual-report --date <YYYY-MM-DD> [--provider <name>] [--symbol <pair>] [--attach <path>]`: `ManualCsvReconciler.generate_report()`を呼び出し、`ManualCsvIngestionTask`のレビュー履歴と検証結果を集約したMarkdownを`reports/validation_log/manual_summary_<YYYYMMDD>.md`へ作成。Runbook `RUN-DATA-06.step6`のチェックボックスと、Opsワークロードログ（`ops_worklog.jsonl`）へ`{"task":"manual_fallback_review","duration_min":<入力値>}`を追記する。`--attach`で外部根拠ファイルを`reports/validation_log/attachments/`にコピーし、パスをレポート末尾に挿入する。
   - `hash --path <dir>`: 双子CSVのSHA256ダイジェストと、時刻/価格列の差分サマリを表示。`ManualCsvReconciler.compute_hash_pair()`を直接実行し、`ManualCsvIngestionTask`が参照する`manual_hash.json`を更新。`RUN-DATA-06.step3`完了時にCLIが`reports/validation_log/hash_audit_<provider>_<symbol>_<YYYYMMDD>.json`を保存し、Runbookチェックリストへ添付すべきファイルパスを標準出力へ明示する。
+  - `rate-limit stage inspect [--provider <name>] [--window <hours>]`: `RateLimitGuard.snapshot()`を読み込み、現在のStage/429発生率/連続カウント/推奨ステージを表形式で表示。`--window`指定でローリング評価期間（既定24h）を変更する。Acceptable Degradation宣言中は警告バナーと`RUN-DATA-05#rate_limit_guard`リンクを表示する。
+  - `rate-limit stage set <stage> --provider <name> --reason <text> [--dry-run]`: Stage変更提案の適用。`--dry-run`時は`RateLimitSuggestion`との乖離を表示し、Exit code 3で差異有りを通知。実際の変更時はRunbookチェックリストIDと操作者イニシャルを入力させ、`logs/audit/rate_limit.jsonl`と`metrics/rate_limit_window.jsonl`へ記録する。Stage変更後に`ProviderFetchWorker`へ再設定イベントをブロードキャストし、手動CSVキューが存在する場合は警告する。
 - `tradectl ticket approve|reject|edit`: `TicketAction`イベントと監査ログ追記。`edit`は複数フィールド同時更新を許可し、バリデーションエラー時は差分と原因を表示。
 - `tradectl status`: HealthState, Kill Switch, Snapshot Hash, SpreadCooldown, 未処理リスクフlagを表示。
 - `tradectl events tail`: event_type絞り込みと`--since`指定。
@@ -422,12 +426,29 @@ tests/
 - **入力**: `MarketRequest`（symbol, timeframe, start, end, provider_priority）、`config.provider.*`、`config.ingestion.buffer_maxsize`、`config.ingestion.buffer_timeout_sec`。
 - **出力**: `MarketFrame`（5分/1時間）。1時間足は5分足を集約して生成し、**整合済みバーのみ**が`Workflow Orchestrator`の`bar_ready_queue`へ投入される。
 - **アルゴリズム**: symbol×provider単位で`asyncio.Queue(maxsize>1)`を保持し、`ProviderFetchWorker`がAPI取得→生データをキューへ投入。`ProviderParseWorker`が内部`AsyncBuffer`で整形・UTC整列し、`DataQualityGuard`チェック合格までバッファに保持する。`BufferCoordinator`が`Queue.get()`にタイムアウトを付与し、取得/パースが滞留した場合は`fetch_delay`と`processing_delay`を分離記録する。フォールバックは`ProviderFallbackPolicy`が**再試行間隔と手動CSV移行をそれぞれ`FallbackRetryTask`/`ManualCsvIngestionTask`へ委譲**し、メインパイプラインから分離する。
+- **RateLimit制御**: すべての取得リクエストは`RateLimitGuard.acquire(provider, symbol)`を経由し、段階別トークンバケット（§3.1.1）で発行する。`acquire`は`PollStage`に応じたジッター付きディレイ（Stage0: `Uniform[12,15]`sec, Stage1: `Uniform[11,14]`sec, Stage2: `Uniform[10,12]`sec）を算出し、取得ジョブへawaitさせる。429/403検知時は`RateLimitGuard.observe(rate_limit_event)`を呼び、ローリング1hの発生率/連続回数を更新する。
 - **ManualCsvIngestionTask**: `data/manual_fallback/<provider>/<symbol>/<YYYYMMDD>/fallback_<provider>_<symbol>_<tf>_<YYYYMMDD>_{op,review}.csv`の双子入力を必須とし、`ManualCsvReconciler`が差分チェック・SHA256ハッシュ生成・承認者イニシャル検証を実施。ハッシュ一致とRunbook `RUN-DATA-06`の承認チェックが完了するまで`bar_ready_queue`への投入をブロックし、`reports/benchmark/manual_log_signoff/<YYYYMMDD>.md`と`logs/ops/manual_csv.log`へ証跡を残す。CLI `tradectl benchmark validate-manual --path data/manual_fallback/<provider>/<symbol>/<YYYYMMDD>/`が検証コマンドとして実装され、非一致時はExit code 120でKPI更新を抑止する。
 - **内部バッファ**: `AsyncBufferSlot`は最新バーと`quality_flag`を保持し、Quality Guardで`status=reconciled`となったものだけが`bar_ready_queue`へコミットされる。未整合バーは`AsyncBuffer`内で再検証するため、シグナル側での欠損判定は不要。
 - **エラーハンドリング**: Provider失敗で`ProviderError`→`FallbackRetryTask`が指数バックオフで再取得をスケジュール。全失敗で`DataSourceDown`→`HealthMonitor.degraded(fetch_delay)`。パース失敗やQuality Guard不合格は`processing_delay`として記録され、`processing_timeout`超過時にのみKill Switchへ伝搬する。
 - **設定**: `config.cache.ttl_hours`, `config.provider.retry`, `config.provider.timeout_sec`, `config.ingestion.buffer_maxsize`, `config.ingestion.fetch_timeout_sec`, `config.ingestion.processing_timeout_sec`。
 - **遅延メトリクス**: `fetch_delay_sec = (queue_enqueue_ts - request_ts)`、`processing_delay_sec = (bar_ready_ts - queue_enqueue_ts)`を算出し、`metrics/data_ingestion_sla.jsonl`に`phase=fetch|processing`ラベルで記録。閾値（既定: fetch≤18秒、processing≤12秒）は`config.ingestion.sla.fetch_p95_sec`/`config.ingestion.sla.processing_p95_sec`で制御し、超過時は`HealthMonitor.raise('degraded','data_latency_fetch|process')`を行う。Prometheus Exporterでは`data_ingestion_delay_seconds{phase,symbol,provider}`として公開。
 - **Runbook連携**: 遅延アラート発生時はEventBusで`ingestion.latency_exceeded`を発火し、Runbook手順`RUN-DATA-05`（フォールバック調整）/`RUN-DATA-06`（手動補填）を通知。`FallbackRetryTask`/`ManualCsvIngestionTask`の完了を`tradectl data jobs --pending`で確認し、二重入力CSVは`tradectl benchmark validate-manual`の結果（ハッシュ一致・承認サイン）をRunbookチェックリストへ添付する。`make sla-report`出力（`reports/validation_log/AC-45_sla_<date>.md`）と合わせて`RUN-POST-03`に従い事後レビュー（原因/再発防止）を`logs/ops/review.log`へ追記する。
+
+#### 3.1.1 RateLimitGuard & Polling Stage Evaluator (`src/data/rate_limit.py`)
+- **目的**: 無償フィード(yfinance)の帯域制限を管理し、429/403レートリミット発生率を監視したうえで段階的ポーリング間隔（Stage0/1/2）を手動で運用する。自動遷移はM1.1以降の検討事項とし、M1 Coreでは測定・提案・Runbookログ連携に徹する。
+- **公開API**: `acquire(provider, symbol) -> Awaitable[None]`, `observe(event: RateLimitEvent)`, `snapshot() -> RateLimitSnapshot`, `set_stage(provider, stage, actor)`, `suggest_stage(provider) -> RateLimitSuggestion`, `record_manual_action(provider, stage, actor, reason)`。
+- **内部構造**: `RateLimitState`（`stage`, `tokens_per_minute`, `burst_tokens`, `jitter_range`, `rolling_1h_429_rate`, `consecutive_429`, `last_stage_change_ts`, `manual_actor`, `manual_reason`）をprovider単位で保持。`TokenBucket`は`tokens_per_minute`と`burst_tokens`から初期化し、`acquire`時に即時消費できない場合はStageごとのジッターを適用してawaitする。
+- **ステージ定義**:
+  | Stage | ポーリング間隔分布 | `tokens_per_minute` | `burst_tokens` | 昇格基準（手動適用条件） | 退行基準 | 備考 |
+  | --- | --- | --- | --- | --- | --- | --- |
+  | 0 | `Uniform[12,15]` 秒 | 20 | 5 | 初期状態。7日間連続稼働し、ローリング1hの429発生率≤1.0%、連続429<3回を確認。 | 429率>1.5% または連続429≥3回 | Acceptable Degradation判定時はこのStageに戻す。 |
+  | 1 | `Uniform[11,14]` 秒 | 24 | 6 | Stage0条件を満たしOpsレビューで承認後。レビューではRunbook `RUN-DATA-05`の`rate_limit_stage_eval`チェックを完了し、`metrics/rate_limit_window.jsonl`の統計を添付。 | 同上（閾値越えで即座にStage0へ戻す） | Stage1は最長14秒を維持し429率が低い場合のみ暫定許可。 |
+  | 2 | `Uniform[10,12]` 秒 | 30 | 8 | Stage1で7日間連続基準内、かつOps/POダブルサイン済み。 | 429率>1.2% または連続429≥2回 | Stage2はPoC用途。Acceptable Degradationでは必ずStage0へロールバック。 |
+- **評価ロジック**: `RateLimitGuard.observe`は429/403イベントを`RateLimitWindow`へ累積し、1分バケットで`rolling_1h_429_rate`と`consecutive_429`を更新。`RateLimitStageEvaluator`（Scheduler 15分間隔ジョブ）が`snapshot()`を読み取り、昇格/退行条件を判定して`RateLimitSuggestion`（`suggested_stage`, `reason`, `metrics_summary`）を生成する。提案はEventBus `rate_limit.suggest_stage`にpublishし、CLI/メールで通知する。
+- **メトリクス/監査**: `metrics/rate_limit_window.jsonl`に`{ts, provider, stage, tokens_remaining, rolling_1h_429_rate, consecutive_429, suggested_stage, manual_override, runbook_step}`を追記。Runbook `RUN-DATA-05`/`RUN-DATA-06`の手動操作では`record_manual_action`を必ず呼び、`reports/validation_log/AC-45_sla_<date>.md`へステージ判定理由とハッシュをリンクする。
+- **CLI連携**: `tradectl data rate-limit stage inspect`が現在の`stage`と直近24hの429統計を表示。`tradectl data rate-limit stage set <stage> --provider yfinance --reason <text>`はRunbook承認後のみ使用でき、実行時に`RateLimitGuard.set_stage`を呼び出し監査ログ（`logs/audit/rate_limit.jsonl`）へ記録する。`--dry-run`で提案との差分を確認可能。Stage変更後は`ManualCsvIngestionTask`の待機中ジョブを再計画し、`RateLimitGuard`が`max_concurrent = ⌊tokens_per_minute / (60 / mean_interval)⌋`を再計算して`ProviderFetchWorker`へ伝搬する。
+- **HealthMonitor連携**: 429退行基準を超えた場合は`HealthMonitor.raise('degraded','rate_limit_stage')`を呼び、`recommended_action='runbook:RUN-DATA-05#rate_limit_guard'`を付与する。Acceptable Degradation期間中はStageを0へ戻したうえで`ManualCsvIngestionTask`の準備手順を案内する。
+- **将来拡張**: M1.1では`auto_transition_enabled` Feature Flagで`RateLimitStageEvaluator`に自動適用を委譲する余地を残し、テストケースとRunbook承認フローを整備する。M2ではプロバイダ別のポーリングプロファイル（Dukascopy高速取得）を同一機構に統合する計画。
 
 ### 3.2 DataQualityGuard (`src/data/quality.py`)
 - **公開API**: `validate(frame)`, `report()`, `compare(reference_series)`。
@@ -608,11 +629,11 @@ tests/
 - **SQLite (拡張)**: `logs/audit.db`にテーブルを保持（M1 optional, M2+で強化）。
 
 ### 3.21 Metrics & Telemetry (`src/infra/metrics.py`)
-- **収集対象**: パイプライン処理時間、SpreadCooldown滞留時間、Kill Switch遷移、CLIレスポンス、**Data Ingestionのfetch/processing遅延**。
-- **フォーマット**: JSON Lines (`metrics/pipeline.jsonl`, `metrics/cli_perf.jsonl`, `metrics/data_ingestion_sla.jsonl`)でローリング1日ごとにローテーション。レコードは`ts, metric, value, labels`を共通スキーマとし、Data Ingestionは`metric=data_ingestion_delay_sec`、`labels={phase,provider,symbol}`を付与する。
-- **M1出力経路**: `JSONLMetricsWriter`がバックグラウンドワーカーで書き込み、`tradectl metrics report --window 24h`がJSONLから集計してMarkdown/JSONサマリーを`reports/metrics/<timestamp>/summary.{md,json}`へ出力（Runbook添付用）。
+- **収集対象**: パイプライン処理時間、SpreadCooldown滞留時間、Kill Switch遷移、CLIレスポンス、**Data Ingestionのfetch/processing遅延**、**RateLimitステージ統計（429発生率/トークン残量/手動操作ログ）**。
+- **フォーマット**: JSON Lines (`metrics/pipeline.jsonl`, `metrics/cli_perf.jsonl`, `metrics/data_ingestion_sla.jsonl`, `metrics/rate_limit_window.jsonl`)でローリング1日ごとにローテーション。レコードは`ts, metric, value, labels`を共通スキーマとし、Data Ingestionは`metric=data_ingestion_delay_sec`、`labels={phase,provider,symbol}`を付与する。RateLimit系は`metric=rate_limit_429_rate|rate_limit_tokens`を利用し、`labels={provider,stage,window}`を必須とする。
+- **M1出力経路**: `JSONLMetricsWriter`がバックグラウンドワーカーで書き込み、`tradectl metrics report --window 24h`がJSONLから集計してMarkdown/JSONサマリーを`reports/metrics/<timestamp>/summary.{md,json}`へ出力（Runbook添付用）。`rate_limit`グループは`tradectl metrics report --window 24h --filter rate_limit`で個別抽出可能とし、Runbook `RUN-DATA-05`のステージレビューにリンクする。
 - **Exporterインターフェース**: `PrometheusExporter`クラスを定義し`register_histogram/register_gauge`でメトリクスを登録できるようにするが、M1では`start_http()`はFeature Flag無効時にNo-OpとなりHTTPサーバを起動しない。M2で`127.0.0.1:9108/metrics`を公開する実装を追加予定。
-- **アラート**: 閾値（pipeline p95>250ms, spread mismatch>5%, fetch_delay_p95>fetch目標, processing_delay_p95>processing目標）超過で`AlertDispatcher`へ通知し、CLIにもWARNを表示する。
+- **アラート**: 閾値（pipeline p95>250ms, spread mismatch>5%, fetch_delay_p95>fetch目標, processing_delay_p95>processing目標, rate_limit_429_rate>Stage基準）超過で`AlertDispatcher`へ通知し、CLIにもWARNを表示する。RateLimit逸脱時は`code='rate_limit_stage'`でHealthMonitorへ伝搬し、`recommended_action`にRunbook節を添付する。
 
 ### 3.22 依存ライブラリとバージョン管理
 - **パッケージ管理**: Poetry (Python 3.11)。`pyproject.toml`に厳格バージョンとハッシュ (`poetry.lock`) を保持し、`poetry install --no-root`を標準化。
@@ -630,8 +651,9 @@ tests/
 ### 3.23 ネットワーク/レートリミット耐性
 - **リトライポリシー**: `ProviderAdapter`は指数バックオフ(初期1s, 最大30s, 試行3回)を使用。連続失敗時は`DataSourceDown`イベントを発行し、フォールバックプロバイダへ切替。
 - **レートリミット**:
-  - yfinance: API呼び出し間隔>=1秒を保持し、`RateLimitTokenBucket`で制御。
-  - Dukascopy: 1リクエスト/0.5秒、日次ダウンロードは時間帯分散。403/429検出時は60秒クールダウン。
+  - yfinance: `RateLimitGuard`（§3.1.1）がStage0/1/2ごとのジッター付きポーリングを提供し、429閾値に応じて手動昇格/退行を行う。Stage変更時は`max_concurrent = ⌊tokens_per_minute / (60 / mean_interval)⌋`を再計算し、`metrics/rate_limit_window.jsonl`に証跡を残す。
+  - Dukascopy: 1リクエスト/0.5秒、日次ダウンロードは時間帯分散。403/429検出時は60秒クールダウン。Stage制御の対象外だが`RateLimitGuard`は`stage='fixed'`で統計のみ記録する。
+- **Stage監視ジョブ**: `RateLimitStageEvaluatorJob`（15分間隔）が429率・連続回数を集計し、昇格/退行提案をEventBusへ配信。Acceptable Degradation中は自動的にStage0推奨を発行し、Runbook `RUN-DATA-05#rate_limit_guard`のチェックリスト更新を促す。
 - **プロキシ/VPN検出**: プロキシ利用時は`config.provider.proxy`を設定。未設定で疎通不可ならWARNを出力。
 - **ネットワーク障害時の保護**: 連続失敗閾値到達で`HealthMonitor`が`soft_stop(network)`へ遷移し、新規シグナルを停止。再接続後に自動`Resync`を実施。
 - **監視**: `metrics/network.jsonl`に遅延、エラー率、フォールバック発生回数を記録。閾値(エラー率>10%/5分)でメールWARN。
@@ -1218,8 +1240,10 @@ Flag切替時は`ConfigChanged`イベントに`flag_delta`が記録され、Repo
 | UT-SIZE-01 | FR-06 | サイジング単調性・ロット丸め property | ユニット |
 | UT-TKT-01 | FR-07/FR-38 | TicketBuilderチェックリスト生成 | ユニット |
 | UT-CFG-01 | FR-14/FR-33 | Configホットリロード/遅延適用 | ユニット |
+| UT-RL-01 | FR-01/AC-45 | RateLimitGuardステージ遷移（429閾値・トークン計算・手動操作記録）の検証 (`tests/unit/test_rate_limit_guard.py`) | ユニット |
 | IT-PIPE-01 | AC-10 | データ→チケット統合フロー（モックデータ）＋Live実績CSV突合（`actual_fill_imported`/`summary`検証） | 統合 |
 | IT-RESYNC-01 | AC-04 | Resync後TTL/ドリフト整合 | 統合 |
+| IT-RL-01 | AC-45 | `tradectl data rate-limit stage` CLIと`metrics/rate_limit_window.jsonl`出力の整合（429シナリオ/Acceptable Degradation復帰） | 統合 |
 | IT-SPREAD-01 | AC-34 | Spread閾値→クールダウン→解除 | 統合 |
 | IT-KILL-01 | FR-05/FR-22 | Kill Switch遷移（soft/hard） | 統合 |
 | IT-RISK-02 | FR-05/FR-18 | `risk_summary`が`risk_policy`閾値とKill Switchイベントに一致するか検証 (`tradectl report weekly --since 7d`) | 統合 |
@@ -1472,6 +1496,7 @@ SpreadCooldown: cooldown (ETA 12:15) | Snapshot hash: a1c3...
 | `report.generated` | `reports/` | レポート生成 | `weekly_report` |
 | `governance.action_item` | `reports/meetings/` | アクションアイテム | `ops_automation` |
 | `validation.playbook` | `reports/validation_log/` | Validation Data Playbookエントリ | `AC-45_20250301` |
+| `rate_limit.*` | `metrics/rate_limit_window.jsonl`, `logs/audit/rate_limit.jsonl` | RateLimitステージ評価/手動操作ログ | `rate_limit.stage_suggest`, `rate_limit.stage_set` |
 
 ### 付録F: Validation Data Playbookテンプレート
 ```
