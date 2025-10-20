@@ -1,9 +1,10 @@
 # GOV-AUD-01: 監査パッケージレビュー手順
 
 > **ACカバレッジ**: AC-06, AC-40, AC-43  
-> **Runbook版数**: v1.2  
-> **最終更新日**: 2025-03-08  
+> **Runbook版数**: v1.2
+> **最終更新日**: 2025-03-08
 > **最終更新者**: Compliance Advisor (Doc Maintainer)
+> **M1 Core注記**: Audit Bundle ServiceはM1.1で有効化予定のため、M1 Coreでは本Runbookはプレースホルダとして保管し、`tradectl audit bundle`コマンドは配置されない。
 
 ## 目的
 - `tradectl audit bundle`で生成した監査パッケージを検証し、外部税理士/監査人への提供前に完全性と指摘対応の準備を整える。
