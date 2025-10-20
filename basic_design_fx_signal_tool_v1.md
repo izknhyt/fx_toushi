@@ -237,7 +237,8 @@
 - **Trade Journal Service**: チケット承認イベントと実績（Backtest/Paper/Live）を`journal_entries.db`へ保存し、週次レポート生成時にMarkdownテンプレートへレンダリング（FR-44）。CLIは`tradectl journal add-note --ticket <id>`でコメント追記、`tradectl journal review`で直近レビューを表示。
 - **StressTest Orchestrator**: `scenarios/*.yaml`のイベントセットと感度パラメータ（spread_multiplier, slip_bias, decision_delay）をBacktest Runnerへ注入し、結果を`reports/stress/<scenario>/index.md`へまとめる（FR-43, AC-36）。
 - **Benchmark Monitor**: `benchmark_feeds/*.csv`を取り込み、自戦略のエクイティ・KPIと差分チャートを生成。`tradectl benchmark compare --from 2023-01-01`で比較実行し、差分が閾値超過の場合はHealth Monitorへ`benchmark_gap`理由を追加（FR-46, FR-48）。
-- **Benchmark Monitor**: `benchmark_feeds/*.csv`を取り込み、自戦略のエクイティ・KPIと差分チャートを生成。`tradectl benchmark compare --from 2023-01-01`で比較実行し、差分が閾値超過の場合はHealth Monitorへ`benchmark_gap`理由を追加（FR-46, FR-48）。Acceptable Degradation期間中に手動補完を利用する場合は、`data/manual_fallback/<provider>/<symbol>/<YYYYMMDD>/fallback_<provider>_<symbol>_<tf>_<YYYYMMDD>_{op,review}.csv`を`benchmark validate-manual --path ...`で突合し、ハッシュと承認者イニシャルを`reports/benchmark/manual_log_signoff/<YYYYMMDD>.md`へ書き出すまでKPI集計をブロックする。
+
+  Acceptable Degradation期間中に手動補完を利用する場合は、`data/manual_fallback/<provider>/<symbol>/<YYYYMMDD>/fallback_<provider>_<symbol>_<tf>_<YYYYMMDD>_{op,review}.csv`を`benchmark validate-manual --path ...`で突合し、ハッシュと承認者イニシャルを`reports/benchmark/manual_log_signoff/<YYYYMMDD>.md`へ書き出すまでKPI集計をブロックする。
 - **Observability Exporter**: M1は`metrics/pipeline.jsonl`/`metrics/cli_perf.jsonl`をストリーム書き出しし、`tradectl metrics report`でRunbook添付用スナップショット（Markdown/JSON）を生成する。Prometheus互換ExporterはM2+で`/metrics`（予定ポート`127.0.0.1:9108`）を公開する計画とし、M1ではExporterインターフェースとメトリクス登録コードをスタブ化しておく（NFR-06, NFR-15）。
 
 ## 3. ユースケースフロー（MVP）
