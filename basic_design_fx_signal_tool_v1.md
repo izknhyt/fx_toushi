@@ -94,7 +94,7 @@
 | Regime Detector | レジーム分類（ADX等） | 独自ロジック | M2 |
 | Account Service（単一口座集計） | Paper/Backtest/Live各モードの残高・証拠金・保有ポジションを単一口座単位で再構築し、R計算と証拠金余力をSignal/Risk/Reportへ提供する。入力は`reports/performance/paper/<run_id>.parquet`、`db/tradectl.db`（`tickets`）、`data/account/live_account.csv`等の単一口座ログに限定 | Paper実績Parquet, Backtest台帳, Live CSV/API | M1 Core |
 | Account Aggregator（複数口座統合） | `accounts/<broker>/<account_id>.yaml`を基にブローカー横断の口座プロファイルとウェイトを読み込み、残高・証拠金・有効レバレッジを統合。口座別Rガードと相関用エクスポージャ（FR-58）を算出し、複数口座の引当/警告ワークフローを提供 | Live/Paper統合CSV, Broker API, `accounts/<broker>/<account_id>.yaml` | M2+ |
-| Funding Service | スワップ/ファンディングレートの取得と適用 | broker_rules.yaml, swap_rates.csv (手入力/公開CSV, M1) | M1 Core |
+| Funding Service | スワップ/ファンディングレートの取得と適用 | broker_rules.yaml, swap_rates.csv (手入力/公開CSV, M1) | M1 Core（M1コア例外） |
 | FX Rate Updater | 口座通貨換算レート取得/保存 | yfinance, 手入力CSV, (M2+: ブローカーフィード) | M1 Core (M2+ feed) |
 | Calendar Service | 経済指標/休日スケジュール配信（出力: GateState） | ローカルCSV, 外部API同期 | M1 Core |
 | Broker Rules Loader | ブローカー仕様読み込み（pip値/contract等） | YAML loader (`broker_rules.yaml`) | M1.1 |
@@ -249,7 +249,7 @@
 3. Broker Rules Loaderが`broker_rules.yaml`をロードし、pip値/contract size/最小ロット/tick制約を`BrokerSpecs`として共有キャッシュに展開。〔M1.1〕[^ms-hardening]
 4. FX Rate Updaterが口座通貨換算レート（5m最新値＋日次終値）を取得し、差分があれば`fx_rates.parquet`を更新（排他ロック付与）。〔M1〕[^ms-core]
 5. Spread Monitorが`spread_metrics.parquet`（M1: Dukascopyティック/公開CSV/手入力CSVから事前集計、M2+: ブローカーフィード連携）をロード・更新し、`SpreadMetrics`としてキャッシュ。CLIからは`tradectl spread ingest`でヒストリカル分位を生成し、`tradectl spread watch`でリアルタイムポーリングを開始する（M2+）。〔M1.1〕[^ms-hardening]
-6. Funding Serviceが`broker_rules.yaml`で定義されたスワップ計算ルールを読み込み、`swap_rates.csv`（M1: 手入力/公開CSV、M2+: ブローカーフィード統合）から当日分のロング/ショートスワップ（Wednesday_NYの3倍など）を取得し、`FundingCurve`を生成。CLIは`tradectl funding sync`でCSV読み込み、`tradectl funding status`で最新値を照会。〔M1〕[^ms-core]
+6. Funding Serviceが`broker_rules.yaml`で定義されたスワップ計算ルールを読み込み、`swap_rates.csv`（M1: 手入力/公開CSV、M2+: ブローカーフィード統合）から当日分のロング/ショートスワップ（Wednesday_NYの3倍など）を取得し、`FundingCurve`を生成。CLIは`tradectl funding sync`でCSV読み込み、`tradectl funding status`で最新値を照会。〔M1コア例外〕[^ms-core]
 7. Account Serviceがモード別データソース（Backtest: シミュレーション台帳 / Paper: `reports/performance/paper/<run_id>.parquet` / Live: ユーザー入力CSV/API）と最新レートを用いて単一口座の残高・証拠金・含み損益を集計。口座単位のR計算と証拠金余力を`AccountState`へ反映し、欠損データや算出不能時はSignal Boardへ警告を送る。スワップは`FundingCurve`を日次で織り込んだキャッシュフローとして反映し、バックテストでも同一ロジックを適用する。〔M1〕[^ms-core]
 8. Calendar Serviceが経済指標CSV/休日CSVをUTC基準でロードし、設定された`trading_timezone`（既定:JST）に変換した上で現在時刻に対するブロック/解除ウィンドウを判定して`GateState`を更新。イベント強度に応じた±15/30分の動的拡張ルールもここで適用する。〔M1〕[^ms-core]
 9. Feature Engineが差分計算で新規バー分の指標を更新し、必要な区間のみ再計算。M1ベース戦略では5分足のインジケータ更新後に`multi_tf_joiner`が1時間足EMA(55)と日足Zスコアを参照し、`FeatureFrame`へ`ema55_slope`/`htf_bias_zscore`を追加する。〔M1〕[^ms-core]
@@ -433,6 +433,7 @@
 - **Reduce-Only判定**: 相関異常で`R_eff`が`R_cap`を超えた場合はCorrelation GuardがReduce-Only Advisorへ縮小対象候補を提示し、寄与度に基づく優先順位を付ける（FR-37, FR-42〈M2+〉）。
 
 ### 4.7 スワップ/ファンディング管理
+> **マイルストーン注記**: FundingServiceはPaper損益評価の必須要素としてM1 Coreへ例外的に含め、API自動更新はM2で拡張する。
 - **取得経路**: `config/swap_rates.csv`（ユーザー管理）を基軸に、公開CSV/手入力で更新する。M2以降でブローカー提供のCSV/APIを追加し、優先度は `swap_rates.csv > 手入力 > broker_api` を既定とする。取得に失敗した場合は最終成功値を維持しつつ`FundingDegraded`イベントを発火。
 - **正規化**: スワップは1ロットあたりの通貨建て値で保持し、`BrokerSpecs.min_lot`と`lot_step`で換算。`pip_size`と`price_decimals`に基づき丸めを行い、Human Errorチェックにも同じ丸め関数を提供。
 - **適用タイミング**: Backtest/Paperはバー確定時に日次スワップを計上。Liveではロールオーバー時刻（例: 06:00 JST）に`FundingService.apply_daily_swap()`を発火し、`AccountState`に`swap_realized`を追加。
