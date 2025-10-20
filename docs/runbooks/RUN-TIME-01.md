@@ -1,8 +1,8 @@
 # RUN-TIME-01: 時刻同期・タイムゾーン異常対応手順
 
 > **ACカバレッジ**: AC-05, AC-45（時刻整合）
-> **Runbook版数**: v0.1
-> **最終更新日**: 2025-03-10
+> **Runbook版数**: v0.2
+> **最終更新日**: 2025-03-15
 > **最終更新者**: Ops Manager (Doc Maintainer)
 
 ## 目的
@@ -18,6 +18,14 @@
 - NTPクライアント（例: `sntp`, `chrony`）がインストール済みであること。
 - `sudo`権限を持つオペレータが対応可能な状態。
 - `reports/validation_log/AC-45_sla_<date>.md`のテンプレートを用意。
+
+## 日次クイックチェック（M1 Core必須）
+- 目的: プレフライト警告に頼らず、起動前に人が時計差を把握する。
+- 手順:
+  1. `systemsetup -getnetworktimeserver`でNTPサーバが設定されていることを確認し、未設定なら`sudo systemsetup -setnetworktimeserver time.apple.com`などで設定する。
+  2. `date`コマンドの出力とスマートフォン等の基準時計を比較し、±2秒以内であることを目視確認する。
+  3. ±2秒を超える場合は以下の「手順」で再同期を実施し、`tradectl preflight --silent`のWARNログを添付してOps日報に記録する。
+> **メモ**: `TimeSyncGuard`自動ガードはM1.1 Hardeningで導入予定のため、M1 Coreではこの手動チェックで十分とする。
 
 ## 手順
 1. `tradectl preflight --recheck`を実行し、`clock_drift_ms`を確認。
