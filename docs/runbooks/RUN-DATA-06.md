@@ -65,7 +65,7 @@
 
 ### 6. Signal Board解除と`degraded_ack`発行
 1. Runbook `RUN-DATA-05`のチェックリストと本Runbookの補填ログを突合し、**データ鮮度検証→Reduce-Only運用→復旧確認→提案再開**の順で証跡が揃っていることを確認する。
-2. `tradectl board status --detail`で`board_mode=guarded`が維持されていること、Reduce-Only以外の新規提案が表示されていないことを確認する。
+2. `tradectl status --detail`の`board_guard`セクションで`board_mode=guarded`が維持されていること、`reduce_only=true`のままであることを確認する。新規提案が抑止されているかは`tradectl board --view open_tickets`でダブルチェックする。
 3. Ops ManagerとPOがダブルサインした復旧記録（`reports/validation_log/AC-45_sla_<date>.md`）を添付し、解除可能と判断したら`tradectl board guard --release`（または等価の解除操作）を実行する。
 4. 解除操作と同時に`audit`へ`degraded_ack`イベントを1件発行し、イベントID・解除時刻・参照チェックリストを`reports/validation_log/AC-45_sla_<date>.md`および`reports/audit/reduce_only/<date>.md`に追記する。再発防止タスクと一緒にRunbook `RUN-DATA-05`へリンクを戻し、次回の演習で参照できるようにする。
 
