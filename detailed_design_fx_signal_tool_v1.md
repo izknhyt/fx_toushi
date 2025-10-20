@@ -136,12 +136,12 @@ src/
     ma_rsi.py
     donchian.py
   execution/
-    model.py             # ExecutionModel
-    spread.py            # SpreadMonitor + cooldown state
-    adjustments.py       # ExecutionAdjustments dataclass
+    model.py             # ExecutionModel（M1.1で有効化、M1 CoreはNotImplementedスタブ）
+    spread.py            # SpreadMonitor + cooldown state（M1.1で本稼働、M1 Coreはスタブのみ）
+    adjustments.py       # ExecutionAdjustments dataclass（M1 Coreでは参照のみ）
   scoring/
-    hybrid.py            # HybridScore
-    stability.py         # 摂動テスト
+    hybrid.py            # HybridScore（M2+で有効化、M1 Coreではファイル未配置/追加不要）
+    stability.py         # 摂動テスト（M2+）
     ranking.py           # ランキング/閾値
   scoreboard/
     service_stub.py      # StrategyScoreboardServiceStub (M1, no-op; M2+本実装は付録G)
@@ -150,8 +150,8 @@ src/
   risk/
     policy.py            # RiskPolicy構造体
     manager.py           # Kill Switch/制約評価
-    correlation_guard.py # 通貨・シンボル相関ガード
-    sprt.py              # SPRT (M2+ feature flag)
+    correlation_guard.py # 通貨・シンボル相関ガード（M1.1以降）
+    sprt.py              # SPRT（M2+でのみ有効、M1 Coreはスタブ）
   account/
     service.py           # 残高/証拠金/ポジション集計
     fx_rates.py          # FX換算レート

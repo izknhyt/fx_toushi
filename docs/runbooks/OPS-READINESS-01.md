@@ -1,6 +1,7 @@
 # OPS-READINESS-01: オペレーションレディネス評価手順
 
 ## 目的
+- **M1 Core注記**: Ops Readiness EvaluatorはM2での有効化を予定しており、M1 Coreでは本Runbookはプレースホルダ（参考手順）としてのみ保管する。関連コマンド`tradectl ops readiness`は未実装。
 - `ops_readiness_score`を維持し、リリースや戦略昇格の前提となる運用体制・バックアップ整合性・演習完遂率を定量的に確認する。
 - スコア低下時に是正アクションを明確化し、Kill Switch解除条件を整える。
 
