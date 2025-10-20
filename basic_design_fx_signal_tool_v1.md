@@ -98,8 +98,8 @@
 | FX Rate Updater | 口座通貨換算レート取得/保存 | yfinance, 手入力CSV, (M2+: ブローカーフィード) | M1 Core (M2+ feed) |
 | Calendar Service | 経済指標/休日スケジュール配信（出力: GateState） | ローカルCSV, 外部API同期 | M1 Core |
 | Broker Rules Loader | ブローカー仕様読み込み（pip値/contract等） | YAML loader (`broker_rules.yaml`) | M1.1 |
-| Spread Monitor | スプレッド/コスト観測・クールダウン制御 | `spread_metrics.parquet`(Dukascopy/公開CSV, M1) / Broker API(M2+) | M1.1 (M2+ broker feed) |
-| Execution Model | スリッページ/ロールオーバー/Fill判定モデル | MarketData, SpreadMetrics, broker_rules.yaml | M1.1 |
+| Spread Monitor | スプレッド/コスト観測・クールダウン制御 | `spread_metrics.parquet`(Dukascopy/公開CSV, M1) / Broker API(M2+) | M1.1（M1 Coreではスタブのみ配置し、クールダウン制御は無効） |
+| Execution Model | スリッページ/ロールオーバー/Fill判定モデル | MarketData, SpreadMetrics, broker_rules.yaml | M1.1（M1 Coreでは`NotImplemented`スタブ） |
 | Liquidity Intelligence Service | 複数レートソースの乖離検知・板厚監視・HOLD判定 | yfinance, Dukascopy, broker API/CSV, `liquidity_monitor.parquet` | M2 |
 | Correlation Guard | 通貨/シンボル相関制御 | Rule-based filter | M1.1 |
 | Signal Engine | ルール/モデルプラグインIF | Strategyプラグイン | M1 Core |
