@@ -249,16 +249,16 @@ tests/
 | ハードウェア | Apple Silicon (M1/M2) or Intel i7 同等、RAM 16GB、SSD空き 20GB以上 | バックテスト並列時は4コア以上推奨。 |
 | OS | macOS 13 Ventura 以降 | Python 3.11動作検証済み。将来Linux移植予定。 |
 | Python | 3.11.x (pyenv or system) | `python --version`で起動時チェック。 |
-| タイムゾーン/NTP | システムTZ=JST。NTP同期で時計誤差≤2秒 | `tradectl preflight`でドリフト検査。 |
+| タイムゾーン/NTP | システムTZ=JST。時計誤差±2秒以内を維持（目視確認推奨） | 日次起動前にRunbook `RUN-TIME-01`で`systemsetup`等を確認、`tradectl preflight`はWARNログで支援。 |
 | ネットワーク | 下り20Mbps以上、HTTPS(80/443) outbound許可 | Dukascopy/yfinance両方のエンドポイントへ疎通確認。 |
 | SMTP | StartTLS対応サーバ（Gmail等） | `.env`で資格情報管理し、試験送信を週次実施。 |
 | ストレージ配置 | `~/development/codex_invest/{data,logs,snapshots,metrics}` | バックアップ先は外部SSD/NAS。 |
 | 依存ツール | `poetry`, `git`, `make`(任意), `gnu-sed`, `rg` | セットアップは`poetry install`で完結。 |
 | 監査バックアップ | 週次フルバックアップ(外部デバイス) + 日次増分 | 復元テストを月次実施。 |
 
-- 起動スクリプトはプレフライトでPython/Poetryバージョン、ディスク残量、NTP同期、SMTP疎通を検査し、NG項目があれば`HealthState=degraded(preflight)`を設定する。
-- `TimeSyncGuard`は`tradectl preflight`内で`systemsetup -getnetworktimeserver`を確認し、未設定の場合は`config.time.ntp_server`を案内。NTP疎通は`/usr/sbin/sntp -sS <server>`のdry-runで確認し、`clock_drift_ms`が500ms超で`health.changed(reason='clock_out_of_sync')`と`BoardMode=guarded`を発行する。結果は`metrics/time_sync.jsonl`に追記し、偏差が1500ms/3000msで段階的にアラートレベルを引き上げる。
-- ランタイムでは`AsyncIntervalJob`（10分間隔）が同じ検査を実施し、偏差が閾値内に戻った場合は`degraded_recovered`イベントとともに`BoardMode`を`normal`へ自動復帰させる。復帰条件は`clock_drift_ms<200ms`かつ直近30分のNTP応答率100%。
+- 起動スクリプトはプレフライトでPython/Poetryバージョン、ディスク残量、SMTP疎通を必須検査とし、NG項目があれば`HealthState=degraded(preflight)`を設定する。NTP同期は推奨検査として実施し、失敗時はWARNログとRunbook参照を案内する。
+- `TimeSyncGuard`は`tradectl preflight`内で`systemsetup -getnetworktimeserver`設定をチェックし、未設定の場合は`config.time.ntp_server`を案内する。NTP疎通は`/usr/sbin/sntp -sS <server>`のdry-runで確認し、`clock_drift_ms`が500ms超の場合はWARNログと`health.suggest_guarded(clock_out_of_sync)`イベントを発行する。結果は`metrics/time_sync.jsonl`に追記し、偏差が1500ms/3000msでWARN→MAJORへレベルを引き上げるが、自動ガードは行わない。
+- ランタイムでは`AsyncIntervalJob`（10分間隔）が同じ検査を実施し、偏差が閾値内に戻った場合は`health.suggest_resume(clock_out_of_sync)`イベントを出す。復帰条件は`clock_drift_ms<200ms`かつ直近30分のNTP応答率100%を満たしたことをWARNログで示し、最終判断はオペレータが行う。
 - Manual CSV取込では`utc_iso`列のタイムゾーンを`pandas.to_datetime(..., utc=True)`で強制し、`ManualCsvReconciler`が`timezone != UTC`を検出した場合は`ManualCsvError(code='clock_mismatch')`で拒否する。拒否ログは`reports/validation_log/AC-45_sla_<date>.md`と`metrics/time_sync.jsonl`へ記録し、再入力要求にはRunbook `RUN-TIME-01`を参照させる。
 - VPN/テザリング使用時はSpread遅延が見込まれるため、`config.provider.timeout_sec`や`retry`値を引き上げ、`AlertDispatcher`でWARNを送信する。
 
@@ -329,11 +329,11 @@ tests/
 - **プレフライトチェック** (`tradectl preflight`, 起動時自動実行)
   1. Python/Poetryバージョン整合 (`python3 --version`, `poetry --version`)
   2. ディスク残容量 (`threshold=5GB`) と書込権限確認
-  3. NTP同期状態 (`systemsetup -getnetworktimeserver` 等)
+  3. NTP同期状態（推奨チェック: `systemsetup -getnetworktimeserver`, `/usr/sbin/sntp -sS <server>`のdry-run）
   4. SMTP疎通テスト（メール送信ドライラン）
   5. `config/profile`と`cfg.schema.json`の整合検査
   6. 直近バックアップ日付 (`logs/ops/backup.log`) の検証
-  -> 失敗時は`HealthState=degraded(preflight)`とし、CLI/メールで通知。
+  -> 必須項目（1,2,4,5,6）が失敗した場合は`HealthState=degraded(preflight)`とし、CLI/メールで通知。NTP推奨チェック（3）は失敗時にWARNログとRunbook `RUN-TIME-01`参照を提示する。
 - **ランタイムモニタ**
   - `telemetry.HeartbeatTask`: 30秒ごとに処理遅延/CPU/メモリを`metrics/pipeline.jsonl`へ記録。
   - `PreflightReminder`: プレフライト未実施状態で`tradectl start`した場合、初回バー処理前に警告。
