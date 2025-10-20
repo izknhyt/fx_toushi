@@ -1,8 +1,8 @@
 # RUN-DATA-06: 手動データ補填・Resync運用手順
 
 > **ACカバレッジ**: AC-04, AC-45  
-> **Runbook版数**: v1.1
-> **最終更新日**: 2025-03-09
+> **Runbook版数**: v1.2
+> **最終更新日**: 2025-03-10
 > **最終更新者**: Data Engineer (Doc Maintainer)
 
 ## 目的
@@ -15,7 +15,8 @@
 - 週次/監査レビューで手動補填とResyncのエビデンスを提出するとき。
 
 ## 事前準備
-- `data/manual_fallback/<provider>/<symbol>/<YYYYMMDD>/`ディレクトリを作成し、OPS用/POレビュー用それぞれのテンプレートを`tradectl data request-template --symbol <symbol> --tf m5 --out data/manual_fallback/<provider>/<symbol>/<YYYYMMDD>/fallback_<provider>_<symbol>_<tf>_<YYYYMMDD>_{op,review}.csv`で生成する。
+- `tradectl data manual-template --help`で利用可能なオプションを確認し、必要に応じて`--from`/`--to`で期間を指定する。テンプレート生成結果は`data/manual_fallback/templates/`のサンプルと突合してから本番ディレクトリへコピーする。
+- `data/manual_fallback/<provider>/<symbol>/<YYYYMMDD>/`ディレクトリを作成し、OPS用/POレビュー用それぞれのテンプレートを`tradectl data manual-template --symbol <symbol> --tf m5 --provider <provider> --out data/manual_fallback/<provider>/<symbol>/<YYYYMMDD>/`で生成する（コマンドは`fallback_<provider>_<symbol>_<tf>_<YYYYMMDD>_{op,review}.csv`の双子CSVを出力）。サンプル雛形は`data/manual_fallback/templates/`配下の`fallback_template_op.csv`/`fallback_template_review.csv`を参照可能。
 - CSVに必要な列: `ts,open,high,low,close,volume,spread,session_tag`。`ts`はUTC ISO8601、5分足境界にスナップ。
 - 補填対象期間のリファレンスとして`data/raw/<provider>/<symbol>/<tf>.parquet`または前回の`reports/audit/data_diff_<date>.md`を参照する。
 - Resync前に`tradectl status --detail`で`manual_source=true`が立っていること、`HealthState`が`degraded|data_gapped|soft_stop(processing)`であることを確認する。
@@ -33,6 +34,12 @@
 2. `tradectl data jobs enqueue --task manual_csv --symbol <symbol> --tf m5 --from <start> --to <end>`を実行し、`ManualCsvIngestionTask`がキューに追加されたことを確認する。`tradectl data jobs --pending`で`status=running`→`completed`へ変化することを監視し、完了時刻を`reports/validation_log/AC-45_sla_<date>.md`に記録する。
 3. 取り込み後に`tradectl data verify --symbol <symbol> --tf m5 --from <start> --to <end>`を実行し、`missing_count=0`かつ`checksum_status=ok`であることを確認する。
 4. すべての対象シンボルについて完了したら、`reports/performance/data_latency/<YYYYMMDD>.md`および`reports/validation_log/AC-45_sla_<date>.md`に補填所要時間・担当者・データソースを記録し、`metrics/data_ingestion_sla.jsonl`の`phase=processing`に改善が反映されたことを確認する。
+
+### 照合作業チェックリスト
+- [ ] `tradectl data manual-template`で生成された双子CSVのヘッダと列順（`ts,open,high,low,close,volume,spread,session_tag`）を確認し、カスタマイズ時も順序が崩れていない。
+- [ ] `tradectl data validate-csv --path <...>_op.csv`および`..._review.csv`が共に`errors=0`で、UTC→JST変換ログに5分足境界逸脱がない。
+- [ ] `tradectl benchmark validate-manual --path data/manual_fallback/<provider>/<symbol>/<YYYYMMDD>/`でSHA256ハッシュとバー数が一致し、`reports/benchmark/manual_log_signoff/<YYYYMMDD>.md`へハッシュを転記した。
+- [ ] `ManualCsvReconciler`の実行ログで`missing=0`/`duplicates=0`/`ohlc_consistency=pass`を確認し、Runbook `RUN-DATA-05`/`RUN-DATA-06`の解除条件リンクを添付した。
 
 ### 3. Resync/Catch-up 実行（AC-04）
 1. `tradectl resync --since <ts>`を実行し、`resync_queue`に`BackfillJob`が投入されることを確認。`logs/resync/resync_events.jsonl`に`job_started`/`job_completed`が連続して出力されることを確認する。
@@ -70,6 +77,7 @@
 ## チェックリスト
 - [ ] 欠損区間を`tradectl data gaps`で特定し、差分ログを作成
 - [ ] `tradectl data validate-csv`/`reload`/`verify`が全て成功
+- [ ] 照合作業チェックリスト（本Runbook内）を完了し、ハッシュと承認サインを記録
 - [ ] Resync後にTTL=3×TF、ドリフト≤0.5R、減衰λ=0.1/minを確認
 - [ ] `reports/audit/resync/<date>.md`と`data_manifest.json`を更新
 - [ ] `manual_source=false`へ復帰し、フォローアップタスクを起票
