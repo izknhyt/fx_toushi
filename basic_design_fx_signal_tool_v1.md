@@ -267,7 +267,7 @@
 21. Statement Reconciliation Serviceが日次ジョブまたは`tradectl reconcile statements --from <date>`により呼び出され、ブローカーステートメントCSVを正規化してLive/Paperログと突合し、`reports/audit/reconciliation/<date>.md`へ差分を出力。残高差分>0.5Rまたは取引突合率<99%の場合は`Health Monitor`へ`statement_gap`理由を追加し、Kill Switch解除条件にRunbook調査メモを要求（FR-64, AC-53）。〔M2+〕[^ms-m2]
 22. Parameter Drift Monitor（M2+）が最新最適化結果と現行パラメータを比較し、KLダイバージェンスしきい値を超えた場合は`benchmark_gap`同様にHealth Monitorへ理由を追加（FR-45）。〔M2+〕[^ms-m2]
 23. Benchmark MonitorがベンチマークCSVとの差分を計算し、`benchmark_gap_pct`を更新。ギャップ>5%（設定値）でアラートを発火し、運用健全性ダッシュボードにハイライト（FR-46, FR-48）。〔M2+〕[^ms-m2]
-24. Reporterが定期的にレポート/ログを出力し、Spread/Correlation/Resync/StressTest/Journal要約も含めてダッシュボードに反映（FR-10, FR-43, FR-44）。〔M1〕[^ms-core]
+24. Reporterが定期的にレポート/ログを出力し、**M1 CoreではSharpe/最大DD/WinRate/累積Rと主要コメントのみ**をダッシュボードへ反映する。Spread/Correlation/StressTest/Journal要約は**M1.1以降で順次有効化**し、必要なテンプレート/集計処理はマイルストーン別に分離管理する（FR-10, FR-43, FR-44）。〔M1〕[^ms-core]
 25. Observability Exporterが最新メトリクスをJSONLへ書き出し、必要に応じて`tradectl metrics report`でサマリースナップショットを生成してRunbookへ添付（NFR-06, NFR-15）。〔M1.1〕[^ms-hardening]
 26. Audit Bundle Serviceが月次/四半期スケジュールまたは`tradectl audit bundle --period`コマンドに応じて、シグナル履歴・承認/約定ログ・設定差分・リスク承諾・ベンチマーク比較を`audit_pack/<period>/`へ束ね、`audit_manifest.json`と署名`audit_manifest.sig`を生成（FR-59）。〔M2+〕[^ms-m2]
 27. Release Governance Serviceが`tradectl release prepare/tag`でSmokeテスト結果とリスク承諾差分を検証し、未完了チェック項目があればKill Switchを`HOLD`固定として新規配信を抑止。承認結果は`reports/audit/release/<version>.md`に記録（FR-60）。〔M2+〕[^ms-m2]
