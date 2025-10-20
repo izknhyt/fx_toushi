@@ -424,14 +424,14 @@ tests/
 ### 3.9 HealthMonitor (`src/core/health.py`)
 - **公開API**: `raise(level, reason)`, `snapshot()`, `ack(alert_id)`。
 - **入力**: Risk/Data/Config/Spread/Funding/Heartbeat/Manual。`alert_id`を生成しCLIで承認。
-- **出力**: `HealthStateChanged`, `AlertEvent`（メール送信対象）。
-- **遷移ポリシー更新**: `data_latency_fetch`と`data_latency_processing`を独立評価し、
-  - `fetch_delay_p95>config.ingestion.sla.fetch_p95_sec`で`HealthState=degraded(fetch)`へ遷移。`FallbackRetryTask`が成功するか`bar_ready_queue`が安定すると自動で`ok`へ戻る。
-  - `processing_delay_p95>config.ingestion.sla.processing_p95_sec`、もしくは`processing_timeout_sec`超過が連続3回で`HealthState=degraded(reason='data_latency_processing')`とし`BoardMode=guarded`を維持。Kill Switchは維持したまま`ManualCsvIngestionTask`や代替ソース適用が完了するまで監視し、`DataQualityGuard`が`status=reconciled`を連続10バー確認すると解除候補に降格する。
-  - 取得が停止し`fetch_gap_sec>config.ingestion.fetch_timeout_sec`のときのみKill Switchへ`STOP(data_feed_unavailable)`を伝搬。処理遅延のみでは`STOP`へ到達しない。
-  - `catch_up_lag_minutes>config.ingestion.catch_up_warn_minutes`が20分超過で`HealthState=degraded(reason='data_latency_catch_up')`、30分超過で`board_mode=guarded`を強制。Kill Switchは維持しつつAcceptable Degradation運用へ切替え、Runbook `RUN-DATA-05/06`に沿って代替ソースの投入/解除ログを取得する。`catch_up_lag_minutes<30`が連続3回確認できたら復旧候補とみなし、解除時に`degraded_recovered`イベントへ測定値を添付する。
-  - `health.status=degraded`が`business_days_since(last_ok)≥3`または`rolling_30d_degraded_count≥2`を満たした時点で`health.escalate`イベントを発火し、Ops Managerがエスカレーションレビュー（Runbook `RUN-DATA-05`）を開始する。`business_days_since(last_ok)≥5`または週次KPIレビュー2回連続で`degraded`が解消されない場合は自動で`KillSwitchChanged(mode='hard_stop', reason='data_latency')`を送出して新規シグナルを遮断し、手動CSVモードに限定する。復帰は`catch_up_lag_minutes<30`とSLAメトリクス復帰、二重入力CSVハッシュ一致の3条件を満たした上で`tradectl health ack`により完了ログを記録する。
-- **メトリクス**: `health_state_transitions.jsonl`に`reason`, `phase`, `prev_state`, `next_state`, `trigger_metric`を記録し、`make sla-report`がData Ingestion遅延メトリクスと突合する。Kill Switch発火は`kill_switch_events.jsonl`に別途記録し、不要なSTOP判定をレビューできるようにする。
+- **出力**: `HealthStateChanged`, `AlertEvent`（メール/Slack送信対象）。`AlertEvent`には`severity`, `recommended_action`, `runbook_ref`, `ack_required`, `metric_snapshot`（`metric`, `observed`, `threshold`, `lookback`）を含め、CLIの`tradectl health ack --alert <id>`で承認者IDとRunbook記録先を入力する。
+- **運用ポリシー**: `data_latency_fetch`, `data_latency_processing`, `catch_up_lag_minutes`, `fetch_gap_sec`を独立評価するが、状態遷移はあくまでRunbookに基づく手動操作とする。
+  - `fetch_delay_p95>config.ingestion.sla.fetch_p95_sec`を検出した際は`HealthState.reasons`へ`code='data_latency_fetch'`と`recommended_action='runbook:RUN-DATA-05#enter_guarded'`を追加し、`AlertEvent`でOpsチャンネルへ通知する。オペレータはRunbook `RUN-DATA-05`のチェックリストで`tradectl board --guarded`実行可否を判断し、承認後に手動実行＋監査ログ（チケットID、承認者、計測値）を`reports/validation_log/AC-45_sla_<date>.md`へ追記する。
+  - `processing_delay_p95`や`processing_timeout_sec`の逸脱は`code='data_latency_processing'`で記録し、推奨アクションとして`runbook:RUN-DATA-05#processing_fallback`と`notify:ops`を付与する。`ManualCsvIngestionTask`や再処理はRunbook承認後に実行し、解除も`tradectl board --normal`を人手で行う。
+  - データ取得が停止し`fetch_gap_sec>config.ingestion.fetch_timeout_sec`の場合は`severity='critical'`, `recommended_action='runbook:RUN-DATA-05#kill_switch_review'`で`AlertEvent`を生成し、Ops/POがRunbook `RUN-RISK-01`の審査手順で`tradectl kill-switch engage --reason data_feed_unavailable`実行可否を判断する。自動でKill Switchへ伝搬しない。
+  - `catch_up_lag_minutes>config.ingestion.catch_up_warn_minutes`で`warn`レベルの`AlertEvent`を発行し、20分超過では`recommended_action`に`notify:ops`を、30分超過では追加で`pager:ingestion`, `runbook:RUN-DATA-06#guarded_checklist`を設定する。オペレータはRunbook記録に測定値、代替ソース実施状況、承認者サイン、`tradectl board --guarded`/`tradectl board --normal`の実行ログを必須項目として追記する。`catch_up_lag_minutes<30`が連続3回確認できた場合にのみ`degraded_recovered`イベントへ測定スナップショットとRunbook参照を添付して手動解除する。
+  - `health.status=degraded`が`business_days_since(last_ok)≥3`または`rolling_30d_degraded_count≥2`を満たした際は`health.escalate`イベントを`runbook:RUN-DATA-05#escalation_review`付きで出力し、Ops Manager主導のレビュー会議を要求する。`business_days_since(last_ok)≥5`または週次KPIレビュー2回連続で`degraded`が解消されない場合でもKill Switch/Board Guard遷移は自動化せず、レビュー結果を踏まえて人間がコマンドを実行する。
+- **メトリクス**: `health_state_transitions.jsonl`に`reason`, `phase`, `prev_state`, `next_state`, `trigger_metric`, `recommended_action`, `ack_user`, `ack_ts`を記録し、`make sla-report`がData Ingestion遅延メトリクスとRunbookログを突合する。Kill Switch操作は`kill_switch_events.jsonl`と監査イベント（`audit.kill_switch_engaged`）をセットで出力し、不要なSTOP判定を人手でレビューできるようにする。
 
 ### 3.10 CorrelationGuard (`src/risk/correlation_guard.py`, `src/account/exposure.py`)
 - **公開API**: `filter(signals, account_state, correlation_snapshot)`。
