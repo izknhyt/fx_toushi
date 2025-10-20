@@ -1,8 +1,8 @@
 # RUN-DATA-06: 手動データ補填・Resync運用手順
 
 > **ACカバレッジ**: AC-04, AC-45  
-> **Runbook版数**: v1.0  
-> **最終更新日**: 2025-03-08  
+> **Runbook版数**: v1.1
+> **最終更新日**: 2025-03-09
 > **最終更新者**: Data Engineer (Doc Maintainer)
 
 ## 目的
@@ -55,6 +55,12 @@
 1. `tradectl data resume --provider dukascopy`などで通常経路へ復帰し、`manual_source`フラグが`false`に戻ることを`tradectl status --detail`で確認する。
 2. 24時間後に`tradectl data health --symbol <symbol>`を再実行し、再発がないか監視する。
 3. 本Runbook手順で発生した課題があれば`tickets/data_quality/<symbol>_<date>.md`に記録し、是正タスクを登録する。
+
+### 6. Signal Board解除と`degraded_ack`発行
+1. Runbook `RUN-DATA-05`のチェックリストと本Runbookの補填ログを突合し、**データ鮮度検証→Reduce-Only運用→復旧確認→提案再開**の順で証跡が揃っていることを確認する。
+2. `tradectl board status --detail`で`board_mode=guarded`が維持されていること、Reduce-Only以外の新規提案が表示されていないことを確認する。
+3. Ops ManagerとPOがダブルサインした復旧記録（`reports/validation_log/AC-45_sla_<date>.md`）を添付し、解除可能と判断したら`tradectl board guard --release`（または等価の解除操作）を実行する。
+4. 解除操作と同時に`audit`へ`degraded_ack`イベントを1件発行し、イベントID・解除時刻・参照チェックリストを`reports/validation_log/AC-45_sla_<date>.md`および`reports/audit/reduce_only/<date>.md`に追記する。再発防止タスクと一緒にRunbook `RUN-DATA-05`へリンクを戻し、次回の演習で参照できるようにする。
 
 ### ディレクトリ移行ノート（v1.5）
 - 旧構成（`data/manual/<date>/`配下の単一CSV、`manual_csv/primary|review/<provider>/<YYYYMM>.csv`）は廃止対象。残存ファイルは`data/manual_fallback/<provider>/<symbol>/<YYYYMMDD>/fallback_<provider>_<symbol>_<tf>_<YYYYMMDD>_{op,review}.csv`へ移動し、`git mv`またはファイルコピー後に旧パスを削除する。
