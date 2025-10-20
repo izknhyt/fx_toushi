@@ -58,7 +58,7 @@
 2. `reports/research/m1_baseline/validation_<date>.md`に承認者サイン、`data_manifest.json`のコミットハッシュ、再実行コマンドを追記。
 3. `reports/research/m1_baseline/metrics_<date>.json`をGitへコミットし、Pull RequestにRunbook承認ログを添付。
 4. `reports/validation_log/AC-07_<date>.md`に要約（変更理由、再計算結果、承認日時）を記入し、`AC-01`のレポートとの差異を明記。
-5. 必要に応じて`Benchmark Monitor`と`Risk Monitor`へ通知し、未承認データでの分析を無効化（`notify=False`→再承認後に`notify=True`）。
+5. 必要に応じて〈M2+〉`Benchmark Monitor`と`Risk Monitor`へ通知し、未承認データでの分析を無効化（`notify=False`→再承認後に`notify=True`）。M1 CoreではBenchmark Monitorが未導入のため、手動レビュー通知のみ実施する。
 
 ## チェックリスト
 - [ ] `data_manifest.json`の該当エントリ更新と`reports/data_manifest.sig`の再署名
