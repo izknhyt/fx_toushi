@@ -1,7 +1,7 @@
-# FXヒューマン・インザループ投資ツール 詳細設計書 v1.9
+# FXヒューマン・インザループ投資ツール 詳細設計書 v2.0
 
 ## 0. 文書情報
-- 作成日: 2025-02-25
+- 作成日: 2025-02-26
 - 作成者: Codex AI 支援
 - 参照文書: 要件定義（テンプレ形式）v_1.md, basic_design_fx_signal_tool_v1.md
 - 対象スコープ: マイルストーンM1（Backtest/Paper/Live 共通基盤）。M2以降で有効化される機能は拡張ポイントとして明示し、実装フックと制約を記載する。
@@ -9,6 +9,7 @@
 ### 0.1 改訂履歴
 | 版 | 日付 | 改訂概要 |
 | --- | --- | --- |
+| v2.0 | 2025-02-26 | Codex向け実装アクセラレーションパックを追加し、エピック別の成果物・プロンプト指示・テストゲーティングを体系化。Acceptable Degradation運用と将来の拡張に耐える抽象化境界の指針を強化。 |
 | v1.9 | 2025-02-25 | 要件v1.4/基本設計v1.4の差分（RateLimitGuard段階評価、Acceptable Degradation手動運用ログ、Validation Data Playbookリンク強化）を反映。Codex実装前提のプロンプト/テスト指示を更新し、SLA計測とRunbookトレーサビリティを拡充。 |
 | v1.8 | 2025-02-20 | Codex実装前提の開発オペレーション/プロンプト設計/テストシナリオを体系化。ヒューマン・トレーダー視点の期待KPI/UXと整合させた。 |
 | v1.7 | 2025-02-20 | KPI検証/性能モニタリング強化、戦略ガバナンス、データ品質上限対策、運用冗長化を追補し、勝率達成への実効性を高めた。 |
@@ -120,6 +121,55 @@
 1. Codex出力をレビュー後、`docs/prompt_packages/<date>_<feature>.md`に「良かった点」「改善要望」「想定外差分」を追記し、次回プロンプトの改善に反映する。
 2. リリース後7日間は該当機能のメトリクスを重点監視し、異常時は`feedback_loop.md`に記録。Codexへの再依頼時はこのログを添付する。
 3. KPIが改善した場合は`reports/weekly/<YYYYWW>.md`に成果を記載し、反対に悪化した場合はリスクレビュー（`docs/risk_review/<YYYYMMDD>.md`）で原因と暫定対応をまとめる。
+
+### 0.7 Codex実装アクセラレーションパック（v2.0追加）
+
+Codexへ実装を委任する際の成果物粒度・レビュー観点・トレーサビリティをさらに明確にするため、以下の運用ルールとテンプレートを追加する。これらは将来のM1.1/M2機能追加時にも再利用できるよう設計しており、エピックを跨いだ再帰的改善サイクルを可能にする。
+
+#### 0.7.1 ブランチ/レビュー運用レーン
+| レーン | ブランチ命名 | 主担当 | ゴール | 必須テスト | 監査ログ |
+| --- | --- | --- | --- | --- | --- |
+| Discovery | `feature/discovery/<epic>-<YYYYMMDD>` | PO＋開発 | 実験/仮実装。`docs/prompt_packages`に仮説とスナップショットを残す。 | `pytest -k smoke` | `logs/audit/discovery.log`（抜粋） |
+| Build | `feature/<epic>-<story>` | Codex | 詳細設計に沿った本実装。Feature Flagは既定`off`。 | `pytest -k <story>`＋`ruff --select=E,F,I` | `logs/audit/build.log`（diff, cfg_hash） |
+| Hardening | `hardening/<epic>-<fix>` | Codex＋開発 | Acceptable Degradation解除、回帰修正。 | `pytest`, `poetry run mypy`（対象モジュール） | `logs/audit/hardening.log`（SLA値） |
+| Release | `release/<version>` | 開発 | リリースノート生成、タグ付け、bundle。 | `make ci-lite` | `reports/release/<version>.md` |
+
+- `feature_flags/<epic>.yaml`はBuildフェーズでレビュー、Releaseフェーズで既定値を決定する。`docs/release_checklist.md`へ各レーン完了条件を追記済み。
+
+#### 0.7.2 プロンプト/アーティファクト構成
+- **Prompt Bundle**: `docs/prompt_packages/<YYYYMMDD>_<epic>_<story>.md`に以下を収録する。
+  1. **差分概要**（300字以内）。
+  2. **該当セクション引用**：本書のセクション番号＋抜粋（最大200行）。
+  3. **I/O契約表**：関数シグネチャ、例外、戻り値、型ヒント必須。
+  4. **テスト指示**：実行コマンド／期待結果（閾値含む）。
+  5. **運用影響メモ**：Board/Kill Switch/Runbookのどの手順に影響するかを3 bulletで記載。
+- **Diff Attachments**: Codexへ渡す既存コードは`docs/snippets/<epic>/<module>.py`として同期。200行超の場合は該当クラス単位に分割し、`# region`コメントで明示する。
+- **Artifact検証**: Codex出力は`git apply --check`で検証後にブランチへ反映。未適用diffは`docs/prompt_packages/...`の`Rejected`節へ記録する。
+
+#### 0.7.3 エピック別成果物マトリクス（v2.0更新）
+| エピックID | 必須成果物 | 参照セクション | 最低限テスト | 監視・メトリクス | Acceptable Degradation時の判断材料 |
+| --- | --- | --- | --- | --- | --- |
+| EP-01 DataLag Mitigation | `src/data/*`, `metrics/data_ingestion_sla.jsonl`, `docs/runbooks/RUN-DATA-05/06`更新 | §3.1, §3.21, §5.1 | `pytest -k data_pipeline`, `pytest -k rate_limit_guard`, `scripts/qa/manual_csv_smoke.sh` | `metrics/data_ingestion_sla.jsonl`, `metrics/rate_limit_window.jsonl` | Stage退行条件、手動CSV投入ログ、`degraded_ack`記録有無 |
+| EP-02 Strategy Determinism | `src/features/*`, `src/strategies/*`, `docs/validation/strategy_determinism.md` | §3.3〜§3.7, §4.3 | `pytest -k strategy_determinism`, `pytest -k feature_pipeline` | `metrics/strategy_replay.jsonl`, `reports/research/*` | `determinism_drift`イベント、`strategy_manifest`バージョン |
+| EP-03 Guardrails | `src/core/health.py`, `src/risk/manager.py`, `src/interfaces/cli/status.py`, Runbook更新 | §2.5, §3.8〜§3.10, §5.3 | `pytest -k health_state`, `pytest -k risk_manager`, `pytest -k cli_status` | `health_state_transitions.jsonl`, `kill_switch_events.jsonl` | `HealthMonitor`推奨アクション履歴、`reports/validation_log/AC-45*` |
+| EP-04 Ticket Clarity | `src/ticket/*`, `src/interfaces/cli/board.py`, `docs/ux_feedback.md`追記 | §3.16, §5.5, §6.2 | `pytest -k ticket_builder`, `pytest -k board_renderer`, `pytest --snapshot-update`（必要時） | `logs/audit/ticket.jsonl`, `metrics/cli_perf.jsonl` | `degraded`時のBoardモード切替手順、`RiskDisclosure`バナー状態 |
+| EP-05 Weekly Review | `src/reporter/*`, テンプレ更新、`reports/templates/*` | §3.18, §5.11 | `tradectl report weekly --dry-run`, `pytest -k reporter` | `reports/weekly/*.md`, `metrics/reporter.jsonl` | KPI欠損時のFallbackコメント、`guarded`時のコメントテンプレ |
+
+- 表の「必須成果物」は実装完了時に`docs/checklists/<epic>_done.md`へチェックし、Releaseフェーズでサインオフする。Codexへ渡す際は表の行を丸ごと貼り付け、達成条件を明文化する。
+
+#### 0.7.4 コーディング規約と自動チェック強化
+- **Docstring**: すべての公開メソッドはGoogleスタイルDocstringで`Args`/`Returns`/`Raises`を記述し、`Example`にはCLIやJSONのサンプルを最低1件含める。
+- **型注釈**: Optional/Unionでは`typing.Annotated`で意味を付与（例: `Annotated[Decimal, "pip"]`）。テストでは`typing.get_type_hints`で型逸脱を検証するユーティリティ（`tests/util/type_contract.py`）を活用する。
+- **ログ規約**: ログレベルは`logger.log(LogLevel.DATA_LATENCY, {...})`のようにEnum経由で出力し、Runbook検索用タグ（例:`event="rate_limit_stage"`）をJSONに含める。
+- **静的解析**: `make ci-lite`に`ruff --select=F,E,I`, `pyright --project pyproject.toml`（キャッシュ可）、`pytest --maxfail=1`を含め、Codex成果物レビュー時は`make ci-lite`の成功ログを添付させる。
+- **フォーマッタ**: `ruff format`で統一。CodexがBlack整形を提案した場合は差分レビューで却下し、本設計書での`ruff`準拠を強調する。
+
+#### 0.7.5 将来拡張に備えた抽象化境界
+- **ProviderAdapter**: `src/data/providers/base.py`に抽象メソッド`fetch_raw`, `normalize`, `backfill_range`を定義し、M1で未使用でもスタブを配置しておく。M2でREST/WebSocket対応を追加する際の差分を局所化する。
+- **StrategyPlugin**: `StrategyMetadata`へ`capabilities`（例:`{"supports_reduce_only": false}`）フィールドを追加し、M1では既定値を返すだけとする。M2でReduce-OnlyやShadowモードを導入しても`StrategyEngine`のシグネチャを維持できる。
+- **HealthSignal**: `HealthMonitor`からCLI/Reporterへ送るメッセージは`HealthSignal` dataclassで統一し、`recommended_action`をEnum（`RUNBOOK`, `NOTIFY`, `DEFERRED_REVIEW`）にする。将来Slack/Webhook追加時にJSON Schemaが崩れないようにする。
+- **ConfigDiff**: `ConfigRegistry.apply_patch`は`DiffResult`を返し、`dangerous`キー変更時に`NextBarChangeQueue`へ登録する現在の仕様を維持。M1では`DiffResult.rollback_instructions`を`None`にし、M2でロールバック自動生成を追加する余地を残す。
+- **CLI Extensibility**: Typerコマンドは`@cli.command()`の代わりに`register_command(CommandSpec)`を利用するラッパーを導入し、GUI/Tauri移行時に再利用する。Codexは新コマンド実装時に`CommandSpec`を拡張すること。
 
 ## 1. アーキテクチャ概要
 
@@ -981,6 +1031,23 @@ Kill Switch解除 & Scoreboard閾値通常運用へ復帰
 3. **テスト**: `tests/perf/test_pipeline_latency.py`がメトリクスJSONLを解析し、直近500サンプルのp95/p99が閾値未満か検証。失敗時は`pytest`失敗とし、`docs/runbooks/RUN-PERF-01.md`に貼り付けるスパークラインを`tools/render_perf_chart.py`で再生成。
 4. **レポート生成**: `tradectl metrics report --kind latency --window 7d`が`metrics/pipeline.jsonl`/`metrics/cli_perf.jsonl`を集計し、`reports/performance/pipeline_latency/<YYYYMMDD>.md`へ`board_mode`別統計とSLA逸脱ログを出力。Acceptable Degradation解除時は同コマンドの出力を`degraded_recovered`イベントに添付する。
 
+### 5.15 Codex実装スプリントレビューシーケンス（v2.0追加）
+1. **キックオフ**: PO/開発がIssueに`0.7.3`表の対象行、受入基準、想定リスクを貼り付け、`docs/prompt_packages`へプロンプトドラフトを保存。`tradectl spec lint`（将来追加予定、現状はMarkdownチェックリスト）で必須項目を確認。
+2. **Codex実装**: CodexがPrompt Bundleに従って実装。完了後に`make ci-lite`を実行し、成功ログと`pytest`抜粋、主要メトリクスの差分（`git diff --stat`）をIssueへ添付。Acceptable Degradationを伴う変更の場合は`reports/validation_log/AC-45*`へ暫定ログを追記しておく。
+3. **レビューフィードバック**: 開発者が`git show`で差分確認→`tradectl review checklist --epic <id>`（YAMLベースのチェックリスト）を実行し、`logs/audit/build.log`との整合性を確認。差分が仕様外の場合はPrompt Bundleを更新し再依頼。SLA影響が疑われる場合は`tradectl metrics report --window 1d`で事前検証する。
+4. **ハードニング**: 運用シナリオで`docs/runbooks`を辿り、`tradectl scenario run --id <scenario>`でAcceptable Degradation手順をリハーサル。逸脱があれば`hardening/`ブランチで追補し、SLAログ（`metrics/data_ingestion_sla.jsonl`等）を`reports/validation_log`に貼り付ける。
+5. **リリース判定**: Releaseブランチへマージする前に`make release-dry-run`（bundle生成＋`poetry export`）を実行し、`reports/release/<version>.md`にまとめてPO承認を得る。承認後にタグ打ち、`tradectl bundle create --version <version>`で配布物を生成する。
+
+| ステップ | トリガー | 実行者 | コマンド/成果物 | フェイルセーフ |
+| --- | --- | --- | --- | --- |
+| Kickoff | Issue作成 | PO/開発 | `docs/prompt_packages/<date>_<epic>.md`、`docs/checklists/<epic>_todo.md` | 必須項目欠落時はIssueを`status=blocked`に戻す |
+| Build | Codex成果物提出 | Codex | `make ci-lite`, `pytest -k <story>`, `git diff --stat` | テスト失敗時はPrompt Bundleへ原因と再試走条件を追記 |
+| Review | 差分受領 | 開発 | `tradectl review checklist --epic <id>` | チェックリストNGで`feedback_loop.md`へ記録し、再学習素材とする |
+| Hardening | Acceptable Degradationログ確認 | 開発＋運用 | `tradectl scenario run --id AC-45`, `tradectl metrics report --window 7d` | Runbook逸脱があれば`logs/ops/incident.log`に暫定処置を記録 |
+| Release | PO承認 | 開発 | `make release-dry-run`, `tradectl bundle create` | バンドル検証失敗時は`release/<version>`を閉じ、`hardening`フェーズへロールバック |
+
+- このシーケンスを1スプリント単位で繰り返し、`feedback_loop.md`に結果を追記する。特にAcceptable Degradationに関わる変更は、Release前に必ず手動CSV投入とBoard Guard切替手順を演習し、`degraded_ack`証跡が欠落していないかを確認する。
+
 > **M2+想定**: Appendix G.5参照。M1では`StatementReconciliationServiceStub`が`status="not_available"`を返し、下記フローは監査用ログのみ残す。
 ```
 Operator or Scheduler(job=reconciliation_daily)
@@ -1339,6 +1406,20 @@ Flag切替時は`ConfigChanged`イベントに`flag_delta`が記録され、Repo
 - `multi_tf_joiner`はIS/OOS区間の欠損率・再計算範囲を`reports/research/m1_baseline/data_quality.json`へ出力し、欠損率>0.5%/日でAC-22のアラートテストを再実行する。
 - Spread分位テーブルは`reports/research/m1_baseline/spread_verification.md`に直近90営業日のp50/p95/p99を記録し、Spread Guard閾値2.0×が適切かを四半期レビューで確認する。
 - 手動遅延ログ（Paper/Live）は`logs/hitl/latency_samples.jsonl`に追記し、月次で`reports/performance/<mode>/latency_stats.json`へ集計する。90パーセンタイルが閾値を超えた場合はRunbook `HITL-LATENCY`の改善アクションを実施する。
+
+### 9.5 Codex QAハーモニクス（v2.0追加）
+- **3レイヤーQA**: Unit（高速）、Integration（実データ結合）、Scenario（Runbook追従）の3段階を必須化する。Codexは各PRで最低1件ずつサンプルを提出し、`docs/qa/results/<date>_<epic>.md`へ実行ログを貼付する。
+- **データ拘束条件**: `tests/fixtures/market/usdjpy_m5_sample.parquet`などの縮小版データを使用し、個人情報や機密ロジックを含まないことを確認する。必要に応じて`tools/make_fixture.py`で最新データから縮小サンプルを生成し、ハッシュを`reports/data_manifest.json`に登録する。
+- **しきい値追跡**: テストで使用する性能/SLA閾値は`tests/thresholds.yaml`に集約し、変更時は`docs/change_requests/threshold_update_<date>.md`へ理由と影響範囲を記録する。閾値変更はPO承認必須。
+
+| QAレイヤー | コマンド例 | 入力データ/モック | 合格基準 | 失敗時の処置 |
+| --- | --- | --- | --- | --- |
+| Unit | `pytest tests/unit/test_rate_limit_guard.py` | `tests/fixtures/rate_limit/log_stage0.jsonl` | Stage遷移ロジックが仕様通り、429率閾値判定が正しい | Prompt Bundleへ失敗ケース追記、`rate_limit_stage_eval`再現手順をRunbookに記載 |
+| Integration | `pytest tests/integration/test_pipeline_end_to_end.py` | `tests/fixtures/market/usdjpy_m5_sample.parquet`, `tests/fixtures/config/profile_paper.yaml` | Backtest/Paper/Live共通フローで同一チケットが生成される | データ差異は`reports/validation_log/<date>_integration.md`に記録し、`data_manifest`との差分を調査 |
+| Scenario | `tradectl scenario run --id AC-45 --profile paper-m1-core` | Runbook手順、`data/manual_fallback/*`双子CSV（サンプル） | Acceptable Degradationチェックリスト全項目パス、`degraded_ack`記録あり | Runbook更新と`feedback_loop.md`への反省点記録、Hardeningフェーズで再実行 |
+
+- **自動収集**: `make qa-report`が上表のテスト結果を集約し、`reports/qa/<date>.md`へ出力する。CIでは`make qa-report --ci`を週次で回し、合格証跡を残す。
+- **Codexハンドオーバー**: PRマージ前にCodexへ`qa-report`の要約と`feedback_loop.md`の該当行をフィードバックし、次回プロンプト改善へ反映する。
 
 ## 10. 要件トレーサビリティ
 
