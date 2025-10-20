@@ -71,7 +71,7 @@
 - [ ] 週次レビューでRunbook完了をサインオフ
 
 ## エスカレーション
-- Kill Switch解除条件が満たせない場合はプロダクトオーナーの承認が得られるまで停止状態を維持し、必要に応じて`Emergency Orchestrator`（Runbook `docs/runbooks/OPS-READINESS-01.md`）を起動する。
+- Kill Switch解除条件が満たせない場合はプロダクトオーナーの承認が得られるまで停止状態を維持し、〈M2+〉`Emergency Orchestrator`（Runbook `docs/runbooks/OPS-READINESS-01.md`）が有効化された後にのみ自動シナリオを起動する。M1 Coreではスタブのみのため、手動チェックリスト運用を継続する。
 - R_eff逸脱が24時間以内に解消しない場合、リスク委員会（Risk Manager, Ops Manager, Quant Lead, Compliance Advisor）を招集し、戦略停止またはパラメータ修正を決定する。
 
 ## 履歴更新手順
