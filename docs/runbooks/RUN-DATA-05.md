@@ -16,7 +16,7 @@
 
 ## 手順
 1. `tradectl data health`で対象シンボルとプロバイダ、発生時刻、直近メトリクスを確認する。`metrics/data_ingestion_sla.jsonl`から前後30分のログを抽出し、`phase=fetch`/`phase=processing`それぞれの遅延を確認する。
-2. **Signal Boardガード制御**: `board_mode=guarded`が設定されたことを`tradectl board status --detail`（またはボードヘッダの警告バナー）で確認し、以下のシーケンスをチェックリストに沿って記録する。
+2. **Signal Boardガード制御**: `tradectl status --detail`の`board_guard`セクション（またはボードヘッダの警告バナー）で`board_mode=guarded`かつ`reduce_only=true`になっていることを確認し、以下のシーケンスをチェックリストに沿って記録する。
    - データ鮮度検証: `metrics/data_ingestion_sla.jsonl`/`metrics/pipeline_latency.jsonl`の逸脱区間を突き合わせ、復旧まで新規提案停止の根拠を`reports/validation_log/AC-45_sla_<date>.md`に追記する。
    - Reduce-Only運用: 既存ポジションの縮小提案のみがSignal Boardで許可されていることを確認し、対応チケットID・判断理由を`reports/audit/reduce_only/<date>.md`へ記録する。
    - 復旧確認: Runbook `docs/runbooks/RUN-DATA-06.md`の補完状況とCatch-upログを参照し、`catch_up_lag_minutes<30`になるまで新規提案が再開されないようにする。
