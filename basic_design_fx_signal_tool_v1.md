@@ -108,7 +108,7 @@
 | Compliance Validator | チケット承認前のレバレッジ/建玉/規制確認と代替案提示 | `broker_rules.yaml`, `risk_policy.yaml`, 監査ログ | M1.1 |
 | Capital Allocation Guard | VaR/ESモニタリングと提案スロットリング | Portfolio PnL, `risk_policy.yaml`, Exposure metrics | M1.1 |
 | Reduce-Only Advisor | 収縮提案生成（閾値到達時、M2+） | Python service | M2+ |
-| Emergency Orchestrator | `emergency.yaml`に基づく緊急アクション実行（Kill Switch連携、Reduce-Only指示） | Policy/Playbook Runner | M2 |
+| Emergency Orchestrator | `emergency.yaml`に基づく緊急アクション実行（Kill Switch連携、Reduce-Only指示） | Policy/Playbook Runner | M2〈M2+、M1 Coreでは`EmergencyOrchestratorStub`〉 |
 | Ticket Builder | 注文チケット生成・ヒューマンエラーチェック | JSON Lines | M1 Core |
 | Persistence & Audit | イベント/ログ/設定履歴 | SQLite/Parquet/JSON | M1.1 |
 | Optimizer | グリッド/ランダム/WFA | SciPy/自作 | M2 |
@@ -120,12 +120,12 @@
 | Model Risk Register Service | `model_risk_register.md`の差分監視・エビデンス突合・Explainability生成チェックを実施し、`model_risk_gap`ステータスを管理（NFR-26, AC-52） | Git metadata/Markdown AST/Python | M2 |
 | Statement Reconciliation Service | ブローカー公式ステートメント（CSV/PDF→CSV）とLive/Paperログを突合し、残高差分/取引突合率を集計。差分閾値で`HealthState=degraded(reason=statement_gap)`を通知し、`reports/audit/reconciliation/`へMarkdownサマリを出力（FR-64, AC-53） | Pandas/Great Expectations/CLI | M2 |
 | Research Workspace Bridge | `research/strategies/<id>/`のノートブック/成果物を解析し、`tradectl research promote`フローで検証メトリクスを取り込む | Papermill/nbconvert/CLI | M2 |
-| Trade Journal Service | トレード/コメント管理、振り返りダッシュボード | SQLite/Markdown | M2 |
-| Benchmark Analyzer | 外部ベンチマークデータとの比較、ギャップ算出 | Pandas/Plotly | M2 |
+| Trade Journal Service | トレード/コメント管理、振り返りダッシュボード | SQLite/Markdown | M1.1〈M1 Coreでは`TradeJournalServiceStub`のみ〉 |
+| Benchmark Analyzer | 外部ベンチマークデータとの比較、ギャップ算出 | Pandas/Plotly | M2〈M2+、Feature Flag無効時は未導入〉 |
 | Data Provenance Service | `data_manifest.json`生成・署名・検証、アーカイブ連携 | `manifest.sig`, ハッシュ計算, WORMストレージ | M1.1 |
 | Audit Bundle Service | `audit_pack/<period>/`への証跡束ね（シグナル・承認・約定・設定・リスク承諾・ベンチマーク差分）と署名`audit_manifest.sig`生成 | JSON/Parquet/Markdown/署名モジュール | M1.1 |
 | Release Governance Service | `tradectl release prepare/tag`のチェックリスト評価、Smokeテスト結果と承諾差分の検証、Kill Switchの`HOLD`制御 | CLI orchestrator, Markdown checklist | M1.1 |
-| StressTest Engine | 指定シナリオの再生と感度分析、結果レポート生成 | Backtest Runner拡張 | M2 |
+| StressTest Engine | 指定シナリオの再生と感度分析、結果レポート生成 | Backtest Runner拡張 | M2〈M2+、`analytics.stress_test`有効時〉 |
 | Parameter Drift Monitor | 最適化パラメータと最新指標のドリフト監視 | Numpy/Scipy | M2+ |
 | Observability Exporter | メトリクス収集とJSONL書き出し（M1）。Prometheus互換エンドポイントはM2+で有効化 | JSONL writer / future `prometheus_client` | M1 Core (M2+ HTTP) |
 | Alert Dispatcher | メール通知 | SMTPライブラリ | M1.1 |
@@ -233,10 +233,11 @@
 - **Audit Trail Service**: 監査イベント（FR-11）を受け取ってJSONL/SQLiteへ二重書き込みし、書き込み失敗時はWrite-Aheadログでロールフォワード可能にする（ERROR-C04対策）。`HumanCheckFailed`等のヒューマンエラー検知もここで証跡化する。CLIからは`tradectl audit export --date 2025-02-20`で抽出。
 - **Logging Strategy**: `logging.config.dictConfig`を用い、モジュール別ロガーを定義（例: `core.signal`, `infrastructure.ingestion`, `interfaces.cli`）。デフォルトレベルINFO、`metrics`/`debug`チャンネルは`logs/app.log`へ、監査・イベントはJSONLへ出力。例外は`logger.exception`でトレースを記録し、再試行が必要なケースはRetryPolicyへ委譲。
 - **RetryPolicy**: インフラ層でユニット化し、yfinance/Dukascopy取得は`max_attempts=3`, `backoff=1.5`倍増。取得失敗は`DataDegraded`イベントで通知し、閾値超えでKill Switchへ連携。CLIコマンドは即時エラーとし、非ゼロ終了コードでユーザーへ通知。
-- **Emergency Orchestrator**: `emergency.yaml`を`pydantic`でロードし、シナリオ→アクション（Kill Switch遷移、Reduce-Only提案、通知、再接続リトライ）を状態マシンとして実行（FR-47, AC-38）。`tradectl emergency dry-run`で手順検証、`tradectl emergency trigger <scenario>`で手動発火（保護付き）。緊急時のオペレーション責務と承認テンプレートはRunbook `RUN-DATA-05`（docs/runbooks/RUN-DATA-05.md）を参照する。
-- **Trade Journal Service**: チケット承認イベントと実績（Backtest/Paper/Live）を`journal_entries.db`へ保存し、週次レポート生成時にMarkdownテンプレートへレンダリング（FR-44）。CLIは`tradectl journal add-note --ticket <id>`でコメント追記、`tradectl journal review`で直近レビューを表示。
-- **StressTest Orchestrator**: `scenarios/*.yaml`のイベントセットと感度パラメータ（spread_multiplier, slip_bias, decision_delay）をBacktest Runnerへ注入し、結果を`reports/stress/<scenario>/index.md`へまとめる（FR-43, AC-36）。
-- **Benchmark Monitor**: `benchmark_feeds/*.csv`を取り込み、自戦略のエクイティ・KPIと差分チャートを生成。`tradectl benchmark compare --from 2023-01-01`で比較実行し、差分が閾値超過の場合はHealth Monitorへ`benchmark_gap`理由を追加（FR-46, FR-48）。
+- **Emergency Orchestrator**〈M2+〉: `emergency.yaml`を`pydantic`でロードし、シナリオ→アクション（Kill Switch遷移、Reduce-Only提案、通知、再接続リトライ）を状態マシンとして実行（FR-47, AC-38）。`tradectl emergency dry-run`で手順検証、`tradectl emergency trigger <scenario>`で手動発火（保護付き）。M1 Coreでは`EmergencyOrchestratorStub`が`noop`ログのみを残し、本体は未導入のまま運用する。緊急時のオペレーション責務と承認テンプレートはRunbook `RUN-DATA-05`（docs/runbooks/RUN-DATA-05.md）を参照する。
+- **Trade Journal Service**〈M1.1〉: チケット承認イベントと実績（Backtest/Paper/Live）を`journal_entries.db`へ保存し、週次レポート生成時にMarkdownテンプレートへレンダリング（FR-44）。CLIは`tradectl journal add-note --ticket <id>`でコメント追記、`tradectl journal review`で直近レビューを表示。M1 Coreでは`TradeJournalServiceStub`でイベントを受け流し、Feature Flagが有効化されるまでレポート生成を行わない。
+- **StressTest Orchestrator**〈M2+〉: `scenarios/*.yaml`のイベントセットと感度パラメータ（spread_multiplier, slip_bias, decision_delay）をBacktest Runnerへ注入し、結果を`reports/stress/<scenario>/index.md`へまとめる（FR-43, AC-36）。`analytics.stress_test` Feature FlagがOFFの間はジョブ投入を禁止し、M1 Core実装ではプレイブックとテンプレートのみを維持する。
+- **Benchmark Monitor**〈M2+〉: `benchmark_feeds/*.csv`を取り込み、自戦略のエクイティ・KPIと差分チャートを生成。`tradectl benchmark compare --from 2023-01-01`で比較実行し、差分が閾値超過の場合はHealth Monitorへ`benchmark_gap`理由を追加（FR-46, FR-48）。`analytics.benchmark_monitor` Feature Flagがfalseの間はM1 Coreに影響するコードを追加せず、手動レビュー記録のみを維持する。
+> **M1 Core実装ガイダンス**: 上記の〈M1.1〉/〈M2+〉コンポーネントはM1 Coreではスタブまたは未導入で運用する。Codex実装時もM1範囲を超えるコード追加を避け、Feature Flagが有効化されるまではRunbookと手動証跡のみでカバーすること。
 
   Acceptable Degradation期間中に手動補完を利用する場合は、`data/manual_fallback/<provider>/<symbol>/<YYYYMMDD>/fallback_<provider>_<symbol>_<tf>_<YYYYMMDD>_{op,review}.csv`を`benchmark validate-manual --path ...`で突合し、ハッシュと承認者イニシャルを`reports/benchmark/manual_log_signoff/<YYYYMMDD>.md`へ書き出すまでKPI集計をブロックする。
 - **Observability Exporter**: M1は`metrics/pipeline.jsonl`/`metrics/cli_perf.jsonl`をストリーム書き出しし、`tradectl metrics report`でRunbook添付用スナップショット（Markdown/JSON）を生成する。Prometheus互換ExporterはM2+で`/metrics`（予定ポート`127.0.0.1:9108`）を公開する計画とし、M1ではExporterインターフェースとメトリクス登録コードをスタブ化しておく（NFR-06, NFR-15）。
