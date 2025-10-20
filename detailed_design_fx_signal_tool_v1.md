@@ -439,10 +439,13 @@ tests/
 - **出力**: `SizedSignal`（size, risk_R, margin_estimate, ttl_factor）。丸め誤差は`checklist.lot_round_ok`に反映。
 
 ### 3.12 FundingService (`src/funding/service.py`)
+> **マイルストーン注記**: FundingServiceはPaper損益の正確性を確保するためM1 Coreへ「コア例外」として含め、`swap_rates.csv`手動更新＋Calendar連携までを必須化する。ブローカーAPI自動同期はM2で拡張する。
 - **公開API**: `update_forecast(account_positions)`, `apply_daily_swap(now)`, `status()`。
-- **データ源**: `config/swap_rates.csv`（ユーザー管理）、`CalendarService`。
+- **依存モジュール**: `ConfigRegistry`（`config/swap_rates.csv`, `funding.triple_day_shift`）、`CalendarService`（祝日・三倍日補正）、`AccountService`（`AccountState.swap_realized`反映）、`ScoringService`（`swap_penalty`入力）。
+- **データ源**: `config/swap_rates.csv`（ユーザー管理）、`CalendarService`。M2以降で`broker_api`アダプタを追加。
 - **アルゴリズム**: 保持期間推定×スワップで`swap_penalty`を算出しScoringへ提供。ロールオーバー時刻に`swap_realized`をAccountStateへ反映。祝日シフトは`triple_day`とカレンダーで補正。
-- **エラーハンドリング**: データ欠損で`FundingDegraded`イベント→`HealthMonitor.degraded`。Fallbackで前回値保持。
+- **運用要件**: `tradectl funding sync`でCSVを読み込み、更新結果を`funding_state.json`へ記録。M1ではCSVのハッシュと更新者を`reports/validation_log/AC-09_funding_<date>.md`に残し、IT-FUND-01統合テストで祝日前後の三倍日処理を検証する。
+- **エラーハンドリング**: データ欠損で`FundingDegraded`イベント→`HealthMonitor.degraded`。Fallbackで前回値保持。3営業日連続で更新が無い場合は`health.raise('degraded','funding_data_gap')`を発火し、Acceptable Degradation手順で手動CSV確認を要求。
 
 ### 3.13 CalendarService (`src/calendar/service.py`)
 - **公開API**: `update(now)`, `is_blocked(symbol)`, `reload()`。
@@ -1145,7 +1148,7 @@ Flag切替時は`ConfigChanged`イベントに`flag_delta`が記録され、Repo
 | IT-SPREAD-01 | AC-34 | Spread閾値→クールダウン→解除 | 統合 |
 | IT-KILL-01 | FR-05/FR-22 | Kill Switch遷移（soft/hard） | 統合 |
 | IT-RISK-02 | FR-05/FR-18 | `risk_summary`が`risk_policy`閾値とKill Switchイベントに一致するか検証 (`tradectl report weekly --since 7d`) | 統合 |
-| IT-FUND-01 | FR-28 | FundingService三倍日処理 | 統合 |
+| IT-FUND-01 | FR-28 | FundingService三倍日処理（CSV手動更新, 三倍日補正） | 統合 (M1 Core) |
 | IT-COR-01 | FR-37 | 相関閾値でシグナル抑制 | 統合 |
 | PT-CLI-01 | AC-G1/G2 | `tradectl board`操作100件連続 | CLI |
 | PT-BT-01 | AC-13 | Backtest再現性（hash固定） | Property |
