@@ -1308,6 +1308,59 @@ HealthMonitor.ack()
 
 ※詳細手順とCLIスクリーンショットはRunbook付録Gと相互参照。
 
+### 6.8 CLIテレメトリおよびコマンドログ設計（v2.4追加）
+
+CodexがCLI改善やUX回収タスクを効率的に実装できるよう、Typerベースの各コマンドに共通テレメトリフックを追加する。ヒューマン・トレーダーの操作痕跡をQA/Runbookと突合しやすくし、将来的なGUI/Tauri移行時にも同一スキーマを再利用できるようにする。
+
+- **対象モジュール**: `src/interfaces/cli/__init__.py`, `src/interfaces/cli/renderers.py`, 各コマンドモジュール（`board.py`, `status.py`, `tickets.py`, `events.py`, `export.py`, `resync.py`, `spread.py`, `data/rate_limit.py`, `report.py`, `benchmark.py`, `account.py`, `calendar.py`）。
+- **Feature Flag**: `telemetry.cli.enabled`（既定`True`）。M1で常時記録、プライバシー要件が変化した場合は`False`で完全停止できるようにする。
+
+#### 6.8.1 テレメトリデータモデル
+
+| モデル | フィールド | 説明 |
+| --- | --- | --- |
+| `CommandTelemetryRecord` | `ts: datetime`, `command: str`, `subcommand: str | None`, `args_hash: str`, `duration_ms: int`, `status: Literal['success','error','cancelled']`, `error_code: str | None`, `health_state: HealthStateSummary`, `board_mode: BoardMode`, `actor: str`, `session_id: UUID`, `context: Literal['backtest','paper','live']`, `qa_tags: list[str]` | 1コマンド実行ごとの記録。`args_hash`は非機微引数をソートしたJSONのSHA1。`actor`は`.env`の`CLI_ACTOR`またはmacOSユーザ名。 |
+| `HealthStateSummary` | `status: Literal['ok','degraded','soft_stop','hard_stop']`, `reason_codes: list[str]`, `kill_switch: Literal['RUNNING','STOP']` | コマンド開始時点の状態快照。`CommandTelemetryRecord`からインライン参照。 |
+| `TelemetryAggregation` | `command: str`, `period: date`, `count_success: int`, `count_error: int`, `p95_duration_ms: float`, `p99_duration_ms: float`, `median_duration_ms: float`, `error_codes: dict[str,int]`, `board_mode_distribution: dict[str,int]` | 日次バッチで生成する統計行。`reports/telemetry/cli/<YYYYMMDD>.json`に保存し週次レポートへ引用。 |
+
+- **格納先**: `metrics/cli_commands.jsonl`に逐次追記。日次ジョブ`TelemetryAggregatorJob`が`TelemetryAggregation`を生成し、`reports/telemetry/cli/<YYYYMMDD>.json`と`reports/telemetry/cli/<YYYYWW>.md`へ出力する。Runbook `RUN-OPS-02`のレビュー手順で参照する。
+- **匿名化ポリシー**: `args_hash`に含めるのは非個人情報のみに限定する。手動ノートやコメントを含む引数（例: `--note`）は`redacted_args`リストに登録し、`args_hash`から除外する。`actor`は`CLI_ACTOR`環境変数で明示したイニシャルに制限し、個人名をログへ出力しない。
+
+#### 6.8.2 実装ガイド
+
+1. `Typer`アプリ登録時に`@instrument_command`デコレータを挟み、`CommandContext`を生成する。
+   ```python
+   @instrument_command(command="board")
+   def board(...):
+       ...
+   ```
+2. デコレータは`async`/同期双方に対応し、`time.perf_counter_ns()`で実行時間を計測、例外捕捉で`status`/`error_code`を設定する。`error_code`は`ERROR-*`（§7）または`CLI-*`（新設）を使用する。
+3. `CommandTelemetryRecord`は`pydantic` v2モデルで定義し、`.model_dump(mode="json")`したものを`metrics/cli_commands.jsonl`へ追記。ファイルローテーションは1日単位で行い、`SessionManager`起動時に昨日のファイルを`gzip`圧縮する。
+4. CLIコマンド内で`HealthMonitor.snapshot()`と`BoardStateResolver.current_mode()`を呼び、`HealthStateSummary`と`board_mode`を記録する。`board_mode`取得で例外が発生した場合は`board_mode='unknown'`で記録し、`status='error'`扱いにする。
+5. Acceptable Degradation時に実行されたコマンドは`qa_tags`へ`['degraded','runbook:<id>']`を付与し、Runbook証跡検索を容易にする。`qa_tags`は`set[str]`として重複を許さず、将来GUIからも流用できるよう `List[str]`で保存する。
+
+#### 6.8.3 テストと可観測性
+
+- **ユニットテスト**: `tests/unit/test_cli_telemetry.py`
+  - `test_instrument_success_records_metrics`: 正常完了で`status='success'`, `duration_ms>0`が記録される。
+  - `test_instrument_error_records_error_code`: 例外発生で`status='error'`, `error_code`が捕捉される。
+  - `test_redacted_args_not_in_hash`: `--note`など機微引数がハッシュから除外される。
+- **統合テスト**: `tests/integration/test_cli_command_logging.py`
+  - `tradectl board --filter symbol=USDJPY`実行後に直近ログ行を解析し、`command='board'`, `board_mode`が期待値であることを確認。
+  - Acceptable Degradationシナリオ（`tradectl board --guarded`）で`qa_tags`に`degraded`が付与されることを検証。
+- **メトリクス監視**: `TelemetryAggregatorJob`は`metrics/cli_commands.jsonl`の最新24h分を読み込み、`reports/telemetry/cli/<YYYYWW>.md`に以下を出力する。
+  1. コマンド別実行回数/成功率。
+  2. `board`/`ticket`系のp95実行時間とAcceptable Degradation時の増分。
+  3. 重大エラーコード（`CRITICAL`）の一覧とRunbookリンク。
+- **アラート閾値**: `TelemetryAggregatorJob`は`command='board'`で`p95_duration_ms>4000`または`error_rate>0.1`を検出した場合に`AlertDispatcher`へ`telemetry.cli.performance` WARNを送信し、Runbook `RUN-OPS-02`のUX改善タスクを提示する。
+- **将来拡張**: GUI移行時は同一スキーマでWebSocket経由の操作を記録し、`context='gui'`を追加予定。Codexは`CommandTelemetryRecord`のバージョンを`__schema_version__=1`とし、互換性変更時に`tests/contracts/test_cli_telemetry_schema.py`で検知できるようにする。
+
+#### 6.8.4 Codexプロンプト指針
+
+- CLI改善の実装依頼時は、対象コマンドの直近テレメトリ抜粋（`metrics/cli_commands.jsonl`の10行）と`reports/telemetry/cli/<YYYYWW>.md`のサマリをPrompt Bundleへ添付する。
+- `instrument_command`デコレータの既存挙動を変更する場合は、`CommandTelemetryRecord`の互換性チェックリスト（`fields`, `types`, `qa_tags`）をIssue本文に明記し、`tests/contracts/test_cli_telemetry_schema.py`の更新手順を添付する。
+- Acceptable Degradation関連タスクでは`qa_tags`がRunbook整合性チェックに使用されることを明記し、PRに`tradectl telemetry report --command <cmd>`（将来実装予定、当面は`make telemetry-report`）の結果を添付する。
+
 ## 7. エラーハンドリング / フェイルセーフ
 
 | ID | シナリオ | 検知 | アクション | 再開条件 |
@@ -1865,3 +1918,50 @@ HITLトレーダーとCodex開発者が同じ前提でレビューできるよ�
 5. **メトリクス確認**: 復旧後30分以内に`metrics/data_ingestion_sla.jsonl`・`metrics/rate_limit_window.jsonl`・`reports/weekly`の該当箇所をチェックし、未回復指標があれば`HealthMonitor`へ再通知。
 
 Codexは上記シナリオを前提にテストデータ/ログを準備し、PR説明時に「対象シナリオ」「操作ステップ」「検証結果」を必ず紐付ける。トレーダーはRunbookに沿った証跡をレビューし、承認サインを`reports/validation_log`系ドキュメントへ記録する。
+
+## 13. Codex開発準備チェックリスト（v2.4追加）
+
+Codexへ実装タスクを引き渡す際に必要な準備作業を標準化し、スプリントごとの手戻りを防ぐ。以下のチェックリストはIssue/PRテンプレートにも紐付け、未完了項目がある場合は`status=blocked`として扱う。
+
+### 13.1 事前準備フロー
+
+1. **差分基準の明確化**
+   - `git status --short`がクリーンであることを確認し、`docs/prompt_packages/<date>_<epic>.md`にベースラインコミットハッシュを記録する。
+   - `make ci-lite`実行ログを`ci/baseline_<commit>.log`として保存。失敗時はCodexへ渡す前に原因を解決する。
+2. **プロンプト資材の整備**
+   - 必要ファイルの抜粋（最大200行）を`docs/snippets/<epic>/<module>.py`に更新。`# region`コメントで差分境界を明示する。
+   - テレメトリやメトリクスの抜粋（§6.8）を`docs/prompt_packages/...`の`Context`節に添付。Acceptable Degradation関連タスクでは`metrics/cli_commands.jsonl`と`reports/validation_log/AC-45*`を必ず含める。
+3. **Runbook・メトリクス整合**
+   - 影響するRunbook節番号とチェックボックスをIssue本文に列挙し、運用担当と整合する。
+   - `make sla-report`または該当スクリプトを実行し、最新メトリクスを`reports/validation_log/<date>_<topic>.md`へ貼り付ける。Codexはこれをベースラインとし、差分報告に活用する。
+4. **テスト指示の具体化**
+   - `pytest -k <keyword>`や`tradectl ... --dry-run`など、Codexが実行すべきコマンドをIssueに明示し、成功判定（閾値・期待出力）を表形式で記載。
+   - 追加で必要なフィクスチャ・モックは`tests/fixtures/README.md`と`docs/prompt_packages/...`へ追記し、生成スクリプトを併記する。
+5. **リスク通知**
+   - 既知のリスク（§11）やAcceptable Degradation発生履歴を`feedback_loop.md`から抜粋し、Issueに`Known Risks`セクションとして貼り付ける。
+   - 緊急度が高い場合は`AlertDispatcher`ログ（`logs/alerts/*.jsonl`）を添付し、Codexが原因トリアージを再現できるようにする。
+
+### 13.2 チェックリスト（Issue/PR用）
+
+| # | 項目 | 完了状態 | 証跡 |
+| --- | --- | --- | --- |
+| 1 | ベースラインCIログ（`make ci-lite`）を`ci/baseline_<commit>.log`へ保存した | ☐ | `ci/baseline_<commit>.log` |
+| 2 | Prompt Bundleに対象セクション引用・I/O契約表・テレメトリ抜粋を追加した | ☐ | `docs/prompt_packages/<date>_<epic>.md` |
+| 3 | 影響Runbook節とチェックボックスをIssue本文に列挙した | ☐ | Issue/PR本文 |
+| 4 | テストコマンドと判定基準を表形式で記載した | ☐ | Issue/PR本文（`<Tests>`節） |
+| 5 | 既知リスク/Acceptable Degradation履歴を添付した | ☐ | `feedback_loop.md`, `reports/validation_log/*` |
+| 6 | 必要なフィクスチャ/データ抜粋を更新し、生成スクリプトを明記した | ☐ | `tests/fixtures/README.md`, `tools/*` |
+| 7 | Feature Flag既定値と切替条件を明記した | ☐ | Issue/PR本文（`Feature Flags`節） |
+| 8 | Codex成果物レビュー用の`make <target>`コマンド（例:`make sla-report`）を指定した | ☐ | Issue/PR本文 |
+| 9 | 関連Runbook/Validationログの最新ハッシュを記録した | ☐ | `reports/validation_log/<date>_*.md` |
+| 10 | Codex再依頼時のフィードバック（`feedback_loop.md`該当行）を引用した | ☐ | Issue/PR本文 |
+
+### 13.3 Codex成果物受領後の確認
+
+1. `git diff --stat`で設計指定外ファイルが含まれていないか確認。逸脱があれば即差戻し。
+2. `make ci-lite`とIssueで指定したテストコマンドを再実行し、`ci/results/<date>_<epic>.log`へ保存。
+3. Acceptable Degradationが絡む場合は`tradectl telemetry report --window 1d`（実装前は`make telemetry-report`）でコマンドログ差分を確認し、Runbookサインオフに添付。
+4. `docs/prompt_packages/...`へレビューメモ（良かった点/改善点/想定外差分）を追記し、`feedback_loop.md`を更新。次回のPrompt改善に繋げる。
+5. `docs/change_requests/`や`reports/validation_log/`の該当ファイルへサインオフ者と日時を追記し、監査ログと整合させる。
+
+これらの手順を遵守することで、Codexとの反復速度を維持しつつ将来の仕様変更にも耐えられるドキュメント・証跡を確保する。
