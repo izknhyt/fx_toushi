@@ -2484,3 +2484,163 @@ Acceptable Degradation対応やTelemetry/シナリオ演習の成果を**単一�
 - M1.1: Ops ReviewダッシュボードをTauri UIへ拡張し、`OpsReviewDigest`をWebSocket配信。CLIとGUIで同一JSONを共有する。
 - M2: KPI自動判定とアクション提案を`ActionRecommendationEngine`（拡張ポイント）で実装し、`ActionItem`に`confidence`フィールドを追加。モデル再学習時は`ChangeLedger`へ記録し、リグレッションテストを追加する。
 - Acceptable Degradationケースの再発予測を`Knowledge Pack`/`Telemetry`から計算する`RecurrenceAnalyzer`を追加し、`RiskHighlight`へ`recurrence_probability`フィールドを追加する計画。Codex実装時は`tests/integration/test_recurrence_analyzer.py`を新設する。
+
+---
+
+## 20. Codexプロンプトバンドル自動生成フレームワーク（v2.5ドラフト）
+
+### 20.1 目的と背景
+- プロンプト資材準備の所要時間を30分→10分に短縮し、Codexへのハンドオフ遅延を最小化する。
+- Acceptable DegradationやTelemetry改善など複数ソースからの抜粋を正規化し、再利用可能なテンプレートを生成する。
+- `docs/prompt_packages/`配下のファイル構成・命名規則を強制し、変更履歴を`ChangeLedger`（§17）と同期させる。
+
+### 20.2 モジュール構成
+| パス | 役割 | Codex実装ポイント |
+| --- | --- | --- |
+| `src/prompting/__init__.py` | DIエントリ。Feature Flag `prompting.automation_enabled`（既定True）。 | False時は`PromptBundleServiceStub`を返し、副作用を発生させない。 |
+| `src/prompting/models.py` | `PromptBundle`, `PromptSection`, `ArtifactReference`, `SnippetExtract`, `MetricsExcerpt`などの`pydantic`モデル。 | `schema_version = 1`。`PromptSection.kind`は`overview|existing_design|change|tests|operations|metrics|risks`のEnum。 |
+| `src/prompting/collector.py` | 差分対象ファイル・メトリクス・Runbookを解析し`PromptSection`へ変換。 | `collect_from_git(diff_range)`, `collect_design_sections(refs)`, `collect_metrics(paths)`, `collect_runbook_refs(ids)`を提供。 |
+| `src/prompting/renderer.py` | Markdownテンプレート生成。 | `render(bundle: PromptBundle) -> str`。テンプレは`docs/prompt_packages/templates/bundle.md.j2`。 |
+| `src/prompting/summarizer.py` | 変更点/メトリクス差分を要約。M1はルールベース、M2でLLM拡張余地。 | `summarize_diff(diff_stat)`, `summarize_metrics(metrics_excerpt)`。 |
+| `src/prompting/service.py` | `PromptBundleService`。CLI/CIが利用するファサード。 | `build(epic_id, story_id, diff_range, profile)`など。 |
+| `src/interfaces/cli/prompt.py` | `tradectl prompt bundle`コマンド群。 | `instrument_command`（§6.8）でテレメトリ記録。 |
+| `docs/prompt_packages/templates/bundle.md.j2` | Jinja2テンプレ。 | Section順序・表形式・Runbook表記を統一。 |
+| `tests/unit/test_prompt_bundle.py` | モデル変換/テンプレ整形テスト。 | `pytest -k prompt_bundle`必須。 |
+| `tests/integration/test_prompt_cli.py` | CLIシナリオ（差分→Markdown生成）の検証。 | `pytest -k prompt_cli`。 |
+
+- 既存テンプレ（§0.6.2）を自動生成で再現するため、`PromptBundle`には以下のセクションを含める。
+  1. `Overview`: Epic/Story、背景、関連KPI、既知リスク。
+  2. `ExistingDesign`: 本詳細設計の該当セクション抜粋（最大200行）。
+  3. `Change`: 差分ファイル/関数のI/O契約表。`@dataclass`/例外/戻り値を明示。
+  4. `Tests`: `pytest`/CLIコマンド表、許容誤差、証跡の貼付先。
+  5. `Operations`: Runbookステップ、Acceptable Degradationケースとの紐付け。
+  6. `Metrics`: `metrics/*.jsonl`抜粋、QAタグ、現状値→期待値差分。
+  7. `Risks`: Known Risks（§11）や`feedback_loop.md`からの引用。
+
+### 20.3 データモデル
+- `PromptBundle`フィールド:
+  - `id: PromptBundleId` (`f"{epic}-{story}-{date}"`形式)。
+  - `epic_id`, `story_id`, `scenario_id`（シナリオ適用時）。
+  - `sections: list[PromptSection]`。
+  - `artifacts: list[ArtifactReference]`（`path`, `hash`, `description`, `tags`）。
+  - `change_ids: list[str]` (`ChangeLedger`参照)。
+  - `qa_checks: dict[str, Literal['required','optional']]`。
+  - `generated_at`, `generated_by`, `source_commit`。
+- `PromptSection`は`kind`, `title`, `content`, `metadata`を保持。`metadata`には`design_section_refs`, `runbook_refs`, `metrics_refs`を含める。
+- `MetricsExcerpt`は`path`, `qa_tags`, `summary_stats`, `window`, `notes`。`summary_stats`は`{'p50': Decimal, 'p95': Decimal, ...}`。
+- `SnippetExtract`は`path`, `region`, `content`, `hash`。`region`は`# region`コメント名と行番号範囲を保持。
+
+### 20.4 CLI仕様 (`tradectl prompt ...`)
+| コマンド | 用途 | 主な引数/フラグ | 出力 |
+| --- | --- | --- | --- |
+| `tradectl prompt bundle create` | 差分からPrompt Bundle生成 | `--epic`, `--story`, `--scenario`, `--diff-range <commit..HEAD>`, `--profile`, `--out`, `--dry-run` | Markdownを`docs/prompt_packages/<date>_<epic>_<story>.md`へ保存。`--dry-run`は標準出力。 |
+| `tradectl prompt bundle show` | 既存バンドル表示 | `--id <bundle_id>`, `--format markdown|json` | `PromptBundle`整形出力。 |
+| `tradectl prompt bundle audit` | 必須セクション/証跡の検査 | `--id`, `--check qa|runbook|metrics|change` | 欠損項目を赤色で表示し、`exit_code!=0`でCI失敗。 |
+| `tradectl prompt snippet sync` | `docs/snippets/`生成 | `--module src/...py`, `--region ClassName` | `SnippetExtract`を更新しハッシュを記録。 |
+
+- CLIは`CommandTelemetryRecord.qa_tags`に`['prompt_bundle']`を設定。Acceptable Degradationシナリオ指定時は`['prompt_bundle','degraded']`。
+- `bundle create`は生成直後に`ChangeLedger.record_change(category='prompt', summary=...)`を呼び出し、証跡リンクを作成する。
+
+### 20.5 実装ガイド
+1. **差分解析**: `collector.collect_from_git`は`pygit2`で`A/M/D/R`を取得。削除ファイルは`PromptSection(kind='change', metadata.removed=True)`で記録。
+2. **設計抜粋**: `collector.collect_design_sections`が`detailed_design_fx_signal_tool_v1.md`から該当§番号を正規表現で抽出。将来`<section id="...">`マーカー導入を検討。
+3. **Runbook整合**: `collect_runbook_refs`は`docs/runbooks/**/*.md`を探索し、`RunbookRef(id='RUN-DATA-05#stage_eval', path=...)`を生成。`scenario_id`指定時は該当Runbook節を優先。
+4. **Metrics抜粋**: `collect_metrics`は`metrics/schema_index.json`（§18）を参照。対象メトリクスの最新N行を抽出→`summary_stats`算出→`qa_tags`付与。`degraded`タグはKnowledge Pack（§16）へリンク。
+5. **テンプレ適用**: `renderer.render`はJinja2テンプレでMarkdown生成。ヘッダに`bundle_id`/`source_commit`/`generated_at`を記載し、`---`で区切る。
+6. **CI統合**: `make prompt-bundle CHECKOUT=<commit>`をCIに追加。差分があればPRコメントへMarkdownを添付し、レビューで利用。`prompt bundle audit`失敗時はCIをREDにする。
+
+### 20.6 テスト計画
+| テストID | 目的 | 内容 |
+| --- | --- | --- |
+| UT-PRM-01 | git差分抽出の正確性 | `tests/unit/test_prompt_collector.py::test_collect_from_git_added_modified`。 |
+| UT-PRM-02 | メトリクス抜粋計算 | `tests/unit/test_prompt_collector.py::test_collect_metrics_summary`。 |
+| UT-PRM-03 | Runbook参照解決 | `tests/unit/test_prompt_collector.py::test_collect_runbook_refs`。 |
+| UT-PRM-04 | テンプレ整形 | `tests/unit/test_prompt_renderer.py::test_render_markdown`。 |
+| IT-PRM-01 | CLI生成フロー | `tests/integration/test_prompt_cli.py::test_bundle_create_and_audit`。 |
+| IT-PRM-02 | Acceptable Degradationシナリオ統合 | `tests/integration/test_prompt_cli.py::test_bundle_with_scenario`。 |
+
+- `pytest -k prompt_bundle`を`make ci-lite`へ追加。`prompt bundle audit`は`docs/prompt_packages/`更新時のプリコミットで実行。
+
+### 20.7 Codexハンドオフ指針
+- Issueテンプレートに`<Prompt Bundle>`セクションを追加し、`tradectl prompt bundle create`出力を貼付する。
+- Prompt Bundleには`ScenarioRunner`（§14）、`TelemetryDigest`（§15）、`Knowledge Pack`（§16）、`ChangeLedger`（§17）の最新抜粋を含める。
+- Codex再依頼時は`prompt bundle audit --check change`で差分摘要を確認し、未解決事項を`ActionItem`（§19）に転記する。
+
+---
+
+## 21. リサーチ・バックテスト再現性フレームワーク強化（v2.5ドラフト）
+
+### 21.1 目的
+- 戦略リサーチとM1運用の差異を最小化し、Paper/Live移行時のギャップを可視化する。
+- Codexが研究タスクを担当する際の再現性を高め、トレーダーがKPIレビューで根拠を迅速に確認できるようにする。
+- Acceptable Degradation後の検証や戦略アップデート時に、定量的なエビデンスを自動収集する。
+
+### 21.2 モジュール構成
+| パス | 役割 | Codex実装ポイント |
+| --- | --- | --- |
+| `src/research/__init__.py` | Feature Flag `research.framework_enabled`（既定True）。 | False時はスタブを返し、副作用なし。 |
+| `src/research/databank.py` | データセット管理 (`DatasetRegistry`, `DatasetHandle`, `ManifestValidator`)。 | `dataset_manifest.json`（§9.4.1）を検証。ハッシュ/欠損チェックを行い、Runbookリンクを返す。 |
+| `src/research/parameter_store.py` | 戦略パラメータバージョン管理 (`ParameterProfile`, `ParameterDiff`)。 | `strategy_manifest.yaml`と同期し、差分は`ChangeLedger`記録。 |
+| `src/research/backtest_runner.py` | Backtest/WalkForward/Stressテスト実行。 | `run_backtest`, `run_walkforward`, `run_stress`, `compare_runs`を提供。 |
+| `src/research/reporting.py` | レポート生成 (`ResearchReportBuilder`)。 | `reports/research/<strategy>/<date>.md`を生成し、`OpsReviewDigest`へリンク。 |
+| `src/research/validation.py` | `ValidationScenario`モデルと期待値判定。 | `validate(run_result, expectations)`→`ValidationOutcome`。 |
+| `src/interfaces/cli/research.py` | `tradectl research` CLI。 | `instrument_command`適用。 |
+| `tests/unit/test_research_databank.py` | データセット検証テスト。 | `pytest -k research_databank`。 |
+| `tests/integration/test_research_cli.py` | CLI一連の流れ検証。 | `pytest -k research_cli`。 |
+
+### 21.3 データモデル
+- `DatasetRegistry`:
+  - `datasets: dict[str, DatasetHandle]`。
+  - `register(dataset_id, path, hash, timeframe, tags)`。
+  - `verify(dataset_id) -> DatasetVerification`（欠損/ハッシュ不一致/最終更新日）。
+- `ParameterProfile`:
+  - `strategy_id`, `version`, `parameters: dict[str, Any]`, `created_at`, `source` (`research|ops`)、`notes`。
+  - `diff(other_profile)`→`ParameterDiff` (`changed`, `added`, `removed`)。
+- `BacktestRunResult`:
+  - `scenario_id`, `dataset_id`, `parameter_version`, `metrics`（Sharpe/PF/DD/HitRate等）、`equity_curve_path`, `trades_path`, `stress_results`, `hash`。
+- `ValidationExpectation`:
+  - `metric`, `lower_bound`, `upper_bound`, `confidence`, `notes`。
+- `ValidationOutcome`:
+  - `passed: bool`, `violations: list[Violation]`, `artifacts: list[ArtifactRef]`, `review_required: bool`。
+
+- `BacktestRunResult`と`ValidationOutcome`は`reports/research/<strategy>/<date>/`配下へJSON/Markdownで保存。`hash`は`dataset_hash + parameter_hash + code_hash + scenario_id`のSHA256。
+
+### 21.4 CLI仕様 (`tradectl research ...`)
+| コマンド | 用途 | 主な引数/フラグ | 出力 |
+| --- | --- | --- | --- |
+| `tradectl research dataset register` | データセット登録 | `--id`, `--path`, `--hash`, `--tf`, `--tags` | `DatasetRegistry`更新。検証結果を表示。 |
+| `tradectl research dataset verify` | データセット検証 | `--id`, `--strict` | 欠損/ハッシュ不一致を表形式で表示。`--strict`はCI向けExit Code。 |
+| `tradectl research parameters diff` | パラメータ差分 | `--strategy`, `--from-version`, `--to-version` | `ParameterDiff`表。Acceptable Degradation影響度も表示。 |
+| `tradectl research run backtest` | Backtest実行 | `--strategy`, `--dataset`, `--params`, `--profile`, `--out`, `--compare-to` | 主要KPIと`ValidationOutcome`サマリを表示。`--compare-to`でIS/OOS差分。 |
+| `tradectl research run stress` | ストレステスト | `--strategy`, `--scenario`, `--dataset` | Stress結果と`ValidationOutcome.review_required`を表示。 |
+| `tradectl research report` | Markdown生成 | `--strategy`, `--run-id`, `--template` | `reports/research/<strategy>/<date>.md`生成。 |
+
+- CLIは`qa_tags`に`['research']`、ストレステスト時は`['research','stress']`、Acceptable Degradation検証は`['research','degraded']`。
+- `dataset register`は成功時に`ChangeLedger.record_change(category='research', summary=...)`を自動呼び出し。
+
+### 21.5 実装ガイド
+1. **データハッシュ管理**: `DatasetRegistry`は`reports/data_manifest.json`を参照し、登録時にハッシュを照合。差異がある場合は`DatasetMismatch`例外で停止し、Runbook `RUN-DATA-05#dataset_review`を案内。
+2. **パラメータ版管理**: `ParameterProfile`は`docs/strategies/<id>/parameters/<version>.yaml`へ保存。PRでは新旧比較を`tradectl research parameters diff`で提示し、PO承認コメントを記録。`ChangeLedger`へ`category='parameter'`で登録。
+3. **再現ハッシュ**: `BacktestRunResult.hash`は`dataset_hash`, `parameter_hash`, `code_hash`, `scenario_id`から生成。`ValidationOutcome`にも同じ`hash`を保持し、Runbookでの再実行時に突合。
+4. **Validationテンプレ**: `docs/research/templates/validation_expectations.yaml`に戦略別許容幅を保持。`tradectl research run backtest`は実行前に期待値を読み込み、逸脱時は`review_required=True`でOpsレビューへ通知。
+5. **ストレステスト**: `run_stress`は`ScenarioRunner`（§14）の`ScenarioDefinition`を再利用し、`kind='stress'`ステップのみ実行。結果は`BacktestRunResult.stress_results`へ格納し、`Knowledge Pack`（§16）にリンク。
+6. **CI統合**: `make research-baseline`が主要戦略のBacktestを実行し、KPIとハッシュを`reports/research/baseline/<date>.json`へ出力。CIは差分検出時に警告するが、Acceptable Degradation中は`allow_degraded=true`フラグで閾値緩和。
+
+### 21.6 テスト計画
+| テストID | 目的 | 内容 |
+| --- | --- | --- |
+| UT-RES-01 | データセット検証 | `tests/unit/test_research_databank.py::test_verify_hash_mismatch`。 |
+| UT-RES-02 | パラメータ差分 | `tests/unit/test_research_parameter_store.py::test_diff_detects_changes`。 |
+| UT-RES-03 | Validation結果判定 | `tests/unit/test_research_validation.py::test_validation_outcome_flags_review`。 |
+| IT-RES-01 | Backtest + Validation | `tests/integration/test_research_cli.py::test_run_backtest_and_validate`。 |
+| IT-RES-02 | ストレステスト連携 | `tests/integration/test_research_cli.py::test_run_stress_links_scenario`。 |
+| IT-RES-03 | レポート生成 | `tests/integration/test_research_cli.py::test_report_generation`。 |
+
+- Acceptable Degradation発生時は`tradectl research run backtest --compare-to last_ok`で直前の正常実行と比較し、`ValidationOutcome.violations`をKnowledge Packに添付する。
+
+### 21.7 Codexハンドオフ指針
+- Prompt Bundle（§20）へ`dataset register`結果、`ParameterProfile`差分、`BacktestRunResult`サマリを添付する。
+- Codex実装タスクでは`research` CLIのスナップショットを`pytest-approvaltests`で維持し、`docs/research/templates/report.md`更新をIssueに明記する。
+- トレーダーは検証完了後に`ChangeLedger.record_change(category='research_validation')`を実行し、`OpsReviewDigest`（§19）へアクションアイテムを登録する。
+
+---
