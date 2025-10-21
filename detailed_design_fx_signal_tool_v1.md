@@ -1,4 +1,4 @@
-# FXヒューマン・インザループ投資ツール 詳細設計書 v2.3
+# FXヒューマン・インザループ投資ツール 詳細設計書 v2.4
 
 ## 0. 文書情報
 - 作成日: 2025-03-01
@@ -9,6 +9,7 @@
 ### 0.1 改訂履歴
 | 版 | 日付 | 改訂概要 |
 | --- | --- | --- |
+| v2.4 | 2025-03-02 | Acceptable Degradation演習を自動化するシナリオランナー設計とCLIテレメトリ統合の実装指針を追加。Codex向けワークパッケージのハンドオフ手順を拡張し、Runbook連携と証跡集約を強化。 |
 | v2.3 | 2025-03-01 | Codexレビュー負荷を下げるQAスコアカードとRunbook連携シグナルを追加。ドメインデータモデル目録と運用シーケンス図を拡充し、トレーダー視点での整合チェックと将来改修時のIF安定性を強化。 |
 | v2.2 | 2025-02-28 | Codex実装スプリント用のタクティカルロードマップとモジュール別契約テーブルを追加。M1 Core優先モジュールの拡張ポイントを再整理し、将来の仕様変更に耐えるインターフェース境界を強化。 |
 | v2.1 | 2025-02-27 | Codex開発者向けワークパッケージ青写真とトレーダー運用シナリオを追加し、Acceptable Degradation時の判断材料とレビュー観点を具体化。プロンプト生成テンプレートにシナリオID/Runbook整合性チェックを義務化。 |
@@ -1965,3 +1966,115 @@ Codexへ実装タスクを引き渡す際に必要な準備作業を標準化し
 5. `docs/change_requests/`や`reports/validation_log/`の該当ファイルへサインオフ者と日時を追記し、監査ログと整合させる。
 
 これらの手順を遵守することで、Codexとの反復速度を維持しつつ将来の仕様変更にも耐えられるドキュメント・証跡を確保する。
+
+## 14. シナリオランナーとRunbook自動演習設計（v2.4追加）
+
+### 14.1 目的と適用範囲
+
+- Acceptable Degradation手順やKill Switch演習など、Runbookで定義されたシナリオを**半自動的に再現**し、Codex成果物の検証とトレーダー教育を効率化する。
+- 対象モジュール: `src/scenario/runner.py`, `src/scenario/loader.py`, `src/scenario/models.py`, `src/scenario/validators.py`, `src/interfaces/cli/scenario.py`, `tests/unit/test_scenario_runner.py`, `tests/integration/test_scenario_cli.py`。
+- 運用環境: macOSローカルでのPaper/Backtestモード（Liveでは`dry-run`のみ許可）。Runbook参照: `docs/runbooks/RUN-DATA-05`, `RUN-DATA-06`, `RUN-RISK-01`, `RUN-HITL-01`, `RUN-POST-03`。
+
+### 14.2 ディレクトリ構成と成果物
+
+| パス | 役割 | 備考 |
+| --- | --- | --- |
+| `src/scenario/__init__.py` | シナリオパッケージ初期化 | Feature Flag `scenario.runner_enabled`が`False`の場合は`noop`実装を返す |
+| `src/scenario/models.py` | `ScenarioDefinition`, `ScenarioStep`, `ValidationRule`などの`pydantic`モデル | `__schema_version__ = 1`を定義し、`tests/contracts/test_scenario_schema.py`で互換性検証 |
+| `src/scenario/loader.py` | YAML/Markdownシナリオの読み込みと検証 | `docs/scenarios/<id>.yaml`/`docs/scenarios/<id>.md`を対象 |
+| `src/scenario/runner.py` | 実行エンジン（ステップ制御/リトライ/ドライラン） | `ScenarioRunner.run`がメインエントリ |
+| `src/scenario/validators.py` | CLI出力/メトリクスの検証ユーティリティ | Acceptable Degradation判定の閾値ロジックを集約 |
+| `src/interfaces/cli/scenario.py` | `tradectl scenario run/list/show`コマンド | `instrument_command`（§6.8）でテレメトリを記録 |
+| `docs/scenarios/` | シナリオ定義YAML + 参考Markdown（Runbook差分） | `OPS-DEG-01.yaml`, `RISK-KS-05.yaml`など |
+| `tests/fixtures/scenario/` | モックレスポンス（CLIログ/メトリクスJSON） | CLI整合性テストで使用 |
+
+- Codexは上記各ファイルを最大200行単位の抜粋としてPrompt Bundleへ添付する。`docs/scenarios/README.md`にシナリオ命名規約とRunbook対応表を追加予定（別タスク）。
+
+### 14.3 シナリオ定義モデル
+
+| フィールド | 型 | 説明 |
+| --- | --- | --- |
+| `id` | `ScenarioId`（`Literal` + 正規表現`^[A-Z0-9\-]+$`） | `OPS-DEG-01`, `RISK-KS-05`など。Runbookセクションと整合 |
+| `title` | `str` | Runbookでの見出しと一致させる |
+| `tags` | `list[str]` | `['acceptable_degradation','guarded']`等。`qa_tags`（§6.8）と同期 |
+| `mode` | `Literal['backtest','paper','live','dry-run']` | Liveでは`dry-run`のみ許可 |
+| `preconditions` | `list[Precondition]` | `config`/`metrics`/`health`などの前提チェック |
+| `steps` | `list[ScenarioStep]` | CLI実行/手動確認/メトリクス検証を順序付け |
+| `success_criteria` | `list[ValidationRule]` | `metrics.data_ingestion_sla.p95 <= 18`等 |
+| `rollback_plan` | `ScenarioRollback` | 失敗時の手動手順とRunbookリンク |
+| `artifacts` | `list[ArtifactSpec]` | 収集すべきログ/レポート（`reports/validation_log/...`） |
+| `prompt_notes` | `str | None` | Codexへ渡す際に注意する設計観点 |
+
+- `ScenarioStep`は`CommandStep`/`ManualStep`/`ValidationStep`の3種を`discriminator='kind'`で表現。`CommandStep`には`cmd`, `args`, `timeout`, `expected_exit_code`を保持し、`dry_run`時は実行をスキップして`note`を出力する。
+- `Precondition`は`type`に応じて`metrics`（JSONL照会）、`feature_flag`、`file_exists`等をサポート。未達成の場合は実行を停止し`ScenarioPreconditionError`を返す。
+
+### 14.4 CLI仕様 (`tradectl scenario ...`)
+
+| コマンド | 用途 | 主な引数/フラグ | 成功時挙動 | 代表エラー |
+| --- | --- | --- | --- | --- |
+| `tradectl scenario list` | 登録シナリオの列挙 | `--tag acceptable_degradation`, `--mode paper` | `ScenarioSummary`テーブルを表示。`--json`でJSON出力 | シナリオファイル不備→`ScenarioRegistryError` |
+| `tradectl scenario show <id>` | 詳細表示 | `--format yaml|table`, `--include-steps` | YAML整形出力＋Runbookリンク一覧 | `ScenarioNotFound` |
+| `tradectl scenario run <id>` | シナリオ実行 | `--profile`, `--dry-run`, `--step-from`, `--step-to`, `--auto-ack`, `--collect-artifacts` | ステップ毎にRichログ。成功で`ScenarioRunResult`サマリと収集アーティファクトパスを表示 | `ScenarioExecutionError`, `ValidationFailed`, `PreconditionFailed` |
+| `tradectl scenario run --plan <id>` | 実行プラン確認 | `--format table|json` | 実行コマンド/想定所要時間を表示 | 同上 |
+
+- CLIは`ScenarioRunner`をDIし、`instrument_command`デコレータで`metrics/cli_commands.jsonl`へ記録。Acceptable Degradation中の実行では`qa_tags`へシナリオIDを付与する。
+
+### 14.5 実行フロー
+
+1. CLIから`ScenarioRunner.run`呼び出し。
+2. `ScenarioLoader.load(id)`がYAMLを読み込み、`ScenarioDefinition`へパース。`docs/scenarios/<id>.md`（任意）を添付し、`prompt_notes`があればログに表示。
+3. `PreconditionEvaluator.evaluate(definition.preconditions, context)`で前提チェック。失敗時は例外を投げ、`--dry-run`でも実行しない。
+4. ステップごとに`StepExecutor`が種類に応じて処理。
+   - `CommandStep`: `subprocess`（同期）または`asyncio.create_subprocess_exec`（非同期）でコマンドを実行し、標準出力を`logs/scenario/<id>/step_<n>.log`に保存。
+   - `ManualStep`: 実行者へプロンプト表示。`--auto-ack`指定時は`note`をログ化のみ。
+   - `ValidationStep`: `validators.evaluate(metric_spec, tolerance)`で閾値判定し、失敗時に`ValidationFailed`を投げる。
+5. 全ステップ成功後、`SuccessCriteriaEvaluator`が`success_criteria`を検証。Passなら`ScenarioRunResult(status='success')`を返却し、`reports/validation_log/scenario/<id>_<timestamp>.md`を生成。
+6. 途中失敗した場合は`rollback_plan`を表示し、`--auto-rollback`（将来フラグ）未設定なら手動対応を要求。失敗時の状態は`ScenarioRunResult(status='failed', failed_step=<n>, reason=<error>)`として返す。
+
+### 14.6 Codex実装契約
+
+| 関数/クラス | シグネチャ | 主な例外/戻り値 | テスト観点 | 備考 |
+| --- | --- | --- | --- | --- |
+| `ScenarioLoader.load` | `def load(self, scenario_id: str) -> ScenarioDefinition` | `ScenarioNotFound`, `ScenarioSchemaError` | `pytest -k scenario_loader` | YAMLとMarkdown（任意）の整合を検証。`schema_version`不一致時は警告 |
+| `ScenarioRunner.run` | `async def run(self, definition: ScenarioDefinition, context: ScenarioContext) -> ScenarioRunResult` | `ScenarioExecutionError`, `ValidationFailed`, `ScenarioPreconditionError` | `pytest -k scenario_runner::test_run_success`, `test_run_validation_failure` | `context`には`mode`, `profile`, `dry_run`, `collect_artifacts`を含む |
+| `PreconditionEvaluator.evaluate` | `def evaluate(preconditions: Sequence[Precondition], context: ScenarioContext) -> None` | `ScenarioPreconditionError` | `pytest -k scenario_precondition` | メトリクス照会は`metrics.loaders.jsonl_reader`ユーティリティを利用 |
+| `StepExecutor.execute` | `async def execute(self, step: ScenarioStep, context: ScenarioContext) -> StepResult` | `StepExecutionError` | `pytest -k scenario_steps` | `CommandStep`は`timeout`/`expected_exit_code`を必須検証 |
+| `validators.evaluate` | `def evaluate(rule: ValidationRule, context: ScenarioContext) -> ValidationOutcome` | `ValidationFailed` | `pytest -k scenario_validators` | `ValidationRule`は`metric_path`, `comparator`, `threshold`, `window`などを保持 |
+
+- Codexは各実装で`pydantic` v2を使用し、`model_config = {'extra': 'forbid'}`を設定する。例外メッセージにはRunbook参照（例:`runbook:RUN-DATA-05#guarded_checklist`）を含め、運用者が即座に対処できるようにする。
+
+### 14.7 ロギングとテレメトリ
+
+- `ScenarioRunner`は`logs/scenario/<id>/<timestamp>/`配下に以下を保存する。
+  - `scenario_summary.json`: `ScenarioRunResult`のJSONシリアライズ。
+  - `step_<n>_stdout.log`/`step_<n>_stderr.log`: コマンド実行ログ。
+  - `artifacts.json`: 収集対象ファイルと保存先のリスト。
+- `metrics/scenario_runs.jsonl`に`{ts, id, status, duration_sec, failed_step, qa_tags}`を追記。`TelemetryAggregatorJob`が週次でCLI実行回数と結果を集計し、`reports/telemetry/cli/<YYYYWW>.md`へ転載。
+- Acceptable Degradation演習時は`qa_tags`へ`['scenario', <ScenarioId>, 'degraded']`を付与し、`CommandTelemetryRecord`と相互参照できるようにする。
+
+### 14.8 テスト・検証方針
+
+| テストID | 目的 | 内容 |
+| --- | --- | --- |
+| UT-SCN-01 | YAMLスキーマ検証 | `ScenarioLoader`が必須フィールド欠落を検出し`ScenarioSchemaError`を投げる |
+| UT-SCN-02 | ステップ実行成功 | `ScenarioRunner`で`CommandStep`/`ManualStep`/`ValidationStep`が順に成功するケース |
+| UT-SCN-03 | バリデーション失敗時のロールバック案内 | `ValidationFailed`で`rollback_plan`がログ出力される |
+| IT-SCN-01 | Acceptable Degradation演習 | `tradectl scenario run OPS-DEG-01 --dry-run`でCLI出力が期待と一致、`metrics/scenario_runs.jsonl`に記録 |
+| IT-SCN-02 | Kill Switch演習 | `tradectl scenario run RISK-KS-05 --profile paper-m1-core`実行後に`logs/scenario/...`へ証跡が作成される |
+
+- `pytest`マーカー: `@pytest.mark.scenario`を導入し、`pytest -m scenario`で集中実行可能とする。CIでは週次で`pytest -m "scenario and not slow"`を実施。
+- CLIスナップショットは`pytest-approvaltests`を用い、`tests/snapshots/scenario/`へ保存。更新時は`--approve`で承認し、`docs/prompt_packages/<date>_scenario_runner.md`へスクリーンショット差分を添付する。
+
+### 14.9 Runbook・メトリクス連携
+
+- 各シナリオYAMLは`runbook_refs`に`['RUN-DATA-05#guarded', 'RUN-POST-03#review']`のような節IDを列挙し、成功時に自動で`reports/validation_log/scenario/<id>_<timestamp>.md`へ引用を貼り付ける。
+- `ScenarioRunner`は成功時に`EventBus.publish('scenario.completed', payload)`を発火し、`payload`に`runbook_refs`, `artifacts`, `metrics_snapshot`を含める。Opsはこのイベントを監視し、Runbook更新漏れを検知できる。
+- メトリクス照会は`metrics`ディレクトリのJSONLを直接読むのではなく、`infra.metrics`モジュールの`load_window(metric_path, window)`ユーティリティを経由して取得し、将来Prometheus化してもAPI互換を維持する。
+
+### 14.10 将来拡張フック
+
+- `scenario.runner_enabled` Feature FlagでON/OFF制御。M1 Coreは`True`で提供するが、`dry-run`モードを既定とする。Liveモードでの実行は`config.scenario.allow_live=false`が既定で、M1.1で手動承認ステップを追加予定。
+- `ScenarioStep`に`WaitForEventStep`（EventBus待機）、`WebhookStep`（Slack通知検証）を追加できる余地を残し、`StepExecutor`は`match step.kind`構造で拡張しやすくする。
+- GUI/Tauri移行時には`scenario` APIをHTTP/IPC越しに再利用できるよう、`ScenarioRunner`のI/Oを`dataclass`ベースで整理し、シリアライズ可能に保つ。Codexは例外に`error_code`を付与し、将来GUIでハンドリングしやすいようにする。
+
+- 追加シナリオのレビュー手順として、`docs/scenarios/CHANGELOG.md`にID/目的/Runbookリンク/テスト結果を追記し、`docs/prompt_packages/<date>_scenario_runner.md`へ差分を保存する。これによりCodexが次回シナリオ改修を行う際に参照可能な履歴が整備される。
