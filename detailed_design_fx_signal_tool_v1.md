@@ -1,4 +1,4 @@
-# FXヒューマン・インザループ投資ツール 詳細設計書 v2.0
+# FXヒューマン・インザループ投資ツール 詳細設計書 v2.1
 
 ## 0. 文書情報
 - 作成日: 2025-02-26
@@ -9,6 +9,7 @@
 ### 0.1 改訂履歴
 | 版 | 日付 | 改訂概要 |
 | --- | --- | --- |
+| v2.1 | 2025-02-27 | Codex開発者向けワークパッケージ青写真とトレーダー運用シナリオを追加し、Acceptable Degradation時の判断材料とレビュー観点を具体化。プロンプト生成テンプレートにシナリオID/Runbook整合性チェックを義務化。 |
 | v2.0 | 2025-02-26 | Codex向け実装アクセラレーションパックを追加し、エピック別の成果物・プロンプト指示・テストゲーティングを体系化。Acceptable Degradation運用と将来の拡張に耐える抽象化境界の指針を強化。 |
 | v1.9 | 2025-02-25 | 要件v1.4/基本設計v1.4の差分（RateLimitGuard段階評価、Acceptable Degradation手動運用ログ、Validation Data Playbookリンク強化）を反映。Codex実装前提のプロンプト/テスト指示を更新し、SLA計測とRunbookトレーサビリティを拡充。 |
 | v1.8 | 2025-02-20 | Codex実装前提の開発オペレーション/プロンプト設計/テストシナリオを体系化。ヒューマン・トレーダー視点の期待KPI/UXと整合させた。 |
@@ -156,6 +157,22 @@ Codexへ実装を委任する際の成果物粒度・レビュー観点・トレ
 | EP-05 Weekly Review | `src/reporter/*`, テンプレ更新、`reports/templates/*` | §3.18, §5.11 | `tradectl report weekly --dry-run`, `pytest -k reporter` | `reports/weekly/*.md`, `metrics/reporter.jsonl` | KPI欠損時のFallbackコメント、`guarded`時のコメントテンプレ |
 
 - 表の「必須成果物」は実装完了時に`docs/checklists/<epic>_done.md`へチェックし、Releaseフェーズでサインオフする。Codexへ渡す際は表の行を丸ごと貼り付け、達成条件を明文化する。
+
+### 0.8 Codexワークパッケージ青写真（v2.1追加）
+
+Codexへ実装タスクを委譲する際に、トレーダー運用目線での期待アウトカム・レビュー観点を即座に共有できるよう、下表のシナリオ別青写真を準備する。各シナリオはRunbook/Validation Data Playbook/メトリクスとリンクし、Acceptable Degradation下でも判断がブレないようトレーサビリティを確保する。
+
+| シナリオID | 代表タスク/エピック | トレーダー視点の目的 | Codex向け着手前チェック | 成果物/証跡 | 受入テスト/CLI | Runbook整合ポイント |
+| --- | --- | --- | --- | --- | --- | --- |
+| `SCN-ING-01` | EP-01 DataLag Mitigation | SLA遅延を素早く観測しGuarded切替を判断できる状態にする | `metrics/data_ingestion_sla.jsonl`の最新30日サマリを確認し、欠損期間がRunbook `RUN-DATA-05`のステージ記録と一致するかレビューする | `src/data/service.py`差分、`metrics/data_ingestion_sla.jsonl`サンプル、`docs/runbooks/RUN-DATA-05.md`更新 diff | `pytest -k data_pipeline`, `tradectl data rate-limit stage inspect`, `make sla-report` | `RUN-DATA-05` 該当節のチェックボックスが全てTrue、`degraded_ack`ログのダブルサイン確認 |
+| `SCN-RISK-02` | EP-03 Guardrails | 手動Kill Switch判断を迷わず下せるよう理由表示と履歴を整備 | `logs/audit/killswitch.jsonl`最新ファイルを開き、理由タグ/承認者がRunbook `RUN-RISK-01`と揃っているか確認 | `src/core/health.py`、`src/interfaces/cli/status.py`差分、`reports/validation_log/AC-45*`リンク集 | `pytest -k health_state`, `tradectl kill-switch status`, `tradectl health show --verbose` | `RUN-RISK-01`の承認手順にCLIスクリーンショット添付、`RUN-POST-03`への事後レビュー反映 |
+| `SCN-TKT-03` | EP-04 Ticket Clarity | HITL承認時にSpread/ニュース/サイズ根拠が即読解できる | `docs/ux_feedback.md`の未解決コメントを確認し、対応範囲を明示 | `src/ticket/builder.py`, `src/interfaces/cli/board.py` diff、`tests/snapshots/board/*.snap`更新、`logs/audit/ticket.jsonl`サンプル | `pytest -k board_renderer`, `pytest --snapshot-update --maxfail=1`, `tradectl board --filter symbol=USDJPY` | `RUN-OPS-02`のBoardレビュー節に新バナー説明を追記、`RUN-HITL-01`のチェックリスト更新 |
+| `SCN-REP-05` | EP-05 Weekly Review | 週次レビュー会議で即時にSharpe/最大DD/Runbook抜粋を共有 | `reports/weekly/templates/m1_core.md`のバージョンと`reports/kpi_snapshots/*.json`最新ファイルを突合 | `src/reporter/generator.py`, `docs/templates/reports/*` diff、`reports/weekly/<YYYYWW>.md`サンプル、`metrics/reporter.jsonl` | `tradectl report weekly --profile paper --dry-run`, `pytest -k reporter` | `RUN-OPS-04`（週次レビュー）にテンプレ更新を反映、`docs/review_log.md`へレビュー記録 |
+| `SCN-BENCH-07` | Benchmark Monitor (EP-05派生) | ベンチマーク乖離検知を迅速化し改善タスクへ繋ぐ | `reports/benchmark/manual_log_signoff/`内の直近ファイルで手動CSVハッシュが一致しているか検証 | `src/reporter/benchmark.py`, `src/interfaces/cli/benchmark.py` diff、`benchmark_runs/normalized/*.parquet`サンプル | `tradectl benchmark ingest --dry-run`, `tradectl benchmark compare --window 90d`, `pytest -k benchmark_monitor` | `GOV-BENCHMARK-01`のエスカレーション節に新ログ添付、`RUN-DATA-06`の手動CSVダブルチェック欄更新 |
+
+- **プロンプト生成ルール**: 上表のシナリオIDをプロンプト見出しに含め、`<シナリオID> :: <概要>`形式で記載する。`related_runbooks`キーで参照Runbook節番号を列挙し、Codexが差分を逃さないようにする。
+- **レビュー観点**: 各シナリオには「トレーダーUX」「運用負荷」「データ整合」「Acceptable Degradation復帰条件」の4観点チェックリストを付与し、PRレビューで`LGTM`前に全観点へ○/×/要フォローを入力する。
+- **ロールバック計画**: 受入テスト失敗時は`docs/prompt_packages/<date>_<scenario>_rollback.md`に差分と復旧手順を残し、`git revert`とRunbookロールバック箇所を明示する。Acceptable Degradation下ではロールバック判断までの時間目標（最大30分）を記録する。
 
 #### 0.7.4 コーディング規約と自動チェック強化
 - **Docstring**: すべての公開メソッドはGoogleスタイルDocstringで`Args`/`Returns`/`Raises`を記述し、`Example`にはCLIやJSONのサンプルを最低1件含める。
@@ -1677,3 +1694,28 @@ linked_runbook: docs/runbooks/RUN-XXXX-YY.md
 - **イベント/連携**: 正常終了時は`reconciliation.completed`でOps Readiness Evaluatorへスコア加点、Reporterが`reports/audit/reconciliation/<date>.md`を生成。差分時はKill Switchを`soft_stop`に遷移し、Idea Pipeline Managerが新規昇格を停止。
 - **異常系**: ステートメントファイル欠損/解析失敗→`StatementImportError`でリトライ案内。差分特定不可の場合は`reconciliation.escalated`を発火しRunbook `AUD-REC-02`手順へ誘導。証跡出力失敗はOps Readiness Evaluatorの証跡欠損として扱う。
 - **設定ファイル**: `config/reconciliation.yaml`（ブローカー別カラムマッピング、差分閾値、フェイルセーフ条件、Kill Switchハンドリング）。CLI `tradectl reconcile statements --from <date>`が`reconcile`を呼び出し監査に結果を追記。
+
+### 付録H: トレーダー運用シナリオ（M1 Core運用ガイド）
+
+HITLトレーダーとCodex開発者が同じ前提でレビューできるよう、代表的な運用シナリオごとの「検知→判断→操作→検証」手順を以下に整理する。Runbook参照番号とCLIコマンド、必要メトリクスを明示し、Acceptable Degradation移行時の判断材料を平文化する。
+
+| シナリオ | トリガー指標 | トレーダーの判断ポイント | Codex実装フック | 推奨CLI/ツール | Runbook/Validationリンク | 復旧完了チェック |
+| --- | --- | --- | --- | --- | --- | --- |
+| 正常稼働 (`OPS-NOMINAL`) | `HealthState=ok`, `board_mode=normal`, `catch_up_lag_minutes<10` | 週次レビューまでにSharpe/最大DD/WinRateを記録し、KPI未達なら改善チケット起票 | Reporter (`§3.18`), KPI Snapshot (`§9.3`) | `tradectl board`, `tradectl status`, `tradectl report weekly --dry-run` | `RUN-OPS-04`, `reports/weekly/<YYYYWW>.md` | KPIサマリと`reports/kpi_snapshots`が最新、`logs/audit/ticket.jsonl`に異常なし |
+| Acceptable Degradation移行 (`OPS-DEG-01`) | `catch_up_lag_minutes≥30` or `HealthState=degraded(data_latency_*)` | Guardedへ切替えるか、手動CSV投入で凌ぐか。主要4ペアのデータ鮮度と429頻度を確認 | DataIngestionService (`§3.1`), RateLimitGuard (`§3.1.1`), Board Guard Policy (`§3.8`) | `tradectl board --guarded`, `tradectl data failover --mode manual`, `make sla-report` | `RUN-DATA-05`, `RUN-DATA-06`, `reports/validation_log/AC-45_sla_<date>.md` | `catch_up_lag_minutes<30`、`metrics/rate_limit_window.jsonl`で429率回復、`degraded_ack`イベントをRunbookでサイン |
+| Spread急拡大 (`RISK-SPREAD-02`) | `SpreadCooldownState=cooldown`, `spread_pips>threshold` | Reduce-Only運用に移行し、ニュース/カレンダーと矛盾がないか確認 | SpreadMonitor (`§3.6`), CalendarService (`§3.13`), Risk Manager (`§3.8`) | `tradectl spread status`, `tradectl board --guarded --reason spread`, `tradectl calendar upcoming --impact high` | `RUN-RISK-02`, `RUN-HITL-01` | Spreadが閾値内へ連続Nバー収束、`reports/performance/<mode>/spread_review.md`に結果記録、Kill Switch解除サイン取得 |
+| Rate Limit退行 (`OPS-RL-03`) | `metrics/rate_limit_window.jsonl`で`rolling_1h_429_rate>1.5%` or `consecutive_429≥3` | Stageを下げる/ポーリング停止/手動CSV投入の優先度を判断 | RateLimitGuard (`§3.1.1`), ManualCsvIngestionTask (`§3.1`) | `tradectl data rate-limit stage inspect`, `tradectl data rate-limit stage set 0 --provider yfinance`, `tradectl benchmark validate-manual` | `RUN-DATA-05`, `reports/validation_log/AC-45_sla_<date>.md` | `rolling_1h_429_rate<1.0%`に回復、Stage履歴とRunbookチェックが一致、`manual_csv.log`にダブルサイン |
+| Live fills取り込み (`OPS-ACCT-04`) | 取引実績CSVの新規行、`logs/audit/live.jsonl`未反映チケット | CSV整合→スリッページ評価→Journal更新。欠損時はKill Switch soft_stop検討 | AccountService (`§3.14`), Trade Journal (`§3.14.1`), Reporter (`§3.18`) | `tradectl account sync --path data/account/live_account.csv`, `tradectl journal summarize`, `tradectl audit export --type live` | `RUN-OPS-03`, `reports/validation_log/AC-44_live_fill_<date>.md` | `actual_fill_imported`イベントが全件生成、`unmatched_ticket`が0、週次レポートにスリッページ統計掲載 |
+| Kill Switch発動 (`RISK-KS-05`) | `daily_loss`/`weekly_loss`閾値超、`HealthMonitor`推奨`hard_stop` | 即時停止/Reduce-Only/再開判断。承認ログとスナップショット整合を確認 | Risk Manager (`§3.8`), Health Monitor (`§3.9`), SnapshotManager (`§3.15`) | `tradectl kill-switch engage --reason <code>`, `tradectl snapshot verify`, `tradectl health ack --reason hard_stop` | `RUN-RISK-01`, `RUN-POST-03`, `reports/ops/incidents/<date>_killswitch.md` | `kill_switch_events.jsonl`に承認者記録、`snapshot hash`一致、`tradectl board --normal`実行時にRunbook承認済 |
+
+#### 付録H.1 シナリオ遂行チェックリスト
+
+各シナリオ実行時は以下の共通チェックリストをRunbook添付で管理する。
+
+1. **検知証跡**: トリガーとなったメトリクス/イベントファイルのパスとハッシュをRunbookに記載。
+2. **オペレーションログ**: 実行したCLIコマンドと引数を`logs/ops/command.log`へ記録し、承認者を添付。
+3. **Codex差分レビュー**: 対応中に発生したコード/設定の変更点を`docs/prompt_packages/<date>_<scenario>.md`へ追記し、次回再発時のプロンプト準備を短縮。
+4. **事後レビュー**: `RUN-POST-03`のテンプレートに沿って原因分析・恒久対策・フォローアップIssueを整理。Acceptable Degradation時は「復旧目標時間」「実績時間」「差異理由」を必ず記録。
+5. **メトリクス確認**: 復旧後30分以内に`metrics/data_ingestion_sla.jsonl`・`metrics/rate_limit_window.jsonl`・`reports/weekly`の該当箇所をチェックし、未回復指標があれば`HealthMonitor`へ再通知。
+
+Codexは上記シナリオを前提にテストデータ/ログを準備し、PR説明時に「対象シナリオ」「操作ステップ」「検証結果」を必ず紐付ける。トレーダーはRunbookに沿った証跡をレビューし、承認サインを`reports/validation_log`系ドキュメントへ記録する。
