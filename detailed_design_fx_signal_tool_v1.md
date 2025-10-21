@@ -3118,3 +3118,100 @@ Acceptable Degradation対応やTelemetry/シナリオ演習の成果を**単一�
 - トレーダーは検証完了後に`ChangeLedger.record_change(category='research_validation')`を実行し、`OpsReviewDigest`（§19）へアクションアイテムを登録する。
 
 ---
+
+## 27. 流動性・スリッページ診断ラボ（v2.7ドラフト）
+
+Paper→Live移行を見据えて、ヒューマン承認フローのまま実効スリッページと流動性リスクを定量化する分析モジュール群を追加する。M1 CoreではPaper fills/手動入力CSVを対象に実装し、M1.1でブローカーAPIに拡張してもインターフェース互換性が維持されるよう抽象化する。
+
+### 27.1 目的
+- **スリッページ分布の可視化**: `ExecutionModel`が想定した`expected_entry`/`expected_slippage`と実績の乖離を定量化し、戦略・レジーム・時間帯別の偏りを早期検知する。
+- **流動性シグナルの強化**: Spread/Depth/ニュース情報と実績fillsを結び付け、Board GuardやRisk Managerの閾値再調整を支援する。
+- **Codex実装の再利用性向上**: 分析パイプラインを`ExecutionModel`と疎結合に保ち、将来の自動執行/Partial Fill導入時に同じ診断基盤を拡張できるようにする。
+- **トレーダー教育**: Opsシミュレーションゲーム（§22）やScenario Runner（§14）にスリッページ評価ステップを追加し、Acceptable Degradation復旧判断の質を底上げする。
+
+### 27.2 モジュール構成
+| パス | 役割 | Codex実装ポイント |
+| --- | --- | --- |
+| `src/execution/slippage_lab.py` | `SlippageLabService`本体。サンプル収集・統計・分位算出・アラート生成。 | `record_sample`, `aggregate(window)`, `compute_bias`, `suggest_adjustment` APIを定義。`pydantic`モデルでI/Oを固定。 |
+| `src/execution/models/slippage.py` | データモデル (`FillSample`, `SlippageDistribution`, `LiquiditySnapshot`, `AdjustmentSuggestion`)。 | `schema_version=1`、`Decimal`でpips/価格を管理。 |
+| `src/interfaces/cli/liquidity.py` | `tradectl liquidity` CLI。Paper実績/手動CSVから分析を実行。 | `instrument_command`適用、CLIテレメトリ（§6.8）と連携。 |
+| `src/analytics/liquidity_dashboard.py` | Markdown/HTMLレポート生成。 | `render_markdown(summary)`、`render_heatmap(data)`。Jinja2テンプレ使用。 |
+| `src/scenario/hooks/slippage.py` | Scenario Runner用フック。 | Acceptable Degradation演習時に自動で`SlippageLabService`を呼び出し、評価値をScenario結果へ追記。 |
+| `scripts/qa/slippage_backfill.py` | 既存fillsから履歴を再生成するユーティリティ。 | `--source metrics/actual_fills.jsonl`などをサポート。 |
+| `tests/unit/test_slippage_lab.py` | サービス単体テスト。 | サンプル集計、分位算出、バイアス検知を検証。 |
+| `tests/integration/test_liquidity_cli.py` | CLI統合テスト。 | `tradectl liquidity analyze --window 14d`出力の決定論性を担保。 |
+
+### 27.3 データモデル
+- `FillSample`
+  - フィールド: `ts`, `ticket_id`, `strategy_id`, `symbol`, `mode`, `expected_entry`, `actual_entry`, `expected_slippage_pips`, `actual_slippage_pips`, `spread_pips`, `board_mode`, `regime`, `session_label`（`Tokyo|London|NY`） , `source` (`paper_csv|manual_entry|live_api`), `qa_tags`。
+  - 由来: Paper fills (`logs/audit/fill.jsonl`), `tradectl account import`, `ManualCsvIngestionTask`結果。
+- `SlippageDistribution`
+  - フィールド: `symbol`, `regime`, `session_label`, `quantiles`（`p10/p25/p50/p75/p90/p95`）, `mean_pips`, `std_pips`, `sample_size`, `drift_score`。
+  - `drift_score = zscore(actual_slippage - expected_slippage)`をRolling 30 fillsで算出。
+- `LiquiditySnapshot`
+  - フィールド: `window`, `symbols`, `avg_spread_pips`, `median_slippage_pips`, `high_slippage_rate`, `news_overlap_events`, `rate_limit_stage`, `board_mode_distribution`。
+  - Acceptable Degradationとのリンク: `degradation_episode_id | None`、`qa_status`。
+- `AdjustmentSuggestion`
+  - フィールド: `symbol`, `regime`, `suggested_buffer_pips`, `suggested_ttl_sec`, `confidence`, `supporting_metrics`, `runbook_refs`, `change_ids`。
+  - Risk Manager/Execution Model/Scenario Runnerへフィードバックする際の最小単位。
+
+全モデルは`pydantic.BaseModel`で`model_config = {'extra': 'forbid'}`を設定し、`tests/contracts/test_slippage_lab_schema.py`でスキーマハッシュを固定する。将来Partial Fill/Reduce-Only対応時は`FillSample.partial_ratio`などを追加し、`schema_version`をインクリメントする。
+
+### 27.4 データフローとアルゴリズム
+1. **サンプル取り込み**
+   - `SlippageLabService.record_sample`が`FillSample`を受け取り、`metrics/slippage_samples.jsonl`へ追記。Paperモードでは`tradectl account import`後に`on_fill_imported`フックが呼び出す。
+   - Manual CSV経由のfillsは`ManualCsvIngestionTask`が`FillSample.source='manual_entry'`で送信。`qa_tags`に`['degraded']`を必須付与。
+2. **集計**
+   - `aggregate(window)`が`RollingWindow`（既定14日）で`SlippageDistribution`を計算。分位は`numpy.quantile`、信頼区間は`bootstrap`（1000 resamples）で推定。
+   - `compute_bias`が`expected_slippage`との差を評価し、`bias_pips > config.slippage.bias_threshold`または`drift_score>config.slippage.drift_threshold`で`SlippageBiasDetected`イベントをEventBusへ発火。
+3. **調整提案**
+   - `suggest_adjustment`が`AdjustmentSuggestion`を生成。`suggested_buffer_pips = max( expected_slippage_p95 - expected_slippage_mean, config.slippage.min_buffer )`。
+   - 提案は`ExecutionModel`の`calibration_hooks`へ流し込み、Feature Flag `execution.auto_adjust_buffers`が`True`の場合のみ自動適用。M1 Coreでは`False`が既定で、Runbook承認後に`ConfigRegistry.apply_patch`を通じて反映。
+4. **レポート出力**
+   - `LiquiditySnapshot`を`analytics/liquidity_dashboard.py`でMarkdown/PNG化し、`reports/liquidity/<YYYYWW>.md`に保存。`ScenarioRunner`とEvidence Graph（§23）へリンク。
+   - Telemetry Aggregator（§15）が`metrics/slippage_samples.jsonl`と連携し、CLI操作とスリッページの相関を可視化する。
+5. **アラート**
+   - `drift_score`が閾値を超えた場合、`HealthMonitor.raise('warning','slippage_drift')`を発火し、推奨アクションに`runbook:RUN-EXEC-02#slippage_review`を設定。Acceptable Degradation中はBoard Guardの`spread_multiplier`を一時的に上げる提案を添付。
+
+### 27.5 CLI仕様 (`tradectl liquidity ...`)
+| コマンド | 主な引数/フラグ | 出力 | 代表エラー |
+| --- | --- | --- | --- |
+| `tradectl liquidity analyze` | `--window 7d|14d|30d`, `--symbol`, `--regime`, `--session`, `--format table|json|markdown`, `--include-news` | `LiquiditySnapshot`と`SlippageDistribution`テーブル。`--format markdown`でレポート生成。 | `SlippageDataMissing`, `InvalidWindow`, `NewsFeedUnavailable` |
+| `tradectl liquidity suggest-adjustment` | `--symbol`, `--regime`, `--confidence low|mid|high`, `--dry-run`, `--apply-config` | `AdjustmentSuggestion`一覧。`--apply-config`で`ConfigRegistry.apply_patch`を呼び出す（Runbook承認必須）。 | `ConfigPatchRejected`, `InsufficientSamples` |
+| `tradectl liquidity export-samples` | `--window`, `--out` | `FillSample` JSON/CSVエクスポート。Evidence Graph/Prompt Bundle添付用。 | `ExportWriteError` |
+| `tradectl liquidity replay` | `--episode <degradation_id>`, `--scenario OPS-DEG-01`, `--profile paper-m1-core` | Acceptable Degradationエピソード中のスリッページ分析とScenario Runner再生。 | `EpisodeNotFound`, `ScenarioExecutionError` |
+
+- CLIコマンドは`qa_tags`に`['liquidity']`を付与し、Acceptable Degradation期間中は`['liquidity','degraded']`。`--apply-config`実行時は`ChangeLedger.record_change(category='config', ...)`を自動起票する。
+- `analyze`は`news`モジュール（§3.12）から重大イベントを取得し、`--include-news`指定時にスリッページピークと突合する。
+
+### 27.6 テスト計画
+| テストID | 目的 | 内容 |
+| --- | --- | --- |
+| UT-SLP-01 | 分位計算 | `tests/unit/test_slippage_lab.py::test_quantiles_match_expected`で`SlippageDistribution`分位を検証。 |
+| UT-SLP-02 | バイアス検知 | `tests/unit/test_slippage_lab.py::test_bias_detection_emits_event`で`drift_score`計算とイベント発火を確認。 |
+| UT-SLP-03 | 調整提案 | `tests/unit/test_slippage_lab.py::test_suggest_adjustment_bounds`で`min_buffer`/`confidence`ロジックを検証。 |
+| IT-SLP-01 | CLI分析 | `tests/integration/test_liquidity_cli.py::test_analyze_outputs_snapshot`でCLI出力スナップショットを固定。 |
+| IT-SLP-02 | Config適用フロー | `tests/integration/test_liquidity_cli.py::test_suggest_adjustment_apply_config`で`ConfigRegistry.apply_patch`連携とChange Ledger記録を確認。 |
+| IT-SLP-03 | Scenario連携 | `tests/integration/test_scenario_liquidity_hook.py::test_degradation_episode_replay`でScenario Runnerフックとの連動を検証。 |
+| IT-SLP-04 | Evidence Graph同期 | `tests/integration/test_evidence_cli.py::test_liquidity_nodes`で`tradectl liquidity analyze --format json --push-evidence`を検証。 |
+| PT-SLP-01 | ヒューマン演習 | `tradectl scenario run OPS-DEG-01 --step-to slippage_review`＋`tradectl liquidity analyze --window 7d`の手順をRunbookに沿って再現。 |
+
+- `pytest -k "slippage or liquidity"`を`make ci-lite`へ追加。Paper fillsがないCI環境では`tests/fixtures/liquidity/usdjpy_paper_samples.jsonl`を使用。
+- CLIスナップショットは`tests/snapshots/liquidity/`で管理し、文言変更時はPO承認を得る。
+
+### 27.7 Codexハンドオフ指針
+- Prompt Bundleには以下を最低限添付する。
+  1. `SlippageLabService`/`FillSample`モデル抜粋（200行以内）。
+  2. 代表的Paper fillサンプル3件（JSONL）。
+  3. Acceptable Degradationエピソードの`LiquiditySnapshot`（`reports/ops/degradation/<id>.json`）。
+  4. テスト指示: `pytest -k "slippage or liquidity"`, `tradectl liquidity analyze --window 14d --format table`。
+- Issueでは`expected_bias_threshold`, `min_sample_size`, `confidence_mapping`を明記し、`ConfigRegistry`変更を伴う場合は`docs/change_requests/`で承認を得る。
+- レビュー時は`metrics/slippage_samples.jsonl`の増減と`ChangeLedger`ログを必ず確認。`git diff --stat`で対象ファイルが`execution/`, `interfaces/cli/liquidity.py`, `analytics/`に収まっているか検証する。
+
+### 27.8 トレーダー/運用活用シナリオ
+- **週間レビュー**: 週次Opsレビューで`tradectl liquidity analyze --window 7d --format markdown --include-news`を実行し、`reports/liquidity/<YYYYWW>.md`を共有。Spread Guard閾値変更・ニュース対応状況を合わせて確認する。
+- **Board Guard再調整**: `drift_score`が連続3週正のままの場合、`AdjustmentSuggestion`をRunbook `RUN-EXEC-02`で審議し、`execution_model.yaml`の`protection_pips`/`ttl_buffer_sec`を更新する。変更後はScenario Runnerで`OPS-DEG-01`を再実行し、Acceptable Degradation復旧時間が改善したかを評価。
+- **戦略停止判断**: 特定戦略/シンボルで`sample_size>=50`かつ`mean_slippage > config.slippage.stop_threshold`の場合、Risk Managerが`strategy.watchlist`をトリガーし、Strategy Scoreboard（付録G.1）と合わせて戦略OFF判定を行う。
+- **教育/ナレッジ蓄積**: Opsシミュレーションゲーム（§22）のイベントに`slippage_spike`カードを追加し、ゲーム終了後に`SlippageDistribution`比較をKnowledge Packへ記録。Evidence Graph（§23）でトレーニングケースと実運用エピソードをリンクする。
+
+---
