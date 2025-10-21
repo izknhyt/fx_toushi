@@ -2274,3 +2274,111 @@ Acceptable DegradationやTelemetry改善に伴い、変更管理の透明性を�
 ---
 
 これらの追補により、Codex実装チームはAcceptable Degradation対応とCLIテレメトリ改善を高速に反復でき、トレーダー/運用チームは一貫した証跡とレビュー材料を確保できる。今後の設計更新では、上記セクションを基準にPrompt Bundleとテスト計画を組み立て、将来の仕様変更にも耐えうる抽象化境界を維持する。
+
+## 18. メトリクススキーマガバナンスとCodex QA自動化（v2.4追加）
+
+### 18.1 目的
+
+- `metrics/*.jsonl`の命名・構造・閾値を**中央管理**し、Codexが新規メトリクスを追加する際のレビュー時間を短縮する。
+- Acceptable Degradation（§16）やTelemetry Digest（§15）と整合した**QAオートメーション**を用意し、ヒューマンレビューでは逸脱理由の解釈に集中できるようにする。
+- Runbook/Change Ledger（§17）と紐づけることで、メトリクス定義変更の根拠・承認プロセスを可視化する。
+
+### 18.2 成果物とモジュール構成
+
+| パス | 役割 | Codex実装ポイント |
+| --- | --- | --- |
+| `src/infra/metrics/schema_registry.py` | メトリクス定義の読み込み・検証・差分検出。 | `MetricsSchemaRegistry`クラスを定義し、`load()`, `validate(record)`, `diff(new_schema)` APIを提供。`pydantic` v2使用。 |
+| `src/infra/metrics/models.py` | `MetricDefinition`, `Threshold`, `AggregationRule`等のモデル。 | `schema_version=1`を保持。`Decimal`で閾値を管理し、`precision=4`を既定とする。 |
+| `scripts/qa/metrics_schema_check.py` | CI/ローカルQA向け検証スクリプト。 | `poetry run python scripts/qa/metrics_schema_check.py --changed metrics/data_ingestion_sla.jsonl`形式で実行。Codex成果物レビューで必須。 |
+| `src/interfaces/cli/metrics_schema.py` | `tradectl metrics schema ...` CLI。 | `list`, `show`, `diff`, `validate`サブコマンド。`instrument_command`適用。 |
+| `docs/metrics/SCHEMA_GUIDE.md` | 命名規約と更新手順。 | Runbook `RUN-OPS-02`とリンク。Acceptable Degradation関連メトリクスには`qa_tag`必須である旨を明記。 |
+| `metrics/schema_index.json` | スキーマカタログ（真実のソース）。 | `metrics/<name>.schema.json`へリンクを保持し、`hash`, `owner`, `runbook_refs`, `change_ledger_ids`を含める。 |
+| `metrics/<name>.schema.json` | 個別メトリクスのJSON Schema。 | Codexが増やす際はこのファイルを追加し、`schema_registry`が検証に使用。 |
+| `tests/unit/test_metrics_schema_registry.py` | レジストリ単体テスト。 | `pytest -k metrics_schema_registry`で実行。 |
+| `tests/integration/test_metrics_schema_cli.py` | CLI整合性テスト。 | Richテーブル/JSONスナップショットを保持。 |
+
+### 18.3 スキーマ定義
+
+`metrics/schema_index.json`は以下の構造を持つ。
+
+```json
+{
+  "schema_version": 1,
+  "metrics": [
+    {
+      "name": "data_ingestion_sla",
+      "path": "metrics/data_ingestion_sla.jsonl",
+      "schema_path": "metrics/data_ingestion_sla.schema.json",
+      "owner": "data_ops",
+      "qa_tags": ["acceptable_degradation", "sla"],
+      "runbook_refs": ["RUN-DATA-05#sla_check"],
+      "change_ledger_ids": ["CHG-20250301-001"],
+      "notes": "fetch_p95, processing_p95 を保持"
+    }
+  ]
+}
+```
+
+- `schema_version`は互換性管理に使用し、変更時は`tests/contracts/test_metrics_schema_index.py`を更新する。
+- 個別スキーマ（`*.schema.json`）はJSON Schema Draft 2020-12準拠。`$defs.threshold`を定義し、`warning`, `major`, `critical`といったレベル別閾値を規定する。
+- Telemetry Digest（§15）で利用する`metrics/cli_commands.jsonl`は`command`, `duration_ms`, `exit_code`, `qa_tags`, `board_mode`等を定義。`qa_tags`は`Enum`化し、`['baseline','degraded','scenario','manual_csv']`を初期値とする。
+
+### 18.4 運用ワークフロー
+
+1. **新規メトリクス追加**
+   - CodexはIssueで`<Metric Change>`テンプレートを使用し、`owner`, `runbook_refs`, `accept_degradation_case`（該当する場合）を記入。
+   - Prompt Bundleに既存メトリクスの抜粋、`metrics/schema_index.json`該当部分、テストコマンドを添付。
+   - 実装では`MetricDefinition`へ追加→JSON Schema作成→サンプルレコード生成（`metrics/samples/<name>_<date>.jsonl`）。
+2. **CI/QA**
+   - `scripts/qa/metrics_schema_check.py --changed <metric>`を実行し、スキーマと実データの差異、閾値未設定、Runbook参照欠落を検出。
+   - `make ci-lite`に同スクリプトを組み込み、差分に応じて対象メトリクスのみ検査する仕組みを採用。
+3. **レビュー**
+   - レビューアは`tradectl metrics schema diff --metric <name>`で旧版との差分を確認。警告レベルを上げる変更には`ChangeLedger`記録が必須。
+   - Acceptable Degradation関連の場合、`docs/knowledge_packs/<case>/index.json`へ`metric_refs`を追加し、トレーダーが背景を追跡できるようにする。
+4. **リリース後監視**
+   - Telemetry Aggregator（§15）が`schema_index`の`qa_tags`を参照し、自動的に`QA-04`ステータスを更新。逸脱は`TelemetryDigest.notes`へ反映される。
+
+### 18.5 CLI仕様 (`tradectl metrics schema ...`)
+
+| コマンド | 説明 | 主なオプション | 出力 |
+| --- | --- | --- | --- |
+| `tradectl metrics schema list` | 登録メトリクス一覧 | `--owner`, `--qa-tag`, `--format table|json` | Richテーブル/JSON。Acceptable Degradation関連は`🟠`バッジ表示。 |
+| `tradectl metrics schema show <name>` | 定義詳細 | `--include-schema`, `--include-sample` | JSON Schemaとサンプルレコードを表示。 |
+| `tradectl metrics schema diff <name>` | Git HEAD vs 作業コピー差分 | `--base <commit>` | フィールド追加/削除/閾値変更を色分け表示。 |
+| `tradectl metrics schema validate <path>` | 生JSONLの検証 | `--schema <name>` | レコード毎の結果と`metrics/invalid_records.jsonl`への出力状況を表示。 |
+
+- すべてのコマンドは`instrument_command`で計測し、`metrics/cli_commands.jsonl`に`command='metrics.schema.<subcommand>'`を記録する。
+- `validate`はExit code 0（成功）、110（警告：`insufficient_samples`）、120（失敗：バリデーションエラー）を使用する。
+
+### 18.6 テスト計画
+
+| テストID | 内容 | 対象 |
+| --- | --- | --- |
+| UT-MSC-01 | `MetricsSchemaRegistry.load`が`schema_index`不整合を検出し`MetricsSchemaError`を投げる | `tests/unit/test_metrics_schema_registry.py::test_load_invalid_index` |
+| UT-MSC-02 | `validate(record)`が閾値外れを検出し警告レベルを返す | `...::test_validate_thresholds` |
+| UT-MSC-03 | `diff`がJSON Schema差分を集計し`MetricSchemaDiff`を返す | `...::test_diff_detection` |
+| IT-MSC-01 | CLI `list/show/diff/validate`が期待するRich/JSON出力を生成 | `tests/integration/test_metrics_schema_cli.py` |
+| IT-MSC-02 | `scripts/qa/metrics_schema_check.py`が`git diff`から対象メトリクスを特定 | `tests/integration/test_metrics_schema_script.py` |
+| IT-MSC-03 | Telemetry Aggregatorが`schema_index`の`qa_tags`を参照し`TelemetryDigest`へ警告を追加 | `tests/integration/test_telemetry_aggregator.py::test_schema_tag_integration` |
+
+### 18.7 Codexプロンプト指針
+
+- Prompt Bundleには以下を含める。
+  - `metrics/schema_index.json`該当抜粋（20行以内）。
+  - 既存メトリクスのJSON Schema断片。
+  - Runbook参照とChange Ledger ID一覧。
+  - 期待するCLIコマンド出力の例（`tradectl metrics schema show data_ingestion_sla --format json`など）。
+- テスト指示例:
+  - `pytest -k metrics_schema_registry`
+  - `pytest -k metrics_schema_cli`
+  - `poetry run python scripts/qa/metrics_schema_check.py --changed metrics/data_ingestion_sla.jsonl`
+- レビュー時に確認すべき観点:
+  1. `schema_version`が変わっていないか（変更時は互換性レビュー必須）。
+  2. Runbook参照が最新か（`RUN-DATA-05`, `RUN-OPS-02`等）。
+  3. Acceptable Degradationケースへリンクされているか（必要な場合）。
+
+### 18.8 将来拡張
+
+- M1.1: `metrics/schema_index.json`と`ChangeLedger`を双方向リンクし、CLIで`--show-change-log`オプションを提供。`tradectl metrics schema show <name> --with-changes`が直近の変更履歴をテーブル表示する。
+- M2: Prometheus/Grafana移行を視野に`schema_registry`へ`export_prometheus()`を追加し、メトリクス定義を自動的にダッシュボードへ同期する。`TelemetryAggregator`はPrometheusバックエンドからも同一APIでデータ取得できるようアダプタ実装を追加。
+- Acceptable Degradation改善のため、`qa_tags`に`"playbook:RUN-DATA-06"`形式のRunbook識別子を許容し、Telemetry Digestで該当ステップの完了率を自動算出する。
