@@ -1,4 +1,4 @@
-# FXヒューマン・インザループ投資ツール 詳細設計書 v2.6
+# FXヒューマン・インザループ投資ツール 詳細設計書 v2.7
 
 ## 0. 文書情報
 - 作成日: 2025-03-03
@@ -9,6 +9,7 @@
 ### 0.1 改訂履歴
 | 版 | 日付 | 改訂概要 |
 | --- | --- | --- |
+| v2.7 | 2025-03-05 | Delivery Control Tower（§25）とトレーダーフィードバック循環エンジン（§26）を拡張し、Release Readinessスコアカード（§30）とCodex連携フローを追加。AD復旧ツールキットの運用指針を深掘り。 |
 | v2.6 | 2025-03-04 | Acceptable Degradation分析/復旧ツールキット（§24）を追加し、Board Guard/Scenario Runner/QAスコアカードとの循環を明文化。Codex向け実装契約とテスト観点を拡張。 |
 | v2.5 | 2025-03-03 | リサーチ再現性フレームワークとOpsシミュレーションゲームの詳細設計を追補。メトリクススキーマ/プロンプト自動生成との連携、テレメトリ/ナレッジパック/Change Ledger統合の運用指針を追加。 |
 | v2.4 | 2025-03-02 | Acceptable Degradation演習を自動化するシナリオランナー設計とCLIテレメトリ統合の実装指針を追加。Codex向けワークパッケージのハンドオフ手順を拡張し、Runbook連携と証跡集約を強化。 |
@@ -3389,4 +3390,112 @@ src/ops_dashboard/
 - **ベンチマーク乖離監視**: `benchmark_gap`ウィジェットが`status='warn'`になった場合、`actions`に`tradectl benchmark compare`が表示される。CLIから即時差分確認し、必要なら`RUN-BENCH-01`のレビューを開始。
 - **トレーダーフィードバック共有**: `journal_highlight`ウィジェットの`actions`から`tradectl feedback ack <id>`（§26）を開き、トレーダーコメントをOps会議で追跡。Evidence Graphノードとリンクしナレッジ蓄積を促進。
 - **監査/証跡**: 週次で`tradectl ops dashboard snapshot --summary`を実行し、`reports/weekly/<YYYYWW>.md`へ貼り付け。監査時は`ops dashboard diff`でGuarded期間の短縮効果を証明。
+
+
+## 30. Release Readinessスコアカード＆ゲートキーパー（v2.7追加）
+
+トレーダー/PO/運用がリリース判定（Backtest→Paper→Live、Hotfix、Feature Flag切替）を迅速かつ再現性高く実行できるよう、QAスコアカード（§0.10）、Delivery Control Tower（§25）、AD復旧ツールキット（§24）、Feedback循環エンジン（§26）を統合した「Release Readinessスコアカード」を設計する。Codexが実装する際にI/O契約が明確になるよう、モジュール境界とテスト観点を定義する。
+
+### 30.1 目的
+- **リリース可否の定量化**: 準備状況、未解決インシデント、QAギャップ、Acceptable Degradation履歴を数値化し、Go/No-Goの基準を明示する。
+- **証跡一元化**: Runbookチェックリスト、Change Ledger、Evidence Graph、Prompt Bundle抜粋をスコアカードに紐付け、監査証跡をワンクリックで提示する。
+- **Codexハンドオフ短縮**: Release Blockerが存在する場合、即座にワークパッケージ化できるテンプレを出力し、再実装サイクルを短縮する。
+
+### 30.2 モジュール構成
+| パス | 役割 | 主な公開API/責務 |
+| --- | --- | --- |
+| `src/release/readiness.py` | 集約サービス。本スコアカード生成とGate判定ロジック。 | `build_snapshot(window: ReviewWindow, scope: ReleaseScope) -> ReleaseReadinessSnapshot`, `evaluate(snapshot) -> ReleaseDecision` |
+| `src/release/models.py` | データモデル定義。 | `ReleaseReadinessSnapshot`, `GateCriterion`, `RiskException`, `ReadinessMetric`, `EvidencePointer` |
+| `src/release/checklist.py` | リリースチェックリストのテンプレ処理・差分検知。 | `load_checklist(profile)`, `validate_completion(checklist, snapshot)` |
+| `src/release/repository.py` | QAログ、Delivery Snapshot、AD Episode、Change Ledger、Prompt Bundleからのデータ取得。 | `fetch_inputs(window, scope)` |
+| `src/release/forecast.py` | リスク/工数の残量予測。 | `estimate_release_risk(snapshot) -> ReleaseRiskEstimate` |
+| `src/interfaces/cli/release.py` | `tradectl release ...` CLI。 | `tradectl release readiness`, `tradectl release blockers`, `tradectl release checklist`, `tradectl release export` |
+| `tests/unit/test_release_readiness_*.py` | ユニットテスト。 | 判定ロジック/スキーマ/閾値検証 |
+| `tests/integration/test_release_cli.py` | CLI統合テスト。 | CLI出力の決定論性、Evidence Graph連携 |
+
+- Feature Flag: `release.readiness.enabled`（既定`True`）。無効時はCLIが`Feature disabled (M1)`を返し、サービスはスタブを返却する。
+- リリーススコープ: `ReviewWindow`に加え`ReleaseScope`（`{'backtest','paper','live','hotfix'}`）を指定し、閾値/必須項目を切り替える。
+
+### 30.3 データモデル
+| モデル | 主フィールド | 説明 |
+| --- | --- | --- |
+| `ReleaseReadinessSnapshot` | `window`, `scope`, `generated_at`, `qa_summary: dict[str, QaStatus]`, `delivery_alerts: list[DeliveryAlert]`, `ad_episodes: list[DegradationEpisodeRef]`, `open_feedback: list[PrioritizedFeedbackRef]`, `checklist: ReleaseChecklistState`, `metrics: list[ReadinessMetric]`, `risk_exceptions: list[RiskException]`, `evidence: list[EvidencePointer]` | リリース判定に必要な要約。 |
+| `GateCriterion` | `id`, `description`, `status: Literal['pass','warn','fail']`, `weight`, `related_requirement: list[str]`, `auto_fix: bool`, `recommended_action: str` | 判定基準。例:`QA-03 Runbook 更新`, `AD Episode 未解決`。 |
+| `ReleaseDecision` | `status: Literal['go','hold','no_go']`, `score: Decimal`, `failed_criteria: list[GateCriterion]`, `warnings: list[GateCriterion]`, `next_review_at: datetime`, `owner: str` | リリース可否。 |
+| `ReleaseRiskEstimate` | `residual_risk_score`, `manual_hours_remaining`, `expected_guarded_hours`, `kpi_at_risk`, `notes` | Delivery Control Tower/ADツールキット情報から算出。 |
+| `ReleaseChecklistState` | `profile`, `items: list[ChecklistItemState]`, `completion_rate`, `last_updated`, `change_id` | Runbook `docs/release_checklist.md`との整合。 |
+| `EvidencePointer` | `kind: Literal['runbook','change_ledger','prompt_bundle','metric','qa','scenario']`, `path`, `hash`, `summary` | 証跡へのリンク。 |
+
+- `ReadinessMetric`は`metric_id`, `value`, `target`, `trend`, `source`を保持（例: `data_ingestion_sla_p95=14.2s` vs 目標12s）。
+- `DegradationEpisodeRef`は`episode_id`, `status`, `resolved_at`, `manual_hours`, `change_ids`を保持し、未解決ADがある場合に`GateCriterion`へ紐付ける。
+
+### 30.4 判定フロー
+1. `build_snapshot`が`repository.fetch_inputs`を呼び出し、以下を統合。
+   - QAスコアカード最新状態（§0.10）
+   - Delivery Snapshot（§25）と未解決`DeliveryAlert`
+   - AD Episodeサマリ（§24）および復旧完了有無
+   - Feedbackエンジン（§26）の`severity='high'`項目
+   - Change Ledgerの未承認`release_*`エントリ
+   - Prompt Bundleに不足している`test_plan`/`io_contract`情報
+2. `GateCriterion`評価順序:
+   1. **品質ゲート**: `QA-01`〜`QA-05`すべて`pass`か。`pending`があれば`status='fail'`で`hold`決定。
+   2. **ADクリアランス**: 直近30日の`DegradationEpisode`に`pending_followups`が残っていないか。残っていれば`fail`。
+   3. **Delivery Alerts**: `severity >= major`が存在する場合`hold`、`critical`で`no_go`。
+   4. **KPIトレンド**: `ReadinessMetric`で`Sharpe_recent`、`data_ingestion_sla_p95`等が閾値外なら`warn`。
+   5. **Checklist完了率**: `completion_rate>=0.95`が必須。未完了アイテムを`warnings`へ格納。
+3. `score`は`GateCriterion`ごとに重み付け（例: QA=40%、AD=25%、Delivery=15%、KPI=10%、Feedback=10%）。`pass=weight`, `warn=weight×0.5`, `fail=0`で合計。
+4. `evaluate`は`status`を決定し、`EventBus.publish('release.readiness.evaluated', decision, snapshot)`で通知。Delivery Control Towerはこのイベントを取り込み`alerts`と同期する。
+5. `ChangeLedger.record_change(category='release', status=decision.status, score=...)`を必須化。Evidence Graph（§23）へ`EvidenceNode(type='release')`を登録し、監査検索性を高める。
+
+### 30.5 CLI仕様 (`tradectl release ...`)
+| コマンド | 主な引数/フラグ | 出力/副作用 | 代表エラー |
+| --- | --- | --- | --- |
+| `tradectl release readiness` | `--scope backtest|paper|live|hotfix`, `--window 7d|30d`, `--format table|json|markdown`, `--include-evidence`, `--push-to-bundle` | スコアカード表示。`--include-evidence`でリンク一覧。`--push-to-bundle`はPrompt Bundle（§20）へ`<section id="release_readiness">`を追加。 | `ReleaseDataMissing`, `FeatureDisabled` |
+| `tradectl release blockers` | `--scope`, `--severity warn|fail`, `--export` | 失敗/警告`GateCriterion`一覧と推奨アクション。`--export`でMarkdownテンプレを生成しIssue起票に使用。 | `CriterionNotFound` |
+| `tradectl release checklist` | `--profile`, `--diff`, `--update-status` | Runbookチェックリストとの整合確認。`--diff`で未完了項目ハイライト。`--update-status`は手動完了記録を追加（Change Ledger更新）。 | `ChecklistMismatch`, `ChecklistUpdateError` |
+| `tradectl release export` | `--scope`, `--window`, `--out`, `--format markdown|json`, `--include-ci` | リリース会議用レポート。CIログとEvidenceリンクをまとめ`reports/release/readiness/<timestamp>.md`へ保存。 | `ExportWriteError` |
+| `tradectl release simulate` | `--scenario`, `--with-delivery`, `--with-ad`, `--dry-run` | 過去のRelease Snapshotを再評価し、閾値変更の影響を検証。 | `SimulationError` |
+
+- CLIは`CommandTelemetryRecord`に`component='release'`、`qa_tags`に`['release','qa']`（Guarded中は`'degraded'`も）を付与。
+- `--push-to-bundle`は`docs/prompt_packages/<date>_release_readiness.md`を生成し、Codexへの再依頼時に参照。
+- `release readiness`実行時に`Delivery Control Tower`の`alerts`と重複する場合は`notes`に`alert_id`を表示し、ダブルレビューを防止。
+
+### 30.6 Codex実装契約
+1. `ReleaseReadinessService`は純粋ロジックを保持し、外部I/Oは`repository`に委譲。テストでは`FakeRepository`で差し替え可能とする。
+2. `GateCriterion`評価ルールは`config/release/gates.yaml`で設定可能にし、閾値変更をコード変更無しで行えるようにする。M1 Coreでは以下の必須キーを定義：`qa_pass_required`, `ad_resolved_within_days`, `delivery_alert_max_severity`, `feedback_max_priority`, `checklist_min_completion`。
+3. `ReleaseChecklistState`は`docs/release_checklist.md`のハッシュを保持。ファイル変更時は`ChangeLedger`へ自動登録。`validate_completion`はRunbookに存在しない項目があれば`ChecklistMismatch`で失敗させる。
+4. `ReleaseRiskEstimate`計算では`DeliverySnapshot.ops_impact.expected_manual_minutes`と`DegradationSummary.mttr_minutes`を参照し、`expected_guarded_hours`を出力。Guarded解除までの想定時間を`HealthMonitor`の推奨アクション（§3.9）と突合。
+5. Evidence Graph連携は`EvidencePointer`を通じて行い、`EvidenceGraphService.link_artifact`のみ利用する。直接ファイル操作は禁止。
+6. Codexは`ReleaseScope`ごとのデフォルトテンプレを`config/release/readiness_<scope>.yaml`に実装し、`poetry run mypy src/release`を通過させる。
+
+### 30.7 テスト計画
+| テストID | 目的 | 内容 |
+| --- | --- | --- |
+| UT-REL-01 | Gate判定ロジック | `tests/unit/test_release_readiness.py::test_evaluate_go_hold_no_go`でGo/Hold/No-Go条件を網羅。 |
+| UT-REL-02 | チェックリスト整合 | `tests/unit/test_release_checklist.py::test_validate_completion_detects_missing_items`でRunbookとの差分検知を確認。 |
+| UT-REL-03 | リスク推定 | `tests/unit/test_release_forecast.py::test_estimate_risk_aggregates_delivery_and_ad`で`expected_guarded_hours`算出を検証。 |
+| UT-REL-04 | Evidenceリンク | `tests/unit/test_release_repository.py::test_fetch_inputs_links_evidence`で証跡参照が欠損しないか確認。 |
+| IT-REL-01 | CLI出力 | `tests/integration/test_release_cli.py::test_release_readiness_markdown_snapshot`でCLI出力のスナップショットを固定。 |
+| IT-REL-02 | Prompt連携 | `tests/integration/test_prompt_cli.py::test_release_push_to_bundle`で`--push-to-bundle`がテンプレ追加することを検証。 |
+| IT-REL-03 | Delivery連動 | `tests/integration/test_delivery_release_hook.py::test_release_event_updates_delivery_alerts`でDelivery Control Towerとのイベント循環を検証。 |
+| SC-REL-01 | Go/No-Go演習 | `tradectl release readiness --scope live --window 7d`→`tradectl release checklist --profile live-core`→`tradectl release blockers --severity fail`をRunbook `RUN-REL-01`に沿って実施。 |
+
+- `make ci-lite`に`pytest -k release_readiness`を追加。CLIスナップショットは`tests/snapshots/release/`で管理し、文言変更時はPO承認必須。
+- `ReleaseReadinessSnapshot`スキーマは`tests/contracts/test_release_snapshot_schema.py`で固定し、Breaking Changeは`docs/change_requests/`を経由。
+
+### 30.8 トレーダー/運用活用シナリオ
+- **スプリントレビュー**: スプリント末に`tradectl release readiness --scope paper --format markdown --include-evidence`を生成し、Ops/POレビューに添付。`warnings`はその場でハンドリング担当者を割り当て、Delivery Control Towerの`alerts`と同期する。
+- **Hotfix判定**: Acceptable Degradation復旧後のHotfixリリースでは、`--scope hotfix --window 3d`を使用し、AD Episodeが未解決なら自動的に`no_go`となる。解除条件を満たした後に再評価し、`ChangeLedger`へ経緯を記録。
+- **戦略ON/OFFレビュー**: 新戦略のLive昇格前に`ReleaseReadinessSnapshot.metrics`から`Sharpe_recent`, `slippage_bias`などを確認。Feedback Engineが`severity='high'`のUX課題を抱えていれば`GateCriterion`が`warn`となり、Feature Flag ONを保留する。
+- **監査対応**: `tradectl release export --scope live --include-ci --out reports/release/readiness/live_<date>.md`で証跡を束ね、監査提出資料とする。Evidence Graph IDをハイパーリンク化し、再現可能性を担保。
+
+### 30.9 Codexプロンプト/レビュー運用
+- Prompt Bundleでは`<section id="release_readiness">`に`failed_criteria`, `recommended_actions`, `evidence_links`表を添付し、Codexへ不足情報を明確化する。
+- Issueには以下を必須項目として記載：
+  1. `scope`と対象リリース日。
+  2. `failed_criteria`リスト（Gate ID、Runbook参照、期待アクション）。
+  3. 関連する`ChangeLedger`/`EvidenceGraph`ID。
+  4. 実行必須テスト（`pytest -k release_readiness`, `tradectl release readiness --dry-run`など）。
+- レビュー時は`git diff --stat`で変更が`src/release/`, `interfaces/cli/release.py`, `tests/`, `docs/`に収まっているか確認。`config/release/`やRunbook差分がある場合は`ChangeLedger`記録を必須とする。
+- `ReleaseDecision`が`hold`または`no_go`の場合、`tradectl release blockers --export`のMarkdownを`docs/runbooks/RUN-REL-01.md`へ貼り付け、改善タスクをチケット化する。
 
