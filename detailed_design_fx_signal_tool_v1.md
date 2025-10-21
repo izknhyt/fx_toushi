@@ -3215,3 +3215,105 @@ Paper→Live移行を見据えて、ヒューマン承認フローのまま実�
 - **教育/ナレッジ蓄積**: Opsシミュレーションゲーム（§22）のイベントに`slippage_spike`カードを追加し、ゲーム終了後に`SlippageDistribution`比較をKnowledge Packへ記録。Evidence Graph（§23）でトレーニングケースと実運用エピソードをリンクする。
 
 ---
+
+## 28. 戦略スコアボード＆アルファ評価ワークベンチ（v2.7ドラフト）
+
+M2で本実装を予定している戦略スコアボードを先行して詳細化し、M1 Core時点ではスタブ（§1.3参照）ながらもインターフェースを固定しておく。Codexへ委譲する際に、リサーチ成果・シグナル品質・運用証跡を同一ビューで突合できるよう、Evidence Graph／Scenario Runner／Change Ledgerと双方向リンクする。トレーダー視点では「戦略を止める／改良する」判断の根拠を数分以内に引き出せることを目標とし、Acceptable Degradation後の改善検証にも耐える設計とする。
+
+### 28.1 目的
+- 戦略単位のKPI（Sharpe、Hit Rate、平均R、Max Drawdown、平均レイテンシなど）を90日ローリングで集約し、Paper/Live/Backtestを横断比較する。
+- Acceptable Degradationエピソード終了後に「どの戦略が原因か」「復旧施策で改善したか」を即座に可視化する（FR-71, AC-54）。
+- 研究チーム（Codex含む）が提出する検証レポート（`reports/research/*`）と本番テレメトリ（`metrics/strategy_replay.jsonl`）をトレーダーが並列に参照できるよう、Evidence Graphノードとして公開する。
+- 将来の自動ゲーティング（M2+）に備え、Scorecardのメトリクス閾値とRunbook `RUN-ALPHA-02`の承認フローを機械可読化する。
+
+### 28.2 モジュール構成
+| ファイル | 役割 | 主な公開API/責務 | 備考 |
+| --- | --- | --- | --- |
+| `src/scoreboard/service.py` | Scoreboard集約サービス本体 | `build_scorecard(window: ScoreWindow, filters: ScoreFilter) -> StrategyScorecard`, `compare_modes(strategy_id, window) -> ModeComparison`, `list_alerts(window) -> list[ScoreAlert]` | M1では`StrategyScoreboardServiceStub`が`NotImplementedError`を投げる。M2で本実装。 |
+| `src/scoreboard/repository.py` | メトリクス/証跡取得レイヤ | `fetch_metrics(strategy_id, window)`, `fetch_research_refs(strategy_id)`, `store_snapshot(scorecard)` | 永続化は`data/scoreboard/<strategy>/<date>.parquet`。 |
+| `src/scoreboard/calculators.py` | KPI算出ユーティリティ | `compute_performance(series)`, `compute_latency(samples)`, `compute_acceptance_rate(events)` | Pure関数・NumPy/Pandas依存不可。`statistics`/`numpy`のみ。 |
+| `src/scoreboard/alerts.py` | 閾値評価・アラート生成 | `evaluate(scorecard, policy: ScorePolicy) -> list[ScoreAlert]` | PolicyはYAML構成。Acceptable Degradation連動。 |
+| `src/scoreboard/interfaces/cli.py` | CLIコマンド登録 | `tradectl scoreboard ...`のTyperコマンド群。 | `interfaces/cli/__init__.py`でFeature Flag登録。 |
+| `src/scoreboard/export.py` | Evidence Graph/Reports出力 | `to_markdown(scorecard)`, `to_evidence_nodes(scorecard)` | Evidence Graph（§23）へノード追加。 |
+| `src/scoreboard/policies.py` | ScorePolicy定義 | `ScorePolicy` dataclassとYAMLローダ。 | Change Ledger追跡用ハッシュ含む。 |
+
+### 28.3 データモデル
+| モデル | 主フィールド | 生成元 | 主な利用先 | 備考 |
+| --- | --- | --- | --- | --- |
+| `ScoreWindow` (`pydantic` v2) | `start: datetime`, `end: datetime`, `mode: ModeContext`, `granularity: Literal['daily','weekly']` | CLI/Service | Repository, Calculators | バリデーションで`end-start<=180d`（M2初期）。 |
+| `ScoreFilter` | `strategy_ids: list[str]`, `tags: list[str]`, `include_retired: bool`, `minimum_trades: int` | CLI/Scenario Runner | Service | `minimum_trades`でサンプル不足を排除。 |
+| `StrategyScorecard` | `strategy_id`, `display_name`, `mode`, `metrics: dict[str, MetricSeries]`, `alerts: list[ScoreAlert]`, `research_refs: list[ResearchRef]`, `evidence_nodes: list[EvidenceNodeRef]`, `generated_at` | Service | CLI, Reporter, Evidence Graph | `metrics`は`MetricSeries`（`value`, `p25/p50/p75`, `trend`, `sample_size`）のdict。 |
+| `ModeComparison` | `strategy_id`, `baseline_mode`, `target_mode`, `delta: dict[str, MetricDelta]`, `latency_diff_ms`, `ticket_acceptance_delta`, `notes` | Service | CLI compare, Runbook | Live移行評価用。 |
+| `ScoreAlert` | `severity: Literal['info','warn','critical']`, `code`, `message`, `metric`, `threshold`, `current_value`, `evidence_links: list[str]`, `qa_tags: list[str]` | Alerts | CLI/Health Monitor | `qa_tags`でQAスコアカード（§0.10）連携。 |
+| `ScorePolicy` | `policy_id`, `strategy_tags`, `thresholds: dict[str, ThresholdRule]`, `min_sample_size`, `cooldown_days`, `auto_escalate: bool` | YAML | Alerts | Change Ledgerでバージョン管理。 |
+| `ResearchRef` | `report_id`, `path`, `hash`, `summary`, `last_reviewed_by`, `last_reviewed_at` | Repository | CLI/Evidence | `hash`で再現性確認。 |
+| `EvidenceNodeRef` | `node_id`, `type`, `link`, `summary` | Export | Evidence Graph | Scenario Runnerとの突合。 |
+
+- すべてのモデルは`@dataclass(frozen=True, slots=True)`または`pydantic.BaseModel`（`model_config = ConfigDict(frozen=True)`）で不変化。Codexはリストへのミューテーションではなく新インスタンス作成を徹底する。
+- `ScorePolicy`変更時は`ChangeLedger.record_change(category='score_policy', policy_id=...)`を必須とし、`policy.hash`をログへ記録。Runbook `RUN-ALPHA-02#policy_review`と整合。
+
+### 28.4 データフローとアルゴリズム
+1. CLI/Scenario Runnerが`ScoreWindow`/`ScoreFilter`を指定して`StrategyScoreboardService.build_scorecard`を呼ぶ。
+2. ServiceはRepositoryからメトリクスを取得。ソース: `metrics/strategy_replay.jsonl`（シグナル→チケット経路）、`reports/research/<strategy>/*.md`（再現性レポート）、`logs/audit/ticket.jsonl`（承認履歴）、`reports/liquidity/<YYYYWW>.md`（流動性補正）。
+3. Calculatorsが各メトリクスを算出:
+   - `Sharpe`: ローリング90日、`risk_free_rate`は`config.scoreboard.risk_free_rate`を参照。サンプルが不足（<`min_sample_size`）の場合は`MetricSeries.status='pending'`。
+   - `HitRate`: `tickets.approved`の`tp_hit`/`sl_hit`ログから算出。Acceptable Degradation期間（`board_mode='guarded'`）はフラグを付与し、`trend`評価から除外。
+   - `Latency`: `signal.generated_at`と`ticket.presented_at`の差で計算。`ManualCsv`由来のバーは`qa_tags=['manual_csv']`を付与して集計対象外とする。
+   - `Research drift`: 最新リサーチレポートの`expected_return`と実測`average_R`の差分。しきい値は`ScorePolicy.thresholds['research_drift']`。
+4. Alertsモジュールが`ScorePolicy`に基づき評価。`auto_escalate=True`かつ違反時はEventBusへ`scoreboard.alert`イベントをpublishし、`HealthMonitor.raise('degraded','strategy_score')`でBoard Guardに反映。
+5. Evidence ExporterがScorecardをMarkdown（`reports/scoreboard/<YYYYWW>.md`）とEvidence Graphノードに変換。Change Ledgerエントリが存在すれば相互リンク。
+6. `ModeComparison`要求時はPaper/Live/Pilotなど2モードの`StrategyScorecard`を引き、`MetricDelta`（`current`, `baseline`, `delta`, `pct_change`, `is_significant`）を計算。`is_significant`は`scipy`依存を避け、Welch t-testを自前実装（`statistics`）で近似、p値<0.1でTrue。
+
+- **キャッシュ**: Scorecard生成は重い。`data/cache/scoreboard/<strategy>/<window_hash>.json`へJSONを保存し、同一ウィンドウ再要求で再計算を省略。`--force`指定時のみ再計算。
+- **Acceptable Degradation連携**: Degradation Episode（§24）終了時に`Scenario Runner`が`scoreboard.recompute`ジョブをキックし、復旧前後のScorecardを比較する。`ScoreAlert`に`episode_id`を紐づけ、Runbook `RUN-POST-03`で参照。
+
+### 28.5 CLI仕様（`tradectl scoreboard ...`）
+| コマンド | 説明 | 主なオプション | 出力/副作用 | 例外 |
+| --- | --- | --- | --- | --- |
+| `tradectl scoreboard view` | 指定ウィンドウのScorecard生成 | `--window 90d|30d`, `--mode paper|live|backtest`, `--strategy <id>...`, `--tags momentum,carry`, `--granularity daily|weekly`, `--format table|markdown|json`, `--force` | CLI表、Markdown（`--format markdown`）、JSON。Evidence Graph同期は`--push-evidence`指定時。 | `ScoreDataMissing`, `InvalidWindow`, `PolicyNotFound` |
+| `tradectl scoreboard compare` | モード間比較 | `--strategy <id>`, `--baseline paper`, `--target live`, `--window 60d`, `--metrics sharpe,hit_rate,latency` | `ModeComparison`テーブルと差分チャート（Rich棒グラフ）。`--export reports/scoreboard/live_vs_paper.md`でMarkdown出力。 | `InsufficientSample`, `ModeNotAvailable` |
+| `tradectl scoreboard alerts` | 閾値違反一覧 | `--window 30d`, `--severity warn|critical`, `--include-retired`, `--format table|json`, `--qa-tags missing_review` | Alertsテーブルと推奨Runbookリンク。`--format json`でCI/Scenario Runner用。 | `PolicyNotFound` |
+| `tradectl scoreboard policy validate` | Policy YAML検証 | `--file config/scoreboard/policies.yaml`, `--strict`, `--print-hash` | バリデーション結果と`policy_hash`。`--strict`で未使用戦略タグを警告。 | `PolicyValidationError` |
+| `tradectl scoreboard export` | ScorecardのMarkdown/Evidence出力 | `--strategy <id>`, `--window 90d`, `--out reports/scoreboard/<file>.md`, `--include-evidence`, `--link-change-ledger` | Markdown + Evidence Graphノード生成。`--include-evidence`で`docs/prompt_packages`に添付。 | `ExportError`, `EvidenceSyncError` |
+
+- CLIはFeature Flag `scoreboard.enabled`（既定: `false`）でラップ。M1 Coreでは`tradectl scoreboard`実行時に「M2予定」メッセージ＋`--enable-preview`案内のみ返す。`--enable-preview`時はスタブが`NotImplementedError`。
+- `--push-evidence`や`--link-change-ledger`実行時は`ChangeLedger.record_reference`を呼び出し、Evidence Graph（§23）との一致を検証する。
+
+### 28.6 テレメトリ・ナレッジ統合
+- メトリクスは`metrics/scoreboard.jsonl`に追記。フィールド: `{ts, strategy_id, mode, metric, value, window_days, sample_size, policy_hash, alerts}`。
+- Evidence Graph（§23）の`scoreboard`ノードタイプを追加し、`node.meta`に`strategy_id`, `window`, `policy_hash`, `source_files`を格納。`tradectl evidence verify --type scoreboard`でハッシュ検証。
+- Scenario Runner（§24, §22）から`tradectl scoreboard compare --push-evidence`をフックし、Degradation演習→改善タスクまで一貫した証跡を生成。
+- Change Ledger（§17）では`category='score_policy'`でハッシュ・承認者を記録。`tradectl scoreboard policy validate --print-hash`の結果をRunbook `RUN-ALPHA-02`に貼付。
+- QAスコアカード（§0.10）の`QA-04`チェックで`metrics/schema_index.json`へ`scoreboard`スキーマを追加し、週次レポート（§5.11）にScoreboard要約を連携。
+
+### 28.7 テスト計画
+| テストID | 目的 | 内容 |
+| --- | --- | --- |
+| UT-SCB-01 | Sharpe算出確認 | `tests/unit/test_scoreboard_calculators.py::test_compute_sharpe_matches_reference`で基準データセットとの一致を確認。 |
+| UT-SCB-02 | Latency統計 | `tests/unit/test_scoreboard_calculators.py::test_latency_distribution_handles_outliers`でガードレンジを検証。 |
+| UT-SCB-03 | Policy適用 | `tests/unit/test_scoreboard_alerts.py::test_policy_thresholds_trigger_alerts`で閾値評価と`qa_tags`付与を確認。 |
+| UT-SCB-04 | Evidence出力 | `tests/unit/test_scoreboard_export.py::test_evidence_nodes_include_required_fields`でEvidence Graphノード生成を検証。 |
+| IT-SCB-01 | CLIビュー | `tests/integration/test_scoreboard_cli.py::test_view_outputs_snapshot`でCLI出力スナップショットを固定。 |
+| IT-SCB-02 | モード比較 | `tests/integration/test_scoreboard_cli.py::test_compare_generates_delta`で`ModeComparison`計算と閾値判定を検証。 |
+| IT-SCB-03 | Degradation連携 | `tests/integration/test_scoreboard_degradation_hook.py::test_recompute_after_episode`でScenario Runner呼び出しとの連携を確認。 |
+| IT-SCB-04 | Evidence/Change Ledger同期 | `tests/integration/test_scoreboard_evidence.py::test_export_links_change_ledger`でEvidence Graph・Change Ledgerの双方向リンクを検証。 |
+| PT-SCB-01 | 運用演習 | Acceptable Degradation演習後に`tradectl scoreboard compare --baseline paper --target live`を運用チームが実施し、Runbook記録と一致するかヒューマンテスト。 |
+
+- `pytest -k "scoreboard"`を`make ci-lite`へ追加し、Codex出力レビュー時に`metrics/scoreboard.jsonl`へ余計な値がないか`tests/util/metrics_guard.py`で検証する。
+- CLIスナップショットは`tests/snapshots/scoreboard/`で管理。文言変更時はPO承認必須。
+
+### 28.8 Codexハンドオフ指針
+1. Prompt Bundleには`StrategyScorecard`/`ScorePolicy`モデルと、`metrics/strategy_replay.jsonl`抜粋（30行以内）、`reports/research/<strategy>/summary.md`リンクを添付する。
+2. Issue要約では「対象戦略タグ」「評価ウィンドウ」「期待するアラート閾値」「Evidence/Change Ledger連携必須か」を明示し、`RUN-ALPHA-02`該当節を引用する。
+3. Codex出力レビューでは`git diff --stat`で`src/scoreboard/`配下と`tests/(unit|integration)/scoreboard_*.py`に変更が収まっているか確認し、`config/scoreboard/policies.yaml`差分はChange Ledgerに紐づける。
+4. テスト実行指示: `pytest -k "scoreboard"`, `tradectl scoreboard view --strategy strat.ma_rsi --window 90d --format table --enable-preview`, `tradectl evidence verify --type scoreboard`。
+5. 受入時は`metrics/schema_index.json`に`scoreboard`項目が追加されているか、`docs/runbooks/RUN-ALPHA-02.md`へ新たなチェックリストが追記されているかをチェック。
+
+### 28.9 トレーダー/運用活用シナリオ
+- **Live移行前レビュー**: Paper 90日終了後に`tradectl scoreboard compare --baseline paper --target pilot`でKPI差分を可視化。Sharpe悪化かつ`ScoreAlert(severity='warn', code='research_drift')`が出た場合はLive移行を保留し、Change Ledgerに改善タスクを起票。
+- **Acceptable Degradation事後分析**: Degradation Episode終了時に`tradectl scoreboard view --window 30d --strategy strat.ma_rsi --push-evidence`を実行し、Episode IDと一緒にEvidence Graphへ保存。復旧後7日で改善が確認できなければ`RUN-POST-03`で追加施策を審議。
+- **戦略停止判断**: `ScorePolicy.auto_escalate=True`の閾値違反が`cooldown_days`内に2回連続発生した場合、Risk Managerが`tradectl scoreboard alerts --severity critical`結果をRunbook `RUN-RISK-02`へ添付し、Board Guardを`guarded`へ切替。
+- **リサーチ成果レビュー**: 研究チームが新フィルタを提案する際に`tradectl scoreboard export --include-evidence`でMarkdown＋Evidenceを生成し、Prompt Bundleへ添付してCodexへ実装依頼。トレーダーはCLI出力と`reports/research/<strategy>/`を同時に確認し、承認コメントを`docs/review_log.md`へ追記。
+- **教育用途**: Opsシミュレーションゲーム（§22）で戦略評価カードを引いた際、ゲーム内シナリオが`tradectl scoreboard view`の要約を提示。参加者は`score_alert`に対応するRunbook手順を即答する必要がある。Knowledge Packに演習結果を追記し、将来の訓練に再利用する。
+
+---
