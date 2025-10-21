@@ -2078,3 +2078,199 @@ Codexへ実装タスクを引き渡す際に必要な準備作業を標準化し
 - GUI/Tauri移行時には`scenario` APIをHTTP/IPC越しに再利用できるよう、`ScenarioRunner`のI/Oを`dataclass`ベースで整理し、シリアライズ可能に保つ。Codexは例外に`error_code`を付与し、将来GUIでハンドリングしやすいようにする。
 
 - 追加シナリオのレビュー手順として、`docs/scenarios/CHANGELOG.md`にID/目的/Runbookリンク/テスト結果を追記し、`docs/prompt_packages/<date>_scenario_runner.md`へ差分を保存する。これによりCodexが次回シナリオ改修を行う際に参照可能な履歴が整備される。
+
+## 15. CLIテレメトリアグリゲータとQAダッシュボード統合（v2.4追加）
+
+### 15.1 目的と適用範囲
+- CLIテレメトリ（§6.8）とシナリオランナー（§14）の計測データを**定期バッチで集約し、QA/運用レビューに直結するダッシュボード**を生成する。
+- Codexが実装する主モジュール: `src/telemetry/aggregator.py`, `src/telemetry/models.py`, `src/telemetry/repository.py`, `src/interfaces/cli/telemetry.py`, `src/reports/telemetry_renderer.py`, `tests/unit/test_telemetry_aggregator.py`, `tests/integration/test_cli_telemetry_report.py`。
+- 対象データソース: `metrics/cli_commands.jsonl`, `metrics/scenario_runs.jsonl`, `health_state_transitions.jsonl`, `logs/ops/command.log`, `reports/telemetry/cli/<YYYYWW>.md`（既存ファイルへの追記）。
+- 運用頻度: `TelemetryAggregatorJob`を**日次**で自動実行し、週次レビュー前に`tradectl telemetry report --window 7d`を人手で確認する。
+
+### 15.2 モジュール構成と責務
+| モジュール | 主責務 | Codex実装ガイド |
+| --- | --- | --- |
+| `src/telemetry/models.py` | `CliCommandSample`, `ScenarioRunSample`, `AggregationWindow`, `TelemetryDigest`等の`pydantic`モデル定義。 | `__schema_version__ = 1`を設定し、`tests/contracts/test_telemetry_schema.py`で互換性検証。浮動小数は`Decimal`で保持し丸めは表示段階に限定。 |
+| `src/telemetry/repository.py` | JSONL読み込み/ウィンドウ抽出/ローテーション確認。 | `load_cli_samples(window: AggregationWindow) -> Iterable[CliCommandSample]`などのAPIを提供し、ファイル欠損時は空イテレータを返す。将来S3移行時に差し替え可能な設計とする。 |
+| `src/telemetry/aggregator.py` | 集計ロジック。p95/p99計算、エラーレート算出、`qa_tags`別ブレークダウンを実装。 | `TelemetryAggregator.aggregate(window, *, include_scenarios: bool = True) -> TelemetryDigest`。p95/p99は最近傍補間で計算し、サンプル数<20件の場合は`insufficient_sample=True`を立てる。Acceptable Degradation時の実行(`qa_tags`に`degraded`)を別集計する。 |
+| `src/interfaces/cli/telemetry.py` | `tradectl telemetry report`コマンド。`--window`, `--command`, `--format`, `--qa-tag`等を受け取り、Richテーブル/Markdown/JSONで出力。 | `instrument_command`デコレータ適用。Markdown出力時は`reports/telemetry/cli/<YYYYMMDD>.md`へ保存し、週次モードでは`reports/telemetry/cli/<YYYYWW>.md`に追記。 |
+| `src/reports/telemetry_renderer.py` | Markdownテンプレ生成、スパークライン描画、QAサマリ挿入。 | `render_digest(digest: TelemetryDigest, *, profile: str, window: AggregationWindow) -> str`。`jinja2`テンプレート利用可。 |
+| `src/app/jobs/telemetry.py` | Scheduler登録。日次`02:15 JST`実行、失敗時は3回再試行。 | `TelemetryAggregatorJob`がDigest生成→Markdown/JSON書込→`EventBus.publish('telemetry.digest_generated', payload)`。 |
+
+### 15.3 データパイプライン
+1. `instrument_command`が`metrics/cli_commands.jsonl`へ逐次追記。シナリオランナーは`metrics/scenario_runs.jsonl`へ書込。
+2. `TelemetryAggregatorJob`が`AggregationWindow(start, end)`を決定（既定: 前日00:00〜23:59, `tz=UTC`）。
+3. `TelemetryRepository`がウィンドウ内サンプルを読み込み、`CliCommandSample`/`ScenarioRunSample`へ変換。欠損/破損行は`invalid_records.jsonl`へ退避し、`EventBus.publish('telemetry.invalid_record')`。
+4. `TelemetryAggregator.aggregate`が以下を計算:
+   - `command_stats[command] = {count_success, count_error, median_ms, p95_ms, p99_ms, error_codes}`。
+   - `qa_tag_stats[tag] = {count, success_rate, median_ms}`。
+   - `scenario_stats`（`scenario_id`, `status`, `duration_p95`, `artifact_count`）。
+   - `health_state_correlation`: コマンド実行時の`HealthStateSummary.status`分布。
+5. `TelemetryDigest`へまとめ、`TelemetryRenderer`がMarkdown/JSON/CSVを生成。
+6. CLI `tradectl telemetry report`はDigestを読み込み、必要に応じて`--persist`でファイル出力。
+
+### 15.4 CLI仕様 (`tradectl telemetry report`)
+| オプション | 説明 | 既定値 | 備考 |
+| --- | --- | --- | --- |
+| `--window <int>` | 過去n日（最大90日） | 7 | `AggregationWindow`に変換。`--since/--until`で明示指定も可能。 |
+| `--command board,status,...` | 対象コマンドをカンマ区切りで絞り込み | 全コマンド | `command_stats`からフィルタ。 |
+| `--qa-tag degraded,scenario` | `qa_tags`ベースで集計 | 全タグ | Acceptable Degradation影響を確認する際に使用。 |
+| `--format table|markdown|json` | 出力形式 | table | `markdown`で`reports/telemetry/cli/<window>.md`へ保存。 |
+| `--persist` | 出力ファイルを保存 | False | Markdown/JSONを所定パスに保存。 |
+| `--include-scenarios/--no-include-scenarios` | シナリオ集計の有無 | include | シナリオが多い週は集計除外可能。 |
+| `--threshold-profile <path>` | SLA閾値と比較 | `config/sla_thresholds/active.yaml` | `TelemetryAggregator`が閾値差分を計算し、逸脱をハイライト。 |
+
+- エラーコード: `TelemetryReportGenerationError`, `TelemetryDataMissing`。処理失敗時はExit code 121。
+- `--format markdown --persist`使用時は`reports/telemetry/cli/<YYYYWW>.md`をテンプレ更新し、週次レビューに添付する。
+
+### 15.5 TelemetryDigest スキーマ
+```python
+class TelemetryDigest(BaseModel):
+    schema_version: Literal[1]
+    window: AggregationWindow
+    generated_at: datetime
+    command_stats: dict[str, CommandStats]
+    qa_tag_stats: dict[str, QaTagStats]
+    scenario_stats: dict[str, ScenarioStats]
+    health_state_correlation: dict[str, HealthDistribution]
+    insufficient_sample_commands: list[str]
+    notes: list[str]
+```
+- `CommandStats`は`count_success`, `count_error`, `median_ms`, `p95_ms`, `p99_ms`, `error_codes: dict[str, int]`, `board_mode_distribution: dict[str, int]`。
+- `QaTagStats`は`count`, `success_rate`, `median_ms`, `p95_ms`, `health_state_distribution`。
+- `ScenarioStats`は`status_counts`, `duration_median_ms`, `duration_p95_ms`, `artifact_count_avg`, `last_run_at`。
+- `notes`にはサンプル不足や閾値逸脱を列挙し、Markdown出力時に`⚠️`バッジで強調。
+
+### 15.6 テスト計画
+| テストID | 目的 | 内容 |
+| --- | --- | --- |
+| UT-TEL-01 | コマンド集計の正確性 | `tests/unit/test_telemetry_aggregator.py::test_basic_stats`でサンプルを与え、p95/p99/エラーレートが期待値通りか検証。 |
+| UT-TEL-02 | `qa_tags`フィルタ | `test_qa_tag_breakdown`で`degraded`タグを分離集計できることを確認。 |
+| UT-TEL-03 | サンプル不足フラグ | サンプル<20件の場合に`insufficient_sample_commands`へ登録されるか検証。 |
+| UT-TEL-04 | スキーマ互換性 | `tests/contracts/test_telemetry_schema.py`で`TelemetryDigest`がバージョン1を維持するか確認。 |
+| IT-TEL-01 | CLI出力整合 | `tests/integration/test_cli_telemetry_report.py::test_table_output`でCLI出力がRichテーブル形式/ヘッダ一致を確認。 |
+| IT-TEL-02 | Markdown永続化 | `test_markdown_persist`で`--persist`指定時にファイルが生成され、テンプレヘッダ（週次サマリ/Acceptable Degradationログ）が埋まるか検証。 |
+| IT-TEL-03 | SLA閾値比較 | `test_threshold_profile_diff`で`config/sla_thresholds/sample.yaml`を読み込み、逸脱箇所に`⚠️`注記が表示されるか確認。 |
+
+### 15.7 Codex実装ハンドオフ要件
+1. Prompt Bundleに`metrics/cli_commands.jsonl`と`metrics/scenario_runs.jsonl`の最新10行を添付し、`CLI_ACTOR`や`qa_tags`の意味を注記する。
+2. `TelemetryAggregator.aggregate`の数式（p95/p99計算、エラーレート = `count_error / max(1, count_total)`）を明示し、浮動小数→`Decimal`変換の方針を記載。
+3. CLIテストでは`pytest-approvaltests`によるスナップショット更新手順を指定し、差分が発生した際の承認フローをIssueに追記。
+4. `reports/telemetry/cli/<YYYYWW>.md`のテンプレート断片（ヘッダ/サマリ/アクションアイテム）をPrompt Bundleへ添付し、Codexに整形ルールを明示。
+5. Runbook整合: `RUN-OPS-02`のレビュー手順に新しいレポートセクションを追記するタスクを併記し、Codex成果物レビュー時にRunbook更新漏れがないか確認する。
+
+### 15.8 運用/QAとの接続
+- `TelemetryDigest`生成後に`EventBus.publish('telemetry.digest_generated')`を発火し、`payload`へ`insufficient_sample_commands`や`notes`を含める。`HealthMonitor`は`p95_ms`が`config.telemetry.board.p95_warn_ms`を超えた場合に`health.changed(reason='cli_latency')`を発火する。
+- 週次レビューでは以下を行う:
+  1. `reports/telemetry/cli/<YYYYWW>.md`を開き、`Acceptable Degradation`タグ付きコマンドのp95/p99がRunbook許容内か確認。
+  2. `scenario_stats`で`OPS-DEG-01`など主要シナリオの成功率が100%か確認。未達の場合は`docs/prompt_packages/<date>_scenario_runner.md`へ追記し、次スプリントでハードニング。
+  3. `health_state_correlation`で`soft_stop/hard_stop`状態中に実行されたCLIが適切にRunbookサイン済みか、`logs/ops/command.log`と突合。
+- Acceptable Degradation解除時は`tradectl telemetry report --qa-tag degraded --window 3`の出力を`reports/validation_log/AC-45_sla_<date>.md`に添付し、オペレーション時間短縮効果を定量化する。
+
+### 15.9 将来拡張フック
+- `TelemetryDigest.schema_version`は`Feature Flag telemetry.digest_v2`で新フィールド追加に備える。Codex実装時はバージョンアップ手順（スキーマテスト更新、`reports`テンプレ更新、Runbook修正）をIssueへ記載する。
+- GUI/Tauri移行時にWebSocket操作を集計するため、`CliCommandSample`に`origin: Literal['cli','gui','api']`フィールドを追加する余地を残す。M1では`'cli'`固定。
+- `TelemetryAggregatorJob`は将来Prometheusプッシュゲートウェイをサポートするため、`ExporterAdapter`インターフェースを用意しておく（M2+）。
+
+---
+
+## 16. Acceptable Degradation ナレッジパックとCodex活用指針（v2.4追加）
+
+### 16.1 目的
+- Acceptable Degradation発生時の対応品質を高めるため、**運用証跡・シナリオ・計測値をCodex向けに体系化**し、再発時に即座に改善タスクへ落とし込めるようにする。
+- 成果物: `docs/knowledge_packs/acceptable_degradation/`配下のテンプレート、`metrics`タグリングルール、`tradectl`コマンド出力例、Codexプロンプト雛形。
+
+### 16.2 ディレクトリ/成果物構成
+| パス | 役割 | 形式 |
+| --- | --- | --- |
+| `docs/knowledge_packs/acceptable_degradation/README.md` | 運用ガイド、タグ定義、更新手順 | Markdown |
+| `docs/knowledge_packs/acceptable_degradation/case_<YYYYMMDD>.md` | 事例テンプレ（発生日・原因・対応・改善タスク） | Markdown |
+| `docs/knowledge_packs/acceptable_degradation/metrics_snapshot_<id>.json` | `metrics/data_ingestion_sla.jsonl`等から抽出した定量データ | JSON |
+| `docs/knowledge_packs/acceptable_degradation/prompt_context_<scenario>.md` | Codexへ渡す際の情報まとめ | Markdown |
+| `docs/knowledge_packs/acceptable_degradation/checklist.yaml` | 更新チェックリスト（Runbook整合、メトリクス抽出、教訓） | YAML |
+| `docs/knowledge_packs/acceptable_degradation/index.json` | 事例メタデータ（シナリオID、影響度、再発率） | JSON |
+
+### 16.3 ナレッジ更新フロー
+1. Acceptable Degradation発生時に`reports/validation_log/AC-45_sla_<date>.md`へ一次記録。
+2. 対応完了後24h以内に`docs/knowledge_packs/.../case_<date>.md`を作成し、以下を記載。
+   - `Scenario ID`（§14参照）、`board_mode`推移、`metrics`抜粋。
+   - 実行したCLI/Runbook手順、所要時間（分単位）。
+   - 恒久対策タスク（Issueリンク）と担当。
+3. `metrics_snapshot_<id>.json`を生成するスクリプト`tools/acceptable_deg/export_snapshot.py`を実行し、再現に必要なメトリクスを抽出。
+4. `prompt_context_<scenario>.md`にCodexへ渡すべきポイント（背景/現象/課題/期待する改善）を200〜300字でまとめ、対応する詳細設計セクション番号を列挙。
+5. `index.json`を更新し、`impact_score`（1〜5）、`recurrence`（例: `rare`, `occasional`）を記載。`impact_score≥4`は次スプリントのレビュー議題とする。
+
+### 16.4 Codex向けプロンプトテンプレ
+```
+<Scenario ID>: Acceptable Degradation Knowledge Pack
+背景:
+  - 発生日/状況/board_mode推移
+  - 既存実装の課題（セクション番号、例: §3.1.1 RateLimitGuard）
+  - メトリクス抜粋（p95遅延、429率など）
+要求:
+  - 修正対象モジュール（ファイルパス + 関数名）
+  - 期待する改善（例: 手動CSV投入ステップの自動化、TelemetryDigestへのタグ追加）
+  - Feature Flag有無・切替条件
+テスト:
+  - `pytest -k <case>`、`tradectl scenario run <ID>`、`tradectl telemetry report --qa-tag degraded`
+証跡:
+  - `reports/validation_log/AC-45_sla_<date>.md`
+  - `docs/knowledge_packs/.../metrics_snapshot_<id>.json`
+レビューポイント:
+  - トレーダーUX/Runbook整合/リスク影響/メトリクス差分
+```
+- テンプレは`docs/knowledge_packs/acceptable_degradation/prompt_template.md`として管理し、更新時は`CHANGELOG`を付与する。
+
+### 16.5 メトリクスとタグ規約
+| タグ | 対応メトリクス | 付与条件 | 参照Runbook |
+| --- | --- | --- | --- |
+| `degraded` | `HealthState.status` | `status in {'degraded','soft_stop','hard_stop'}`で自動付与 | `RUN-DATA-05`, `RUN-RISK-01` |
+| `manual_csv` | `metrics/data_ingestion_sla.jsonl`, `logs/ops/manual_csv.log` | 手動CSV投入ステップ実行時 | `RUN-DATA-06` |
+| `rate_limit_stage` | `metrics/rate_limit_window.jsonl` | Stage変更イベント時 | `RUN-DATA-05` |
+| `guarded_board` | `metrics/cli_commands.jsonl` | `tradectl board --guarded`実行時 | `RUN-HITL-01` |
+| `kill_switch` | `kill_switch_events.jsonl` | Kill Switch遷移 | `RUN-RISK-01` |
+
+- `TelemetryDigest`と`ScenarioRunner`は上記タグを共有し、Acceptable Degradationの頻度と復旧時間をクロス分析できるようにする。
+- `tools/acceptable_deg/tag_sync.py`が`metrics`/`logs`/`reports`からタグの整合性をチェックし、欠損があれば`health.changed(reason='knowledge_pack_desync')`で通知。
+
+### 16.6 QA/レビュー連携
+- 週次レビューでは`docs/knowledge_packs/.../index.json`を参照し、`impact_score≥3`のケースを優先的にハードニング対象へ割り当てる。
+- `tradectl scenario run <ID>`実行後に`--collect-artifacts`で得たログを`case_<date>.md`へ添付し、再現性を保証する。
+- `make qa-report`は`knowledge_packs`の更新有無をチェックし、未更新の場合は`WARN knowledge_pack.stale`を出力。CIで検知した場合はPRを`needs-knowledge-pack`ラベルでブロックする。
+
+### 16.7 将来拡張
+- M1.1でGUI通知を追加する際に、Knowledge PackからSlack用の要約を自動生成する`tools/acceptable_deg/render_slack_summary.py`を導入予定。
+- M2ではAcceptable Degradationからの復旧時間を自動計測し、`TelemetryDigest`に`recovery_time_minutes`を追加。`index.json`の`recovery_time_median`をダッシュボードへ出力する。
+- データストアは当面ローカルJSON/Markdownだが、将来は`docs/knowledge_packs`をGitサブモジュール化し、組織共有リポジトリでバージョン管理することを想定。
+
+---
+
+## 17. 変更管理と監査証跡の高度化（v2.4追加）
+
+Acceptable DegradationやTelemetry改善に伴い、変更管理の透明性をさらに高めるための仕組みを追補する。
+
+### 17.1 Change Ledger サービス
+- モジュール: `src/governance/change_ledger.py`（M1 Core: append-onlyロガー）。
+- API: `record_change(ChangeRecord)`, `list_changes(filter)`, `export_digest(window)`。
+- `ChangeRecord`フィールド: `change_id`, `timestamp`, `actor`, `category`（`code`, `config`, `runbook`, `knowledge_pack`）, `summary`, `related_artifacts`, `runbook_refs`, `accept_degradation_case`。
+- 実装方針: M1ではJSONL（`logs/governance/change_ledger.jsonl`）へ追記。M2で外部システム連携予定。Codex実装時は`pydantic`モデルで入力検証し、Runbook整合性を保つ。
+- CLI: `tradectl governance change log --window 30`で最近の変更を表示。`instrument_command`でテレメトリ記録。
+
+### 17.2 監査ログ相互参照
+- `ChangeLedger`は記録時に`AuditService.append`を呼び、`audit_ref`を返却。Ticket/Auditログ/Knowledge Packで相互リンクを作成する。
+- `TelemetryDigest`出力に直近`change_ledger`エントリ5件を添付し、CLI改善と運用変更の因果を把握できるようにする。
+- `ScenarioRunner`成功時は関連する`ChangeRecord` IDを付与し、再演習時の根拠を可視化。
+
+### 17.3 Codex実装チェックポイント
+- Prompt Bundleに`change_ledger`の最新10行と`ChangeRecord`スキーマを含める。
+- `tests/unit/test_change_ledger.py`を追加し、`record_change`が重複`change_id`を拒否すること、`export_digest`がウィンドウ境界を尊重することを確認。
+- `tests/integration/test_change_ledger_cli.py`でCLI出力のスナップショットを維持。
+- Runbook `RUN-GOV-01`に`change_ledger`追記手順を追加し、Acceptable Degradation後24h以内に記録するルールを明文化。
+
+### 17.4 将来拡張
+- M1.1: `change_ledger`を`docs/knowledge_packs`と同期し、ケースファイルに自動でリンクを挿入。
+- M2: ガバナンスサービス本実装と連携し、承認ワークフロー（承認者、署名ハッシュ）を追加。
+
+---
+
+これらの追補により、Codex実装チームはAcceptable Degradation対応とCLIテレメトリ改善を高速に反復でき、トレーダー/運用チームは一貫した証跡とレビュー材料を確保できる。今後の設計更新では、上記セクションを基準にPrompt Bundleとテスト計画を組み立て、将来の仕様変更にも耐えうる抽象化境界を維持する。
