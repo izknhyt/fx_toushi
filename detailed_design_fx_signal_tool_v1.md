@@ -2382,3 +2382,105 @@ Acceptable DegradationやTelemetry改善に伴い、変更管理の透明性を�
 - M1.1: `metrics/schema_index.json`と`ChangeLedger`を双方向リンクし、CLIで`--show-change-log`オプションを提供。`tradectl metrics schema show <name> --with-changes`が直近の変更履歴をテーブル表示する。
 - M2: Prometheus/Grafana移行を視野に`schema_registry`へ`export_prometheus()`を追加し、メトリクス定義を自動的にダッシュボードへ同期する。`TelemetryAggregator`はPrometheusバックエンドからも同一APIでデータ取得できるようアダプタ実装を追加。
 - Acceptable Degradation改善のため、`qa_tags`に`"playbook:RUN-DATA-06"`形式のRunbook識別子を許容し、Telemetry Digestで該当ステップの完了率を自動算出する。
+
+---
+
+## 19. 運用レビューハブとダッシュボード統合（v2.4追加）
+
+Acceptable Degradation対応やTelemetry/シナリオ演習の成果を**単一のレビュー導線**に集約し、PO・運用・トレーダーが同一ビューで状況判断できるようにする。Codex実装を前提とし、Runbook/Knowledge Pack/Change Ledgerと双方向にトレース可能な設計を定義する。
+
+### 19.1 モジュール構成と責務
+
+| モジュール | 役割 | 主なAPI | 備考 |
+| --- | --- | --- | --- |
+| `src/review/hub.py` | 集約サービス本体。Telemetry/Scenario/Knowledge Pack/Change Ledgerを統合。 | `build_digest(window: ReviewWindow) -> OpsReviewDigest`, `fetch_artifacts(digest) -> list[ArtifactRef]`, `list_pending_actions(window)` | `ReviewWindow`は`date`/`mode`/`scope`（`'ops'|'kpi'|'degraded'`）を保持。 |
+| `src/review/aggregators.py` | データソース別アグリゲータ（Telemetry/Scenario/Knowledge/ChangeLedger）。 | `collect_telemetry(window)`, `collect_scenarios(window)`, `collect_knowledge(window)`, `collect_changes(window)` | それぞれ`TelemetryDigest`, `ScenarioStats`, `KnowledgeCaseSummary`, `ChangeDigest`を返す。 |
+| `src/review/models.py` | `OpsReviewDigest`, `SectionSummary`, `ActionItem`, `RiskHighlight` 等の`pydantic`モデル。 | `schema_version = 1` | `tests/contracts/test_review_digest_schema.py`で互換性検証。 |
+| `src/interfaces/cli/review.py` | `tradectl review`コマンド群。 | `tradectl review weekly`, `tradectl review degraded`, `tradectl review export` | `instrument_command`適用、Richレンダリング。 |
+| `reports/review/templates/weekly.md` | Markdownテンプレート。 | 週次レビュー資料を自動生成。 | Telemetry/Scenario/Knowledge Packを所定セクションに配置。 |
+| `docs/review/playbook.md` | レビュー手順書。 | Runbook `RUN-OPS-04`補完。 | Acceptable Degradationケースの検証手順を明文化。 |
+
+- Feature Flag: `review.hub_enabled`（既定`True`）。`False`時は`OpsReviewDigest`ではなく静的テンプレを返す`StubReviewHub`をDIする。
+- 依存モジュール: Telemetry Digest (§15), シナリオランナー (§14), Knowledge Pack (§16), Change Ledger (§17), Metrics Schema (§18)。
+
+### 19.2 データモデル
+
+| モデル | 主フィールド | 説明 |
+| --- | --- | --- |
+| `OpsReviewDigest` | `window: ReviewWindow`, `sections: list[SectionSummary]`, `actions: list[ActionItem]`, `risks: list[RiskHighlight]`, `qa_status: QaScorecardSnapshot`, `artifacts: list[ArtifactRef]`, `generated_at`, `source_hash` | 週次/臨時レビューの集約結果。`source_hash`で再現性確保。 |
+| `SectionSummary` | `id`, `title`, `metrics: list[MetricPoint]`, `narrative`, `evidence_refs` | `id='telemetry'`, `id='scenario'` 等を想定。 |
+| `ActionItem` | `id`, `title`, `owner`, `due_date`, `source`, `status`, `related_runbooks`, `related_change_ids` | `source`に`'telemetry'|'scenario'|'knowledge_pack'`を記録。 |
+| `RiskHighlight` | `code`, `severity`, `description`, `recommended_action`, `runbook_ref`, `knowledge_case` | Acceptable Degradationケースと紐付くリスク。 |
+| `QaScorecardSnapshot` | `qa_checks: dict[str, Literal['pass','fail','pending']]`, `last_updated`, `notes` | §0.10 QAスコアカードの最新状態。 |
+| `ArtifactRef` | `path`, `hash`, `description`, `tags` | `reports/validation_log`, `metrics/*.jsonl`, `logs/ops/*.log` 等を指す。 |
+
+- `source_hash`はTelemetry/Scenario/Knowledge/ChangeLedger入力ファイルのSHA256を連結した値。再演算時に差分検出し、Runbookへ再レビューを促す。
+- `QaScorecardSnapshot.qa_checks`は`QA-01`〜`QA-05`の最新値を保持し、`review weekly` CLIで○/△/×表示する。
+
+### 19.3 データフロー
+
+1. `ReviewHub.build_digest(window)`
+   1. `TelemetryAggregator.collect(window)`から`TelemetryDigest`取得。
+   2. `ScenarioAggregator.collect(window)`が`ScenarioStats`（成功率/平均所要時間/失敗詳細）を返す。
+   3. `KnowledgePackAggregator.collect(window)`が`KnowledgeCaseSummary`（新規/更新/impact_score）を返す。
+   4. `ChangeLedgerAggregator.collect(window)`が`ChangeDigest`（カテゴリ別件数、Acceptable Degradationリンク）を返す。
+   5. `QaScorecardRegistry.snapshot()`でQA状況を読み取る。
+   6. 各セクションを`SectionSummaryFactory`で整形し、`ActionItem`と`RiskHighlight`を抽出。
+2. `fetch_artifacts(digest)`が各セクションから参照するファイル群の存在/ハッシュを検証し、欠損は`RiskHighlight`に`severity='warning'`で追記。
+3. 結果を`reports/review/<window>.json`と`reports/review/<window>.md`へ保存。Markdownはテンプレートに沿って`Sections`/`QA`/`Risks`/`Action Items`を埋める。
+4. EventBusへ`review.digest_generated`をpublishし、`payload`に`digest_path`, `actions_due`, `risk_codes`を含める。Health Monitorは重大リスクがある場合に`health.changed(reason='ops_review_risk')`を発火する。
+
+### 19.4 CLI仕様 (`tradectl review ...`)
+
+| コマンド | 用途 | 主な引数/フラグ | 出力 |
+| --- | --- | --- | --- |
+| `tradectl review weekly` | 週次Opsレビュー資料を生成/表示 | `--window <YYYYWW>`, `--profile`, `--format table|markdown|json`, `--open` | RichテーブルまたはMarkdown出力。`--open`でMarkdownをエディタ表示。 |
+| `tradectl review degraded` | Acceptable Degradationケースまとめ | `--since <date>`, `--limit`, `--export` | `knowledge_pack`の新規/再発ケースを表形式で表示。`--export`で`reports/review/degraded_<date>.md`生成。 |
+| `tradectl review actions` | 未完了アクション一覧 | `--status pending|overdue`, `--owner` | `ActionItem`リストと関連Runbook/Change IDを表示。 |
+| `tradectl review diff` | 過去ダイジェストとの差分確認 | `--window <YYYYWW> --compare-to <YYYYWW-1>` | セクション別にメトリクス差分/アクション進捗を色分け表示。 |
+
+- すべて`instrument_command`でテレメトリ記録。`qa_tags`に`['review']`、Acceptable Degradationケース含む場合は`['review','degraded']`を付与。
+- `--format markdown`時はテンプレートを適用し、`reports/review/<window>.md`へ保存。`--open`は`$EDITOR`起動（`.env`で指定）。
+
+### 19.5 テスト計画
+
+| テストID | 目的 | 内容 |
+| --- | --- | --- |
+| UT-REV-01 | Telemetry・シナリオ統合 | `tests/unit/test_review_hub.py::test_build_digest_basic`でモックデータから`OpsReviewDigest`を生成し、セクション/アクションが期待通りか確認。 |
+| UT-REV-02 | QAスナップショット整合 | `...::test_qascore_snapshot`で`QaScorecardSnapshot`が`qa_checks`を引き継ぐか検証。 |
+| UT-REV-03 | Artifact検証 | `...::test_fetch_artifacts_missing`で欠損ファイルを`RiskHighlight`に変換する挙動を確認。 |
+| IT-REV-01 | CLI weekly | `tests/integration/test_review_cli.py::test_weekly_output`でテーブル/Markdown出力の整合性とテンプレ適用を検証。 |
+| IT-REV-02 | CLI degraded | `...::test_degraded_export`でKnowledge Pack連携とタグ付けを確認。 |
+| IT-REV-03 | EventBus通知 | `...::test_eventbus_publish`で`review.digest_generated`が正しいpayloadで送信されるか確認。 |
+
+- `pytest -k review_hub`と`pytest -k review_cli`をCI必須テストに追加。`make ci-lite`へ統合する際は実行時間測定を`TelemetryDigest`に記録。
+
+### 19.6 Codexプロンプト指針
+
+- Prompt Bundleに含めるもの:
+  1. `OpsReviewDigest`モデル定義（200行以内）。
+  2. `TelemetryDigest`/`ScenarioStats`サンプルJSON（各5行）。
+  3. `reports/review/templates/weekly.md`抜粋と生成例。
+  4. 関連Runbook/Knowledge Packの節番号一覧（`RUN-OPS-04`, `docs/knowledge_packs/...`）。
+- Issue本文には`Target window`、`Expected actions`、`Must-link Knowledge Pack`（ID/パス）を明記し、`ChangeLedger`との紐付け要件（自動記録/手動追記）を表形式で提示する。
+- テスト指示例:
+  - `pytest -k review_hub`
+  - `pytest -k review_cli`
+  - `tradectl review weekly --window $(date +"%G%V") --format markdown --open --dry-run`
+- レビュー観点:
+  1. `OpsReviewDigest.source_hash`が入力ファイル更新時に変化し、Runbook確認漏れを防げるか。
+  2. `ActionItem.related_change_ids`が`ChangeLedger`記録と一致しているか。
+  3. Acceptable Degradationケースが`RiskHighlight`に正しく昇格し、Knowledge Packへのリンクが切れていないか。
+
+### 19.7 運用/ガバナンス連携
+
+- `RUN-OPS-04`週次レビュー手順に「`tradectl review weekly`実行→Markdown添付→PO/運用サイン」を追加。`docs/review/playbook.md`で手順を図解し、Acceptable Degradationケースの優先順位を`impact_score`で並べ替えるルールを記載する。
+- `ChangeLedger.record_change`は`category='review'`を新設し、ダイジェスト生成時に自動記録する。これにより、どの週次レビューでどの知見が共有されたか追跡できる。
+- `TelemetryDigest`と`ScenarioRunner`は`review_window`タグを追加し、レビュー資料と生ログの突合を容易にする。`make telemetry-report`と`tradectl scenario run`は実行時に`--review-window`引数を受け取り、ダイジェスト生成時のフィルタ条件に使用する。
+- `docs/knowledge_packs/.../checklist.yaml`へ「レビュー反映済」チェックを追加し、`tradectl review degraded --export`完了後に必ず更新する。
+
+### 19.8 将来拡張
+
+- M1.1: Ops ReviewダッシュボードをTauri UIへ拡張し、`OpsReviewDigest`をWebSocket配信。CLIとGUIで同一JSONを共有する。
+- M2: KPI自動判定とアクション提案を`ActionRecommendationEngine`（拡張ポイント）で実装し、`ActionItem`に`confidence`フィールドを追加。モデル再学習時は`ChangeLedger`へ記録し、リグレッションテストを追加する。
+- Acceptable Degradationケースの再発予測を`Knowledge Pack`/`Telemetry`から計算する`RecurrenceAnalyzer`を追加し、`RiskHighlight`へ`recurrence_probability`フィールドを追加する計画。Codex実装時は`tests/integration/test_recurrence_analyzer.py`を新設する。
