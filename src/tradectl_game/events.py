@@ -35,47 +35,73 @@ def _incident_catalogue() -> Sequence[Incident]:
         penalty = -12 if state.stats.data_quality > 35 else -8
         return StatDelta(data_quality=penalty, risk_load=5)
 
+    def data_feed_guard(state: GameState) -> bool:
+        # Avoid piling on when quality is already critical.
+        return state.stats.data_quality > 18
+
     def market_tailwind(_: GameState) -> StatDelta:
         return StatDelta(profit_score=10, risk_load=4)
+
+    def tailwind_guard(state: GameState) -> bool:
+        # Skip upside-only events when risk is already overheated.
+        return state.stats.risk_load < 85
 
     def morale_break(state: GameState) -> StatDelta:
         penalty = -9 if state.stats.team_morale > 40 else -6
         return StatDelta(team_morale=penalty, data_quality=-2)
+
+    def morale_break_guard(state: GameState) -> bool:
+        # When morale is already in the danger zone, avoid further erosion.
+        return state.stats.team_morale > 20
 
     def clean_run(state: GameState) -> StatDelta:
         bonus = 6 if state.stats.data_quality < 85 else 3
         morale = 4 if state.stats.team_morale < 80 else 2
         return StatDelta(data_quality=bonus, team_morale=morale)
 
+    def clean_run_guard(state: GameState) -> bool:
+        # Provide boosts only when there is room to improve.
+        stats = state.stats
+        return stats.data_quality < 98 or stats.team_morale < 98
+
     def audit_ping(state: GameState) -> StatDelta:
         risk_penalty = 6 if state.stats.risk_load < 70 else 3
         return StatDelta(risk_load=risk_penalty, profit_score=-4)
+
+    def audit_guard(state: GameState) -> bool:
+        # Compliance stays quiet when risk is already negligible.
+        return state.stats.risk_load > 25
 
     incidents = (
         Incident(
             name="Data Feed Lag",
             description="Overnight fetch retries slowed to a crawl.",
             delta_factory=data_feed_outage,
+            guard=data_feed_guard,
         ),
         Incident(
             name="Market Tailwind",
             description="Carry trades rally across the board, boosting upside.",
             delta_factory=market_tailwind,
+            guard=tailwind_guard,
         ),
         Incident(
             name="Ops Fatigue",
             description="Long hours catch up with the rotation schedule.",
             delta_factory=morale_break,
+            guard=morale_break_guard,
         ),
         Incident(
             name="Smooth Sync",
             description="Ingestion finishes with perfect parity checks.",
             delta_factory=clean_run,
+            guard=clean_run_guard,
         ),
         Incident(
             name="Audit Follow-up",
             description="Compliance calls for a deep dive on exposure changes.",
             delta_factory=audit_ping,
+            guard=audit_guard,
         ),
     )
     return incidents
