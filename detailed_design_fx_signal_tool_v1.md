@@ -3214,4 +3214,179 @@ Paper→Live移行を見据えて、ヒューマン承認フローのまま実�
 - **戦略停止判断**: 特定戦略/シンボルで`sample_size>=50`かつ`mean_slippage > config.slippage.stop_threshold`の場合、Risk Managerが`strategy.watchlist`をトリガーし、Strategy Scoreboard（付録G.1）と合わせて戦略OFF判定を行う。
 - **教育/ナレッジ蓄積**: Opsシミュレーションゲーム（§22）のイベントに`slippage_spike`カードを追加し、ゲーム終了後に`SlippageDistribution`比較をKnowledge Packへ記録。Evidence Graph（§23）でトレーニングケースと実運用エピソードをリンクする。
 
----
+## 28. 緊急対応オーケストレータ（v2.7ドラフト）
+
+### 28.1 目的
+- **対象要件**: FR-47, AC-34, AC-38, AC-43。
+- **ゴール**: データ停止・ブローカーダウン・異常スリッページ等の重大事象を検知し、Runbook `RUN-EMG-01`/`RUN-RISK-01`に沿ったアクション（Reduce-Only提案、通知、再取得等）を半自動で編成する。Acceptable Degradationツールキット（§24）・Scenario Runner（§22）と連携し、24分以内の初動着手と60分以内の暫定復旧判断を支援する。
+- **M1 Coreでの扱い**: サービス骨格とCLI、Change Ledger連携を実装し、アクションは推奨ログ出力とRunbookチェックリスト生成まで。自動実行はFeature Flag `emergency.auto_execute`が`False`のため抑止。M1.1以降でSlack/Webhook、Reduce-Only自動投入を段階的に解禁する。
+
+### 28.2 モジュール構成
+```
+src/emergency/
+  orchestrator.py        # EmergencyOrchestrator (Facade)
+  detectors.py           # DataStop/FillDrift/ProviderOutage検知器
+  actions.py             # ReduceOnlyProposal, AlertDispatch, ManualCsvDrill 等
+  registry.py            # Feature Flag判定とDIハンドラ
+  plans.py               # EmergencyPlanテンプレ/Runbookマッピング
+  cli.py                 # tradectl emergency ...
+  persistence.py         # IncidentLedger JSONL
+```
+- `EmergencyOrchestrator`は`HealthMonitor`/`Acceptable Degradation Analyzer`からのイベントサブスクライバとして登録。
+- `detectors.py`はイベント/メトリクス/ログのフィードを`EmergencySignal`へ正規化。M1 Coreでは`DataFeedGapDetector`と`BrokerStatusDetector`の2種のみ有効化。
+- `actions.py`はアクションオブジェクトを定義。`execute()`は`FeatureFlagManager`を参照し、`auto_execute`が`False`の場合は`PlanStep`にRunbook IDと手順を付与して返却する。
+- `persistence.py`は`IncidentLedger`で`incidents/emergency/<YYYYMMDD>.jsonl`へ記録。Change Ledger（§5.9）へハッシュを通知。
+
+### 28.3 データモデル
+| モデル | 主フィールド | 生成元 | 利用先 | 備考 |
+| --- | --- | --- | --- | --- |
+| `EmergencySignal` | `id: str`, `source: Literal['data','broker','execution','health']`, `severity: Severity`, `summary: str`, `evidence: list[EvidenceRef]`, `detected_at: datetime` | Detectors | Orchestrator | `evidence`は`Path`/`MetricsPoint`/`EventRef`のUnion。 |
+| `EmergencyPlan` | `plan_id: str`, `scenario: ScenarioId`, `actions: list[PlanStep]`, `required_signoff: list[Role]`, `recommended_board_mode: BoardMode` | plans.py | CLI/Scenario Runner | `PlanStep`は`action_id`, `runbook_ref`, `auto_executable: bool`, `eta_minutes`. |
+| `IncidentRecord` | `incident_id: str`, `signal: EmergencySignal`, `plan: EmergencyPlan`, `status: Literal['draft','ack','in_progress','resolved','postmortem']`, `created_by: str`, `ack_by: str | None`, `events: list[IncidentEvent]` | persistence.py | CLI/Reports | `IncidentEvent`でRunbookチェック/Change Ledgerリンクを保持。 |
+| `EmergencyActionContext` | `mode: ModeContext`, `board_mode: BoardMode`, `kill_switch: KillSwitchState`, `feature_flags: dict[str, bool]`, `ops_contacts: list[Contact]` | Orchestrator | actions.py | CLI/メール通知で利用。 |
+
+- すべて`pydantic.BaseModel`（frozen）で定義し、`json()`はRunbook IDを`runbooks/RUN-EMG-01#step`形式で出力。
+- `IncidentLedger`は`metrics/emergency_incident_index.json`へサマリ（MTTR, ack_time）を集約。
+
+### 28.4 検知・編成フロー
+1. `EmergencyOrchestrator.subscribe()`が`EventBus`で以下イベントを購読。
+   - `health.changed(status in {'degraded','soft_stop','hard_stop'})`
+   - `data.ingestion_gap_detected`（DataLag, Manual CSV要求）
+   - `execution.slippage_spike`（§27）
+   - `broker.status_changed`（M1 Coreでは手動入力CLI `tradectl broker report`の結果を取り込む）
+2. イベント受信後、`detectors`が閾値とRunbook条件を確認。例:`DataFeedGapDetector`は`metrics/data_ingestion_sla.jsonl`から直近15分の`processing_delay>config.emergency.gap_threshold`を計算。
+3. `EmergencySignal`生成時に`EvidenceCollector`が関連ログ/Runbookステップをリンク。`Acceptable Degradation Analyzer`が既にアクティブな場合、`PlanStep`の優先度を`degradation.prioritize('data')`で調整。
+4. `EmergencyPlanner`がシナリオID（例:`EMG-DATA-01`）を決定し、`plans.py`で定義されたテンプレートを展開。各`PlanStep`には`runbook_ref`と`recommended_eta`を設定。
+5. `FeatureFlagManager`が自動化可否を評価。`auto_execute`が`False`なら`actions.execute()`は`PlanStepResult(status='pending_manual')`を返し、`IncidentRecord`にTODOとして登録。`True`の場合は即時実行（将来拡張）。
+6. `IncidentLedger`へ書き込み、`EventBus.publish('emergency.plan_ready', ...)`でCLI/メールへ通知。通知には`ChangeLedger.record_change(category='emergency', ...)`のURIを含める。
+7. `tradectl emergency ack <incident_id>`で承認すると`IncidentRecord.status='ack'`に遷移し、`HealthMonitor`へ`recommended_board_mode`を反映。Runbook完了後に`postmortem`テンプレートを自動生成し`reports/ops/incidents/<id>.md`を作成。
+
+### 28.5 CLI仕様 (`src/emergency/cli.py`, `src/interfaces/cli/emergency.py`)
+| コマンド | 主な引数 | 出力/副作用 | 例外 |
+| --- | --- | --- | --- |
+| `tradectl emergency list` | `--status`, `--since`, `--limit`, `--format table|json` | 直近インシデント一覧。MTTA/MTTR要約を含む。 | `IncidentLedgerNotFound` |
+| `tradectl emergency show <incident_id>` | `--with-evidence`, `--format`, `--open-runbook` | `IncidentRecord`詳細とPlanStep状態。`--open-runbook`でRunbook URL出力。 | `IncidentNotFound` |
+| `tradectl emergency ack <incident_id>` | `--actor`, `--note`, `--board-mode`, `--dry-run` | `status='ack'`へ遷移し、`HealthMonitor`に`board_mode`を提案。`--dry-run`は差分確認のみ。 | `IncidentStateError` |
+| `tradectl emergency execute <incident_id> <action_id>` | `--auto`, `--note` | Feature Flag許可時にアクション実行。`--auto`はDry-run→実行を一括指定。 | `AutoExecutionDisabled`, `ActionNotFound` |
+| `tradectl emergency export <incident_id>` | `--out` | `reports/ops/incidents/<incident_id>.md`を生成。Evidence Graph（§23）にノード追加。 | `ExportError` |
+| `tradectl emergency simulate <scenario_id>` | `--profile`, `--with-scenario-runner` | Scenario Runner（§22）と連携し演習を再現。 | `ScenarioNotDefined`, `SimulationError` |
+
+- CLIは`qa_tags=['emergency','runbook']`を付与し、`tradectl emergency list`はAcceptable Degradation期間中`board_mode=guarded`をヘッダ表示。
+- `ack`実行時は`docs/runbooks/<RunbookID>.md`のチェックリストリンクを`IncidentEvent`へ記録。`--board-mode`を省略した場合は`EmergencyPlan.recommended_board_mode`を使用。
+
+### 28.6 実装ガイド（Codex向け契約）
+- `EmergencyOrchestrator`コンストラクタは`EventBus`, `EmergencyPlanner`, `IncidentRepository`, `FeatureFlagManager`, `ChangeLedger`, `Clock`を受け取る。依存は`infra/registry.py`でDI。
+- Detectorsは`@dataclass(frozen=True)`で`thresholds`を保持し、`evaluate(event, metrics) -> Optional[EmergencySignal]`を実装。`metrics`アクセスには`MetricsReader`（`metrics/reader.py`）を利用し、直接ファイルIOしない。
+- `EmergencyPlanner.plan(signal, context)`は`plans.py`のテンプレート辞書を基に`PlanStep`リストを生成。テンプレートは`yaml.safe_load`で読み込み、`docs/runbooks/`の節番号と整合させる。Codexはテンプレート追加時、Runbook差分をPRに含めること。
+- `IncidentRepository`は`IncidentRecord`をJSONLでappendしつつ、`incident_index.json`を更新する。I/Oは`asyncio.to_thread`で実行し、CLI操作をブロックしない。
+- ログは`logger.bind(event="emergency_plan", incident_id=...)`形式で出力し、`logs/ops/emergency.log`に集約。Runbook検索用タグを必須にする。
+- Feature Flagにより未使用のアクションを容易に無効化できるよう、`actions.py`は`ActionRegistry`で登録。Codexは新アクション追加時、`tests/unit/test_emergency_actions.py`に必ずテストを追加。
+
+### 28.7 テスト計画
+| テストID | 目的 | 内容 |
+| --- | --- | --- |
+| UT-EMG-01 | シグナル生成 | `tests/unit/test_emergency_detectors.py::test_data_gap_detector_threshold`で`EmergencySignal`生成閾値を検証。 |
+| UT-EMG-02 | プラン展開 | `tests/unit/test_emergency_planner.py::test_plan_contains_runbook_refs`でRunbookリンクとETA算出を検証。 |
+| UT-EMG-03 | Feature Flag制御 | `tests/unit/test_emergency_actions.py::test_execute_respects_feature_flag`で`auto_execute`の挙動を確認。 |
+| IT-EMG-01 | EventBus統合 | `tests/integration/test_emergency_workflow.py::test_health_event_triggers_plan`で`health.changed`→`IncidentRecord`作成までを検証。 |
+| IT-EMG-02 | CLI確認 | `tests/integration/test_emergency_cli.py::test_ack_and_export`でCLIのACK/Exportフローをスナップショット。 |
+| IT-EMG-03 | Scenario連携 | `tests/integration/test_emergency_scenario.py::test_simulate_runs_runner`でScenario Runner呼び出しを確認。 |
+| PT-EMG-01 | 演習 | Acceptable Degradation演習（§24）に`tradectl emergency simulate EMG-DATA-01 --with-scenario-runner`を組み込み、Runbookサインオフを取得。 |
+
+- `pytest -k "emergency"`を`make ci-lite`へ追加し、Codex納品時に必須実行ログを添付。CLIスナップショットは`tests/snapshots/emergency/`配下で管理。
+
+### 28.8 トレーダー/運用活用シナリオ
+- **データ断絶**: `health.changed(reason='data_latency_fetch')`発生時に`tradectl emergency ack <id> --board-mode guarded`で即座に`BoardMode=guarded`へ誘導し、Manual CSV導線（§3.1）をPlanStepで提示。Runbook完了後は`IncidentRecord`に`manual_csv_hash`を添付。
+- **ブローカーダウン**: 手動報告CLI `tradectl broker report --status down`が`broker.status_changed`を発火。`EmergencyOrchestrator`がReduce-Only提案とリスク告知メールの草案を生成し、`RUN-RISK-01`の承認手順をPlanStepへ組み込む。
+- **異常スリッページ**: §27の`drift_score`が閾値超過で`execution.slippage_spike`イベントを送出。`EmergencyPlan`が`tradectl liquidity analyze`/`tradectl board --guarded`の順序を提示し、リカバリタイムをChange Ledgerへ記録。
+- **演習ドリル**: 月次Ops演習でScenario Runner（§22）を用い、過去のインシデントを`tradectl emergency simulate`で再現。Knowledge Pack（§23）へ演習結果を自動記録し、評価メトリクス（MTTA, MTTR）を`reports/ops/drill/<YYYYMM>.md`に集計。
+
+## 29. 運用健全性ダッシュボード（v2.7ドラフト）
+
+### 29.1 目的
+- **対象要件**: FR-48, AC-03, AC-34, AC-52。
+- **ゴール**: `HealthState`, `SpreadCooldownState`, `KillSwitch`, `Benchmark Gap`, `Journal Highlights` を単一画面に集約し、トレーダーが1分以内に状況判断できるUI/CLIを提供。Scenario Runner/Acceptable Degradationと接続し、Guarded/Halted時の判断材料を提供する。
+- **M1 Coreでの扱い**: CLIベースのダッシュボードを実装し、`tradectl ops dashboard`がリッチテーブル＋スパークラインを表示。GUI/TauriはM2+で検討。Dashboard WidgetはFeature Flagで個別にON/OFF可能とし、未実装ウィジェットは`status=stub`で明示する。
+
+### 29.2 モジュール構成
+```
+src/ops_dashboard/
+  service.py            # OpsDashboardService
+  widgets.py            # WidgetBaseと具体ウィジェット実装
+  layout.py             # Widget配置ロジック/レイアウトテンプレ
+  telemetry.py          # メトリクス/イベントフェッチャ
+  cli.py                # tradectl ops dashboard
+  renderer.py           # Rich Table/Panel生成
+```
+- `OpsDashboardService`がウィジェット登録・状態更新を統括。`widgets.py`でWidgetクラスが`collect(context) -> WidgetState`を返す。
+- `telemetry.py`は`MetricsReader`, `EventStore`, `JournalRepository`を介してデータ収集。I/Oは`asyncio`互換で実装。
+- `layout.py`はWidget配列と優先度を管理し、`BoardMode`/`Feature Flag`に応じて表示順を調整。
+- `renderer.py`は`Rich`の`Layout`/`Panel`/`Sparkline`を利用し、CLIレンダリングをカプセル化。M2+でGUI移行時はここを差し替える。
+
+### 29.3 データモデル
+| モデル | 主フィールド | 生成元 | 利用先 | 備考 |
+| --- | --- | --- | --- | --- |
+| `DashboardContext` | `mode: ModeContext`, `board_mode: BoardMode`, `feature_flags: dict[str, bool]`, `now: datetime` | service.py | widgets | `board_mode`は`HealthMonitor`から取得。 |
+| `WidgetSpec` | `widget_id: str`, `title: str`, `description: str`, `refresh_sec: int`, `feature_flag: str`, `roles: list[Role]` | widgets.py | layout | 権限別表示を制御。M1 Coreは`role=['trader','ops']`のみ。 |
+| `WidgetState` | `spec: WidgetSpec`, `status: Literal['ok','warn','error','stub']`, `metrics: dict[str, Any]`, `events: list[EventRef]`, `notes: list[str]`, `actions: list[DashboardAction]` | widgets.py | renderer | `actions`はCLIショートカット（例:`tradectl board --guarded`）。 |
+| `DashboardSnapshot` | `generated_at: datetime`, `widgets: list[WidgetState]`, `summary: dict[str, Any]`, `qa: dict[str, str]` | service.py | persistence | `summary`にMTTA, Guarded時間等を保持。`qa`に§0.10スコアカードを再掲。 |
+
+- `DashboardSnapshot`は`reports/ops/dashboard/<YYYYMMDDTHHMM>.json`に保存。週次レポート（§5.11）へリンク。
+
+### 29.4 ウィジェット実装（M1 Core）
+| Widget ID | 目的 | 主なデータソース | 表示内容 | Feature Flag |
+| --- | --- | --- | --- | --- |
+| `health_state` | 現在の`HealthState`と推奨Runbook表示 | `health_state_transitions.jsonl`, `HealthMonitor.recommended_action` | ステータス、理由、Runbookリンク、Guarded経過時間。 | 常時ON |
+| `spread_cooldown` | スプレッド監視とガード状況 | `metrics/spread_monitor.jsonl`, `SpreadCooldownState` | 現在のPhase、残りクールダウン時間、最近のニュースイベント。 | `dashboard.spread` |
+| `kill_switch` | Kill Switchの手動/自動状態 | `logs/audit/killswitch.jsonl`, `HealthMonitor` | 最終操作時刻/操作者、再開条件チェックボックス。 | `dashboard.kill_switch` |
+| `benchmark_gap` | 自戦略 vs ベンチマーク差分 | `reports/benchmark/*.md`, `metrics/benchmark_gap.jsonl` | 14日ローリング差分、Sharpe差、`OPS-BENCH-01`Runbookリンク。 | `dashboard.benchmark` |
+| `journal_highlight` | トレーダーノート抜粋 | `docs/journal/*.md`, `feedback_engine`（§26） | 最新3件のノート、タグ、追跡アクション。 | `dashboard.journal` |
+
+- 各ウィジェットは`collect()`内でRunbook整合チェックを行い、未更新の場合は`status='warn'`と`actions`に`tradectl runbook lint`を追加。
+- M2+で追加予定の`liquidity_watch`, `ops_readiness_score`, `governance_queue`はスタブウィジェットとして表示（`status='stub'`, `notes=['M2 planned']`）。
+
+### 29.5 レンダリングと更新アルゴリズム
+1. `tradectl ops dashboard`実行で`OpsDashboardService.render_dashboard()`を呼び出し、`DashboardContext`を作成。
+2. `WidgetRegistry`が有効Widgetを列挙し、並列で`collect()`を実行（`asyncio.gather`）。失敗時は例外を捕捉し`status='error'`, `notes`にスタックトレースサマリを添付。
+3. `layout.py`がWidget順を決定。`BoardMode in {'guarded','halted'}`の場合、`health_state`, `kill_switch`, `spread_cooldown`を最上段に配置し、`benchmark_gap`, `journal_highlight`を下段へ移動。
+4. `renderer.py`が`Rich`レイアウトを組み立て。`Sparkline`は`metrics`から生成し、`Panel`ヘッダにRunbookショートカット（`[link=runbook://...]`）を付与。
+5. 表示後、`DashboardSnapshot`を保存し、`EventBus.publish('ops.dashboard_rendered', snapshot=...)`でEvidence Graph（§23）とFeedback Engine（§26）へ通知。
+6. `--watch`オプション指定時は`refresh_sec`の最小値でループし、必要に応じて`Ctrl+C`で停止。Guarded/Halted中は自動で`health_state`ウィジェットを毎60秒再評価。
+
+### 29.6 CLI仕様 (`src/ops_dashboard/cli.py`, `src/interfaces/cli/ops_dashboard.py`)
+| コマンド | 主な引数 | 出力/副作用 | 例外 |
+| --- | --- | --- | --- |
+| `tradectl ops dashboard` | `--profile`, `--watch`, `--refresh-sec`, `--format table|json|markdown`, `--widgets` | CLIレイアウトまたはJSON/Markdown出力。`--widgets`で限定表示。 | `DashboardRenderError`, `UnknownWidget` |
+| `tradectl ops dashboard snapshot` | `--out`, `--since`, `--summary` | `DashboardSnapshot`をJSON/Markdownで保存。`--summary`でKPI集計のみ出力。 | `SnapshotWriteError` |
+| `tradectl ops dashboard diff` | `<snapshot_a> <snapshot_b>` | 2スナップショット差分を比較し、Widget状態変化とGuarded時間差を表示。 | `SnapshotNotFound`, `SnapshotDiffError` |
+| `tradectl ops dashboard widget-info <widget_id>` | `--format`, `--open-runbook` | Widget仕様とデータソース、Runbookリンクを表示。 | `WidgetNotRegistered` |
+- CLIコマンドには`qa_tags=['dashboard','ops']`を付与。`--format markdown`は週次レポート添付用テンプレートとして整形し、`reports/weekly/<YYYYWW>.md`へ貼り付けやすい構造（Frontmatter + Table）にする。
+
+### 29.7 実装ガイド（Codex向け契約）
+- `OpsDashboardService`初期化時に`WidgetRegistry`へウィジェットを登録。登録は`register_widget(widget: WidgetBase)`で行い、Feature Flag無効の場合は自動除外。
+- `WidgetBase.collect()`は副作用を持たず、必要なCLIアクションは`WidgetState.actions`に記述。Codexは`collect()`で例外が発生した場合に`WidgetState.status='error'`へフォールバックする処理を実装する。
+- `telemetry.py`は`MetricsReader.fetch_series(metric_id, window)`などの共通関数を提供し、直接ファイルパスを埋め込まない。新規メトリクスを読み込む際は`metrics/schema_index.json`の整合をテストで保証する。
+- `renderer.py`は`Rich`依存をカプセル化し、テストでは`renderer.render(states, format='json')`でシリアライズできるようにする。Codexは新ウィジェット追加時に`tests/unit/test_ops_dashboard_renderer.py`へスナップショットを追加。
+- `DashboardSnapshot`保存時は`ChangeLedger.record_change(category='dashboard', ...)`を呼び、`ops.dashboard_rendered`イベントのpayloadに`change_id`を含める。Evidence Graph連携時はSnapshotハッシュをノード属性として記録。
+- `tradectl ops dashboard --watch`は`asyncio`ループ内で再描画するため、Codexは`AsyncDashboardApp`を実装しシグナル処理（Ctrl+C）をGracefulに扱う。`asyncio.TaskGroup`でウィジェット収集を並列化し、例外を`DashboardRenderError`にラップ。
+
+### 29.8 テスト計画
+| テストID | 目的 | 内容 |
+| --- | --- | --- |
+| UT-DASH-01 | ウィジェット収集 | `tests/unit/test_ops_dashboard_widgets.py::test_health_state_widget_output`で`WidgetState`の構造とRunbookリンクを検証。 |
+| UT-DASH-02 | レイアウト切替 | `tests/unit/test_ops_dashboard_layout.py::test_guarded_layout_priority`で`BoardMode`に応じたWidget順序を確認。 |
+| UT-DASH-03 | レンダラ | `tests/unit/test_ops_dashboard_renderer.py::test_render_json_structure`でJSON出力をスキーマ検証。 |
+| IT-DASH-01 | CLI出力 | `tests/integration/test_ops_dashboard_cli.py::test_dashboard_renders_markdown`でCLI出力スナップショットを固定。 |
+| IT-DASH-02 | スナップショット保存 | `tests/integration/test_ops_dashboard_snapshot.py::test_snapshot_written_and_indexed`で保存ファイルとChange Ledger連携を確認。 |
+| IT-DASH-03 | Watchモード | `tests/integration/test_ops_dashboard_watch.py::test_watch_loop_handles_ctrl_c`でループ終了処理を検証。 |
+| PT-DASH-01 | Opsレビュー | 週次Opsレビューで`tradectl ops dashboard --format markdown`を使用し、Runbook `RUN-OPS-04`の議事録へ添付。 |
+
+- `pytest -k "ops_dashboard"`を`make ci-lite`チェックリストに追加。CLIスナップショットは`tests/snapshots/dashboard/`で管理し、文言変更時はPOレビュー必須。
+
+### 29.9 トレーダー/運用活用シナリオ
+- **平常時の状況確認**: 毎朝`tradectl ops dashboard --format table`を実行し、`health_state`ウィジェットで推奨Runbookを確認。問題なければ`ChangeLedger`に「朝イチ点検完了」を記録。
+- **Acceptable Degradation対応**: Guarded状態で`ops dashboard`を開くと、優先ウィジェットが自動で上段へ移動。`actions`ボタンから`tradectl degradation summarize`（§24）や`tradectl board --guarded`を呼び出し、復旧チェックリストを参照。
+- **ベンチマーク乖離監視**: `benchmark_gap`ウィジェットが`status='warn'`になった場合、`actions`に`tradectl benchmark compare`が表示される。CLIから即時差分確認し、必要なら`RUN-BENCH-01`のレビューを開始。
+- **トレーダーフィードバック共有**: `journal_highlight`ウィジェットの`actions`から`tradectl feedback ack <id>`（§26）を開き、トレーダーコメントをOps会議で追跡。Evidence Graphノードとリンクしナレッジ蓄積を促進。
+- **監査/証跡**: 週次で`tradectl ops dashboard snapshot --summary`を実行し、`reports/weekly/<YYYYWW>.md`へ貼り付け。監査時は`ops dashboard diff`でGuarded期間の短縮効果を証明。
+
