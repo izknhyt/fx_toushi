@@ -1797,6 +1797,48 @@ Flag切替時は`ConfigChanged`イベントに`flag_delta`が記録され、Repo
 - Codex出力レビューでは`GameEngine`の副作用境界（I/Oは`persistence`のみ）と`random.Random(seed)`の利用を確認し、決定論性が維持されているかを`tests/unit/test_game_engine.py`で検証する。
 - 運用担当はゲームログを`OpsReviewDigest`（§19）へ貼り付け、改善アクションが必要な場合は`ChangeLedger`へ`category='training'`で記録する。
 
+### 22.9 アクション/インシデント定義サンプル
+
+| 種別 | ID | フェーズ | 発動条件/Guard | KPIデルタ（基準プロファイル） | Runbookリンク | 備考 |
+| --- | --- | --- | --- | --- | --- | --- |
+| Incident | `INC-DATA-LAG` | `MORNING_OPS` | `data_quality≤65` または `rate_limit_stage∈{1,2}` | `data_quality:-15`, `risk_load:+10`, `team_morale:-5` | `RUN-DATA-05#guarded`, `RUN-DATA-06#manual_csv` | Acceptable Degradation演習の入口。`tags=['data','degraded']` |
+| Incident | `INC-NEWS-SHOCK` | `MIDDAY_TRADING` | `risk_load≤70` | `risk_load:+20`, `team_morale:-8`, `profit_score:-10` | `RUN-RISK-01#kill_switch`, `RUN-HITL-01#board_guard` | ニュース障害シナリオ。Kill Switch判断が必要。 |
+| Action | `ACT-MANUAL-CSV` | `MORNING_OPS` | `ManualCsvIngestionTask.pending>0` | `data_quality:+12`, `risk_load:+4`, `team_morale:-3` | `RUN-DATA-06#manual_csv` | 2段階入力→ハッシュ検証を要求。完了時にChange Ledgerへ記録。 |
+| Action | `ACT-GUARDED-BOARD` | `MORNING_OPS` | `board_mode!='guarded'` かつ `HealthState∈{'degraded','soft_stop'}` | `risk_load:-5`, `team_morale:-4` | `RUN-HITL-01#board_guard` | BoardをGuardedへ切替。Acceptable Degradation指標。 |
+| Action | `ACT-OPS-RETRO` | `EVENING_REVIEW` | `impact_events>=2` | `team_morale:+10`, `risk_load:-6` | `RUN-POST-03#retro` | 1日を振り返り、Knowledge Pack更新のTODOを付与。 |
+| Action | `ACT-CHANGE-LEDGER` | `EVENING_REVIEW` | `pending_change_records>0` | `profit_score:+3`, `risk_load:-2` | `RUN-GOV-01#change_ledger` | Change Ledger記録タスク。記入漏れ時は`qa_tags=['ledger_missing']`。 |
+
+- CodexはJSON/YAML定義ファイルに上表のID・ガード条件・Runbook参照を反映する。`tests/unit/test_game_catalog.py`で定義の整合性（重複IDなし、Runbookリンク有無）を検証する。
+- Guardロジックは`ActionDefinition.guard`に切り出し、`GameState`と`KnowledgePackContext`（必要時）を受け取るCallableとする。Acceptable Degradationシナリオでは`guarded_only=True`の行動を優先し、人手訓練に合わせた制約を再現する。
+
+### 22.10 スコアリングと評価メトリクス
+
+- **日次メトリクス**: `GameRunResult.summary_stats`に`day_metrics[day] = {"data_quality": {...}, "risk_load": {...}, "team_morale": {...}, "profit_score": {...}}`を格納。各値は`start`, `end`, `delta`, `min`, `max`, `threshold_breach: list[str]`を含む。
+- **勝敗判定**:
+  - `loss`条件: `data_quality<45`が連続2日、または`risk_load>85`、または`ChangeLedger`未記録イベント（`ledger_missing`タグ）を放置。
+  - `win`条件: 期間終了時に`profit_score≥70`かつ`risk_load≤60`かつ`data_quality≥65`、さらに全`impact_events`に対してRunbook承認済みフラグが立っていること。
+  - 上記以外は`neutral`。`neutral`でも`ActionItem`が残る場合は`review_required=True`でOps Reviewに連携する。
+- **Acceptable Degradation KPI**: `degradation_sessions`配列にGuarded移行〜解除までの所要時間（分）と対応アクションを記録し、`recovery_minutes_median`を算出。`TelemetryDigest`（§15）に`game.degradation_recovery_minutes`として統合する。
+- **トレーダースコア**: CLIは最終サマリで`Trader Score = 0.4·data_quality_avg + 0.3·team_morale_avg + 0.2·profit_score_end - 0.1·risk_load_avg`を表示。70以上で合格、50〜69は要フォロー、49以下は再演習。
+- **監査リンク**: `persist_run`は`ChangeRecord`を生成し、`summary_md`に`change_id`と`knowledge_case_id`を埋め込む。Runbook復習時に`tradectl review degraded`が自動で参照する。
+
+### 22.11 シナリオランナー・Telemetry連携
+
+1. `ScenarioRunner`（§14）が`game`シナリオを実行する場合、`ScenarioStep(kind='game', options={seed, profile, days, actions})`を使用。
+2. `ScenarioRunner`は`GameEngine.play`を`dry_run=True`で呼び出し、結果の`Outcome`を`scenario_runs.jsonl`へ追記。`qa_tags`に`['scenario','training']`を付与する。
+3. `TelemetryAggregator`は`metrics/scenario_runs.jsonl`から`kind='game'`エントリを抽出し、`ScenarioStats`に`game_outcome_distribution`と`recovery_minutes_distribution`を追加。週次レビューでゲーム演習の頻度/成果を可視化する。
+4. Acceptable Degradationケースと紐づくシナリオでは、`ScenarioRunner`が自動的に`KnowledgePackUpdater.attach_game_result(case_id, run_result)`を呼び出し、Knowledge Pack内の`game_runs`配列に追記する。
+5. Codexは`tests/integration/test_scenario_game_bridge.py`を実装し、`ScenarioRunner`経由でゲームが実行された際にTelemetryとKnowledge Packの両方へ記録されることを検証する。
+
+### 22.12 Runbook/Change Ledger 整合性チェック
+
+- `docs/runbooks/RUN-OPS-02.md`に「ゲーム演習記録」節を追加し、`tradectl game run`後に以下を確認するチェックリストを記載する。
+  1. `summary.md`を`docs/knowledge_packs/.../case_<date>.md`へリンクしたか。
+  2. `ChangeLedger.record_change(category='training')`の`change_id`をRunbookへ転記したか。
+  3. `OpsReviewDigest`次回更新で`training`セクションが生成されることを確認したか。
+- `make game-audit`スクリプトを用意し、直近N件のゲームログについてRunbook/Change Ledgerリンクが存在するか、`knowledge_case_id`が`index.json`に登録されているかを検証。CIでは週次で実行し、欠損があれば`WARN game.audit_missing`を出す。
+- Acceptable Degradation解除判定では、直近30日以内に`ACT-MANUAL-CSV`/`ACT-GUARDED-BOARD`を含むゲーム演習を最低1回実施していることを確認し、未実施なら`HealthMonitor.raise('warning','game_training_stale')`を発火する。
+
 ---
 
 本詳細設計は要件定義・基本設計に基づき、M1リリースの実装に必要なインターフェース・データモデル・フロー・テスト計画を整備した。拡張機能はFeature Flagとガバナンス手順を通じて安全に段階導入できるよう設計している。
