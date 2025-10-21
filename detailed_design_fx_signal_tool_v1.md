@@ -2026,6 +2026,166 @@ Acceptable Degradation（以下AD）発生時の定量把握と復旧計画立�
 - Board Guard (`§3.8`) が`guarded`に遷移した回数と実行時間をEpisodeに紐付け、HITLトレーダーが承認したチケット数/Reject理由を`TicketBuilder`ログと照合。UX改善タスク起票時に`manual_hours_saved`の改善余地を明示する。
 - Acceptable Degradation解除後24時間以内に`tradectl degradation recommend --severity high --push-to-bundle`を実施し、Codexへ再発防止タスクを連続で依頼できるフローを定着させる。
 
+## 25. Codexデリバリーコントロールタワー（v2.7ドラフト）
+
+Codexへ委譲した開発タスクの進行状況・品質指標・運用影響を一元可視化し、トレーダー/PO/運用が合意したSLAを満たしているかを迅速に判断するための統合モジュールを新設する。既存のQAスコアカード（§0.10）、Ops Review Hub（§19）、Prompt Bundle自動生成（§20）と密接に連携し、Acceptable Degradation下でも改善タスクの優先度付けを誤らないようにする。
+
+### 25.1 目的と適用範囲
+- **進捗監視**: 各エピック/ストーリーの完了率・残タスク・SLA逸脱を日次で把握し、Runbook `RUN-OPS-05`のステータスレビューに反映する。
+- **品質早期警戒**: テスト失敗・スコープ逸脱・Runbook未更新といった逸脱を自動集約し、トレーダー判断に必要な背景情報（KPI影響/保留リスク）を提示する。
+- **Codex協働高速化**: Prompt Bundleに不足情報がある場合に警告し、必要な証跡ファイル（テストログ/スクリーンショット/CLI出力）をテンプレ化する。
+- **対象スコープ**: M1 CoreエピックおよびAcceptable Degradation復旧タスク。M1.1以降のGUI/自動化タスクも拡張可能なデータモデルとする。
+
+### 25.2 モジュール構成と責務
+| パス | 役割 | 主な公開API/機能 | 備考 |
+| --- | --- | --- | --- |
+| `src/delivery/control_tower.py` | 集約サービス。各種ソース（ChangeLedger, QA Scorecard, Prompt Bundle, Telemetry）から情報収集。 | `build_snapshot(window: ReviewWindow) -> DeliverySnapshot`, `detect_alerts(snapshot) -> list[DeliveryAlert]` | 非同期I/O対応。`AsyncAggregator`を内部利用。 |
+| `src/delivery/models.py` | `DeliverySnapshot`, `WorkPackageStatus`, `QualitySignal`, `OpsImpactEstimate`, `PromptGap` dataclass。 | `DeliverySnapshot`は`window`, `work_packages`, `qa_summary`, `ops_impact`, `alerts`を保持。 | `@dataclass(slots=True, frozen=True)`で不変性を確保。 |
+| `src/delivery/repository.py` | ChangeLedger/QAログ/Prompt Bundle/CIログからのデータ読み出し。 | `fetch_work_packages(window)`, `fetch_qa_scores(window)`, `fetch_prompt_bundles(window)`, `fetch_ci_logs(window)` | `pathlib.Path`と`pydantic`で入力検証。 |
+| `src/delivery/forecaster.py` | OPSインパクト予測（ヒューマンレビュー所要時間/Guard解除見込み）。 | `estimate_ops_impact(snapshot) -> OpsImpactEstimate` | 統計モデルはM1で線形回帰ベース。M1.1でベイズ更新を追加。 |
+| `src/interfaces/cli/delivery.py` | `tradectl delivery ...` CLI。 | `tradectl delivery status`, `tradectl delivery forecast`, `tradectl delivery alerts`, `tradectl delivery export` | Typer登録は`interfaces/cli/__init__.py`経由。 |
+| `src/review/renderers.py` | Review Hub共通のリッチテーブル出力。 | `render_delivery_snapshot(snapshot)` | 既存§19で定義済みのコンポーネントを拡張。 |
+
+### 25.3 データモデル詳細
+| モデル | 主フィールド | 説明 | 生成元 |
+| --- | --- | --- | --- |
+| `WorkPackageStatus` | `id`, `epic`, `story`, `status: Literal['planned','in_progress','review','blocked','done']`, `owner`, `qa_gate`, `tests_run`, `scope_paths`, `last_prompt_bundle`, `change_ids` | Codex実装チケットの粒度で進行状況を保持。`qa_gate`はQA-01〜05の達成状況。 | ChangeLedger（`category='work_package'`）、Prompt Bundle index、CIログ。 |
+| `QualitySignal` | `qa_id`, `status`, `evidence_path`, `owner`, `updated_at`, `notes` | QAスコアカードの個別項目状態。 | `docs/review_log.md`, `metrics/qa_scorecard.jsonl`。 |
+| `OpsImpactEstimate` | `expected_manual_minutes`, `guard_release_eta`, `risk_score`, `kpi_at_risk`, `recommended_action` | Ops負荷とリスクの見積り。`risk_score`は0〜100。 | `forecaster.estimate_ops_impact`。 |
+| `PromptGap` | `bundle_id`, `missing_sections`, `stale_snippets`, `required_files` | Prompt Bundleに不足している情報。 | Prompt Bundle diff（§20）。 |
+| `DeliveryAlert` | `alert_id`, `severity`, `summary`, `related_work_packages`, `related_runbook_steps`, `recommended_followup` | コントロールタワーが検知した逸脱。 | `control_tower.detect_alerts`。 |
+
+- `DeliverySnapshot`は`work_packages: list[WorkPackageStatus]`, `qa_summary: dict[str, QualitySignal]`, `ops_impact: OpsImpactEstimate`, `prompt_gaps: list[PromptGap]`, `alerts: list[DeliveryAlert]`を保持。
+- `scope_paths`は設計書内の参照（例: `§3.1`, `src/data/service.py`）を持つ。Acceptable Degradation復旧タスクは`degradation_case_id`を追加。
+- `change_ids`はChangeLedgerの記録IDリスト。差分追跡と監査ログ連携に利用。
+
+### 25.4 フローとアルゴリズム
+1. `DeliveryControlTower.build_snapshot(window)`が`repository`各メソッドで入力データを収集。`window`は`ReviewWindow`（§19.2）と共通。
+2. `WorkPackageStatus`生成時に以下を評価:
+   - `status`は`ChangeLedger`の最新レコード＋Prompt Bundle `status`タグから算出。PRマージ済みかどうかは`git`ログ（`logs/audit/build.log`）を参照。
+   - `tests_run`はCIログ解析で`make ci-lite`の結果を抽出し、失敗テストを`QualitySignal.notes`へリンク。
+   - `scope_paths`はPrompt Bundle `io_contract`セクションから抽出、設計書セクション番号との整合をチェック。欠損時は`PromptGap`に追加。
+3. `qa_summary`はQAスコアカード（§0.10）を取り込み、未完了項目は`severity='warn'`以上の`DeliveryAlert`を生成。
+4. `forecaster.estimate_ops_impact(snapshot)`が`expected_manual_minutes`を以下で推定:
+   - 基準値（Runbook作業時間）× `open_alerts`係数。
+   - Acceptable Degradation中は`guard_release_eta`を`HealthMonitor`の推奨アクション（§3.8）と連携し、解除条件までの予測時間を返す。
+5. `detect_alerts`は以下のルールを評価:
+   - `QA-05`が`pending`で`WorkPackageStatus.status in {'review','blocked'}`→`severity='critical'`, `related_runbook_steps=['RUN-DATA-05#guard_release']`。
+   - `PromptGap.missing_sections`に`'test_plan'`が含まれ、`tests_run`に当該テストが存在しない→`severity='major'`。
+   - `ChangeLedger`連携が3日以上遅延→`severity='major'`, `recommended_followup='log_change ledger missing'`。
+6. `DeliverySnapshot`は`EventBus.publish('delivery.snapshot.generated', snapshot)`で配信。Ops Review Hub（§19）が週次レポートへ組み込む。
+
+### 25.5 CLI仕様 (`tradectl delivery ...`)
+| コマンド | 主なフラグ | 出力 | 備考 |
+| --- | --- | --- | --- |
+| `tradectl delivery status` | `--window <N|date range>`, `--epic`, `--include-alerts` | 現在の`DeliverySnapshot`表と警告一覧。 | デフォルトは過去7日。警告は色分け表示。 |
+| `tradectl delivery forecast` | `--window`, `--include-degradation`, `--format json|markdown` | `OpsImpactEstimate`をテーブル表示。 | Acceptable Degradation中は`guard_release_eta`を強調。 |
+| `tradectl delivery alerts` | `--severity warn|major|critical`, `--export` | `DeliveryAlert`一覧。`--export`でJSON。 | `qa_tags=['delivery','qa']`を自動付与。 |
+| `tradectl delivery export` | `--window`, `--out <path>`, `--format markdown|json` | Prompt Bundle添付用サマリと不足チェックリスト。 | `ChangeLedger`記録を自動実行。 |
+
+- CLIは`CommandTelemetryRecord`へ`component='delivery'`を記録。Acceptable Degradation時は`qa_tags`に`'degraded'`を付与。
+- `alerts`コマンドは`AlertDispatcher`（§6.7）と連携し、`--notify`指定時にメール送信。Runbook`RUN-OPS-05`のステップにCLI出力を貼り付ける。
+
+### 25.6 テスト計画
+| テストID | 目的 | 内容 |
+| --- | --- | --- |
+| UT-DEL-01 | Snapshot生成検証 | `tests/unit/test_delivery_control_tower.py::test_build_snapshot_merges_sources`。複数ソースのマージとソート順を確認。 |
+| UT-DEL-02 | アラート検知ロジック | `tests/unit/test_delivery_control_tower.py::test_detect_alerts_rules`。QA/Prompt Gap/ChangeLedger遅延に対するアラート生成。 |
+| UT-DEL-03 | Opsインパクト予測 | `tests/unit/test_delivery_forecaster.py::test_estimate_ops_impact_scaling`。警告件数に応じた所要時間推定を検証。 |
+| IT-DEL-01 | CLI統合 | `tests/integration/test_delivery_cli.py::test_status_and_forecast`。Typer CLIとレンダリングの決定論性を確認。 |
+| IT-DEL-02 | Ops Review連携 | `tests/integration/test_review_cli.py::test_delivery_snapshot_hook`。Ops Review HubがSnapshotを取り込むか検証。 |
+| SC-DEL-01 | Acceptable Degradation演習 | `tradectl delivery forecast --include-degradation --window 3d`実行後、Scenario Runner（§14）とKnowledge Pack（§16）に警告を反映する手動シナリオ。 |
+
+- `make ci-lite`に`pytest -k delivery`を追加し、CIでの逸脱検知を義務付ける。
+- Snapshot JSON Schemaは`tests/contracts/test_delivery_snapshot_schema.py`で固定化し、Breaking Change時は`docs/change_requests/`経由で承認。
+
+### 25.7 Codexプロンプト指針
+- Prompt Bundleへは`DeliverySnapshot`の抜粋（`alerts`, `ops_impact`）を`<section id="delivery_control_tower">`として貼り付ける。
+- Codexタスクには必ず`scope_paths`と`qa_summary`を引用し、レビュー観点（QA-01〜05のどれに影響するか）を明示する。
+- `PromptGap`が検出された場合、Issue起票時に「不足セクション」「期待する証跡」「関連Runbook」を表形式で提示。Codex出力で補完されたら`delivery export`で再評価し、`ChangeLedger.category='prompt_gap'`として記録。
+
+### 25.8 トレーダー/運用活用シナリオ
+- トレーダーは朝会で`tradectl delivery status --include-alerts`を実行し、Board Guard状態と合わせて承認可否を判断。`risk_score>70`の場合はスプリントプランを再調整。
+- Ops担当はGuard解除手順の前に`delivery forecast`で`expected_manual_minutes`を確認し、必要な人員をアサイン。Runbookに実測値を追記し予測モデルを改善。
+- Acceptable Degradation復旧後の事後レビューで、`alerts`履歴を`OpsReviewDigest`に貼り付け、再発防止策（例: Prompt Gap補完、QA-03自動化）をアクションアイテム化。
+
+## 26. トレーダーフィードバック循環エンジン（v2.7ドラフト）
+
+Signal Board/チケット承認フローで収集したヒューマンフィードバックを、戦略改善・UX向上・Codexタスクに即時還元する仕組みを定義する。`docs/ux_feedback.md`・`logs/audit/ticket.jsonl`・`metrics/cli_perf.jsonl`を統合し、改善優先度を定量化する。
+
+### 26.1 目的
+- **UX改善の即応**: チケット承認/却下時のコメント、バナー参照時間、Spread理由確認の有無を集計し、UI/Runbook改善を優先順位付けする。
+- **戦略改善連携**: Reject理由をStrategy/Feature/リスク要因にマッピングし、研究タスクとPrompt Bundleに自動添付する。
+- **Codex開発最適化**: フィードバックから直接アクション化できる粒度（例: ボタン配置、メッセージ文言）を抽出し、差分が小さいワークパッケージへ分解する。
+
+### 26.2 モジュール構成
+| パス | 役割 | 主な機能 |
+| --- | --- | --- |
+| `src/feedback/collector.py` | CLI/ログ/Runbookからフィードバックを収集。 | `collect_ticket_feedback(window)`, `collect_cli_metrics(window)`, `collect_runbook_notes(window)` |
+| `src/feedback/models.py` | `FeedbackItem`, `FeedbackAggregate`, `FeedbackImpact`, `FeedbackRoute` dataclass。 | `FeedbackItem`は`source`, `event`, `strategy`, `ticket_id`, `tags`, `comment`, `severity`等を保持。 |
+| `src/feedback/router.py` | フィードバックを戦略/UX/リスク等に振り分け。 | `route(feedback: FeedbackItem) -> list[FeedbackRoute]` |
+| `src/feedback/prioritizer.py` | 優先順位付けアルゴリズム。 | `prioritize(aggregates) -> list[PrioritizedFeedback]` |
+| `src/interfaces/cli/feedback.py` | `tradectl feedback ...` CLI。 | `tradectl feedback summarize`, `tradectl feedback route`, `tradectl feedback export`, `tradectl feedback ack` |
+| `src/prompt/linker.py` | Prompt Bundle（§20）へのフィードバック差し込み。 | `attach_feedback(bundle_id, feedback_items)` | 既存機能を拡張。 |
+
+### 26.3 データモデル詳細
+| モデル | フィールド | 説明 |
+| --- | --- | --- |
+| `FeedbackItem` | `id`, `source: Literal['cli','board','runbook','manual']`, `timestamp`, `actor`, `strategy_id`, `ticket_id`, `tags`, `comment`, `severity: Literal['low','medium','high']`, `recommendation`, `degradation_case_id?` | 個別フィードバック。`tags`には`['spread','news','ux-copy']`等。 |
+| `FeedbackAggregate` | `key`（`strategy_id`+`tag`等）, `count`, `unique_actors`, `avg_time_to_decision`, `reject_rate`, `related_signals`, `related_metrics` | 集約情報。 | `collector`が生成。 |
+| `FeedbackRoute` | `destination: Literal['ux','strategy','risk','ops','training']`, `priority_score`, `justification`, `recommended_issue_template` | ルーティング結果。 |
+| `PrioritizedFeedback` | `aggregate`, `routes`, `suggested_work_packages`, `impact_estimate`, `qa_implications` | 優先順位付け後の成果物。 |
+
+- `impact_estimate`はトレーダー作業時間削減、リスク低減、勝率影響などを0〜100スケールで保持。
+- `qa_implications`はQAスコアカードへの影響（例: `QA-03`Runbook未更新）を表す。
+- フィードバックは`ChangeLedger.category='feedback'`で記録し、Ops Review（§19）とEvidence Graph（§23）にリンクする。
+
+### 26.4 フィードバック処理フロー
+1. `Collector`が`logs/audit/ticket.jsonl`（承認/却下コメント）、`metrics/cli_perf.jsonl`（Board滞在時間）、`docs/ux_feedback.md`（手動記録）を読み込み、`FeedbackItem`を生成。
+2. `FeedbackRouter`が`tags`・`strategy_id`・`severity`に応じて複数ルートへ分配。
+   - 例: `tags=['spread','ux-copy']`→`destination=['risk','ux']`。
+   - `degradation_case_id`が紐づく場合は必ず`ops`宛に含め、復旧フローで確認できるようにする。
+3. `Prioritizer`は以下の指標で`priority_score`を算出:
+   - `reject_rate`（高いほど優先）
+   - `avg_time_to_decision`（閾値>90秒でペナルティ）
+   - Acceptable Degradation発生頻度（`degradation_case_id`有無で加点）
+   - `strategy_manifest`の重要度（`Tier`属性）
+4. `prioritize`結果は`PrioritizedFeedback`リストとなり、各アイテムは`suggested_work_packages`（Codex向けチケット草案）を含む。
+5. `EventBus.publish('feedback.prioritized', payload)`で通知。Delivery Control Tower（§25）が`PromptGap`と照合し、必要なワークパッケージを生成。
+6. `tradectl feedback export`がMarkdown/JSONレポートを生成し、`docs/ux_feedback.md`へリンク追記。Prompt Bundle生成時に`attach_feedback`で該当節を挿入する。
+
+### 26.5 CLI仕様 (`tradectl feedback ...`)
+| コマンド | 主な引数/フラグ | 出力 | 備考 |
+| --- | --- | --- | --- |
+| `tradectl feedback summarize` | `--window`, `--strategy`, `--tag`, `--format table|json` | `FeedbackAggregate`表。 | 週次Opsレビューで使用。 |
+| `tradectl feedback route` | `--window`, `--destination`, `--min-priority` | ルーティング結果を表示し、Issueテンプレリンクを出力。 | `qa_tags=['feedback','ux']`などタグ自動付与。 |
+| `tradectl feedback export` | `--window`, `--out`, `--format markdown|json`, `--include-prompts` | Prompt Bundle添付用レポート。`ChangeLedger`記録を自動化。 | Acceptable Degradation時は`--include-degradation`で関連ケースを強調。 |
+| `tradectl feedback ack` | `--id`, `--note`, `--change-id` | 対応完了を記録し、`ChangeLedger`へ書き戻す。 | Ops/PO承認が必要。 |
+
+### 26.6 テスト計画
+| テストID | 目的 | 内容 |
+| --- | --- | --- |
+| UT-FB-01 | コレクタ検証 | `tests/unit/test_feedback_collector.py::test_collect_ticket_feedback`。CLIログからFeedbackItem生成。 |
+| UT-FB-02 | ルーティング | `tests/unit/test_feedback_router.py::test_route_multi_destination`。タグに応じた複数宛先振分け。 |
+| UT-FB-03 | 優先度計算 | `tests/unit/test_feedback_prioritizer.py::test_prioritize_scores`。Reject率/滞在時間/重要度によるスコア。 |
+| IT-FB-01 | CLI統合 | `tests/integration/test_feedback_cli.py::test_summarize_and_route`。Typer CLIの出力決定論性。 |
+| IT-FB-02 | Prompt Bundle連携 | `tests/integration/test_prompt_cli.py::test_feedback_attach_to_bundle`。`--include-prompts`で抜粋が追加されること。 |
+| IT-FB-03 | Delivery Control Tower連携 | `tests/integration/test_delivery_feedback_hook.py::test_feedback_alerts_generated`。フィードバックから`PromptGap`が作成されるか検証。 |
+| SC-FB-01 | トレーダーUX演習 | `tradectl feedback summarize --window 1d --strategy core_ma_rsi`→`tradectl feedback route --destination ux`を実施し、ゲーム（§22）で得たUX課題と突合する手動演習。 |
+
+- `pytest -k feedback`をCIに追加。`tests/snapshots/feedback/*.snap`でCLI出力を固定化し、文章変更時はPO承認を必須化する。
+- `FeedbackItem` Schemaは`tests/contracts/test_feedback_schema.py`で維持。Breaking Changeは`docs/change_requests/CR-FEEDBACK-*.md`で承認。
+
+### 26.7 Codexハンドオフ指針
+- Prompt Bundle作成時に`<section id="feedback">`として`PrioritizedFeedback`のトップ3を添付。Codexはワークパッケージに沿って対応し、完了時に`tradectl feedback ack`でChangeLedger更新。
+- `FeedbackRoute.destination='strategy'`の場合は研究フレームワーク（§21）と連携し、再現データセット/パラメータ差分をIssueテンプレートへ自動挿入する。
+- `destination='ux'`のタスクはUI文言/CLIレイアウト変更が主であるため、テスト指示に`pytest --snapshot-update --maxfail=1`を必ず含める。Codex出力でスナップショット更新が無い場合は差戻し。
+
+### 26.8 Acceptable Degradation/トレーダー連携
+- Guarded状態でRejectが急増した場合、`feedback summarize`が`severity='high'`の項目をハイライト。Delivery Control Towerが`alerts`を発火し、Opsレビューで即時対応を検討。
+- トレーダーは日次のBoardレビュー後に`tradectl feedback export --include-degradation`を実行し、復旧計画（§24）と照合。改善策がPrompt Bundleへ反映されているか確認。
+- スナップショットは`reports/feedback/<YYYYWW>.md`に保存し、Ops Review Hubが週次ダッシュボードに統合。改善効果は`manual_hours_saved`指標で評価し、6週間継続して改善が見られない場合は追加タスクを起票する。
+
 ---
 
 本詳細設計は要件定義・基本設計に基づき、M1リリースの実装に必要なインターフェース・データモデル・フロー・テスト計画を整備した。拡張機能はFeature Flagとガバナンス手順を通じて安全に段階導入できるよう設計している。
