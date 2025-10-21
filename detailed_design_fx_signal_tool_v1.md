@@ -1,7 +1,7 @@
-# FXヒューマン・インザループ投資ツール 詳細設計書 v2.2
+# FXヒューマン・インザループ投資ツール 詳細設計書 v2.3
 
 ## 0. 文書情報
-- 作成日: 2025-02-28
+- 作成日: 2025-03-01
 - 作成者: Codex AI 支援
 - 参照文書: 要件定義（テンプレ形式）v_1.md, basic_design_fx_signal_tool_v1.md
 - 対象スコープ: マイルストーンM1（Backtest/Paper/Live 共通基盤）。M2以降で有効化される機能は拡張ポイントとして明示し、実装フックと制約を記載する。
@@ -9,6 +9,7 @@
 ### 0.1 改訂履歴
 | 版 | 日付 | 改訂概要 |
 | --- | --- | --- |
+| v2.3 | 2025-03-01 | Codexレビュー負荷を下げるQAスコアカードとRunbook連携シグナルを追加。ドメインデータモデル目録と運用シーケンス図を拡充し、トレーダー視点での整合チェックと将来改修時のIF安定性を強化。 |
 | v2.2 | 2025-02-28 | Codex実装スプリント用のタクティカルロードマップとモジュール別契約テーブルを追加。M1 Core優先モジュールの拡張ポイントを再整理し、将来の仕様変更に耐えるインターフェース境界を強化。 |
 | v2.1 | 2025-02-27 | Codex開発者向けワークパッケージ青写真とトレーダー運用シナリオを追加し、Acceptable Degradation時の判断材料とレビュー観点を具体化。プロンプト生成テンプレートにシナリオID/Runbook整合性チェックを義務化。 |
 | v2.0 | 2025-02-26 | Codex向け実装アクセラレーションパックを追加し、エピック別の成果物・プロンプト指示・テストゲーティングを体系化。Acceptable Degradation運用と将来の拡張に耐える抽象化境界の指針を強化。 |
@@ -178,7 +179,7 @@ Codexへ実装を委任する際のスプリント運用を以下に定義する
   - M1.1以降に備え、テーブルの`必須プロンプト添付物`列に「差分パッチ」「テレメトリ抜粋」「Runbookリンク」を最低3点添付するルールを明文化した。これにより後続のCodex依頼時に再利用可能な知識ベースを形成する。
   - `docs/snippets/`以下のコード断片は`# region`コメントで抽象化境界を示し、関数追加時に差分マージしやすい構造を保つ。
 
-### 0.8 Codexワークパッケージ青写真（v2.1追加）
+### 0.9 Codexワークパッケージ青写真（v2.1追加）
 
 Codexへ実装タスクを委譲する際に、トレーダー運用目線での期待アウトカム・レビュー観点を即座に共有できるよう、下表のシナリオ別青写真を準備する。各シナリオはRunbook/Validation Data Playbook/メトリクスとリンクし、Acceptable Degradation下でも判断がブレないようトレーサビリティを確保する。
 
@@ -207,6 +208,25 @@ Codexへ実装タスクを委譲する際に、トレーダー運用目線での
 - **HealthSignal**: `HealthMonitor`からCLI/Reporterへ送るメッセージは`HealthSignal` dataclassで統一し、`recommended_action`をEnum（`RUNBOOK`, `NOTIFY`, `DEFERRED_REVIEW`）にする。将来Slack/Webhook追加時にJSON Schemaが崩れないようにする。
 - **ConfigDiff**: `ConfigRegistry.apply_patch`は`DiffResult`を返し、`dangerous`キー変更時に`NextBarChangeQueue`へ登録する現在の仕様を維持。M1では`DiffResult.rollback_instructions`を`None`にし、M2でロールバック自動生成を追加する余地を残す。
 - **CLI Extensibility**: Typerコマンドは`@cli.command()`の代わりに`register_command(CommandSpec)`を利用するラッパーを導入し、GUI/Tauri移行時に再利用する。Codexは新コマンド実装時に`CommandSpec`を拡張すること。
+
+### 0.10 Codex QAスコアカード（v2.3追加）
+
+- **目的**: Codexが出力した成果物のレビュー時間を短縮しつつ、トレーダー運用で致命的な抜け漏れを防ぐ。スプリント毎に以下のスコアカードを埋め、`docs/review_log.md`に転記する。
+
+| チェックID | タイミング | 担当 | 確認内容 | 必須証跡/ログ | 自動化ステータス |
+| --- | --- | --- | --- | --- | --- |
+| QA-01 Baseline | ブランチ作成時 | 開発（Codex前） | `make ci-lite`ベースラインが全てGREENであることを確認し、最新コミットハッシュと共に`docs/prompt_packages/<date>_baseline.md`へ貼り付ける。 | `ci/baseline_<commit>.log`、`metrics/version_pin.json` | ✅ `make ci-lite`（ローカル/CI両方） |
+| QA-02 Diff Envelope | PRレビュー前 | PO/リード開発 | `git diff --stat`が設計指定ファイル内に収まっているか、`pyproject.toml`差分がないかを確認。許容外ファイルは`reject_reason`付きでCodexへ差戻す。 | `logs/audit/build.log`抜粋、`docs/prompt_packages/<date>_<epic>.md::Diff` | 🔁 半自動（`scripts/check_diff_scope.py`） |
+| QA-03 Runbook Sync | テスト完了後 | 運用担当 | 実装変更に紐づくRunbook節が更新済みであるか、`degraded_ack`などの手動承認ログが存在するかを確認。 | `docs/runbooks/*`差分、`reports/validation_log/AC-*`リンク、`logs/ops/review.log` | 🔁 `make runbook-lint`で参照検知 |
+| QA-04 Metrics Guard | マージ前 | 開発＋トレーダー | `metrics/*.jsonl`に新規メトリクスが追加された場合は命名規約と閾値が設定済みか、週次レポート集計に影響が出ないかを確認。 | `metrics/schema_index.json`, `reports/weekly/<YYYYWW>.md` | ✅ `scripts/qa/metrics_schema_check.py` |
+| QA-05 Ops Drill Ready | Acceptable Degradation解除時 | Ops Manager | Guarded/Haltedからの復旧条件が満たされているか。`tradectl board --normal`実行前に`RUN-DATA-05`のチェックボックスが全て完了しているかを二重確認。 | `logs/ops/workload.log`, `docs/runbooks/RUN-DATA-05.md`サイン、`health_state_transitions.jsonl`抜粋 | ❌ 手動（M1 Core） |
+
+- **レビューシグナル**:
+  - `health.changed`イベントに`qa_scorecard`タグを付与し、各チェックIDの成否を`payload.qa`へ格納する。例:`{"qa":{"QA-01":"pass","QA-03":"pending"}}`。
+  - `tradectl status --qa`で直近のQAスコアと不足証跡を表示。Codexへの差戻し時はこの出力をスクリーンショット化して添付する。
+  - Acceptable Degradation期間中は`QA-05`を強制`pending`扱いとし、解除後24h以内に`pass`へ更新する。未更新の場合は`HealthMonitor.raise('warning','qa_scorecard_stale')`を送出し、Opsレビューを促す。
+
+- **トレーダー向け指標**: QA完了後に`reports/weekly/<YYYYWW>.md`へ「QA所要時間」「Runbook更新数」「Guard解除判断」を追記し、運用負荷を可視化する。翌週のスプリント計画でQA時間が閾値（>6h/週）を超えた場合はタスク分割または自動化チケットを起票する。
 
 ## 1. アーキテクチャ概要
 
@@ -365,7 +385,52 @@ tests/
 
 ランタイムディレクトリとして `config/`, `data/`, `logs/`, `snapshots/`, `reports/`, `metrics/` を使用する。
 
-### 1.4 主要コンポーネントサマリ
+### 1.4 ドメインデータモデル目録（v2.3追加）
+
+| モデル | 主フィールド（型） | 生成元 | 主な利用先 | 備考 |
+| --- | --- | --- | --- | --- |
+| `MarketFrame` | `ts: datetime64[ns]`, `open/high/low/close: Decimal`, `volume: float`, `provider_id: str`, `quality_flag: int`, `timeframe: Timeframe` | DataIngestionService | FeaturePipeline, Reporter, SnapshotManager | `quality_flag`は`0=clean/1=patched/2=quarantined`。`provider_id`で後続の評価ログと突合する。 |
+| `ManualCsvPayload` | `path_op: Path`, `path_review: Path`, `symbol: str`, `timeframe: Timeframe`, `submitted_by: str` | CLI `tradectl data jobs enqueue --task manual_csv` | ManualCsvIngestionTask, Audit Service | 2系統CSVのSHA256ハッシュを`manual_csv.log`へ出力し、Runbook `RUN-DATA-06`の証跡リンクと紐付ける。 |
+| `BackfillReport` | `bars_loaded: int`, `fallback_used: bool`, `segments: list[BackfillSegment]`, `started_at/completed_at: datetime`, `warnings: list[str]` | DataIngestionService.backfill | CLI `tradectl data backfill`, HealthMonitor | 欠損区間のスパンを`segments`に保持し、再実行対象を明示。`warnings`はRunbookレビューで確認する。 |
+| `FeatureFrame` | `symbol: str`, `timeframe: Timeframe`, `features: dict[str, NDArray]`, `lagged_context: FeatureLagContext` | FeaturePipeline | StrategyEngine, Backtest | `lagged_context`で最新Nバーの特徴量を保持し、決定論テストで利用。 |
+| `StrategyContext` | `mode: ModeContext`, `feature_frame: FeatureFrame`, `regime_state: RegimeState`, `gate_state: GateState`, `account_state: AccountState`, `config: ConfigSlice` | Workflow Orchestrator | StrategyEngine | `config`は読み取り専用スナップショット。Codexは副作用を与えないこと。 |
+| `RawSignal` | `id: str`, `strategy_id: str`, `symbol: str`, `side: Literal['LONG','SHORT']`, `score: float`, `ttl_sec: int`, `tags: list[str]`, `notes: dict[str, Any]` | Strategy Plugins | ScoringService | `tags`は`ALIGN/VOL/NEWS`等のバッジ候補、`notes`は根拠テキストや指標値を格納。 |
+| `RankedSignal` | `raw: RawSignal`, `rank: int`, `base_score: float`, `components: dict[str, float]`, `ui_hints: UiHint` | ScoringService | RiskManager, Reporter | `components`でSharpe/Drawdown等の要素を保持し、`ui_hints`でBoard表示用コメントを提供。 |
+| `RiskVettedSignal` | `ranked: RankedSignal`, `risk_flags: list[RiskFlag]`, `effective_r: Decimal`, `margin_required: Decimal`, `approved: bool`, `notes: dict[str, Any]` | RiskManager | PositionSizer, TicketBuilder | `risk_flags`に`r_eff`, `bucket_limit`, `kill_switch`等を格納し、Reject時は理由を`notes`へ付与。 |
+| `ExecutionAdjustments` | `expected_entry: Decimal`, `expected_slippage: Decimal`, `ttl_seconds: int`, `fill_style: ExecutionFillStyle`, `drift_guard_r: Decimal` | ExecutionModel | TicketBuilder, Reporter | `fill_style`は`MARKETABLE_LIMIT`などを想定。`drift_guard_r`はReduce-Only推奨ライン。 |
+| `GateState` | `board_mode: BoardMode`, `kill_switch: KillSwitchState`, `calendar_blocked: bool`, `spread_cooldown: SpreadCooldownState`, `news_alerts: list[NewsEvent]` | HealthMonitor, CalendarService, SpreadMonitor | Workflow, TicketBuilder | `board_mode`変更はRunbook承認必須。`news_alerts`は重大ニュースのタイトルと影響度を保持。 |
+| `HealthSignal` | `status: Literal['ok','degraded','soft_stop','hard_stop']`, `reasons: list[HealthReason]`, `recommended_action: RecommendedAction`, `qa: dict[str, str]` | HealthMonitor | CLI `tradectl status`, Reporter, AlertDispatcher | `qa`にQAスコアカード（§0.10）の結果を格納。`recommended_action`はRunbook IDと根拠メトリクスを含む。 |
+| `RiskEvaluationResult` | `approved: list[RiskVettedSignal]`, `rejected: list[RejectedSignal]`, `alerts: list[RiskAlert]`, `snapshot: RiskMetricsSnapshot` | RiskManager | TicketBuilder, Audit Service | `snapshot`はCorrelation行列ハッシュとバケット露出を保持。`alerts`はRunbook `RUN-RISK-01`レビューの材料。 |
+| `TicketPayload` | `ticket_id: str`, `symbol: str`, `size: Decimal`, `sl: Decimal`, `tp: Decimal`, `ttl_sec: int`, `badges: list[str]`, `checklist: list[ChecklistItem]`, `audit_ref: AuditPointer` | TicketBuilder | CLI Board, Audit Service, Trade Journal | `checklist`はヒューマン入力必須。`audit_ref`で監査ログとの往復を保証。 |
+
+- **データモデル運用ルール**:
+  - すべてのモデルは`pydantic` v2ベースまたは`@dataclass(frozen=True, slots=True)`で定義し、イミュータブル性を担保する。
+  - 型変更は`docs/change_requests/`で承認後に実施し、`tests/contracts/test_datamodel_hash.py`でスキーマハッシュが更新されたことを確認する。
+  - Enum類（`UiHint`, `RiskFlag`, `HealthReason`など）は`docs/schema/enums.md`で集中管理し、Codex依頼時は対象Enumと許容値を明示する。
+
+### 1.5 主要運用シーケンス（トレーダー視点）
+
+1. **通常稼働（Board = normal）**
+   1. DataIngestionServiceが`MarketFrame`を`bar_ready_queue`へ投入。
+   2. FeaturePipeline→StrategyEngine→ScoringService→RiskManager→PositionSizerが順に実行し、`RiskVettedSignal`を生成。
+   3. TicketBuilderが`TicketPayload`を整形し、`tradectl board`がバッジ/チェックリスト付きで提示。承認/却下イベントはAudit Serviceと`logs/events/`に記録される。
+   4. Reporterが`metrics/scoring_base.jsonl`や`tickets/*.jsonl`から週次レポートを生成し、POレビューに供する。
+
+2. **Acceptable Degradation（Board = guarded）**
+   1. `HealthMonitor.raise('degraded', 'data_latency_fetch')`が発火し、SessionManagerが`board_mode=guarded`へ遷移。
+   2. WorkflowはReduce-Only候補に限定し、TicketBuilderが`badges`へ`REDUCE_ONLY`を追加。`RiskVettedSignal.notes['guarded_reason']`で根拠を共有。
+   3. Ops担当はRunbook `RUN-DATA-05`に従いフォールバック経路を検証。`QA-05`（§0.10）は`pending`へ変更され、解除条件が満たされるまで保持。
+   4. 復旧後、`tradectl board --normal`と`HealthMonitor.ack`を実行し、`degraded_ack`イベントとRunbookサインを残す。`QA-05`は`pass`へ更新し、週次レポートへ所要時間を追記。
+
+3. **Manual CSV補填フロー**
+   1. OpsがRunbook `RUN-DATA-06`に従いCSVを二重入力し、`ManualCsvPayload`をCLIで登録。
+   2. `ManualCsvIngestionTask`がハッシュ一致を検証し、成功時に`MarketFrame`へ統合。失敗時は`ManualCsvMismatch`例外と`health.changed(reason='manual_csv_mismatch')`を発火。
+   3. `metrics/data_ingestion_sla.jsonl`へ`manual_source=true`のレコードを残し、Reporterが週次レポートに補填ログリンクを追記。
+   4. Ops Managerは`QA-05`とRunbookサインを確認後、`tradectl board --normal`で解除。Audit Serviceは`manual_csv_ingested`イベントを保管し、将来検証に備える。
+
+- **図面管理**: `docs/diagrams/sequence/normal_flow.mmd`と`docs/diagrams/sequence/degradation_flow.mmd`でシーケンス図を管理し、更新時は`make diagrams`でPNGに変換する。
+
+### 1.6 主要コンポーネントサマリ
 | コンポーネント | 主責務 | 対応FR | 実装位置 |
 | --- | --- | --- | --- |
 | SessionManager | 起動/停止、Catch-up制御、モード切替 | FR-08, FR-16 | `core/session.py` |
@@ -380,14 +445,14 @@ tests/
 | Reporter | 週次/日次レポートと可視化 | FR-10 | `reporter/generator.py` |
 | ConfigRegistry | 設定ガバナンス・ホットリロード | FR-14, FR-33 | `infra/config.py` |
 
-### 1.5 クロスカッティング懸念
+### 1.7 クロスカッティング懸念
 - **同期待ち合わせ**: 非同期ジョブは`AsyncIntervalJob`/`AsyncOneShotJob`で管理し、`max_lag_secs`を超えると`EventLagWarning`→`HealthMonitor`へ通知。
 - **安全な更新**: 危険パラメータ変更は`NextBarChangeQueue`で遅延適用し、`cfg_hash`を監査ログに刻印。Kill Switch解除には手動確認フローを強制。
 - **可観測性**: `metrics/pipeline.jsonl`/`metrics/cli_perf.jsonl`と`logs/events/*.jsonl`でトレーサビリティを確保し、`tradectl metrics report`でRunbook添付用レポートを生成する。Prometheus互換Exporterはインターフェースのみ実装し、HTTP公開はM2で有効化する。
 - **再現性**: Backtest/Paper/Liveで共通のExecutionModel/Spread/Fundingロジックを使い、`mode_context.deterministic_seed`で乱数初期化を固定。
 - **拡張ポイント**: SPRT、Reduce-Only Advisor、Slack通知などM2+機能はFeature Flagと依存注入で無効化可能にする。
 
-### 1.6 主な前提と制約
+### 1.8 主な前提と制約
 | 分類 | 内容 | リスク・備考 |
 | --- | --- | --- |
 | 運用前提 | PCは平日日中のみ稼働。夜間/週末停止時は次回起動時にResync必須。 | 無通電期間が48h超の場合は手動でバックフィル期間を短く分割。 |
@@ -399,7 +464,7 @@ tests/
 | SLA | FR KPI達成が主目的。Alert応答はMAJOR:10分、CRITICAL:5分以内。 | 応答遅延時は自己レビューをRunbookに記録。 |
 | 将来拡張 | M2でAPI発注/Slack通知/Tauri GUIを追加予定。M1でフック実装済み。 | M2機能を有効化する際はFeature Flagと回帰テストが必須。 |
 
-### 1.7 システム環境・リソース要件
+### 1.9 システム環境・リソース要件
 | 項目 | 要件 | 備考 |
 | --- | --- | --- |
 | ハードウェア | Apple Silicon (M1/M2) or Intel i7 同等、RAM 16GB、SSD空き 20GB以上 | バックテスト並列時は4コア以上推奨。 |
@@ -418,7 +483,7 @@ tests/
 - Manual CSV取込では`utc_iso`列のタイムゾーンを`pandas.to_datetime(..., utc=True)`で強制し、`ManualCsvReconciler`が`timezone != UTC`を検出した場合は`ManualCsvError(code='clock_mismatch')`で拒否する。拒否ログは`reports/validation_log/AC-45_sla_<date>.md`と`metrics/time_sync.jsonl`へ記録し、再入力要求にはRunbook `RUN-TIME-01`を参照させる。
 - VPN/テザリング使用時はSpread遅延が見込まれるため、`config.provider.timeout_sec`や`retry`値を引き上げ、`AlertDispatcher`でWARNを送信する。
 
-### 1.8 運用体制・RACI
+### 1.10 運用体制・RACI
 | 活動 | R (実行) | A (責任) | C (協議) | I (報告) |
 | --- | --- | --- | --- | --- |
 | 日次プレフライト/運用 | 運用担当 | プロダクトオーナー | 開発 | セキュリティ |
@@ -1645,7 +1710,7 @@ SpreadCooldown: cooldown (ETA 12:15) | Snapshot hash: a1c3...
 | ERROR-C07 (Heartbeat停止) | MAJOR | HealthMonitor | CLI + メール(MAJOR) | Runbook §5.1 |
 | ERROR-C08 (Snapshot破損) | CRITICAL | SnapshotManager | CLI + メール(CRITICAL) | Runbook §4.1 |
 | ERROR-C09 (Account CSV不整合) | MAJOR | AccountService | CLI + メール(MAJOR) | Runbook §3.2 |
-| ERROR-C10 (Scheduler遅延) | WARN | Scheduler | CLI | Runbook §1.4 |
+| ERROR-C10 (Scheduler遅延) | WARN | Scheduler | CLI | Runbook §2.3 |
 
 - `AlertDispatcher`は重大度ごとに件名 `[tradectl][<SEVERITY>] <reason>` を付与する。Slack/Webhook有効時は同じpayloadを送信。
 - Runbook参照欄は対応手順を示し、アフターアクションレビューで更新する。
@@ -1662,7 +1727,7 @@ SpreadCooldown: cooldown (ETA 12:15) | Snapshot hash: a1c3...
 | ERROR-C07 (Heartbeat停止) | MAJOR | HealthMonitor | CLI + メール(MAJOR) | Runbook §5.1 |
 | ERROR-C08 (Snapshot破損) | CRITICAL | SnapshotManager | CLI + メール(CRITICAL) | Runbook §4.1 |
 | ERROR-C09 (Account CSV不整合) | MAJOR | AccountService | CLI + メール(MAJOR) | Runbook §3.2 |
-| ERROR-C10 (Scheduler遅延) | WARN | Scheduler | CLI | Runbook §1.4 |
+| ERROR-C10 (Scheduler遅延) | WARN | Scheduler | CLI | Runbook §2.3 |
 
 - `AlertDispatcher`は重大度ごとに件名 `[tradectl][<SEVERITY>] <reason>` を付与する。Slack/Webhook有効時は同じpayloadを送信。
 - Runbook参照欄は対応手順を示し、アフターアクションレビューで更新する。
