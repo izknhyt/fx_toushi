@@ -1,7 +1,7 @@
-# FXヒューマン・インザループ投資ツール 詳細設計書 v2.4
+# FXヒューマン・インザループ投資ツール 詳細設計書 v2.5
 
 ## 0. 文書情報
-- 作成日: 2025-03-01
+- 作成日: 2025-03-03
 - 作成者: Codex AI 支援
 - 参照文書: 要件定義（テンプレ形式）v_1.md, basic_design_fx_signal_tool_v1.md
 - 対象スコープ: マイルストーンM1（Backtest/Paper/Live 共通基盤）。M2以降で有効化される機能は拡張ポイントとして明示し、実装フックと制約を記載する。
@@ -9,6 +9,7 @@
 ### 0.1 改訂履歴
 | 版 | 日付 | 改訂概要 |
 | --- | --- | --- |
+| v2.5 | 2025-03-03 | リサーチ再現性フレームワークとOpsシミュレーションゲームの詳細設計を追補。メトリクススキーマ/プロンプト自動生成との連携、テレメトリ/ナレッジパック/Change Ledger統合の運用指針を追加。 |
 | v2.4 | 2025-03-02 | Acceptable Degradation演習を自動化するシナリオランナー設計とCLIテレメトリ統合の実装指針を追加。Codex向けワークパッケージのハンドオフ手順を拡張し、Runbook連携と証跡集約を強化。 |
 | v2.3 | 2025-03-01 | Codexレビュー負荷を下げるQAスコアカードとRunbook連携シグナルを追加。ドメインデータモデル目録と運用シーケンス図を拡充し、トレーダー視点での整合チェックと将来改修時のIF安定性を強化。 |
 | v2.2 | 2025-02-28 | Codex実装スプリント用のタクティカルロードマップとモジュール別契約テーブルを追加。M1 Core優先モジュールの拡張ポイントを再整理し、将来の仕様変更に耐えるインターフェース境界を強化。 |
@@ -371,6 +372,13 @@ src/
   reporter/
     generator.py         # 週次/成績レポート
     templates/           # Markdownテンプレート
+  game/
+    engine.py            # Opsシミュレーションゲームのメインループ
+    models.py            # GameState/Action/Eventデータモデル
+    actions.py           # 定義済みアクションカタログ
+    events.py            # 日次イベント生成器
+    persistence.py       # ラン記録/リプレイ保存
+    cli.py               # tradectl game CLIラッパ（Typer登録はinterfaces/cli/game.py）
   infra/
     config.py            # ConfigRegistry + schema検証
     registry.py          # モード別依存性組立
@@ -1281,6 +1289,7 @@ HealthMonitor.ack()
 | `tradectl ops readiness --explain` (M2+) | Opsヘルス可視化 | `--period`, `--output` | M1: `OpsReadinessEvaluatorStub`が`status=not_assessed`を返し、CLIは`(M2+)`案内のみ表示。M2+: Appendix G.3記載の証跡内訳を表示 | M1: `ops_readiness.disabled`ログ。M2+: 証跡欠損時は`OpsEvidenceMissing`を列挙 |
 | `tradectl model risk resolve` (M2+) | モデルリスクギャップ対応 | `--id`, `--evidence` | M1: Feature Flag既定`False`で`Feature disabled (M2+)`のみ出力。M2+: Appendix G.4のギャップ解消フローを実行 | M1: `model_risk.disabled`ログ。M2+: 必須エビデンス欠落で`ModelRiskEvidenceMissing` |
 | `tradectl reconcile statements --from <date>` (M2+) | ステートメント突合 | `--to`, `--mode`, `--dry-run` | M1: `StatementReconciliationServiceStub`が`status=not_available`を返し、CLIは`Feature disabled (M2+)`とログのみ。M2+: Appendix G.5の照合処理を実行 | M1: `reconciliation.disabled`情報ログ。M2+: CSV欠損で`StatementImportError`、差分特定不可で`reconciliation.escalated` |
+| `tradectl game run` | Opsシミュレーションゲーム（トレーニング） | `--seed`, `--days`, `--profile training|paper`, `--log-dir`, `--dry-run` | 7日（既定）の3フェーズを順次実行し、イベント→アクション選択→日次まとめ→最終サマリをRichテーブルで表示。`--log-dir`指定時は`reports/training/game_runs/<timestamp>/`へJSON/Markdownを保存 | 入力検証エラーで`CLI-GAME-001`。イベント定義欠損で`GameDataMissing`、保存失敗で`GameLogWriteError`（警告＋代替パス案内）。 Acceptable Degradation対応で`--profile paper`時はKPI緩和を表示 |
 
 ### 6.6 ネットワーク・セキュリティ制約
 | 項目 | 要件/制限 | 対応策 |
@@ -1525,6 +1534,7 @@ Flag切替時は`ConfigChanged`イベントに`flag_delta`が記録され、Repo
 | UT-TKT-01 | FR-07/FR-38 | TicketBuilderチェックリスト生成 | ユニット |
 | UT-CFG-01 | FR-14/FR-33 | Configホットリロード/遅延適用 | ユニット |
 | UT-RL-01 | FR-01/AC-45 | RateLimitGuardステージ遷移（429閾値・トークン計算・手動操作記録）の検証 (`tests/unit/test_rate_limit_guard.py`) | ユニット |
+| UT-GAME-01 | MVP-FR-01〜FR-04 | GameEngineが日次フェーズ進行・イベント適用・勝敗判定を正しく実行 | ユニット |
 | IT-PIPE-01 | AC-10 | データ→チケット統合フロー（モックデータ）＋Live実績CSV突合（`actual_fill_imported`/`summary`検証） | 統合 |
 | IT-RESYNC-01 | AC-04 | Resync後TTL/ドリフト整合 | 統合 |
 | IT-RL-01 | AC-45 | `tradectl data rate-limit stage` CLIと`metrics/rate_limit_window.jsonl`出力の整合（429シナリオ/Acceptable Degradation復帰） | 統合 |
@@ -1534,6 +1544,7 @@ Flag切替時は`ConfigChanged`イベントに`flag_delta`が記録され、Repo
 | IT-FUND-01 | FR-28 | FundingService三倍日処理（CSV手動更新, 三倍日補正） | 統合 (M1 Core) |
 | IT-COR-01 | FR-37 | 相関閾値でシグナル抑制 | 統合 |
 | PT-CLI-01 | AC-G1/G2 | `tradectl board`操作100件連続 | CLI |
+| IT-GAME-01 | MVP-FR-01〜FR-05 | `tradectl game run --seed 123`で決定論的ログとサマリが生成されるか検証 | CLI |
 | PT-BT-01 | AC-13 | Backtest再現性（hash固定） | Property |
 | FUT-SPRT-01 | FR-22(M2) | SPRTしきい値で提案停止 | 拡張 |
 | FUT-SCORE-01 | AC-07/AC-08 (M2+) | `scoring.hybrid_enabled`時にPF_recent/PF_all/レジーム別PFが閾値を満たすか検証 | 拡張 |
@@ -1711,6 +1722,80 @@ Flag切替時は`ConfigChanged`イベントに`flag_delta`が記録され、Repo
 | R-07 | KPI未達（Sharpe/MaxDD） | 中 | 中 | 戦略評価会、最適化、Feature Flag | 監視中 |
 
 - リスクログは月次レビュー時に更新し、閾値を超えたリスクはIssue Trackerへ登録する。
+
+---
+
+## 22. Opsシミュレーションゲーム設計（v2.5追加）
+
+`mvp_spec_v_1.md`で定義したFX Ops Simulation Gameを、既存ツールチェーンと整合するトレーニング/ドリル機能として取り込む。ヒューマン・トレーダーが運用判断やAcceptable Degradation対応を演習できること、Codexが実装しやすい明確なAPI境界を用意することを目的とする。
+
+### 22.1 運用目的と適用範囲
+- **トレーニング**: 7日間（既定）×3フェーズのシナリオでデータSLA/リスク/モラル/KPIバランスを体験し、Runbook整合やChange Ledger記録の練習を行う。
+- **回帰/ドリル**: Acceptable Degradation発生後に対応手順の振り返りとして利用し、`docs/knowledge_packs/acceptable_degradation/`のケースIDと紐付ける。
+- **Codexプロンプト材料**: 改善タスク起票時にゲームログを添付し、Codexに運用背景を短時間で共有する。
+- **スコープ**: M1ではCLIのみ。GUI/Tauri拡張はM2以降。外部依存なし（標準ライブラリ限定）。
+
+### 22.2 Feature FlagとDI
+- Feature Flag: `game.enabled`（既定True）。`False`時は`GameEngineStub`が`play(...)`を`logger.info("game disabled")`でスキップ。
+- `src/interfaces/cli/game.py`でTyperコマンド登録。DIは`infra/registry.py`に`GameEngineProvider`を追加し、`ModeContext`とは独立させる（ゲームは常にローカルトレーニング扱い）。
+- Telemetry: `instrument_command(command="game")`で`metrics/cli_commands.jsonl`に`qa_tags=['training']`を記録。Acceptable Degradation演習では`qa_tags`へ`'degraded'`を追記する。
+
+### 22.3 モジュール構成
+| パス | 役割 | 実装要点 |
+| --- | --- | --- |
+| `src/game/models.py` | `GameState`, `Phase`, `Incident`, `Action`, `Outcome`, `TimelineEntry` dataclass群 | `@dataclass(slots=True, frozen=True)`で不変性を確保。`GameState`は`day`, `phase`, `data_quality`, `risk_load`, `team_morale`, `profit_score`, `incident`, `timeline`を保持。 |
+| `src/game/actions.py` | 行動定義カタログ | `ActionDefinition`に`id`, `title`, `description`, `phase`, `delta`, `guard`（callable）を保持。`registry.load_defaults()`でJSON/YAMLからロード。 |
+| `src/game/events.py` | 日次イベント生成 | `EventDefinition`に`id`, `narrative`, `delta`, `guards`。RNGは`random.Random(seed)`をDI。 |
+| `src/game/engine.py` | メインループ (`GameEngine.play`) | `seed`・`days`・`profile`・`action_provider`（CLI or テスト）を受け取り、フェーズ毎にイベント適用→行動選択→ステート更新。 |
+| `src/game/persistence.py` | ログ/サマリ保存 | `persist_run(result, path)`がJSON/Markdownを出力し、`ChangeLedger`/Knowledge Pack連携用メタデータを付与。 |
+| `src/game/renderers.py` | CLI出力補助 | `render_status`, `render_menu`, `render_summary`。Rich Tableを返し、`pytest-approvaltests`でスナップショット検証。 |
+| `src/interfaces/cli/game.py` | CLIエントリ | `tradectl game run`コマンドを定義。`--seed`, `--days`, `--profile`, `--log-dir`, `--dry-run`をサポート。 |
+
+### 22.4 データモデル詳細
+- `GameState`の遷移は純関数`GameEngine._apply_action(state, action, event)`で実行。`clamp(value, min_value, max_value)`でKPIを0〜100に制約。
+- `Phase` Enum: `MORNING_OPS`, `MIDDAY_TRADING`, `EVENING_REVIEW`。`phase_order`リストで日内順序を明示。
+- `Incident`はイベント結果を保持し、`effect`（KPI delta）、`narrative`, `tags`（`['data', 'risk', 'morale']`など）を含む。`tags`はKnowledge PackやTelemetryで利用する。
+- `ActionResult`（`actions.py`）は`applied_delta`, `actual_delta`（Guardで縮小された場合）, `notes`を保持。タイムラインに記録。
+- `Outcome`は`status: Literal['win','loss','neutral']`, `reason_codes`, `final_state`, `timeline`。`reason_codes`はMVP仕様FR-04の閾値を文字列化（例:`"loss:data_quality_breach"`）。
+- `TimelineEntry`は`day`, `phase`, `incident_id`, `action_id`, `before_state`, `after_state`, `delta`を保持し、`pydantic`でJSONシリアライズ。
+
+### 22.5 エンジンフローとアルゴリズム
+1. `GameEngine.play`が`GameState.initial(profile)`を生成。`profile`は`training`（既定SLA）と`paper`（リスク閾値厳格）を提供。
+2. 各日について:
+   - `EventDeck.draw(state, phase)`でインシデントを決定。`guards`により状態上限/下限を尊重（例: モラル>=90で士気向上イベントを抑止）。
+   - `GameState.apply_incident`でKPIにデルタ適用し、`TimelineEntry`に`incident_delta`を保持。
+   - `action_provider.choose_action(state, available_actions)`がヒューマン入力/テストスタブを返却。CLIでは番号選択、テストでは決定論的リスト。
+   - `ActionRule.evaluate`で適用可否を検証（Guard: KPI上限/下限, `risk_load`高時のリスク増幅行動禁止など）。
+   - `GameState.apply_action`でステート更新→`TimelineEntry`追加。
+3. 日末判定: `OutcomeEvaluator.check_loss(state)`でFR-04条件（KPI閾値）を評価。`loss`の場合は残フェーズをスキップして終了。
+4. 最終日終了後に`OutcomeEvaluator.check_win(state)`を評価。いずれも満たさない場合は`neutral`とする。
+5. `GameRunResult`（`engine.py`）は`outcome`, `timeline`, `seed`, `profile`, `days`, `summary_stats`（日毎KPI）を保持し`persistence.persist_run`へ渡す。
+6. `summary_stats`には日次平均/最小/最大/終値、Acceptable Degradationタグ付き日の一覧を含める。`incident.tags`に`'degraded'`がある場合は該当日へタグ付与。
+
+### 22.6 CLI・テレメトリ・ナレッジ連携
+- CLI実行時、開始/終了に`CommandTelemetryRecord`を記録（§6.8）。`notes`へ`{"game_outcome":"win"|"loss"|"neutral"}`を追加。
+- `--log-dir`指定時は`reports/training/game_runs/<timestamp>/run.json`と`summary.md`を生成。`summary.md`は`reports/training/templates/run_summary.md.j2`テンプレート（新設）で整形し、Runbook `RUN-OPS-02`から参照。
+- `persistence`は`ChangeLedger.record_change(category='training', summary=...)`を自動実行し、ゲーム実施を監査。`accept_degradation_case`フィールドに対応するKnowledge Pack IDを記入可能にする。
+- Acceptable Degradation演習では`docs/knowledge_packs/.../case_<date>.md`へ`GameRunResult.summary`を追記。`tools/acceptable_deg/export_snapshot.py`にゲームログ抽出処理を追加し、Knowledge Pack更新と同期させる。
+
+### 22.7 テスト・QA
+- ユニットテスト:
+  - `tests/unit/test_game_engine.py::test_phases_progress`（フェーズ順序とKPIクランプ）。
+  - `tests/unit/test_game_events.py::test_event_guard_blocks_high_morale`。
+  - `tests/unit/test_game_actions.py::test_guard_limits_action`。
+- 統合テスト:
+  - `tests/integration/test_game_cli.py::test_run_seeded_game`で`--seed 123`実行→決定論的アウトカムと`summary.md`スナップショットを確認。
+  - `tests/integration/test_game_logging.py::test_persist_run_creates_artifacts`でログディレクトリ生成とChange Ledger登録を検証。
+- QAゲート: `make game-smoke`を新設し、CIで`pytest -k game`＋`tradectl game run --seed 42 --days 3 --dry-run`を実行。結果ログは`ci/game_smoke_<commit>.log`へ保存し、Prompt Bundle（§20）に添付する。
+
+### 22.8 Codexハンドオフ指針
+- Prompt Bundleには以下を必須添付:
+  1. `mvp_spec_v_1.md`抜粋（FR-01〜FR-05）。
+  2. 本節§22.3〜§22.6の引用（最大150行）。
+  3. 行動/イベント定義サンプル（JSON/YAML 5件以内）。
+  4. テストコマンド (`pytest -k game`, `tradectl game run --seed 123 --days 3 --dry-run`).
+- Codex出力レビューでは`GameEngine`の副作用境界（I/Oは`persistence`のみ）と`random.Random(seed)`の利用を確認し、決定論性が維持されているかを`tests/unit/test_game_engine.py`で検証する。
+- 運用担当はゲームログを`OpsReviewDigest`（§19）へ貼り付け、改善アクションが必要な場合は`ChangeLedger`へ`category='training'`で記録する。
 
 ---
 
