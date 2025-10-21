@@ -1,4 +1,4 @@
-# FXヒューマン・インザループ投資ツール 詳細設計書 v2.5
+# FXヒューマン・インザループ投資ツール 詳細設計書 v2.6
 
 ## 0. 文書情報
 - 作成日: 2025-03-03
@@ -9,6 +9,7 @@
 ### 0.1 改訂履歴
 | 版 | 日付 | 改訂概要 |
 | --- | --- | --- |
+| v2.6 | 2025-03-04 | Acceptable Degradation分析/復旧ツールキット（§24）を追加し、Board Guard/Scenario Runner/QAスコアカードとの循環を明文化。Codex向け実装契約とテスト観点を拡張。 |
 | v2.5 | 2025-03-03 | リサーチ再現性フレームワークとOpsシミュレーションゲームの詳細設計を追補。メトリクススキーマ/プロンプト自動生成との連携、テレメトリ/ナレッジパック/Change Ledger統合の運用指針を追加。 |
 | v2.4 | 2025-03-02 | Acceptable Degradation演習を自動化するシナリオランナー設計とCLIテレメトリ統合の実装指針を追加。Codex向けワークパッケージのハンドオフ手順を拡張し、Runbook連携と証跡集約を強化。 |
 | v2.3 | 2025-03-01 | Codexレビュー負荷を下げるQAスコアカードとRunbook連携シグナルを追加。ドメインデータモデル目録と運用シーケンス図を拡充し、トレーダー視点での整合チェックと将来改修時のIF安定性を強化。 |
@@ -1931,6 +1932,99 @@ Flag切替時は`ConfigChanged`イベントに`flag_delta`が記録され、Repo
 - **M1.1**: `graphviz`プラグインを追加し、`tradectl evidence query --format graphviz --open`でPNGを自動生成。CLIに`--open`でPreviewを開く機能を追加。
 - **M2**: `EvidenceInferenceService`を追加し、孤立ノードや重複ケースに対する自動アクション提案を行う。Graphベースの類似度計算に`networkx`を導入し、計算負荷をテレメトリに記録。
 - **M2+**: 外部監査提出用に`evidence_graph.export(standard='audit_v1')`を実装し、CSV/PDF化。外部レビュー向けに個人情報マスキングを自動適用する。
+
+## 24. Acceptable Degradation Analytics & Recovery Toolkit（v2.6追加）
+
+Acceptable Degradation（以下AD）発生時の定量把握と復旧計画立案を半自動化するモジュール群を追加し、Board Guard/Scenario Runner/QAスコアカード/Change Ledgerの循環を強化する。Codexが再発防止タスクを実装する際に必要な証跡とI/O契約を事前に整備し、トレーダーは復旧後の改善効果を定量評価できるようにする。
+
+### 24.1 目的
+- **復旧時間の短縮**: `metrics/data_ingestion_sla.jsonl`や`logs/ops/manual_csv.log`等からAD期間と復旧所要時間を自動抽出し、Runbook `RUN-DATA-05/06`のチェックリストと照合。
+- **根因分析の迅速化**: HealthMonitor理由コード、RateLimitステージ履歴、Scenario Runner結果を一元化してEvidence Graph (§23)へノード登録。
+- **Codexハンドオフ高速化**: Prompt Bundle (§20)へADエピソードのサマリ・再発防止アイデア・既存テストハーネスを自動添付し、再発防止タスクの着手時間を短縮。
+- **トレーダーUX改善**: Board Guard状態・Ticket遅延・ヒューマン作業ログ（`logs/ops/workload.log`）を組み合わせ、復旧後のUXインパクトを週次レポートに反映。
+
+### 24.2 モジュール構成
+| パス | 役割 | 実装要点 |
+| --- | --- | --- |
+| `src/ops/degradation/analytics.py` | ADエピソード抽出/集計サービス | `DegradationEpisodeExtractor`がメトリクス/ログ/Runbookチェックリストをスキャンし、`EpisodeWindow`設定に従って連続区間をエピソードへ変換。`EpisodeRepository`経由でファイルI/Oを抽象化。 |
+| `src/ops/degradation/recovery.py` | 復旧アクション推奨・再演計画生成 | `RecoveryPlanBuilder`がScenario Runner (§14)やGameEngine (§22)のシナリオを再利用し、推奨手順と想定所要時間を算出。 |
+| `src/ops/degradation/report.py` | レポート/ダッシュボード出力 | `DegradationReportGenerator`がMarkdown/JSON/HTML（将来）を生成し、`reports/ops/degradation/<date>.md`へ保存。 |
+| `src/ops/degradation/registry.py` | DI/Feature Flag制御 | Feature Flag `ops.degradation.enabled`（既定True）。`infra/registry.py`からサービスを解決。 |
+| `src/interfaces/cli/degradation.py` | `tradectl degradation`コマンド群 | CLIテレメトリ（§6.8）対応。`instrument_command(command="degradation")`を適用。 |
+| `tests/unit/test_degradation_*.py` | ユニットテスト | `DegradationEpisode`抽出、復旧計画生成、レポート整形を検証。 |
+| `tests/integration/test_degradation_cli.py` | CLI統合テスト | `tradectl degradation report --window 7d`の決定論性とEvidence Graph連携を検証。 |
+
+### 24.3 データモデル
+| モデル | 主フィールド | 説明 |
+| --- | --- | --- |
+| `DegradationEpisode` | `id`, `started_at`, `recovered_at`, `duration_minutes`, `board_mode_start`, `board_mode_end`, `health_reasons`, `rate_limit_stage`, `manual_csv_used: bool`, `impacted_symbols`, `qa_status: dict[str,str]`, `scenario_refs: list[ScenarioId]`, `change_ids: list[str]` | 1回のAD発生を表現。`duration_minutes`は欠損時`None`。`qa_status`はQAスコアカード (§0.10) の結果を格納。 |
+| `RecoveryAction` | `action_id`, `category` (`'manual'|'cli'|'automation'`), `runbook_ref`, `command`, `expected_duration_min`, `actual_duration_min`, `owner`, `evidence_paths` | エピソード内で実施した主要手順。`actual_duration_min`は`ops_worklog.jsonl`から取得。 |
+| `DegradationSummary` | `window`, `episodes: list[DegradationEpisode]`, `mttr_minutes`, `mtbf_days`, `manual_hours_saved`, `pending_followups`, `recommendations` | レポート出力用。`manual_hours_saved`は自動化タスク効果（§6.8.3）と比較。 |
+| `DegradationRecommendation` | `severity`, `owner`, `description`, `linked_prompt_bundle`, `linked_change_ids`, `target_tests` | Codexタスク化用の推奨事項。 |
+
+- すべて`pydantic` v2モデル。`tests/contracts/test_degradation_schema.py`を追加し、スキーマ変更を検知する。
+- `id`は`degrade-<YYYYMMDDHHMM>-<seq>`形式で生成し、Evidence GraphノードIDと突合しやすくする。
+
+### 24.4 データフローとアルゴリズム
+1. `DegradationEpisodeExtractor.scan(window)`が以下のデータソースから候補を抽出。
+   - `metrics/data_ingestion_sla.jsonl`, `metrics/cli_perf.jsonl`: `health_state`=`degraded|soft_stop`期間とBoard Mode遷移時刻を取得。
+   - `logs/ops/manual_csv.log`, `logs/audit/rate_limit.jsonl`: 手動CSV投入やStage変更を紐付け。
+   - `reports/validation_log/AC-45*`, `docs/runbooks/RUN-DATA-05.md`: Runbookチェックボックスのハッシュを読み、エピソードとの整合を確認。
+   - `ScenarioRunner`実行ログ（`reports/scenario_runs/*.json`）: `scenario_id`と結果を紐付け。
+2. Episode化ロジック:
+   - `health_reasons`が`data_latency_*`または`rate_limit_stage`を含む連続区間を1エピソードとみなし、Gap>45分で区切り。
+   - `manual_csv_used`は該当期間に`ManualCsvIngestionTask`成功ログが存在するかで判定。
+   - `impacted_symbols`は`metrics/data_ingestion_sla.jsonl`内の遅延シンボル上位N件（既定:4）を抽出。
+3. `RecoveryPlanBuilder.build(episode)`:
+   - Runbook参照に従い、必要なScenario Runnerシナリオ (`OPS-DEG-01`, `OPS-RL-03`) を列挙。
+   - `GameEngine`シミュレーション結果（`reports/training/game_runs`）で同様の事象が存在する場合はタイムラインを添付し、訓練不足タグを付与。
+   - `QA Scorecard`で`pending`が残るIDを`pending_followups`へ追加。
+4. `DegradationReportGenerator.generate(window)`:
+   - `DegradationSummary`をMarkdown/JSONLへ出力し、Evidence Graph Serviceへ`EvidenceNode(type='degradation')`として登録。
+   - Prompt Bundle Service (§20)へ `PromptSection(kind='degradation_episode')`を追加し、Codexが次回タスクの背景に利用。
+5. `ChangeLedger.record_change(category='degradation', ...)` を自動実行し、`logs/ops/workload.log`に復旧時間を追記。Ops Review Hub (§19) はこのサマリを取り込み週次ダッシュボードへ表示。
+
+### 24.5 CLI仕様 (`tradectl degradation ...`)
+| コマンド | 用途 | 主な引数/フラグ | 出力 | 代表エラー |
+| --- | --- | --- | --- | --- |
+| `tradectl degradation report` | 指定期間のADサマリ生成 | `--window 7d|30d`, `--format markdown|json`, `--include-evidence`, `--push-to-bundle` | `DegradationSummary`表示と`reports/ops/degradation/<window>.md`作成。`--push-to-bundle`でPrompt Bundleに自動添付。 | `DegradationDataMissing`, `EvidenceSyncError` |
+| `tradectl degradation episode list` | エピソード一覧表示 | `--window`, `--filter reason=data_latency_fetch`, `--qa` | Rich Table/JSON。`--qa`でQAステータス列を追加。 | `EpisodeNotFound` |
+| `tradectl degradation episode show <id>` | 詳細参照 | `--format table|json`, `--include-actions`, `--link-evidence` | Episode詳細、Recovery Actions、関連Runbook/Scenario/Evidenceノードを表示。 | `EpisodeLoadError`, `EvidenceLookupFailed` |
+| `tradectl degradation recommend` | Codex向け改善提案抽出 | `--window`, `--limit`, `--severity high|medium`, `--output` | `DegradationRecommendation`リストをMarkdown/JSONで出力し、Issue/Promptテンプレへ貼付可能。 | `RecommendationBuildError` |
+| `tradectl degradation sync-evidence` | Evidence Graph/Change Ledger同期 | `--window`, `--force` | 同期結果、追加/更新ノード数、欠損ノードを表示。 | `EvidenceSyncError`, `ChangeLedgerWriteError` |
+
+- すべてのコマンドはCLIテレメトリに`qa_tags`を付与（例: `['degradation','guarded']`）。Acceptable Degradation期間中の実行では`qa_tags`へ`degraded`を必ず含める。
+- `--push-to-bundle`指定時は`docs/prompt_packages/<date>_degradation.md`を自動生成し、`PromptBundle`モジュールへ差分追加する。
+
+### 24.6 実装ガイド（Codex向け契約）
+1. `DegradationEpisodeExtractor`はI/Oを純関数化し、データソースとのやり取りは`Repository`インターフェース経由で実装。ユニットテストではファイルシステムをモック。
+2. Episode抽出の閾値（例: Gap45分、429率1.5%）は`config/degradation.yaml`に集約し、Feature Flag `ops.degradation.auto_link_prompt`でPrompt Bundle連携のON/OFFを制御。
+3. `RecoveryPlanBuilder`はScenario RunnerとGame EngineをOptional依存としてDI。Feature Flagで無効な場合は代替手順を`manual_actions`に追加する。
+4. Evidence Graph連携は`EvidenceGraphService.link_artifact(node, edge)`のみ使用し、内部Graph構造へ直接アクセスしない。`link_artifact`失敗時はエラーログを残しつつ処理を継続（ベストエフォート）。
+5. CLIは`Typer`のサブアプリとして登録し、既存`register_command(CommandSpec)` API（§0.7.5）を利用。`CommandSpec`に`category='ops'`、`requires_profile=False`を設定。
+6. レポート出力はMarkdownテンプレ `docs/templates/degradation_report.md`（新設）を利用し、`jinja2`ではなく`string.Template`で軽量に生成（依存追加回避）。
+7. `manual_hours_saved`計算では`automation_effect.jsonl`（§6.8.3）と比較し、差分が負の場合はWARNログ `degradation.manual_savings_negative` を出力してRunbookレビューを促す。
+
+### 24.7 テスト計画
+| テストID | 目的 | 内容 |
+| --- | --- | --- |
+| UT-DEG-01 | Episode抽出 | `tests/unit/test_degradation_analytics.py::test_extracts_contiguous_health_reasons`で`health_reasons`連続区間からEpisodeを生成し、Gap>45分で分割されることを確認。 |
+| UT-DEG-02 | Recovery計画生成 | `tests/unit/test_degradation_recovery.py::test_build_plan_links_scenarios`でScenario Runner/QAスコアカードが適切に紐付くかを検証。 |
+| UT-DEG-03 | レポート整形 | `tests/unit/test_degradation_report.py::test_generate_markdown_snapshot`でテンプレ出力のスナップショットテストを実施。 |
+| IT-DEG-01 | CLIレポート | `tests/integration/test_degradation_cli.py::test_report_and_episode_show`で`tradectl degradation report --window 7d`→`episode show`が決定論的に動作するか確認。 |
+| IT-DEG-02 | Evidence同期 | `tests/integration/test_degradation_cli.py::test_sync_evidence_links_graph`でEvidence Graphへのノード追加をモック検証。 |
+| IT-DEG-03 | Prompt Bundle連携 | `tests/integration/test_prompt_cli.py::test_degradation_push_to_bundle`を追加し、`--push-to-bundle`指定でPrompt Bundleへ節が追加されるか検証。 |
+| SC-DEG-01 | シナリオ連携 | `tradectl scenario run --id OPS-DEG-01 --dry-run`後に`tradectl degradation report --window 1d --include-evidence`を実行し、Scenario IDとRunbookチェックが紐付いていることを確認（Scenario Runner統合テストに組み込み）。 |
+
+- `make ci-lite`へ`pytest -k degradation`を追加（CI設定ファイルに追補）。
+- CIで`tradectl degradation report --window 1d --format json --push-to-bundle --dry-run`を週次実行し、`reports/ops/degradation/latest.json`のハッシュをEvidence Graphテストと共有する。
+
+### 24.8 トレーダー/運用インサイト
+- Opsレビュー会議では`DegradationSummary`を`tradectl review digest`（§19）へ自動添付し、復旧時間とAutomation効果を同一スライドで確認できるようにする。
+- `reports/weekly/<YYYYWW>.md`の「Opsハイライト」節へ`mttr_minutes`、`manual_hours_saved`、`pending_followups`を要約し、POがリソース配分を判断できるようにする。
+- GameEngine (§22) の演習結果で`loss:data_latency_breach`が一定回数を超えた場合、`DegradationRecommendation`に「トレーニング不足」タグを付与し、Runbook更新または追加演習を提案。
+- Board Guard (`§3.8`) が`guarded`に遷移した回数と実行時間をEpisodeに紐付け、HITLトレーダーが承認したチケット数/Reject理由を`TicketBuilder`ログと照合。UX改善タスク起票時に`manual_hours_saved`の改善余地を明示する。
+- Acceptable Degradation解除後24時間以内に`tradectl degradation recommend --severity high --push-to-bundle`を実施し、Codexへ再発防止タスクを連続で依頼できるフローを定着させる。
 
 ---
 
