@@ -1841,6 +1841,99 @@ Flag切替時は`ConfigChanged`イベントに`flag_delta`が記録され、Repo
 
 ---
 
+## 23. リサーチ/運用エビデンスグラフ統合（v2.5ドラフト）
+
+リサーチ成果・運用ログ・ゲーム演習・Change Ledger記録を横断的に結び付け、トレーダー/POがAcceptable Degradation後や戦略更新前に必要な根拠へ即アクセスできるようにする。Codexがモジュールを実装する際に境界が明確になるよう、データモデル・API・テスト観点を以下に定義する。
+
+### 23.1 目的
+- **証跡の一元化**: `ChangeRecord`、`KnowledgeCase`、`GameRunResult`、`BacktestRunResult`、`QA Scorecard`をグラフ構造で連結し、Ops Review/研究レビューで欠損を即座に把握できるようにする。
+- **Codexハンドオフ効率化**: Prompt Bundle（§20）生成時に関連証跡を自動で抽出し、実装者が対象コンテキストを素早く理解できるようにする。
+- **将来の自動推論基盤**: M2以降でRecurrence分析や戦略ガバナンス自動提案へ拡張可能なGraph APIを先行整備する。
+
+### 23.2 モジュール構成
+| パス | 役割 | Codex実装ポイント |
+| --- | --- | --- |
+| `src/review/evidence_graph.py` | `EvidenceGraphService`本体。ノード/エッジ管理とクエリAPIを提供。 | `build_index(window: ReviewWindow)`, `link_artifact(node: EvidenceNode, edge: EvidenceEdge)`、`query(selector: EvidenceSelector)`を実装。|
+| `src/review/models.py` | `EvidenceNode`, `EvidenceEdge`, `EvidenceSelector`, `EvidenceQueryResult`などの`pydantic`モデル。 | 既存`review`モデル（§19）と同一モジュールで共存。`schema_version=1`。|
+| `src/review/ingestors/change_ledger.py` | Change Ledgerエントリをノード化するアダプタ。 | `ingest(records: Iterable[ChangeRecord]) -> list[EvidenceNode]`。|
+| `src/review/ingestors/knowledge_pack.py` | Knowledge Packケース/チェックリストを取り込む。 | `KnowledgeCase`に`node_tags=['knowledge','degraded']`などを付与。|
+| `src/review/ingestors/research.py` | Backtest/Validation成果をグラフへ登録。 | `link_parameter_change(change_id, run_result)`で差分ノード生成。|
+| `src/review/ingestors/game.py` | GameEngineの`GameRunResult`を登録。 | `attach_game_run(case_id, run)`でKnowledge Packと関連付け。|
+| `src/review/query_language.py` | ドメイン特化クエリ構文（YAML/JSON）→`EvidenceSelector`への変換。 | `parse(selector_text)`、`validate(selector)`。|
+| `src/interfaces/cli/evidence.py` | `tradectl evidence` CLI。 | テレメトリ（§6.8）対応、Rich表/グラフ描画。|
+
+### 23.3 データモデル
+- **EvidenceNode**:
+  - `id: str`（`<type>:<uuid>`）。
+  - `type: Literal['change','knowledge','game','research','qa','metric']`。
+  - `title`, `summary`, `tags: set[str]`, `created_at`, `source_path`, `hash`, `related_ids`。
+  - `metadata: dict[str, Any]`にRunbook参照、KPI、シナリオID等を格納。
+- **EvidenceEdge**:
+  - `from_id`, `to_id`, `relation: Literal['supports','blocks','duplicates','replaces','requires']`。
+  - `weight`（推奨度合い、0〜1の`Decimal`）。
+  - `annotations`（Runbookステップ、レビューコメント）。
+- **EvidenceSelector**:
+  - `kinds: set[str]`、`tags: set[str]`、`time_range: tuple[datetime, datetime]`、`relations: list[RelationFilter]`。
+  - `RelationFilter`は`relation`, `direction`（`'incoming'|'outgoing'`）, `depth`。
+- **EvidenceQueryResult**:
+  - `nodes: list[EvidenceNode]`, `edges: list[EvidenceEdge]`, `summary_stats`（ノード種別件数、孤立ノード件数、未リンクChange数など）。
+  - `action_items: list[ActionItemRef]`（§19の再利用）。
+- すべてのモデルに`schema_hash`を付与し、`tests/contracts/test_evidence_graph_schema.py`でリグレッション検知する。
+
+### 23.4 CLI仕様 (`tradectl evidence ...`)
+| コマンド | 用途 | 主な引数/フラグ | 出力 |
+| --- | --- | --- | --- |
+| `tradectl evidence graph build` | 指定ウィンドウのグラフ生成 | `--window <YYYYWW|date range>`, `--scope ops|research|degraded`, `--out` | `evidence_graph_<window>.json`とサマリMarkdownを生成。`ChangeLedger`/`Knowledge Pack`へのリンクを埋め込む。|
+| `tradectl evidence query` | クエリ実行 | `--selector <file|text>`, `--format table|json|graphviz`, `--limit` | ノード/エッジ表、Graphviz DOT出力。|
+| `tradectl evidence inspect` | 特定ノードの詳細確認 | `--id`, `--show-related`, `--depth` | ノードメタデータと関連証跡を表示。|
+| `tradectl evidence audit` | 欠損/未リンク検査 | `--window`, `--check orphan|stale|missing-change|missing-knowledge` | 欠損リストを赤字で表示しExit Code!=0。CI向け。|
+| `tradectl evidence export` | Ops Review/Prompt Bundle向けエクスポート | `--window`, `--format markdown|json`, `--include qa|metrics|game` | Prompt Bundle（§20）に添付可能な抜粋を生成。|
+
+- CLIコマンドは`CommandTelemetryRecord.qa_tags`に`['evidence_graph']`を設定。Acceptable Degradation期間中のエクスポートには`'degraded'`タグを追加する。
+- `graph build`完了時に`ChangeLedger.record_change(category='evidence_graph')`を自動記録し、生成ファイルのハッシュを保存する。
+
+### 23.5 実装ガイド
+1. **インデックス構築**: `EvidenceGraphService.build_index`は`ReviewWindow`に基づき、`ChangeLedger`, `KnowledgePack`, `PromptBundle`, `TelemetryDigest`, `GameRunResult`, `BacktestRunResult`, `QaScorecardSnapshot`から最新N日（既定: 30日）をロードする。ロード順序は`change → knowledge → research → game → qa → metrics`で安定化させ、ハッシュとタイムスタンプで重複排除。
+2. **ノード統合**: 同一`change_id`や`knowledge_case_id`を検出した場合はマージし、`related_ids`にすべての参照元を列挙する。`EvidenceEdge.relation='duplicates'`でリンクし、`ActionItem`には`resolution='merge'`を設定。
+3. **再計算戦略**: `build_index`は`source_hash`を計算し、変更がない場合はキャッシュ（`reports/evidence_graph/cache/<window>.json`）を返す。キャッシュヒット時も`graph build --force`で再生成可能とする。
+4. **Prompt Bundle連携**: `PromptBundleService.build`（§20）にグラフAPIを注入し、対象`change_ids`のノード要約を`PromptSection(kind='existing_design')`末尾へ自動追記する。
+5. **Ops Review統合**: `OpsReviewDigestBuilder`（§19）が`EvidenceQueryResult`から`RiskHighlight`と`ActionItem`を補強。孤立ノードは`impact_score`を引き上げ、レビューで優先的にチェックする。
+6. **セキュリティ/プライバシー**: ノード`metadata`から個人名/メールを削除し、`actor`はイニシャルまたは`CLI_ACTOR`に置換。`args_hash`のみを保持し、生ログへの直接リンクは`artifact://`スキームで参照。
+7. **性能**: ノード数500件、エッジ3000件を想定。`networkx`等の外部依存を避け、`igraph`導入はM2検討。M1は純PythonでDFS/BFSを実装し、`O(N+E)`でクエリ処理できるようにする。
+8. **エラーハンドリング**: 欠損ファイルは`EvidenceNode`に`status='orphan'`を付与し、`evidence audit`で検出。致命的エラー時は`EvidenceGraphError`をRaiseし、CLIは`ERROR evidence.graph_build_failed`で終了。
+
+### 23.6 テスト計画
+| テストID | 目的 | 内容 |
+| --- | --- | --- |
+| UT-EVG-01 | ノード統合 | `tests/unit/test_evidence_graph.py::test_merge_duplicate_change_records`で`change_id`重複のマージを確認。 |
+| UT-EVG-02 | エッジ生成 | `tests/unit/test_evidence_graph.py::test_link_game_to_knowledge_case`で`GameRunResult`→`KnowledgeCase`リンクを検証。 |
+| UT-EVG-03 | クエリ言語 | `tests/unit/test_evidence_query_language.py::test_parse_selector`でDSL→`EvidenceSelector`変換を検証。 |
+| UT-EVG-04 | キャッシュ制御 | `tests/unit/test_evidence_graph.py::test_build_index_uses_cache`でハッシュ一致時にキャッシュが再利用されるか確認。 |
+| IT-EVG-01 | CLIビルド | `tests/integration/test_evidence_cli.py::test_graph_build_and_inspect`で`graph build`→`inspect`→`query`の一連操作を検証。 |
+| IT-EVG-02 | Prompt Bundle連携 | `tests/integration/test_prompt_cli.py::test_bundle_includes_evidence_summary`を追加し、グラフ抜粋がプロンプトに挿入されることを確認。 |
+| IT-EVG-03 | Ops Review統合 | `tests/integration/test_review_cli.py::test_review_digest_includes_evidence_nodes`で孤立ノードがハイライトされることを検証。 |
+| IT-EVG-04 | Acceptable Degradationケース | `tests/integration/test_evidence_cli.py::test_degraded_case_audit`で`--scope degraded`指定時に必要ノードが揃っているか検証。 |
+
+- `pytest -k evidence_graph`を`make ci-lite`へ追加し、キャッシュ利用時でも決定論的にGREENとなることを保証する。
+- CLI `tradectl evidence audit`はCIジョブ`make evidence-audit`で日次実行し、欠損があればSlack（M2+）またはメールで通知する。
+
+### 23.7 Codexハンドオフ指針
+- Prompt Bundleに`EvidenceNode`定義と代表的クエリ例（`selector: tags=['degraded']`など）を抜粋して添付する。
+- Codexへは`docs/snippets/review/evidence_graph_service.py`（200行以内）を渡し、`EvidenceGraphService`のpublicメソッドシグネチャと主要テストを明記する。
+- Issueには以下を必須記載:
+  1. 対象ウィンドウ/スコープ。
+  2. 期待するノード種別と最低件数（例: `change>=5`, `knowledge>=3`）。
+  3. Acceptable Degradationケースとの関連（Knowledge Pack ID）。
+  4. 実行テストコマンド（`pytest -k evidence_graph`, `tradectl evidence graph build --window <...> --dry-run`）。
+- レビュー時は`git diff --stat`で`src/review/`/`tests/`/`docs/`のみに収まっているか確認し、`PromptBundle`出力の差分を`docs/prompt_packages/...`へ添付させる。
+
+### 23.8 将来拡張
+- **M1.1**: `graphviz`プラグインを追加し、`tradectl evidence query --format graphviz --open`でPNGを自動生成。CLIに`--open`でPreviewを開く機能を追加。
+- **M2**: `EvidenceInferenceService`を追加し、孤立ノードや重複ケースに対する自動アクション提案を行う。Graphベースの類似度計算に`networkx`を導入し、計算負荷をテレメトリに記録。
+- **M2+**: 外部監査提出用に`evidence_graph.export(standard='audit_v1')`を実装し、CSV/PDF化。外部レビュー向けに個人情報マスキングを自動適用する。
+
+---
+
 本詳細設計は要件定義・基本設計に基づき、M1リリースの実装に必要なインターフェース・データモデル・フロー・テスト計画を整備した。拡張機能はFeature Flagとガバナンス手順を通じて安全に段階導入できるよう設計している。
 
 ## 12. 付録
