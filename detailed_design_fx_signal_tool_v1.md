@@ -1,7 +1,7 @@
-# FXヒューマン・インザループ投資ツール 詳細設計書 v2.1
+# FXヒューマン・インザループ投資ツール 詳細設計書 v2.2
 
 ## 0. 文書情報
-- 作成日: 2025-02-26
+- 作成日: 2025-02-28
 - 作成者: Codex AI 支援
 - 参照文書: 要件定義（テンプレ形式）v_1.md, basic_design_fx_signal_tool_v1.md
 - 対象スコープ: マイルストーンM1（Backtest/Paper/Live 共通基盤）。M2以降で有効化される機能は拡張ポイントとして明示し、実装フックと制約を記載する。
@@ -9,6 +9,7 @@
 ### 0.1 改訂履歴
 | 版 | 日付 | 改訂概要 |
 | --- | --- | --- |
+| v2.2 | 2025-02-28 | Codex実装スプリント用のタクティカルロードマップとモジュール別契約テーブルを追加。M1 Core優先モジュールの拡張ポイントを再整理し、将来の仕様変更に耐えるインターフェース境界を強化。 |
 | v2.1 | 2025-02-27 | Codex開発者向けワークパッケージ青写真とトレーダー運用シナリオを追加し、Acceptable Degradation時の判断材料とレビュー観点を具体化。プロンプト生成テンプレートにシナリオID/Runbook整合性チェックを義務化。 |
 | v2.0 | 2025-02-26 | Codex向け実装アクセラレーションパックを追加し、エピック別の成果物・プロンプト指示・テストゲーティングを体系化。Acceptable Degradation運用と将来の拡張に耐える抽象化境界の指針を強化。 |
 | v1.9 | 2025-02-25 | 要件v1.4/基本設計v1.4の差分（RateLimitGuard段階評価、Acceptable Degradation手動運用ログ、Validation Data Playbookリンク強化）を反映。Codex実装前提のプロンプト/テスト指示を更新し、SLA計測とRunbookトレーサビリティを拡充。 |
@@ -157,6 +158,25 @@ Codexへ実装を委任する際の成果物粒度・レビュー観点・トレ
 | EP-05 Weekly Review | `src/reporter/*`, テンプレ更新、`reports/templates/*` | §3.18, §5.11 | `tradectl report weekly --dry-run`, `pytest -k reporter` | `reports/weekly/*.md`, `metrics/reporter.jsonl` | KPI欠損時のFallbackコメント、`guarded`時のコメントテンプレ |
 
 - 表の「必須成果物」は実装完了時に`docs/checklists/<epic>_done.md`へチェックし、Releaseフェーズでサインオフする。Codexへ渡す際は表の行を丸ごと貼り付け、達成条件を明文化する。
+
+### 0.8 Codex実装ロードマップ（M1 Coreタクティクス）
+
+Codexへ実装を委任する際のスプリント運用を以下に定義する。各スプリントは**1エピックずつ完遂**し、レビュー/Runbook訓練/メトリクス監視をセットで完了させることで、後続変更にも耐えられる堅牢な境界を維持する。
+
+| Sprint Window | ワークパッケージ | 主担当モジュール/ファイル | 必須プロンプト添付物 | テストゲート | 進捗審査ポイント |
+| --- | --- | --- | --- | --- | --- |
+| Sprint 1 (週次) | EP-01 DataLag Mitigation | `src/data/service.py`, `src/data/rate_limit.py`, `src/data/cache.py`, `src/data/quality.py` | `docs/prompt_packages/<date>_ep01.md`, `docs/snippets/ep01/data_service.py`（200行以内）, `metrics/data_ingestion_sla.jsonl`抜粋 | `pytest -k data_pipeline`, `pytest -k rate_limit_guard`, `scripts/qa/manual_csv_smoke.sh`（429エッジケースを含む） | `metrics/data_ingestion_sla.jsonl`でfetch/processing両方のp95が記録され、`RUN-DATA-05/06`のチェックリストが更新されていること。 |
+| Sprint 2 (週次) | EP-03 Guardrails | `src/core/health.py`, `src/risk/manager.py`, `src/risk/kill_switch.py`, `src/interfaces/cli/status.py` | `docs/prompt_packages/<date>_ep03.md`, `docs/snippets/ep03/risk_manager.py`, `reports/ops/incidents/*`の代表ログ | `pytest -k health_state`, `pytest -k risk_manager`, `pytest -k cli_status`, `make sla-report`（推奨） | `health_state_transitions.jsonl`に推奨アクションが残り、`tradectl status`でBoardモード/推奨Runbookが表示されること。 |
+| Sprint 3 (週次) | EP-04 Ticket Clarity | `src/ticket/builder.py`, `src/ticket/checklist.py`, `src/interfaces/cli/board.py`, `src/ticket/validator.py` | `docs/prompt_packages/<date>_ep04.md`, `docs/snippets/ep04/ticket_builder.py`, CLIスクリーンショット（`tradectl board --sample`） | `pytest -k ticket_builder`, `pytest -k board_renderer`, `pytest --snapshot-update`（必要時） | `logs/audit/ticket.jsonl`に`ticket.edit.*`とチェックリストバッジが記録され、`docs/ux_feedback.md`の該当課題がクローズされていること。 |
+| Sprint 4 (週次) | EP-05 Weekly Review | `src/reporter/generator.py`, `src/reporter/templates/weekly.py`, `src/interfaces/cli/report.py` | `docs/prompt_packages/<date>_ep05.md`, `reports/templates/m1_core.md`, `reports/kpi_snapshots/latest.json` | `pytest -k reporter`, `tradectl report weekly --dry-run`, `tradectl kpi rollup --window 90` | 週次レポートに`metric_state`が表示され、`reports/weekly/<YYYYWW>.md`へ自動生成＋POコメント欄が残っていること。 |
+
+- **スプリントゼロ**: `src/core/session.py`, `src/core/workflow.py`, `src/interfaces/cli/main.py`の現状調査と`poetry run ruff --fix`適用。Codexに渡す前に既存ユニットテストをすべて再実行し、ベースラインを`docs/prompt_packages/<date>_baseline.md`へ記録する。
+- **フォールバックルール**: Acceptable Degradation状態（`board_mode=guarded`）でスプリントが開始された場合、まずEP-01の`ManualCsvIngestionTask`と`RateLimitGuard`を再確認し、Runbookサインオフを更新する。ガード解除後に次エピックへ進む。
+- **ブリッジング**: 各スプリント完了時に`docs/review_log.md`へレビュー結果を追記し、次スプリントのプロンプトには「前スプリントの改善要望」節を必須で含める。
+
+- **将来拡張への備え**:
+  - M1.1以降に備え、テーブルの`必須プロンプト添付物`列に「差分パッチ」「テレメトリ抜粋」「Runbookリンク」を最低3点添付するルールを明文化した。これにより後続のCodex依頼時に再利用可能な知識ベースを形成する。
+  - `docs/snippets/`以下のコード断片は`# region`コメントで抽象化境界を示し、関数追加時に差分マージしやすい構造を保つ。
 
 ### 0.8 Codexワークパッケージ青写真（v2.1追加）
 
@@ -501,6 +521,22 @@ tests/
 - **遅延メトリクス**: `fetch_delay_sec = (queue_enqueue_ts - request_ts)`、`processing_delay_sec = (bar_ready_ts - queue_enqueue_ts)`を算出し、`metrics/data_ingestion_sla.jsonl`に`phase=fetch|processing`ラベルで記録。閾値（既定: fetch≤18秒、processing≤12秒）は`config.ingestion.sla.fetch_p95_sec`/`config.ingestion.sla.processing_p95_sec`で制御し、超過時は`HealthMonitor.raise('degraded','data_latency_fetch|process')`を行う。Prometheus Exporterでは`data_ingestion_delay_seconds{phase,symbol,provider}`として公開。
 - **Runbook連携**: 遅延アラート発生時はEventBusで`ingestion.latency_exceeded`を発火し、Runbook手順`RUN-DATA-05`（フォールバック調整）/`RUN-DATA-06`（手動補填）を通知。`FallbackRetryTask`/`ManualCsvIngestionTask`の完了を`tradectl data jobs --pending`で確認し、二重入力CSVは`tradectl benchmark validate-manual`の結果（ハッシュ一致・承認サイン）をRunbookチェックリストへ添付する。`make sla-report`出力（`reports/validation_log/AC-45_sla_<date>.md`）と合わせて`RUN-POST-03`に従い事後レビュー（原因/再発防止）を`logs/ops/review.log`へ追記する。
 
+#### 3.1.A Codex実装契約と拡張境界
+
+| 関数/メソッド | シグネチャ（型ヒント必須） | 主な例外/戻り値 | 必須テスト/フィクスチャ | 拡張ポイント・備考 |
+| --- | --- | --- | --- | --- |
+| `fetch_latest` | `async def fetch_latest(self, symbols: list[str], timeframe: Timeframe) -> dict[str, MarketFrame]` | `ProviderError`, `DataSourceDown`; 正常時はシンボルごとの`MarketFrame` | `pytest -k data_pipeline::test_fetch_latest_success`, `pytest -k data_pipeline::test_fetch_handles_rate_limit` | `ModeContext`でBacktest/Paper/Liveのキャッシュ経路を切替。M1.1でWebSocket追加予定のため戻り値はdict固定。 |
+| `backfill` | `async def backfill(self, symbols: list[str], timeframe: Timeframe, start: datetime, end: datetime) -> BackfillReport` | `BackfillTimeout`, `ManualCsvRequired`; レポートは`bars_loaded`, `fallback_used`等を含む | `pytest -k data_pipeline::test_backfill_gap_detection`, `scripts/qa/manual_csv_smoke.sh` | `BackfillReport`に`segments: list[BackfillSegment]`を含め将来の部分再実行を許容。 |
+| `warm_cache` | `async def warm_cache(self, symbols: list[str]) -> None` | `CacheWarmupError` | `pytest -k data_pipeline::test_warm_cache_populates` | キャッシュを`data/cache/<provider>/<symbol>.parquet`に保存。M2でRedis化する際もAPI変更なし。 |
+| `spawn_provider_workers` / `drain_buffers` | `async def spawn_provider_workers(self) -> None` / `async def drain_buffers(self) -> None` | `WorkerSpawnError`, `BufferDrainTimeout` | `pytest -k data_pipeline::test_worker_spawn_guardrails` | `spawn_*`は`asyncio.TaskGroup`で実装し将来WebSocketへ移行可能にする。`drain_buffers`は終了時のGraceful shutdown手順。 |
+| `ingest_manual_csv` | `async def ingest_manual_csv(self, payload: ManualCsvPayload) -> ManualCsvResult` | `ManualCsvMismatch`, `ManualCsvMissingTwin` | `pytest -k data_pipeline::test_manual_csv_double_entry`, `scripts/qa/manual_csv_smoke.sh` | `ManualCsvPayload`は`path_op`, `path_review`, `symbol`, `timeframe`を保持。M1.1でGUI導線を追加予定。 |
+| `snapshot_state` | `def snapshot_state(self) -> IngestionSnapshot` | 例外なし（不変データを返却） | `pytest -k data_pipeline::test_snapshot_roundtrip` | Snapshotは`AsyncBuffer`のヘッド・Stage情報を含む。`SessionManager`のスナップショット復元APIで利用する。 |
+
+- **実装ガイド**:
+  1. Codexに渡す際は`ManualCsvPayload`/`BackfillReport`等の`@dataclass`定義を先頭に提示する。
+  2. `RateLimitGuard`との結合は`acquire/observe`のみに限定し、`TokenBucket`内部構造へアクセスしない。将来`rate_limit`モジュールを差し替えても変更を局所化できるようにする。
+  3. エラーメッセージはRunbook検索キーワード（例: `data_latency_fetch`, `manual_csv_mismatch`）を含める。
+
 #### 3.1.1 RateLimitGuard & Polling Stage Evaluator (`src/data/rate_limit.py`)
 - **目的**: 無償フィード(yfinance)の帯域制限を管理し、429/403レートリミット発生率を監視したうえで段階的ポーリング間隔（Stage0/1/2）を手動で運用する。自動遷移はM1.1以降の検討事項とし、M1 Coreでは測定・提案・Runbookログ連携に徹する。
 - **公開API**: `acquire(provider, symbol) -> Awaitable[None]`, `observe(event: RateLimitEvent)`, `snapshot() -> RateLimitSnapshot`, `set_stage(provider, stage, actor)`, `suggest_stage(provider) -> RateLimitSuggestion`, `record_manual_action(provider, stage, actor, reason)`。
@@ -576,6 +612,21 @@ tests/
 - **Kill Switch**: 連続ドローダウンで`soft_stop(drawdown)`→Spread/CorrelationによるReduce-Only提案（M2+）を指示。`r_eff`逸脱が継続する場合はKill Switchへ`reason='r_eff_guard'`を伝搬し、解除時は`RiskMetricsSnapshot`の`r_eff<=threshold`が2バー連続で確認できたことを条件とする。
 - **資本整合性チェック**: `RiskPolicy`に`base_capital_jpy`と`trade_frequency_estimate`を保持し、月次ジョブ`RiskSimulationJob`（CLI: `tradectl risk simulate --trials 10000 --horizon 252d`）が最新Paper実績（勝率/平均R/相関）をサンプルしてモンテカルロ試算を実行する。`Prob(max_drawdown>15%)`と`Prob(equity<0.8·base_capital)`を計算し、閾値（0.25/0.05）を超えた場合は`health.raise('degraded','risk_capital_gap')`→Kill Switchレビューをトリガーする。結果は`reports/risk/capital_adequacy/<YYYYMM>.md`へMarkdown出力し、PO＋Ops ManagerがRunbook `RUN-RISK-01`の月次レビュー節でサインする。
 
+#### 3.8.A Codex実装契約とレビュー観点
+
+| 関数/メソッド | シグネチャ | 主な例外/戻り値 | テスト観点 | 拡張ポイント |
+| --- | --- | --- | --- | --- |
+| `evaluate` | `def evaluate(self, ranked: Iterable[RankedSignal], context: RiskContext) -> RiskEvaluationResult` | `KillSwitchEngaged`, `RiskPolicyBreach`; 結果は`approved`, `rejected`, `alerts`を含む | `pytest -k risk_manager::test_r_eff_guard`, `pytest -k risk_manager::test_bucket_limits`, `pytest -k risk_manager::test_reduce_only_recommendation` | `RiskEvaluationResult`に`ui_hints`と`audit_payload`を含め、M1.1でSPRTやReduce-Only自動化を追加しても互換。 |
+| `kill_switch_state` | `def kill_switch_state(self) -> KillSwitchState` | 例外なし、`status`, `reason`, `since`を返す | `pytest -k risk_manager::test_kill_switch_state_snapshot` | `KillSwitchState`は`FeatureFlag`で将来`suggested_action`を追加する余地。 |
+| `capture_snapshot` | `def capture_snapshot(self) -> RiskSnapshot` | `SnapshotWriteError` | `pytest -k risk_manager::test_snapshot_roundtrip`, `pytest -k risk_manager::test_snapshot_file_integrity` | `RiskSnapshot`は`correlation_matrix_hash`を保持し、M2で外部モニタリングに送信可能。 |
+| `acknowledge_alert` | `def acknowledge_alert(self, alert_id: str, actor: str) -> None` | `AlertNotFound`, `AlreadyAcknowledged` | `pytest -k risk_manager::test_acknowledge_alert_audit` | 監査ログ`logs/audit/risk.jsonl`へ`ack_actor`, `ack_ts`を書き出す。M1.1でUI承認やSlack連携に転用。 |
+| `register_policy_override` (M1.1+) | `def register_policy_override(self, *, key: str, value: Any, expiry: datetime) -> PolicyOverride` | `PolicyOverrideRejected` | `pytest -k risk_manager::test_policy_override_requires_signature` | M1 CoreではFeature Flag `risk.policy_override_enabled`がfalse。Codex実装時もAPIシグネチャは確定済みのため準備のみ。 |
+
+- **レビュー観点**:
+  1. 監査ログ (`audit_payload`) には`strategy_ids`, `r_eff`, `bucket_exposure`, `kill_switch_status` を含め、HumanレビューがそのままRunbookへ転記できるようにする。
+  2. `evaluate`内部で`context.mode`に応じた緩和ロジックを集中管理し、将来Live特有の閾値調整を追加する際に分岐を一箇所で済ませる。
+  3. Codex出力に`Decimal`と`float`が混在しないかをレビュー。金融計算は`Decimal`を優先し、`FractionalSizer`との整合性を保つ。
+
 ### 3.9 HealthMonitor (`src/core/health.py`)
 - **公開API**: `raise(level, reason)`, `snapshot()`, `ack(alert_id)`。
 - **入力**: Risk/Data/Config/Spread/Funding/Heartbeat/Manual。`alert_id`を生成しCLIで承認。
@@ -645,6 +696,21 @@ tests/
 - **監査**: `TicketIssued`イベントと`logs/audit/*.jsonl`へ書き込み。`cfg_hash`, `data_hash`, `hybrid_components`を添付。
 - **エラーハンドリング**: バリデーションNGで`TicketValidationError`→SignalをReject。ユーザー編集時も同じバリデーションを実施。
 
+#### 3.16.A Codex実装契約とUI整合性
+
+| 関数/メソッド | シグネチャ | 主な例外/戻り値 | テスト観点 | UI/UX拡張ポイント |
+| --- | --- | --- | --- | --- |
+| `build` | `def build(self, sized_signal: SizedSignal, *, execution: ExecutionAdjustments, gate: GateState, disclosure: RiskDisclosureState) -> Ticket` | `TicketValidationError`, `InstrumentMetaMissing` | `pytest -k ticket_builder::test_build_rounding`, `pytest -k ticket_builder::test_guarded_reduce_only`, `pytest -k ticket_builder::test_disclosure_badge` | `Ticket`の`ttl`と`expected_entry`は`ExecutionModel`と整合。GUI導入時もJSON Schemaを固定し、表示層のみ差し替える。 |
+| `apply_manual_adjustments` | `def apply_manual_adjustments(self, ticket: Ticket, adjustments: TicketAdjustments) -> Ticket` | `AdjustmentOutOfRange`, `MinLotViolation` | `pytest -k ticket_builder::test_manual_adjustment_limits` | 調整差分は`ticket.changes`に保持し、CLIが`+2.0 pips`等の表示を生成可能。 |
+| `validate_ticket` | `def validate_ticket(self, ticket: Ticket) -> ValidationResult` | `ValidationError`（`code`, `field`, `delta`を含む） | `pytest -k ticket_validator::test_min_stop_distance`, `pytest -k ticket_validator::test_risk_disclosure_gate` | `ValidationResult`は`is_valid`, `warnings`, `errors`を保持。M1.1でGUI入力検証に再利用。 |
+| `render_checklist` | `def render_checklist(self, ticket: Ticket, *, format: ChecklistFormat = ChecklistFormat.CLI) -> str` | 例外なし | `pytest -k ticket_builder::test_checklist_render_cli` | `ChecklistFormat`に`cli`/`markdown`を用意し、M1 CoreはCLIのみ。GUI導入時にMarkdownを転用。 |
+| `badge_summary` | `def badge_summary(self, ticket: Ticket) -> list[BadgeSummary]` | 例外なし | `pytest -k ticket_builder::test_badge_summary_levels` | Badgeは`level∈{info, warn, critical}`を持ち、Signal Boardが色分け表示できる。
+
+- **実装ノート**:
+  1. `Ticket`は`pydantic`モデルで定義し、`json(by_alias=True)`出力がCLI/監査共通となるようAliasを整備する。
+  2. `ChecklistEngine`に新項目を追加する際は`ChecklistRegistry`へ登録し、Feature Flagで制御。Codex実装時は新規`Enum`を増やしても既存ロジックが崩れないよう`default`ケースを定義する。
+  3. `badge_summary`に表示するラベルはRunbook検索語（例: `oco_missing`, `risk_disclosure_pending`）を含め、運用トレーダーがCLIログから直接Runbook参照できるようにする。
+
 ### 3.17 Backtest & Optimizer (`src/backtest/engine.py`, `src/backtest/walkforward.py`, `src/backtest/optimizer.py`)
 - **Backtest**: Workflowと同じパイプラインを同期実行し、ExecutionModel統計値でFill判定。`PerformanceStats`にPF/Sharpe/DD/Stabilityを集計。
 - **Walk-Forward**: `(train_start, train_end, test_end)`スケジューラを処理。`config.optimizer.walkforward`でウィンドウ指定。
@@ -657,6 +723,21 @@ tests/
 - **依存**: M1 Coreでは`PerformanceStats`、`reports/performance/paper|live/*.parquet`、`logs/events`（主要コメント抽出のみ）に限定する。Feature Flag有効時にのみ`metrics/pipeline.jsonl`、`kill_switch_events.jsonl`、`config/diff/`を追加読み込みする。
 - **リスク概要/キルスイッチ連携**: `RiskSummaryBuilder`はM1.1で有効化し、Flag無効時は`RiskSummaryStub`が`None`を返す。M1.1では`risk_policy.yaml`の閾値と`kill_switch_events.jsonl`を集計し、逸脱時に`[ALERT]`バッジを付与、閾値変更は`reports/risk/threshold_change_<date>.md`へのリンクを付ける。
 - **同期メタデータ**: `kpi_snapshot_version`のみをM1 Coreで記録し、Feature Flagが有効化された際に`threshold_version`や`extended_block_version`を追加する。`tradectl risk status`はメタデータ齟齬を監視し、Flag無効時は拡張フィールドを`not_applicable`表示とする。
+
+#### 3.18.A Codex実装契約とテンプレート運用
+
+| 関数/メソッド | シグネチャ | 主な例外/戻り値 | テスト観点 | 拡張ポイント |
+| --- | --- | --- | --- | --- |
+| `generate_weekly` | `def generate_weekly(self, profile: ReportProfile) -> ReportArtifact` | `ReportTemplateMissing`, `MetricNotAvailable`; `ReportArtifact`は`markdown`, `summary`, `attachments` | `pytest -k reporter::test_generate_weekly_core`, `pytest -k reporter::test_weekly_missing_metric_annotations` | `ReportProfile`に`feature_flags`を保持し、M1.1でブロック追加時にテンプレ差分のみで対応可能。 |
+| `generate_daily` | `def generate_daily(self, date: datetime) -> ReportArtifact` | `ReportDataGap`; `ReportArtifact` | `pytest -k reporter::test_generate_daily_catchup` | Daily版はM1 Core optional。M1.1でベンチマーク比較等を追加する際に再利用。 |
+| `emit_summary` | `def emit_summary(self) -> dict[str, Any]` | 例外なし（欠損時は`metric_state='pending'`） | `pytest -k reporter::test_emit_summary_structure` | Signal Boardヘッダで使用。M1.1で`extended_blocks`を含める場合でもキー互換を維持。 |
+| `render_block` | `def render_block(self, block: ReportBlock, data: ReportData) -> str` | `ReportBlockDeferred`（Flag無効時） | `pytest -k reporter::test_render_block_deferred_comment` | `ReportBlock`はEnumで定義し、`deferred_reason`を保持。将来GUIレポートでも再利用。 |
+| `validate_inputs` | `def validate_inputs(self, stats: PerformanceStats) -> None` | `ReportValidationError` | `pytest -k reporter::test_validate_inputs_thresholds` | `PerformanceStats`の閾値変更があっても例外文言をRunbook検索語（例: `report_missing_winrate`）で統一。
+
+- **テンプレート管理**:
+  1. `docs/templates/reports/*.md`は`jinja2`テンプレートとして実装し、Codexが修正する際は`{{ metric.value }}`/`{{ metric.state }}`などの変数名を変更しない。
+  2. テンプレートに新ブロックを追加する場合は`<!-- block:<name> -->`コメントで囲み、Feature Flagが無効なときに`render_block`が`ReportBlockDeferred`を返しても差し支えないよう記述する。
+  3. `ReportArtifact.attachments`には`reports/kpi_snapshots/<date>.json`や`metrics/...`のパスを格納し、Runbook `RUN-OPS-04`が参照できるようにする。
 
 #### 3.18.1 Benchmark Monitor & Feed Loader (`src/reporter/benchmark.py`, `src/interfaces/cli/benchmark.py`)
 - **目的**: 市販シグナルツールとの比較KPIを算出し、`reports/benchmark/<YYYYWW>.md`および`reports/governance/benchmark_review/<YYYYQ>.md`へ自動反映する。
