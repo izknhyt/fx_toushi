@@ -1918,6 +1918,84 @@ Codexへ依頼する際にそのまま転記できる粒度で、各エピック
 - **KPI影響記録**: KPIへ影響する変更（EP-01, EP-05等）は`reports/kpi_snapshot.md`と`metrics/performance.jsonl`へ追記し、POレビュー前にトレーダーが確認。
 - **フォールバック計画**: 高リスク変更は`docs/runbooks/ROLLBACK-<feature>.md`を事前整備し、PRで参照を明示。未整備なら先にRunbookを起票する。
 
+## 16. ドメインイベント & データ契約カタログ
+
+Codex実装で差異が生じやすいイベント/監査/メトリクスのスキーマを明文化し、テストダブル作成やJSON整形時に迷いが出ないようにする。本節の定義は`pydantic`モデルまたは`dataclasses`として実装し、テストでは`schema_version`とハッシュを検証する。変更時は`docs/change_requests/`に「データ契約変更」カテゴリで起票し、PO+運用承認を必須とする。
+
+### 16.1 DomainEvent共通スキーマ
+- ベースクラス: `src/core/event_bus.py::DomainEvent`。
+- 直列化方式: `orjson.dumps(event.dict(by_alias=True))`（`DomainEvent`が`pydantic.BaseModel`化された場合）または`asdict + orjson`（現行dataclass）。
+- 必須フィールド:
+  | フィールド | 型 | 説明 | 設計ノート |
+  | --- | --- | --- | --- |
+  | `event` | `str` | `snake.case`イベント名。 | `EventBus.publish`でログタグにも使用。 |
+  | `ts` | `datetime` (UTC, ISO8601) | 発火時刻。 | `datetime.now(tz=UTC)`で統一。 |
+  | `source` | `Literal['core','data','strategy','execution','risk','ticket','reporter','infra','ops','governance']` | イベント起点。 | 増やす場合は付録Eタグ規約更新。 |
+  | `payload` | `Mapping[str, Any]` | イベント固有データ。 | 下記16.2で詳細定義。 |
+  | `schema_version` | `str` (SemVer) | 互換性管理。初期は`"1.0.0"`。 | 変更時はマイナー or メジャー更新。 |
+  | `id` | `str` | `uuid4`。 | 重複検知に使用。 |
+  | `correlation_id` | `Optional[str]` | 元イベント追跡用。 | CLI操作やRunbook手順IDと紐付け。 |
+- JSONL出力: 1行1イベント。`orjson.OPT_APPEND_NEWLINE`で終端改行を確保。
+
+### 16.2 主要イベントの契約
+| Event | dataclass/Model | `payload`フィールド | 生成元 (`publish`位置) | 主な購読者/検証ポイント |
+| --- | --- | --- | --- | --- |
+| `resync.completed` | `src/core/session.py::ResyncCompleted` | `catch_up_elapsed_sec:int`, `recovered_symbols:list[str]`, `failover_used:list[str]`, `manual_csv_required:bool`, `data_hash:str`, `cfg_hash:str` | `SessionManager.catch_up`完了時 | CLI `tradectl resync`, Reporter(週次), Opsレビュー。`tests/integration/test_resync.py`でJSON整合検証。 |
+| `health.changed` | `src/core/health.py::HealthStateChanged` | `from_state:str`, `to_state:str`, `reasons:list[str]`, `ack_required:bool`, `suggested_board_mode:Literal['normal','guarded','halted']`, `auto_ack_required:bool` | `HealthMonitor._transition` | CLI `status`, AlertDispatcher, Runbook。ユニットテスト`test_health_state_transitions`で`schema_version`確認。 |
+| `ticket.issued` | `src/ticket/builder.py::TicketIssued` | `ticket_id:str`, `symbol:str`, `side:Literal['long','short']`, `score:float`, `ttl_seconds:int`, `checklist:list[str]`, `risk_summary:dict`, `board_mode:str`, `consent_required:bool`, `degraded_reason:Optional[str]` | `TicketBuilder.build` | CLI Board, AuditWriter, Snapshot。`pytest -k ticket_builder`で`orjson.loads`比較。 |
+| `ticket.action` | `src/persistence/audit.py::TicketActionLogged` | `ticket_id`, `action:Literal['approve','reject','edit','expire']`, `actor`, `delta:dict`, `consent_reference_id:Optional[str]`, `board_mode`, `spread_state`, `health_state`, `notes:str` | `AuditWriter.record_ticket_action` | `logs/audit`, Reporter、KPI分析。`tests/integration/test_audit_log.py`でタイムゾーン/ハッシュ確認。 |
+| `data.latency_alert` | `src/data/quality.py::DataLatencyAlert` | `symbol`, `provider`, `lag_seconds:float`, `clock_drift_ms:int`, `severity:Literal['warn','major','critical']`, `manual_csv_required:bool` | `DataQualityGuard.evaluate` | HealthMonitor, AlertDispatcher, Ops Agenda。テスト`test_data_quality_alert_payload`で閾値別期待値確認。 |
+| `benchmark_gap` | `src/reporter/benchmark.py::BenchmarkGapEvent` | `provider`, `window`, `missing_ratio:float`, `mode:Literal['paper','live']`, `action_url:str` | `BenchmarkComparator.compare` | HealthMonitor (M1.1+), Reporter, Ops Readiness。`pytest -k benchmark`で生成。 |
+| `risk.consent_warning` | `src/compliance/risk_disclosure.py::RiskDisclosureEvent` | `status`, `version`, `expires_at`, `required_action`, `renderer_hint`, `ack_user:Optional[str]` | `RiskDisclosureService.prompt/record_consent` | CLI Board、AuditWriter、Reporter。`tests/unit/test_risk_disclosure_service.py`でバナー文言整合。 |
+| `ops_worklog.recorded` | `src/app/telemetry.py::OpsWorklogRecorded` | `task`, `duration_min`, `owner`, `source`, `notes` | `OpsWorkloadAggregator` | Reporter、Ops Agenda。`tests/unit/test_ops_worklog.py`で必須フィールド検証。 |
+
+- **実装指針**: Codexは各イベントに`schema_version`定数を付与し、変更時に`CHANGELOG`へ記録する。テストでは`orjson.loads`→`assert payload.keys()=={...}`で明示的に検証する。
+
+### 16.3 監査レコード (`logs/audit/*.jsonl`)
+- データモデル: `src/persistence/audit.py::AuditRecord`（`pydantic.BaseModel`化を想定）。
+- フィールド仕様:
+  | フィールド | 型 | 必須 | 説明 | 追加メモ |
+  | --- | --- | --- | --- | --- |
+  | `ts` | `datetime` (UTC) | ✓ | 操作時刻。 | イベントIDと同一にする場合は`audit_id`共有。 |
+  | `audit_id` | `str` | ✓ | `uuid4`。 | CLIで参照。 |
+  | `user` | `str` | ✓ | 操作ユーザーID。 | CLI `--user`省略時は環境変数`TRADECTL_USER`。 |
+  | `action` | `Literal['ticket.approve','ticket.reject','ticket.edit','config.apply','risk.consent','ops.runbook','benchmark.ingest']` | ✓ | 操作種別。 | 追加時は付録Eタグ更新。 |
+  | `context` | `dict[str, Any]` | ✓ | `ticket_id`, `cfg_hash`, `board_mode`, `kill_switch_state`等。 | 重要フィールドは列挙: `ticket_id`, `symbol`, `before`, `after`, `diff`。 |
+  | `consent_reference_id` | `Optional[str]` | (EP04-T3以降) | RiskDisclosure紐付け。 | 未承諾時は`null`。 |
+  | `notes` | `str` | 任意 | 補足コメント。 | CLI `--note`と一致。 |
+- 書き込み: `AuditWriter.record`で`fsync`、エラー時は`retry`3回→`AuditWriterError`→`HealthMonitor.soft_stop('audit_writer')`（M1.1予定）。
+- テスト: `tests/unit/test_audit_writer.py`で`AuditRecord.schema()`検証、`tests/integration/test_audit_tail.py`でTailer動作確認。
+
+### 16.4 メトリクスレコード
+- 共通構造 (`src/infra/metrics.py::MetricsRecord`): `{ "ts": iso8601, "metric": str, "value": float, "labels": dict[str,str], "schema_version": "1.0.0" }`。
+- 代表メトリクス:
+  | Metric | ラベル | 生成箇所 | 目的 | テスト |
+  | --- | --- | --- | --- | --- |
+  | `data_ingestion_delay_sec` | `phase∈{'fetch','processing'}`, `provider`, `symbol` | `DataIngestionService.fetch_latest`後 | Acceptable Degradation判定 | `tests/perf/test_data_ingestion_metrics.py`で閾値評価。 |
+  | `pipeline_step_elapsed_ms` | `step`, `board_mode` | `Workflow Orchestrator` | ボトルネック計測 | `pytest -k workflow_metrics`。 |
+  | `cli_render_ms` | `command`, `mode` | `interfaces/cli/_decorators.py` | UX SLA | `tests/perf/test_cli_latency.py`。 |
+  | `spread_cooldown_duration_sec` | `symbol`, `reason` | `SpreadMonitor` | Guard滞留監視 | `tests/unit/test_spread_monitor_metrics.py`。 |
+  | `ops_manual_minutes` | `task`, `owner` | `OpsWorkloadAggregator` | 自動化効果追跡 | `tests/unit/test_ops_workload_metrics.py`。 |
+- `MetricsWriter.flush_interval_sec`は60秒既定。Codexが新規メトリクスを追加する際は表へ追補し、`metrics/<metric>.jsonl`ファイル名も明示すること。
+
+### 16.5 JSON Schemaリファレンス
+- `docs/schemas/`配下に以下のJSON Schemaを配置し、Codexは更新時に`pytest -k json_schema_validation`を追加実行する。
+  | Schemaファイル | 対象 | バリデーション対象コマンド |
+  | --- | --- | --- |
+  | `event_resync_completed.schema.json` | `resync.completed`イベント | `tradectl resync --since ... --schema-check`（将来） |
+  | `audit_ticket_action.schema.json` | `ticket.action`レコード | `tools/replay_signals.py --validate` |
+  | `metrics_pipeline.schema.json` | `pipeline_step_elapsed_ms`メトリクス | `tradectl metrics report --validate` |
+  | `risk_disclosure_state.schema.json` | `consent_state.json` | `tradectl compliance status` |
+- Schema変更のGitフロー: `docs/change_requests/`に起票→`schemas/`更新→`tests/schema/test_*.py`追加→Codexへ共有。
+
+### 16.6 Codex実装チェックリスト
+- 変更対象がイベント/監査/メトリクスを追加・更新する場合、PRテンプレートに以下のチェックボックスを追加で使用する。
+  - [ ] `schema_version`更新済み（該当イベント名: ____）
+  - [ ] JSON Schema差分を`tests/schema/`で検証した証跡を添付
+  - [ ] `docs/schemas/CHANGELOG.md`へ記録
+  - [ ] 受入Runbook更新不要の場合は理由をPRコメントに記載
+- トレーダー受入では`tradectl audit tail --since -1h --json`を実行し、イベント/監査/メトリクスのサンプルを3件以上確認すること。`docs/trader_signoff/<packet>.md`の「データ契約」セクションに貼り付ける。
+
 ---
 
 本節以降の更新は`v1.10`で予定されている追加機能（Spread自動解除、RiskDisclosure強制、Correlation Guard本番化等）の詳細を反映予定。Codexへ依頼する際は、本書該当箇所を最新版と照合し、差分がある場合は事前に更新してから依頼すること。
