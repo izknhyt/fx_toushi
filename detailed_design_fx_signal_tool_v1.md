@@ -1,4 +1,4 @@
-# FXヒューマン・インザループ投資ツール 詳細設計書 v1.9
+# FXヒューマン・インザループ投資ツール 詳細設計書 v1.10
 
 ## 0. 文書情報
 - 作成日: 2025-02-20
@@ -9,6 +9,7 @@
 ### 0.1 改訂履歴
 | 版 | 日付 | 改訂概要 |
 | --- | --- | --- |
+| v1.10 | 2025-02-21 | Codexスプリントパッケージ、RiskDisclosure詳細、Acceptable Degradation実務フロー、トレーダー受入チェックリストを追加。 |
 | v1.9 | 2025-02-21 | Codex向けエピック別実装指示セット、レビュー観点テンプレ、トレーダー受入チェックの粒度を拡充。 |
 | v1.8 | 2025-02-20 | Codex実装前提の開発オペレーション/プロンプト設計/テストシナリオを体系化。ヒューマン・トレーダー視点の期待KPI/UXと整合させた。 |
 | v1.7 | 2025-02-20 | KPI検証/性能モニタリング強化、戦略ガバナンス、データ品質上限対策、運用冗長化を追補し、勝率達成への実効性を高めた。 |
@@ -120,6 +121,16 @@
 1. Codex出力をレビュー後、`docs/prompt_packages/<date>_<feature>.md`に「良かった点」「改善要望」「想定外差分」を追記し、次回プロンプトの改善に反映する。
 2. リリース後7日間は該当機能のメトリクスを重点監視し、異常時は`feedback_loop.md`に記録。Codexへの再依頼時はこのログを添付する。
 3. KPIが改善した場合は`reports/weekly/<YYYYWW>.md`に成果を記載し、反対に悪化した場合はリスクレビュー（`docs/risk_review/<YYYYMMDD>.md`）で原因と暫定対応をまとめる。
+
+#### 0.6.7 Codexスプリント計画とレビューゲート
+- **スプリント粒度**: 1スプリント=5営業日。エピック単位（§0.6.3）を`Implementation Packet`に分解し、1 PacketでCodex作業→ヒューマンレビュー→Ops影響確認まで完了させる。
+- **Packet構造**: `docs/implementation_packets/<YYYYMMDD>_<epic>_<packet>.md`を作成し、(1) 目的/KPIリンク、(2) 対象ファイル/セクション引用、(3) テスト指示、(4) トレーダー受入チェックリスト、(5) Rollback手順を記載。Codexへはこのファイルと要約を同梱する。
+- **レビューゲート**:
+  1. *設計整合チェック*: プロダクトオーナー/トレーダーがPacket内容と本書該当節を照合。逸脱時は`docs/change_requests/`で再承認。
+  2. *Codex出力レビュー*: Diff/テスト/ログ確認に加え、`ops_worklog`への影響推定をコメントする。未確認の場合は`ops_review_pending`ラベルを付与。
+  3. *トレーダー承認*: CLIスクリーンショット・テレメトリサマリを確認し、`docs/trader_signoff/<packet>.md`へ署名。署名前にRunbook該当手順を実施する。
+- **WIP制限**: Codex作業中Packetは最大2件まで。Spread/Catch-up/Health関連（高リスクPacket）は単独で進行し、他Packetを一時停止する。
+- **メトリクス**: Packet完了までのリードタイムを`metrics/implementation_packets.jsonl`に記録し、週次レビューでボトルネック（レビュー待ち時間>2日など）を分析する。
 
 ## 1. アーキテクチャ概要
 
@@ -251,6 +262,8 @@ src/
     builder.py           # TradeTicket構築
     validator.py         # Broker検証/TTL/Drift
     checklist.py         # ヒューマンエラーチェック
+  compliance/
+    risk_disclosure.py   # RiskDisclosureService（M1.1 enforce、M1はWARNのみ）
   persistence/
     events.py            # DomainイベントJSONL
     audit.py             # HITL監査ログ
@@ -702,6 +715,34 @@ tests/
 - **イベント/連携**: `reconciliation.completed`/`discrepancy`等のイベントは発火しない。Ops ReadinessやHealthMonitorとの接続は未配線。
 - **依存関係**: CLI `tradectl reconcile statements`はM1では`Feature disabled (M2+)`メッセージを返し、Schedulerにも登録しない。
 - **M2+実装**: ステートメント突合やKill Switch連携の詳細は付録G.5を参照。
+
+### 3.30 RiskDisclosureService (`src/compliance/risk_disclosure.py`)
+- **目的**: 重要事項説明の承諾状況を管理し、未承諾時にSignal Board操作を制限。FR-53/FR-54 (M1.1) を満たすため、M1 CoreでWARN運用→M1.1で強制停止に拡張できる構造とする。
+- **主要データモデル**:
+  - `RiskDisclosureState`: `status ∈ {'accepted','pending','expired'}`, `accepted_at`, `expires_at`, `version`, `ack_user`, `source`（`manual`, `cli`, `import`）。
+  - `RiskDisclosureNotice`: CLIへ表示する文言/リンク。`id`, `title`, `body`, `action_url`, `required`。
+  - `RiskDisclosureAudit`: 承諾時のチェックリスト（`ip`, `device`, `note`, `document_hash`）。`audit_writer`へ同時記録。
+- **公開API**:
+  - `fetch_state() -> RiskDisclosureState`: `data/compliance/risk_disclosure_state.json`（pydantic検証）を読み込む。未存在時は`pending`初期化。
+  - `record_consent(user, note, evidence_path=None) -> RiskDisclosureState`: CLIまたはGUIから承諾を登録。`document_hash`は`hashlib.sha256`で算出し、`logs/audit`へ`RiskDisclosureAccepted`イベントを出力。
+  - `refresh_from_profile(profile)`: `config/compliance/risk_disclosure_<profile>.yaml`から最新版の文書ハッシュ/有効期限を取得し、バージョン差分があれば`status='expired'`に遷移。
+  - `prompt(mode: Literal['warn','enforce'], renderer)` (M1.1+): CLIへRichプロンプトを表示し、承諾完了まで`renderer.render_locked()`を繰り返す。M1 Coreでは`mode='warn'`のみ呼び出され、バナー表示に留める。
+- **状態遷移**:
+  1. `pending` → `accepted`: `record_consent`成功時。`expires_at`が過去の場合は承諾不可で`RiskDisclosureExpiredError`。
+  2. `accepted` → `expired`: `refresh_from_profile`でバージョン更新検知、または`expires_at`経過。CLIは`board_mode='read_only'`で操作を`warn_only`に制限。
+  3. `expired` → `pending`: 新バージョン公開時の初期化。Runbook `COMPLIANCE-01`で再承諾手順を実施する。
+- **連携**:
+  - `BoardRenderer`: `state.status in {'pending','expired'}`のときヘッダに黄色（warn）/赤（expired）バナーと承諾要求リンクを表示。M1.1以降は`expired`でApprove/Rejectをブロックし、`ConsentRequiredError`を返す。
+  - `SessionManager`: 起動時に`refresh_from_profile(profile)`を実行し、`status='expired'`なら`HealthMonitor.raise(level='degraded', reason='risk_disclosure_expired')`を発火。`health.reasons['risk_disclosure']`にバージョン差分を記録。
+  - `AuditWriter`: `RiskDisclosureAccepted`/`RiskDisclosureRejected`イベントをJSONLへ追記し、署名済PDF等の証跡パスを記録。`ops_worklog`へ承諾作業時間を追加。
+- **ファイル配置**:
+  - `config/compliance/risk_disclosure_live.yaml`: `version`, `document_url`, `expires_in_days`, `ack_checklist`（Runbook項目ID）。
+  - `data/compliance/risk_disclosure_state.json`: 実行環境ごとに保持。暗号化はM2検討。バックアップは`reports/compliance/archive/<YYYYMM>/`へ日次コピー。
+- **テスト**:
+  - `tests/unit/test_risk_disclosure.py`: `record_consent`が`accepted`へ遷移し、監査ログ出力をモック検証。
+  - `tests/integration/test_cli_risk_disclosure.py`: CLIバナー/ロックのスナップショットテスト。`Feature Flag feature_flags.risk_disclosure_enforce`が`True`のときApproveコマンドが`ConsentRequiredError`になることを検証。
+- **M1→M1.1移行**: M1 Coreでは`mode='warn'`のみ実装し、`feature_flags.risk_disclosure_enforce`が`False`。M1.1でFlagを`True`に切り替えると`prompt(mode='enforce')`が有効化され、CLIロック＋Kill Switch `soft_stop(compliance)`提案が動作する。移行時はRunbook `COMPLIANCE-01`で承諾状況を確認し、`tradectl status --verbose`に`RiskDisclosure: pending (version x.y)`が表示されるか検証する。
+- **トレーダー運用**: 承諾期限7日前から`AlertDispatcher`でリマインダ送信。日次プレフライトで`RiskDisclosureState.status!='accepted'`の場合、運用開始前に承諾再取得を完了させる。承諾実施者と確認者をダブルサインでRunbookへ記録する。
 ## 4. データモデル
 
 ### 4.1 時系列フレーム
@@ -959,6 +1000,15 @@ Kill Switch解除 & Scoreboard閾値通常運用へ復帰
 2. **CLI応答計測**: `interfaces/cli/board.py`と`tickets.py`に`@measure_cli_latency`デコレータを実装し、`metrics/cli_perf.jsonl`へ`render_ms`/`fetch_ms`/`persist_ms`を記録。`p95(render_ms)<100ms`, `p99<180ms`、`board_mode=guarded`中は`p95<140ms`を閾値とする。`tools/measure_cli_perf.py`で自動測定し、CIジョブ`perf-check`で週次実行。
 3. **テスト**: `tests/perf/test_pipeline_latency.py`がメトリクスJSONLを解析し、直近500サンプルのp95/p99が閾値未満か検証。失敗時は`pytest`失敗とし、`docs/runbooks/RUN-PERF-01.md`に貼り付けるスパークラインを`tools/render_perf_chart.py`で再生成。
 4. **レポート生成**: `tradectl metrics report --kind latency --window 7d`が`metrics/pipeline.jsonl`/`metrics/cli_perf.jsonl`を集計し、`reports/performance/pipeline_latency/<YYYYMMDD>.md`へ`board_mode`別統計とSLA逸脱ログを出力。Acceptable Degradation解除時は同コマンドの出力を`degraded_recovered`イベントに添付する。
+
+### 5.15 Acceptable Degradation実務フロー（データ遅延・Spread異常）
+1. **検知**: `metrics/data_ingestion_sla.jsonl`または`SpreadCooldownState`が閾値超過→`HealthMonitor.raise(level='degraded', reason='data_latency'|'spread_cooldown')`を発火。
+2. **運用宣言**: `tradectl status --verbose`で理由を確認し、CLI `tradectl board --guarded`を実行。Runbook `RUN-DATA-05`/`RUN-RISK-02`に従って`degraded_ack`を登録し、`logs/ops/workload.log`へ開始時刻を記録。
+3. **代替ソース投入**: `tradectl data manual-template`で双子CSVを生成→運用担当とレビュアが各自入力→`tradectl data validate-csv`で一致確認。Spread異常時は`config/gates.spread_max_pips`を強化し、`feature_flags.reduce_only_advisor`が無効でも手動でReduce-OnlyチェックをRunbookに沿って実施。
+4. **モニタリング**: `tradectl metrics report --window 1h --kind sla`を15分ごとに確認し、`catch_up_lag_minutes`が閾値内へ戻るまでフォロー。CLIボードは主要4ペアのみ承認可。`ops_worklog`へ手動作業時間を追記し、`metrics/ops_workload.json`を更新。
+5. **解除判定**: `catch_up_lag_minutes<30`かつ`SpreadCooldownState`が`normal`に戻り、直近3バーの`data_ingestion_delay_sec`が`warning`未満であることを確認。Runbook `RUN-DATA-06`で承認者ダブルサイン→`tradectl board --normal`→`health.ack(reason='data_latency')`を実行。
+6. **事後レビュー**: `reports/ops/degradation_log/<YYYYMMDD>.md`に原因・所要時間・使用代替ソース・改善案を記録。Codexへ改善依頼を行う場合は`docs/implementation_packets/`にフィードバックし、`feature_flags.reduce_only_advisor`など将来自動化候補を評価する。
+7. **M1.1自動化準備**: Spread/データ双方で解除条件が整った場合、`health.suggest_resume`イベントを自動発火し、CLIに解除提案を表示する。M1 Coreでは手動承認必須だが、メトリクスとRunbook整備によりM1.1での自動解除可否を判断する。
 
 > **M2+想定**: Appendix G.5参照。M1では`StatementReconciliationServiceStub`が`status="not_available"`を返し、下記フローは監査用ログのみ残す。
 ```
@@ -1395,7 +1445,51 @@ Flag切替時は`ConfigChanged`イベントに`flag_delta`が記録され、Repo
 
 本詳細設計は要件定義・基本設計に基づき、M1リリースの実装に必要なインターフェース・データモデル・フロー・テスト計画を整備した。拡張機能はFeature Flagとガバナンス手順を通じて安全に段階導入できるよう設計している。
 
-## 12. 付録
+## 12. Codex実装パッケージ（M1 Sprint-Alpha）
+
+### 12.1 Packetバックログ概要（Sprint-Alpha〜Sprint-1）
+| Packet ID | Epic | 範囲 | 依存セクション | 必須テスト | トレーダー確認ポイント |
+| --- | --- | --- | --- | --- | --- |
+| EP01-P1 | EP-01 DataLag Mitigation | `DataIngestionService.fetch_latest`の遅延計測、`metrics/data_ingestion_sla.jsonl`出力整備 | §3.1, §3.20, §5.15 | `pytest -k data_ingestion`、`tests/integration/test_data_pipeline.py` | `tradectl metrics report --kind sla`のp95値、`health.reasons`表示 |
+| EP01-P2 | EP-01 DataLag Mitigation | 手動CSVフォールバックCLI (`tradectl data manual-*`)、`ManualCsvReconciler` | §2.1, §3.1, §5.15 | `pytest -k manual_csv`, CLIスナップショット | Runbook `RUN-DATA-05`手順がCLIに反映、`ops_worklog`追記 |
+| EP03-P1 | EP-03 Guardrails | `HealthMonitor`拡張（`suggest_guarded/resume`イベント、Acceptable Degradation運用ログ） | §2.5, §5.15, §8.10 | `tests/unit/test_health_state.py`, `pytest -k health_monitor` | `tradectl status`で理由/解除条件が明示、Kill Switchログ |
+| EP04-P1 | EP-04 Ticket Clarity | `TicketBuilder` JSON整形、`RiskDisclosure` WARNバナー対応 | §3.16, §3.30, §5.5 | `pytest -k ticket_builder`, `pytest-approvaltests` | CLIチケット表示、RiskDisclosure pending時の文言 |
+| EP04-P2 | EP-04 Ticket Clarity | CLI承認コマンドの監査ログ強化、`ops_worklog`連携 | §2.6, §3.20, §8.9 | `pytest -k ticket_cli`, CLI手動試験 | 監査ログ`cfg_hash`、手動承認時間入力 |
+| EP05-P1 | EP-05 Weekly Review | Reporter週次テンプレ更新、`RiskDisclosure`状態表示 | §3.18, §3.30, §9.3 | `tradectl report weekly --dry-run` | Markdown出力に承諾バナー/リンク、POレビュー用コメント欄 |
+
+- **Packet採番**: `EP<epic>-P<sequence>`。Issue/PRタイトルにも同番号を付与（例: `[EP03-P1] HealthMonitor suggest_guarded`）。
+- **依存管理**: P1→P2の順で完了させる。`EP03-P1`は`EP01-P1`完了後（メトリクスが揃った状態）で着手する。
+
+### 12.2 Packetチェックリスト（Codex向け共通テンプレ）
+- **設計整合**: 対象セクション引用、I/O契約、例外、Feature Flag初期値をIssue本文にコピペ。差分がある場合は本書更新→再レビュー。
+- **テスト指示**: `pytest`コマンド、CLIスナップショット、必要なダミーデータ生成コマンドを列挙。Codexが実行困難な外部依存（SMTP等）は`--skip-smtp`等のオプションを用意し、テスト結果に`SKIP`が出る想定を明示する。
+- **監査ログ検証**: `pytest -k audit_snapshot`など監査ログをファイル比較するテストを定義し、Codexには出力例を提供する。`git diff logs/audit`があれば差戻し。
+- **UX確認**: トレーダーはCLIスクリーンショットと`tradectl status`出力をレビュー。`docs/trader_signoff/<packet>.md`テンプレに沿って(1) 画面キャプチャ、(2) 操作所要時間、(3) コメントを記入する。
+- **Rollback手順**: 各Packetで変更した設定/Flag/データを明記。例: `cfg change: config/profile_live.yaml (feature_flags.risk_disclosure_enforce)` → `git checkout -- config/profile_live.yaml`で戻す。データ生成の場合は削除コマンドも記載。
+
+### 12.3 トレーダー受入試験テンプレ
+| チェック項目 | 詳細 | 実施者 | 証跡 |
+| --- | --- | --- | --- |
+| A1 CLIレンダリング | `tradectl board --guarded`表示をスクリーンショット化し、RiskDisclosureバナー/Spreadバッジを確認 | トレーダー | `docs/trader_signoff/EP04-P1.md`に画像貼付 |
+| A2 Ops Worklog | 新コマンド実行後に`ops_worklog.jsonl`へ記録されているか確認 | 運用担当 | JSON抜粋をテンプレへ添付 |
+| A3 メトリクス整合 | `tradectl metrics report --window 1h --kind sla`にPacket変更が反映（新ラベル等）されているか | トレーダー | Markdown抜粋 |
+| A4 Rollback試行 | Rollback手順を試し、元の挙動へ戻ることを確認 | 開発補佐 | 実行ログ/コマンド履歴 |
+| A5 Runbook更新 | 対応するRunbook箇所が更新され、手順に差異が無いか確認 | 運用担当 | `git diff docs/runbooks`添付 |
+
+- 受入完了後に`tradectl ops agenda --date <翌営業日>`を実行し、当日のTODOへ新手順が反映されているか確認する。反映されない場合は`docs/prompt_packages/`の改善事項へ記録。
+- Packetごとに`ops_worklog`へ`{"task":"packet_review","packet_id":"EP04-P1","duration_min":15}`を追記し、WIP制限の効果を分析する。
+
+### 12.4 Codexレビューフィードバックフォーマット
+```
+Packet: EP04-P1
+Diff summary: ticket.builder + interfaces/cli/board
+Tests: pytest -k ticket_builder (pass), approvaltests (updated snapshot)
+Trader notes: Spread badge OK, RiskDisclosure pending banner text request
+Follow-up: Update copywriting (docs/implementation_packets/20250222_ep04_p1.md#todo)
+```
+- フィードバックはPRマージ前に`docs/prompt_packages/`へ追記し、次Packetのプロンプトに引用。Codexへは改善要望を3件以内に絞り、優先度を`{must,should,nice}`でタグ付けする。
+
+## 13. 付録
 
 ### 付録A: Health/Kill Switch状態遷移簡易図
 ```
@@ -1448,23 +1542,17 @@ SpreadCooldown: cooldown (ETA 12:15) | Snapshot hash: a1c3...
 - `AlertDispatcher`は重大度ごとに件名 `[tradectl][<SEVERITY>] <reason>` を付与する。Slack/Webhook有効時は同じpayloadを送信。
 - Runbook参照欄は対応手順を示し、アフターアクションレビューで更新する。
 
-### 付録D: エラーコードと通知マッピング
-| エラーコード | 重大度 | 発火元 | 通知チャネル | Runbook参照 |
-| --- | --- | --- | --- | --- |
-| ERROR-C01 (データ欠損) | WARN/MAJOR | DataQualityGuard | CLI + メール(WARN) | Runbook §2.1 |
-| ERROR-C02 (指標計算失敗) | CRITICAL | FeaturePipeline | CLI + メール(CRITICAL) | Runbook §2.2 |
-| ERROR-C03 (Config検証NG) | WARN | ConfigRegistry | CLI | Runbook §3.1 |
-| ERROR-C04 (監査ログ書込失敗) | CRITICAL | AuditWriter | CLI + メール(CRITICAL) | Runbook §4.3 |
-| ERROR-C05 (Spread欠損) | WARN | SpreadMonitor | CLI + メール(WARN) | Runbook §2.3 |
-| ERROR-C06 (Funding未更新) | WARN | FundingService | CLI | Runbook §2.4 |
-| ERROR-C07 (Heartbeat停止) | MAJOR | HealthMonitor | CLI + メール(MAJOR) | Runbook §5.1 |
-| ERROR-C08 (Snapshot破損) | CRITICAL | SnapshotManager | CLI + メール(CRITICAL) | Runbook §4.1 |
-| ERROR-C09 (Account CSV不整合) | MAJOR | AccountService | CLI + メール(MAJOR) | Runbook §3.2 |
-| ERROR-C10 (Scheduler遅延) | WARN | Scheduler | CLI | Runbook §1.4 |
+#### 付録D.1 トレーダー受入チェックシナリオ
+| シナリオID | Packet/機能 | 事前条件 | 手順 | 期待結果 | 記録先 |
+| --- | --- | --- | --- | --- | --- |
+| TR-01 | EP01-P1 データ遅延計測 | `feature_flags.reduce_only_advisor=false`, `metrics/data_ingestion_sla.jsonl`を空に初期化 | 1. `poetry run tradectl start --profile paper` 2. 疑似データ投入(`tools/gen_fixture.py --inject-lag 45`) 3. `tradectl metrics report --kind sla --window 1h` | `data_ingestion_delay_sec`が閾値超過、`HealthState`が`degraded(data_latency)`、`board_mode=guarded`提案 | `docs/trader_signoff/EP01-P1.md` |
+| TR-02 | EP01-P2 手動CSVフォールバック | TR-01継続状態 | 1. `tradectl data manual-template --provider dukascopy --symbol USDJPY --date <today>` 2. 双子入力→`tradectl data validate-csv --path ...` 3. `tradectl resync --since <ts>` | `ManualCsvValidated`イベント記録、`catch_up_lag_minutes`が30未満に回復、`board_mode=guarded`解除提案 | `reports/ops/degradation_log/<date>.md` |
+| TR-03 | EP03-P1 Guardrails | TR-02後、`HealthState=degraded` | 1. `tradectl status --verbose`確認 2. `tradectl board --guarded`で承認制限を体感 3. `tradectl board --normal`後、`health.ack` | `status`出力に理由・解除条件表示、`KillSwitch`変化なし、`ops_worklog`へ操作時間が記録 | `docs/trader_signoff/EP03-P1.md` |
+| TR-04 | EP04-P1 Ticket UX | RiskDisclosure `status=pending` | 1. `tradectl board`表示確認 2. `tradectl ticket approve --id <pending>` 3. `RiskDisclosureService.record_consent`実行 4. 再度`approve` | 初回はWARN表示で承認可能、承諾後はバナー消失、監査ログに承諾イベント | `docs/trader_signoff/EP04-P1.md` |
+| TR-05 | EP05-P1 Reporter | 上記Packet完了後 | 1. `tradectl report weekly --profile paper --dry-run` 2. Markdown出力確認 3. `RiskDisclosure`セクションが最新バージョンを表示 | レポートに`RiskDisclosure`ステータスが反映、`kpi_snapshot`と矛盾なし | `reports/weekly/<YYYYWW>.md` |
 
-- `AlertDispatcher`は重大度ごとに件名 `[tradectl][<SEVERITY>] <reason>` を付与する。Slack/Webhook有効時は同じpayloadを送信。
-- Runbook参照欄は対応手順を示し、アフターアクションレビューで更新する。
-
+- 各シナリオは`poetry run`コマンドで実施し、終了後に`poetry run tradectl stop`でクリーンアップ。`snapshots/`にテスト用スナップショットが残る場合は`tools/cleanup_snapshots.py --older-than 1d`で削除する。
+- 受入完了後は`docs/trader_signoff/index.md`にPacket ID、実施日、所要時間、改善メモを追記し、次回Sprint計画に反映する。
 ### 付録E: ログ/メトリクスタグ規約
 | タグ | 対象ログ | 意味 | 例 |
 | --- | --- | --- | --- |
