@@ -1,4 +1,4 @@
-# FXヒューマン・インザループ投資ツール 詳細設計書 v1.8
+# FXヒューマン・インザループ投資ツール 詳細設計書 v1.9
 
 ## 0. 文書情報
 - 作成日: 2025-02-20
@@ -9,6 +9,7 @@
 ### 0.1 改訂履歴
 | 版 | 日付 | 改訂概要 |
 | --- | --- | --- |
+| v1.9 | 2025-02-21 | Codex向けエピック別実装指示セット、レビュー観点テンプレ、トレーダー受入チェックの粒度を拡充。 |
 | v1.8 | 2025-02-20 | Codex実装前提の開発オペレーション/プロンプト設計/テストシナリオを体系化。ヒューマン・トレーダー視点の期待KPI/UXと整合させた。 |
 | v1.7 | 2025-02-20 | KPI検証/性能モニタリング強化、戦略ガバナンス、データ品質上限対策、運用冗長化を追補し、勝率達成への実効性を高めた。 |
 | v1.6 | 2025-02-20 | 運用責任分掌、BCP/DR指針、QAゲート、リスクログ、サポートツール等を追補し、プロジェクト/運用一体の整合を強化。 |
@@ -1762,6 +1763,73 @@ def test_<case>(...):
 ```
 - レビューメモは`docs/review_log.md`へ日付順に追記する。トレーダーはこのログをもとに運用改善メモを作成する。
 
+## 15. Codexエピック別実装指示セット
+
+Codexへ依頼する際にそのまま転記できる粒度で、各エピックを構成するタスク/期待I/O/テスト/レビュー観点を整理する。表の「Codexプロンプト要点」は`docs/prompt_packages/`に記載する箇条書きの最小セットであり、追加事項があれば本節を更新してから依頼する。すべてのタスクで`docstring`は**目的・入力・副作用・例外・監査ログ**を明記し、ログタグは§付録Eの規約に従う。
+
+### 15.1 EP-01 DataLag Mitigation（データSLA）
+- **目的/KPI**: `metrics/data_ingestion_sla.jsonl`の`fetch_delay_p95≤180s`・`processing_delay_p95≤120s`を維持し、Catch-up時の`ResyncCompleted.failover_used`がRunbook手順と一致すること。
+- **前提**: `config/sla_thresholds/active.yaml`と`RUN-DATA-05/06`が最新であることを事前確認する。
+
+| タスクID | 対象コンポーネント | 変更指示 | テスト/証跡 | Codexプロンプト要点 |
+| --- | --- | --- | --- | --- |
+| EP01-T1 | `src/data/service.py::DataIngestionService.fetch_latest` | `provider_priority`をシンボル優先度と連動させ、`FallbackRetryTask`へ連鎖する非同期フック（`await fallback_queue.enqueue(...)`）を追加。成功/失敗を`logger.info("data.fetch", extra={...})`で記録。 | `pytest -k data_ingestion_fetch`、`tradectl resync --since -3h`（ダミーデータ） | 失敗時イベント名`data.fetch_failed`、`failover_used`算出ロジック、`DataFrameHasher`再利用要否 |
+| EP01-T2 | `src/data/quality.py::DataQualityGuard.evaluate` | 欠損比率とNTPドリフトを同時評価し`DataLatencyAlert`へ`clock_drift_ms`を添付。`ManualCsvIngestionTask`のブロック条件を`quality.failed & provider=primary`に限定。 | `pytest -k data_quality`、`tradectl data validate-csv --path tests/fixtures/manual_good` | NTP逸脱時WARN文言、`AlertDispatcher`重大度、`metrics/data_ingestion_sla.jsonl`追記例 |
+| EP01-T3 | `src/interfaces/cli/resync.py` / `src/core/session.py` | `--failover-report`フラグを追加し、`ResyncCompleted.failover_used`/`manual_csv_required`を表形式で表示。Resync完了時に`health.suggest_resume`を自動発火。 | `pytest-approvaltests`でCLIスナップショット、`tradectl resync --since -30m --failover-report` | CLI列順、`health.suggest_resume`発火条件、`logs/ops/manual_csv.log`整合 |
+
+- **レビュー観点**: Catch-up優先度、Failoverキュー容量、`ManualCsvIngestionTask`連携。`ops_worklog.jsonl`へ所要時間を追記する場合はOpsと事前調整。
+
+### 15.2 EP-02 Strategy Determinism（シグナル決定論）
+- **目的/KPI**: Backtest/Paper/Liveのシグナル/サイズを完全一致させ、`pytest -k strategy_determinism`が乱数固定後に安定成功すること。
+- **前提**: `data_manifest`で参照するParquetハッシュを要件と突合し、`ModeContext.deterministic_seed`の既存利用箇所を確認しておく。
+
+| タスクID | 対象コンポーネント | 変更指示 | テスト/証跡 | Codexプロンプト要点 |
+| --- | --- | --- | --- | --- |
+| EP02-T1 | `src/features/pipeline.py::FeaturePipeline.run` | `deterministic_seed`から`numpy.random.Generator`を生成し、欠損補完/特徴量生成を決定論化。Cacheキーへ`feature_version`を付与し`metrics/feature_cache.jsonl`へヒット率を記録。 | `pytest -k feature_pipeline`、`tools/replay_signals.py --since 2024-01-01 --mode backtest,paper` | Seedのスコープ、`feature_version`算出方法、Cacheミスマッチ時ログ |
+| EP02-T2 | `src/strategies/registry.py::StrategyRegistry.execute_all` | `StrategyContext(seed=...)`を用意して乱数を戦略に供給し、結果に`deterministic_hash`を添付。`strategy.determinism`イベントをEventBusへ送出。 | `pytest -k strategy_registry`、`tradectl board --view diagnostics` | `deterministic_hash`計算対象、イベントフィールド、診断ビュー列構成 |
+| EP02-T3 | `src/execution/model.py::ExecutionModel.apply_human_delay` | 人手遅延三角分布を`ModeContext`のジェネレータで再現し、Paper/Liveの時間丸めを共通化。`execution_model.yaml`へ`seed_offset`設定を追加。 | `pytest -k execution_model`、`tradectl metrics report --kind latency --window 1d` | `seed_offset`初期値、遅延ログ追記内容、TTL算出整合 |
+
+- **レビュー観点**: Backtest差分、`deterministic_hash`可視化、PaperログとLive実績の突合（`reports/backtest/diff_*.md`）。
+
+### 15.3 EP-03 Guardrails（リスク/ヘルス）
+- **目的/KPI**: Kill Switch/Spread/NTP連携を安定化させ、`IT-KILL-01`/`IT-SPREAD-01`/`IT-RESYNC-01`を通過。`Acceptable Degradation`解除条件を自動イベント化。
+
+| タスクID | 対象コンポーネント | 変更指示 | テスト/証跡 | Codexプロンプト要点 |
+| --- | --- | --- | --- | --- |
+| EP03-T1 | `src/core/health.py::HealthMonitor` | `suggest_guarded`/`suggest_resume`をキュー化し、CLI承認時に`reason`/`evidence`を監査ログへ記録。`kill_switch_state`へ`auto_ack_required`フラグを追加。 | `pytest -k health_state`、`tradectl status --verbose --json` | `auto_ack_required`初期値、監査フィールド、`health.escalate`との整合 |
+| EP03-T2 | `src/execution/spread.py::SpreadMonitor` | Spread分位とNTP/ニュースを組み合わせた`SpreadCooldownState`を返却。`cooldown_reason`文字列を追加し、`metrics/network.jsonl`へ滞留時間を書き込む。 | `pytest -k spread_monitor`、`tradectl spread inspect --window 30m` | `cooldown_reason`文言、メトリクス例、Degradation時挙動 |
+| EP03-T3 | `src/risk/manager.py::RiskManager.evaluate_ticket` | Kill Switch状態に応じた`TicketForceCancelled`と`RiskMetricsSnapshot`更新。`reduce_only`推奨フック（既定No-Op）を追加。 | `pytest -k risk_manager`、`tradectl board --guarded` | `RiskMetricsSnapshot`項目、`reduce_only`条件、CLIバナー文言 |
+
+- **レビュー観点**: Kill Switch通知メール、監査ログ整合、`ops_worklog.jsonl`記録。`health.status`遷移がRunbook `RUN-RISK-02`と一致しているかを確認。
+
+### 15.4 EP-04 Ticket Clarity（HITL UX）
+- **目的/KPI**: チケットUXと監査完全性を向上し、`pytest -k ticket_builder`とCLIスナップショットが合格。Paper運用でレビュー時間中央値を10%短縮。
+
+| タスクID | 対象コンポーネント | 変更指示 | テスト/証跡 | Codexプロンプト要点 |
+| --- | --- | --- | --- | --- |
+| EP04-T1 | `src/ticket/builder.py::TicketBuilder.build` | `risk_summary`/`spread_badge`/`regime_context`/`checklist`を構造化し、`ttl_seconds`算出をExecutionModelへ委譲。 | `pytest -k ticket_builder`、`tradectl board --filter symbol=USDJPY` | JSONフィールド名、チェックリスト順序、TTL委譲方法 |
+| EP04-T2 | `src/interfaces/cli/board.py::BoardRenderer.render_ticket` | Richテーブルにバッジ/バナーを表示し、`RiskDisclosure`未承諾時はロックバナー。承認コマンドへ確認ダイアログを追加。 | `pytest-approvaltests`、`tradectl board --guarded --yes` | バナー配色文言、RiskDisclosure挙動、CLI引数互換性 |
+| EP04-T3 | `src/persistence/audit.py::AuditWriter.record_ticket_action` | `diff_before_after`と`consent_reference_id`を必須化し、`board_mode`/`spread_state`/`health_status`を追加。 | `pytest -k audit_writer`、`tradectl ticket approve --id <sample>` | `diff_before_after`形式、監査整合チェック、リトライ戦略 |
+
+- **レビュー観点**: CLIスクリーンショット、監査ログJSON、`RiskDisclosure`連携、`ops_worklog`メトリクスへの影響。
+
+### 15.5 EP-05 Weekly Review（レポート/監査）
+- **目的/KPI**: 週次レポートとベンチマーク比較を自動化し、`tradectl report weekly --dry-run`でMarkdown生成、`benchmark compare`で欠損検知が機能すること。
+
+| タスクID | 対象コンポーネント | 変更指示 | テスト/証跡 | Codexプロンプト要点 |
+| --- | --- | --- | --- | --- |
+| EP05-T1 | `src/reporter/generator.py::generate_weekly` | `PerformanceStats`/`RiskSummaryStub`/`ManualCsvSummary`を結合し、テンプレへ差し込む。Flag無効時も崩れない構造に。 | `pytest -k reporter_weekly`、`tradectl report weekly --dry-run --out /tmp/report.md` | テンプレ変数、`ManualCsvSummary`形式、Flag無効時挙動 |
+| EP05-T2 | `src/reporter/benchmark.py::BenchmarkComparator.compare` | 欠損率>10%で`BenchmarkGapError`を返し、`benchmark_gap`イベント発火。指標を`Sharpe/MaxDD/HitRate/Latency`に固定。 | `pytest -k benchmark`、`tradectl benchmark compare --window 90d --mode paper` | 欠損率計算、イベントフィールド、CLI exit code |
+| EP05-T3 | `docs/templates/reports/weekly_m1_core.md` | `Manual CSV`/`Kill Switch`/`Spread`セクションとサイン欄、`ops_worklog`抜粋を追加。`<!-- deferred: -->`コメントは維持。 | `poetry run pytest -k reporter_template` | サイン欄形式、Flag条件、Markdown整形ルール |
+
+- **レビュー観点**: 週次レポート差分、`reports/benchmark/manual_log_signoff`リンク整合、`alert`通知との重複防止。
+
+### 15.6 共通レビュー/サインオフ手順
+- **ドキュメント整備**: Runbook/テンプレが陳腐化する場合は同PRで更新する。更新不要ならPRコメントで理由を明記。
+- **テスト証跡**: テスト結果はPR本文`## Testing`に貼り、CLIスナップショットは`reports/snapshots/<feature>/`へ保存。添付が無い場合は受入不可。
+- **KPI影響記録**: KPIへ影響する変更（EP-01, EP-05等）は`reports/kpi_snapshot.md`と`metrics/performance.jsonl`へ追記し、POレビュー前にトレーダーが確認。
+- **フォールバック計画**: 高リスク変更は`docs/runbooks/ROLLBACK-<feature>.md`を事前整備し、PRで参照を明示。未整備なら先にRunbookを起票する。
+
 ---
 
-本節以降の更新は`v1.9`で予定されている追加機能（Spread自動解除、RiskDisclosure強制、Correlation Guard本番化等）の詳細を反映予定。Codexへ依頼する際は、本書該当箇所を最新版と照合し、差分がある場合は事前に更新してから依頼すること。
+本節以降の更新は`v1.10`で予定されている追加機能（Spread自動解除、RiskDisclosure強制、Correlation Guard本番化等）の詳細を反映予定。Codexへ依頼する際は、本書該当箇所を最新版と照合し、差分がある場合は事前に更新してから依頼すること。
