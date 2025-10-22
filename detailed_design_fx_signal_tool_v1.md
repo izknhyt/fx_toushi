@@ -1999,3 +1999,164 @@ Codex実装で差異が生じやすいイベント/監査/メトリクスのス�
 ---
 
 本節以降の更新は`v1.10`で予定されている追加機能（Spread自動解除、RiskDisclosure強制、Correlation Guard本番化等）の詳細を反映予定。Codexへ依頼する際は、本書該当箇所を最新版と照合し、差分がある場合は事前に更新してから依頼すること。
+## 17. CLIコマンド契約カタログ
+
+CodexがCLI層を安全に実装・改修できるよう、`tradectl`コマンド群のI/O契約・副作用・テスト要求を明文化する。各コマンドはTyperエントリ（§2.6, `src/interfaces/cli/*.py`）として実装し、出力はRichテーブル/Markdown/JSON Linesのいずれかに統一する。凡例:
+
+- **実装位置**: 主要関数とファイルパス。非同期ハンドラは`async`指定を明記する。
+- **主要引数**: CLIオプション（必須/任意/将来フラグ）。`--json`はM1で準備のみ。
+- **副作用**: EventBus発火、監査ログ、メトリクス追記、Runbook連携。
+- **テスト**: 必須`pytest`キーワードとApprovalテスト有無。CLIスナップショットは`tests/approval/cli/`で管理。
+
+### 17.1 `tradectl board`
+- **実装位置**: `src/interfaces/cli/board.py::board`。
+- **主要引数**: `--filter key=value [複数指定可]`, `--view {tickets,diagnostics,summary}`, `--guarded/--normal`, `--json`(M1.1以降)。
+- **副作用**:
+  - EventBusサブスクライブで`ticket.issued`/`ticket.action`/`health.changed`を取得。
+  - `--guarded`/`--normal`時は`AuditWriter`に`BoardModeChanged`イベントを書き込み（§5.3）。
+  - `ops_worklog.jsonl`へ`{"task":"board_review","duration_min":<入力 or 既定>}`を追記（§8.9）。
+- **出力仕様**:
+  - チケット行: `id`, `symbol`, `side`, `score`, `ttl`, `spread`, `regime`, `risk_badge`, `consent`。
+  - Diagnosticsビューは`RiskMetricsSnapshot`、`deterministic_hash`, `spread_state`を縦並びで表示。
+- **テスト**: `pytest -k board_cli_snapshot`（Approval）, `pytest -k board_guarded_toggle`。
+- **Runbook**: `RUN-DATA-05`(Acceptable Degradation)と`RUN-RISK-02`(Kill Switch)のステップIDをバナーに表示。
+
+### 17.2 `tradectl ticket` サブコマンド
+- **実装位置**: `src/interfaces/cli/tickets.py` (`approve`, `reject`, `edit`, `snooze`(M1.1+準備)、`list`).
+- **主要引数**:
+  - `approve --id <ticket_id> [--note <str>] [--user <id>] [--force-consent]`。
+  - `reject --id <ticket_id> [--reason <code>]`。
+  - `edit --id <ticket_id> --field {size,sl,tp,ttl} --value <float|duration>`。
+- **副作用**:
+  - `TicketAction`イベント（§16.2）をEventBusへ発火。
+  - `AuditWriter.record_ticket_action`で`consent_reference_id`、`board_mode`、`spread_state`を記録。
+  - `AccountService`へ`TicketApproved`通知、`ops_worklog.jsonl`へ`ticket_action`タスクを追記。
+- **バリデーション**: `TicketValidator`(§3.16)を同期呼出し、NG時はExit code 70 (`os.EX_SOFTWARE`)。
+- **テスト**: `pytest -k ticket_actions`, `pytest -k audit_writer`。
+- **Runbook**: `RUN-HITL-01`(承認手順)、`RUN-HITL-02`(OCO設定確認)。拒否理由はRunbook内の理由コード辞書に一致させる。
+
+### 17.3 `tradectl status`
+- **実装位置**: `src/interfaces/cli/status.py::status`。
+- **主要引数**: `--verbose`, `--json`, `--ack <alert_id>`, `--kill-switch {running,stop}`(手動操作), `--board {normal,guarded,halted}`。
+- **副作用**:
+  - `--ack`時に`HealthMonitor.ack`を呼び監査ログへ`alert_acknowledged`記録。
+  - `--kill-switch`/`--board`で`KillSwitchChanged`/`BoardModeChanged`イベントを発火。
+- **出力**: 主要セクション（Mode/Health/KillSwitch, GateState, Pending Alerts, Snapshot hash, Manual CSV pending）。`--json`は`json.dumps(status.dict())`で返却。
+- **テスト**: `pytest -k status_cli`, `pytest -k health_state_transitions`。
+- **Runbook**: `RUN-TIME-01`（起動前チェック）と`RUN-RISK-02`（Kill Switch）にCLI出力例を添付。
+
+### 17.4 `tradectl resync`
+- **実装位置**: `src/interfaces/cli/resync.py::resync`。
+- **主要引数**: `--since <ISO8601|relative>`, `--symbol <pair>[, ...]`, `--force`, `--failover-report`, `--dry-run`。
+- **副作用**:
+  - `SessionManager.catch_up`呼出し→`ResyncRequested`/`ResyncCompleted`イベント。
+  - `--failover-report`でFailover履歴をRich Table表示し`reports/validation_log/resync_<ts>.md`保存。
+  - `metrics/data_ingestion_sla.jsonl`へ`resync_latency_sec`を追記。
+- **エラー**: Catch-up未実行時はExit code 112 (`manual_csv_required`)。
+- **テスト**: `pytest -k resync_cli`, `pytest -k data_pipeline`(統合)。Approval: `tests/approval/cli/resync_failover.approved.txt`。
+- **Runbook**: `RUN-DATA-05`/`RUN-DATA-06`で使用。`--dry-run`はRunbook手順のシミュレーション用。
+
+### 17.5 `tradectl preflight`
+- **実装位置**: `src/interfaces/cli/preflight.py`（M1 Coreで骨組み）。
+- **主要引数**: `--profile <name>`, `--json`, `--ntp-check/--no-ntp`, `--smtp-check`。
+- **副作用**:
+  - `scripts/preflight.sh`を呼び、結果JSONを`logs/ops/preflight.log`へ追記。
+  - `HealthMonitor.raise('degraded','preflight')`（NG項目存在時）。
+- **出力**: チェックリスト表（項目/結果/備考）。`--json`時は同JSONを出力。
+- **テスト**: `pytest -k preflight_cli`（モック利用）。
+- **Runbook**: `RUN-TIME-01`の自動化手順。NG項目はRunbookTODOに追記。
+
+### 17.6 `tradectl data` サブコマンド
+- **実装位置**: `src/interfaces/cli/data.py`。
+- **主要サブコマンド**:
+  | コマンド | 主引数 | 機能 | 出力/イベント |
+  | --- | --- | --- | --- |
+  | `manual-template` | `--provider`, `--symbol`, `--date`, `--tf` | 双子CSVテンプレ生成 | `data/manual_fallback/...`へファイル作成、`ManualCsvTemplateCreated`イベント |
+  | `validate-csv` | `--path` | `ManualCsvReconciler`で検証 | 結果表＋Exit code 0/120、`ManualCsvValidated`イベント |
+  | `jobs` | `--pending/--all`, `--export-json` | 手動CSV/フェイルオーバーキュー表示 | `ManualCsvJobSnapshot`をJSON保存 |
+  | `manual-report` | `--date`, `--provider?`, `--symbol?`, `--attach` | Markdownレポート生成 | `reports/validation_log/`へ保存、`ManualCsvReportGenerated`イベント |
+  | `hash` | `--path` | 双子CSVハッシュ計算 | `manual_hash.json`更新、`ManualCsvHashUpdated`イベント |
+- **副作用**: `logs/ops/manual_csv.log`追記、`ops_worklog`タスク`manual_csv_review`。
+- **テスト**: `pytest -k manual_csv_cli`, Approval: `tests/approval/cli/manual_csv_validate.approved.txt`。
+- **Runbook**: `RUN-DATA-05`/`RUN-DATA-06`必須。CLI出力をRunbookチェックリストに貼り付ける。
+
+### 17.7 `tradectl spread`
+- **実装位置**: `src/interfaces/cli/spread.py::inspect`。
+- **主要引数**: `--symbol`, `--window <duration>`, `--percentile {50,75,90,95}`, `--fail-on-gap`, `--export <path>`。
+- **副作用**:
+  - `SpreadMonitor`から状態をpullし、`spread.cooldown.inspect`イベントを生成。
+  - `--fail-on-gap`で閾値逸脱時Exit code 121。
+  - `metrics/network.jsonl`へ`spread_cli_ms`を追加（UX測定）。
+- **テスト**: `pytest -k spread_cli`, Approval: `tests/approval/cli/spread_inspect.approved.txt`。
+- **Runbook**: `RUN-RISK-03`（Spread異常対応）にスクリーンショットを添付。
+
+### 17.8 `tradectl metrics report`
+- **実装位置**: `src/interfaces/cli/metrics.py::report`。
+- **主要引数**: `--kind {sla,latency,pipeline,ops}`, `--window <duration>`, `--mode <profile>`, `--out <path>`, `--validate`。
+- **副作用**:
+  - `JSONLMetricsReader`でデータ読み込み、Markdown/JSON出力。
+  - `--validate`時は`docs/schemas/metrics_*.schema.json`と突合。
+  - 出力パス指定時に`reports/metrics/<timestamp>/`配下へ保存。
+- **テスト**: `pytest -k metrics_report_cli`, `pytest -k json_schema_validation`。
+- **Runbook**: Acceptable Degradation解除判定（§5.15）で添付必須。`--kind ops`はOpsアジェンダ生成（§8.9）と連携。
+
+### 17.9 `tradectl report`
+- **実装位置**: `src/interfaces/cli/report.py`。
+- **主要サブコマンド**:
+  - `weekly --profile <name> [--since <weeks>] [--dry-run] [--out <path>]`。
+  - `daily --date <YYYY-MM-DD> [--profile]`(M1.1)。
+- **副作用**:
+  - ReporterがMarkdown生成→`reports/weekly/<YYYYWW>.md`保存。
+  - `ManualCsvSummary`/`RiskDisclosure`状態をテンプレへ挿入、`ReportGenerated`イベントを発火。
+  - `ops_worklog`へ`report_generation`タスクを追記。
+- **テスト**: `pytest -k reporter_weekly`, Approval: `tests/approval/reports/weekly_m1_core.approved.md`。
+- **Runbook**: `RUN-POST-03`（週次レビュー）。`--dry-run`出力を議事録に添付。
+
+### 17.10 `tradectl benchmark`
+- **実装位置**: `src/interfaces/cli/benchmark.py`。
+- **主要サブコマンド**:
+  | コマンド | 主引数 | 機能 | Exit code |
+  | --- | --- | --- | --- |
+  | `ingest` | `--provider`, `--file`, `--mode <paper|live>`, `--symbol?`, `--email?` | ベンチマークCSV/ICS取り込み | 正常:0, 検証NG:120 |
+  | `compare` | `--window <duration>`, `--mode`, `--provider list`, `--export`, `--fail-on-gap` | KPI比較 | 欠損>閾値:122 |
+  | `validate-manual` | `--path` | 双子CSV突合 | 不一致:120 |
+- **副作用**: `logs/benchmark/*.jsonl`記録、`benchmark_gap`イベント（§3.18.1）。`reports/benchmark/manual_log_signoff/`更新。
+- **テスト**: `pytest -k benchmark_cli`, Approval: `tests/approval/cli/benchmark_compare.approved.txt`。
+- **Runbook**: `GOV-BENCHMARK-01`。
+
+### 17.11 `tradectl ops` 系
+- **実装位置**: `src/interfaces/cli/ops.py`。
+- **主要サブコマンド**:
+  - `readiness --explain [--period weekly]`: Ops Readiness Evaluatorの最新スコア詳細。
+  - `agenda --date <YYYY-MM-DD> [--out <path>]`: Ops Agenda生成（§8.9）。
+  - `automation log --task <name> --before <min> --after <min>`: `automation_effect.jsonl`更新。
+- **副作用**: `ops_worklog`/`automation_effect.jsonl`更新、`ops_readiness.evaluated`イベント購読。
+- **テスト**: `pytest -k ops_cli`。
+- **Runbook**: `OPS-READINESS-01`, `OPS-AUTOMATION-01`。
+
+### 17.12 `tradectl compliance`
+- **実装位置**: `src/interfaces/cli/compliance.py` (M1 Core: WARN表示のみ)。
+- **主要サブコマンド**:
+  - `status`: RiskDisclosureState表示、`consent_version`, `expires_at`, `required_action`。
+  - `ack --note <str> [--user <id>] [--force]`: 暫定承諾記録（M1 CoreはWARNのみ）。
+  - `refresh`: `RiskDisclosureService.refresh_from_profile`を起動。
+- **副作用**: `RiskDisclosureEvent`（§3.30）、`audit`ログ追記。
+- **テスト**: `pytest -k compliance_cli`。
+- **Runbook**: `COMPLIANCE-01`。
+
+### 17.13 `tradectl audit`
+- **実装位置**: `src/interfaces/cli/events.py`または`audit.py`。
+- **主要サブコマンド**:
+  - `tail --since <duration> [--event <filter>] [--json]`: `logs/audit/*.jsonl`のTail表示。
+  - `export --type {ticket,risk_consent} --from <date> --to <date> --out <path>`。
+- **副作用**: `AuditTailSessionStarted`イベント、`reports/audit/exports/`へファイル保存。
+- **テスト**: `pytest -k audit_cli`。
+- **Runbook**: `GOV-AUD-01`, `RUN-POST-03`で監査証跡添付。
+
+### 17.14 共通ガイドライン
+- すべてのCLIは`logger.info("cli.<command>", extra={...})`で操作ログを残し、`extra`には`user`, `mode`, `duration_ms`, `exit_code`を含める。
+- `--json`出力は`json.dumps(obj, indent=2, ensure_ascii=False)`を既定とし、`schema_version`を明示する。
+- Typerコールバックで`asyncio.run`を重複呼び出ししない。既存イベントループがある場合は`anyio.from_thread.run`を使用。
+- Exit codeはPOSIX規約に合わせ、再試行可能エラーは70〜79、バリデーション系は120台、未実装は`EX_UNAVAILABLE (69)`。
+- ドキュメント更新: 新コマンド追加時は本節、Runbook、テストケース、`docs/templates/cli_reference.md`を同時更新。
+- Codex向けPRでは`## CLI`セクションに変更コマンド・オプション・出力差分を記載し、Approvalテストを添付すること。
