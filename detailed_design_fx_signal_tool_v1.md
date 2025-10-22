@@ -1571,3 +1571,197 @@ linked_runbook: docs/runbooks/RUN-XXXX-YY.md
 - **イベント/連携**: 正常終了時は`reconciliation.completed`でOps Readiness Evaluatorへスコア加点、Reporterが`reports/audit/reconciliation/<date>.md`を生成。差分時はKill Switchを`soft_stop`に遷移し、Idea Pipeline Managerが新規昇格を停止。
 - **異常系**: ステートメントファイル欠損/解析失敗→`StatementImportError`でリトライ案内。差分特定不可の場合は`reconciliation.escalated`を発火しRunbook `AUD-REC-02`手順へ誘導。証跡出力失敗はOps Readiness Evaluatorの証跡欠損として扱う。
 - **設定ファイル**: `config/reconciliation.yaml`（ブローカー別カラムマッピング、差分閾値、フェイルセーフ条件、Kill Switchハンドリング）。CLI `tradectl reconcile statements --from <date>`が`reconcile`を呼び出し監査に結果を追記。
+
+## 12. Codex実装オーケストレーションガイド
+
+Codexに安全かつ高品質な実装を委任するため、エピック→タスク→指示テンプレートの分解規約と、出力レビュー/受入のダブルチェック手順を定義する。本節の適用により、ヒューマンレビュー工数を削減しながらもトレーダー観点の精度と再現性を担保する。
+
+### 12.1 エピック分解と優先度キュー
+| エピック | 完了条件 | 分割単位 | Codexハンドオフ手順 | 先行依存 | 備考 |
+| --- | --- | --- | --- | --- | --- |
+| EP-01 DataLag Mitigation | `metrics/data_ingestion_sla.jsonl`p95達成、IT-PIPE-01/IT-RESYNC-01合格 | `data.service`フェッチ改善、`quality`ガード強化、Catch-up Job改修 | 1) `data.service.fetch_latest`の実装差分、2) テストケース、3) CLI `tradectl resync`ログ改善を順番に渡す。 | `core/session`, `core/workflow` | Acceptable Degradation解除条件を事前共有。 |
+| EP-02 Strategy Determinism | Backtest=Paper=Liveの出力一致、`pytest -k strategy_determinism`合格 | `features.pipeline`, `strategies.registry`, `execution.model`の決定論化 | 乱数初期化とCacheバージョンハッシュの実装→Strategy登録→差分テストの順で着手させる。 | `infra/config`, `core/session` | データセットバージョン固定化指示を添付。 |
+| EP-03 Guardrails | Kill Switch/Spread/NTPシグナルの整合、`IT-KILL-01`/`IT-SPREAD-01`合格 | `core/health`, `risk.manager`, `execution.spread` | Health→Risk→Spreadの順で小粒度PRを依頼し、各段階でCLIスナップショットを要求。 | `infra/metrics` | `Acceptable Degradation`のRunbookリンクを併記。 |
+| EP-04 Ticket Clarity | CLIボードのUX向上、`pytest -k ticket_builder`合格 | `ticket.builder`, `interfaces/cli/board`, `persistence.audit` | Ticket JSON→CLIレンダラ→監査ログ出力の3段階。各段階でサンプルデータを渡す。 | `core/event_bus` | `RiskDisclosureService`連携を先に説明。 |
+| EP-05 Weekly Review | Reporter/Benchmark整合、`tradectl report weekly --dry-run`成功 | `reporter.generator`, `reporter.benchmark`, テンプレート更新 | Reporter本体→テンプレ→Benchmark連携。差分確認用に承認済サンプルを添付。 | `infra/config`, `persistence.events` | スタブからの切替時はFeature Flag操作手順を同梱。 |
+
+- 優先度は常に`EP-01`→`EP-03`→`EP-02`→`EP-04`→`EP-05`の順で進め、複数エピックを同時進行させない。例外は緊急Hotfixのみ。
+- 各タスクは**最大4ファイル**・**300行以内**の差分で収まるよう切り出し、必要であればPRを段階分割する。
+- Codexへのハンドオフ前に、依頼対象ファイルに該当する本設計書の節番号を明記し、レビュー観点（KPI・リスク・UX）を箇条書きする。
+
+### 12.2 コード/テスト提示テンプレート
+Codexへ渡すコード断片は以下のテンプレートに従う。特に`dataclass`/`Enum`の定義と、代表的なテストフィクスチャを同梱することで、余計な推測を防ぐ。
+
+```
+<context>
+  - 対象: src/<path>::<Class/Function>
+  - 目的: (FR/NFR/AC番号)
+  - 依存: <他クラス/設定/Feature Flag>
+
+<現行実装>
+```python
+<抜粋(<=120行)>
+```
+
+<変更要求>
+  - 追加/更新メソッド署名
+  - docstring要件（ユーザー向けメトリクス/リスク警告）
+  - 例外/フォールバック
+
+<テスト>
+```python
+@pytest.mark.<marker>
+def test_<case>(...):
+    ...
+```
+  - CLI/コマンド例 (`tradectl ...`)
+
+<レビューポイント>
+  - Spread/NTP/Kill Switch連携 など
+```
+
+- `poetry run pytest -k <keyword>`や`tradectl ... --dry-run`など、実行コマンドはそのままコピーペースト可能な形で記述する。
+- 大量の既存コードを引用する場合は`rg`による該当行番号を示し、必要最小限の抜粋で留める。
+- スタブ→本実装切替時は「スタブの残置」「Feature Flag初期値」「M1/M1.1差分」などを明記し、後続のPRが適切に差分認識できるようにする。
+
+### 12.3 Codex出力レビュー/受入チェックリスト
+| ステップ | 実施者 | 内容 | エビデンス | コメント |
+| --- | --- | --- | --- | --- |
+| 1. 仕様差分確認 | 依頼者 | `git diff --stat`で対象ファイルが設計指定内か検証。想定外変更は即差戻し。 | Diffスクリーンショットorログ | |
+| 2. 静的チェック | 依頼者 | `poetry run ruff check`/`poetry run mypy`（必要時）を実行。 | CIログ or ローカルログ | `mypy`は型警告をレビュー。 |
+| 3. 単体テスト | 依頼者 | 依頼時指定の`pytest -k ...`を実施し成功を確認。 | テストログ | 失敗時は原因分類（設計/実装/環境）をメモ。 |
+| 4. UX確認 | トレーダー | CLIスナップショット/JSONサンプルをレビューし、Runbook整合をチェック。 | `reports/snapshots/<feature>/` | Spread/Kill Switchバナーの文言確認。 |
+| 5. KPI影響記録 | トレーダー | `metrics/performance.jsonl`や`reports/kpi_snapshot.md`に期待影響を追記。 | KPIログリンク | Acceptable Degradation時は特に厳守。 |
+| 6. ドキュメント更新 | 依頼者 | 本設計書/Runbook/リリースノート更新の有無を判断。必要なら同PRで更新。 | コミットログ | 未更新の場合はTODO記録。 |
+
+- 受入判定後は`docs/prompt_packages/<date>_<feature>.md`へ結果を記録し、良かった点/改善点/次回注意事項を追記。Codexへのフィードバックは次回依頼時の冒頭で引用する。
+- 差戻し時は必ず「設計逸脱」「要件未達」「テスト未実施」「UX不整合」「リスク未考慮」のいずれかに分類し、再実装時の観点を明記する。
+
+### 12.4 リグレッション/再現性ガード
+- **スナップショット比較**: Codex出力がSnapshotスキーマに触れる場合は`tests/integration/test_snapshot_regression.py`を必須実行。`snapshot.compare_hash`差分はPRコメントで添付し、差異が期待どおりかヒューマンが判断する。
+- **Backtest Diff**: Strategy関連変更は`tools/replay_signals.py --since <date>`で差分を可視化し、PF/Sharpeの変化を`reports/backtest/diff_<timestamp>.md`にまとめる。Codexに差分まとめを依頼しても良いが、ヒューマンが最終確認する。
+- **CLI Snapshot**: `pytest-approvaltests`で保護されたCLI出力に変更がある場合は、Codexへ承認済みスナップショットを添付し`--approve`結果を提示させる。差分説明がない場合は差戻し。
+- **データバージョン**: データセット更新が伴う場合は`reports/data_manifest.json`の該当エントリとハッシュを必ず更新する。Codexへハッシュ算出コマンド（`shasum -a 256 <file>`）を明示する。
+
+### 12.5 Codex質問対応プロトコル
+1. Codexから追加質問が来た場合、**質問受付ログ**を`docs/prompt_packages/<date>_<feature>.md`へ追記し、回答までのSLAを明記（通常6h以内）。
+2. 回答は可能な限り`Q/A`形式で、設計書の該当節番号・Runbookリンク・依存Feature Flagを引用する。判断が必要な場合はPO/運用へエスカレーション。
+3. 質問回答により設計変更が必要と判明した場合は、本書の該当箇所を更新し、コミットメッセージに`docs: update detailed design (Q&A <id>)`を含めて記録する。
+4. Codexが設計逸脱の提案をする場合は、**受け入れるなら**基本設計/要件の差分承認を取得し、本書に`[CHANGE REQUEST <id>]`注記を追加。**却下するなら**理由と代替案を回答ログに残す。
+
+### 12.6 ヒューマン・トレーダー運用との整合
+- Acceptable Degradation中の開発依頼は、運用負荷を最小化する観点から以下を必須とする。
+  - PR説明に「当面の運用ハック」「解除条件」「Runbook変更点」を記載。
+  - CLI文言変更は`ops_worklog.jsonl`の省力化フラグに影響するため、変更前後の操作時間を記録する。
+  - リスク/KPIに関わる閾値変更は`reports/governance/risk_policy_changes/`へ差分Markdownを自動生成し、Codex出力にも添付させる。
+- トレーダーが週次レビューで利用する`reports/weekly/<YYYY-WW>.md`には、Codex実装直後の「想定KPI/実績KPI」「Spread監視結果」「Kill Switchアクション」を追記する欄を設け、レビュー時に乖離を特定しやすくする。
+
+## 13. リリース・運用準備計画
+
+### 13.1 マイルストーン別ゲート
+| マイルストーン | 対応機能 | 必須達成条件 | 承認者 | 備考 |
+| --- | --- | --- | --- | --- |
+| M1 Core | Backtest/Paper共通パイプライン、HITLボード、リスクガード | FR/NFR必須項目達成、`pytest -m "not m2plus"`合格、Backtest再現性証跡 (`reports/backtest/m1_baseline/*`) | PO + 運用 | Liveモードはβ。 |
+| M1.1 | Spread Monitor本稼働、RiskDisclosure enforce、Acceptable Degradation自動化 | Spread Cooldown自動解除、Consent強制モード、`IT-SPREAD-01`/`IT-KILL-01`再実施 | PO + トレーダー | Feature Flag切替Runbook必須。 |
+| M1.2 | Correlation Guard、Ops Workload自動集計 | `correlation_guard`テスト合格、`ops_worklog`ダッシュボード稼働 | PO + 運用 | Ops負荷軽減を評価。 |
+| M2 | Scoreboard/Idea/Ops/Governance統合、Slack通知 | Appendix G実装、CI/CD導入、`tradectl` GUI PoC | PO + 運用 + セキュリティ | 外部連携前に監査レビュー。 |
+
+- 各ゲート通過時に`docs/release_checklist/milestone_<id>.md`を更新し、未完了項目は`status=pending`で残す。Codex実装後にゲート条件が変動した場合は本設計書とチェックリスト双方を更新。
+
+### 13.2 リリースタグ運用
+- リリースタグは`release/<YYYYMMDD>_m1_core`形式。タグ時点の`cfg_hash`, `data_manifest_hash`, `snapshots/latest`ハッシュを`docs/releases/<tag>.md`へ記録する。
+- タグ作成手順:
+  1. `git checkout main && git pull`
+  2. `poetry run pytest -m "not m2plus"`
+  3. `tradectl preflight --mode dry-run`
+  4. `tradectl report weekly --dry-run`
+  5. `git tag release/<date>_m1_core`
+  6. `git push origin release/<date>_m1_core`
+- タグ後に緊急修正が必要な場合は`hotfix/<issue>`ブランチを切り、`docs/change_requests/`へホットフィックス票を作成。適用後はタグを再発行せず、`docs/releases/<tag>.md`に差分を追記する。
+
+### 13.3 デプロイ/起動手順整合
+- **Paperモード**:
+  1. `poetry install --sync`
+  2. `poetry run tradectl preflight`
+  3. `poetry run tradectl start --profile paper`
+  4. Acceptable Degradationが出た場合は`tradectl board --guarded`
+  5. 終了時に`tradectl stop`
+- **Liveモードβ**:
+  1. 上記に加え`tradectl account import --csv <broker_log>`で初期残高を同期
+  2. RiskDisclosureが`pending`の場合はRunbook `COMPLIANCE-01`に従い承諾ログを取得
+  3. Live中はSpread/NTPジョブを監視し、異常時は`Kill Switch STOP`
+  4. 日次終了後に`tradectl report daily <date>`を生成
+- Codexが起動スクリプトを変更する場合は、上記手順との差異をドキュメント化し、Runbookをセットで更新させる。
+
+### 13.4 BCP/DRテーブル更新
+| シナリオ | RTO | RPO | 担当 | 手順 | 訓練頻度 |
+| --- | --- | --- | --- | --- | --- |
+| 端末故障 | 4h | 12h | 運用 | 予備端末へバックアップ復元→`tradectl resync --force` | 半期 |
+| データ汚染 | 8h | 2h | 開発 | `git checkout`で前回タグへ戻し`data_manifest`照合→`tradectl replay`で再評価 | 四半期 |
+| SMTP障害 | 24h | 1h | 運用 | `.env`切替→Gmail代替→Runbook `ALERT-FAILOVER`実施 | 年次 |
+| ネットワーク断 | 2h | 15m | 運用 | 予備回線へ切替→`tradectl preflight --network-only`→Spread guard確認 | 四半期 |
+- 訓練結果は`reports/drill/<YYYYMMDD>_<scenario>.md`に記録し、Ops Readiness Evaluatorが参照する。Codexが関連コード（例: `scripts/restore_snapshot.sh`）を更新した場合は本テーブルも同期更新する。
+
+### 13.5 KPI可視化・レビューカレンダー
+- **週次 (毎週月曜09:00 JST)**: `tradectl report weekly --dry-run`出力をPO/トレーダーがレビュー。Spread/Kill Switchアラート、手動CSV件数を確認し、必要に応じて改善タスクを起票。
+- **月次 (第1営業日夜)**: KPIスナップショットと`ops_worklog`サマリを突合。Codexが関与した変更の効果測定を実施し、`automation_effect.jsonl`に差分を記録。
+- **四半期 (最終営業週)**: Backtest再評価とSLAプロファイル更新。`tools/sla/generate_profile.py`の結果をレビューし、必要なら閾値適用を決定。
+- 各レビュー結果は`docs/review_log.md`へ転記し、未解決課題は`docs/risk_review/<date>.md`でフォローアップ。
+
+### 13.6 監査・証跡統合
+- `AuditWriter`が吐き出すログに`consent_reference_id`, `cfg_hash`, `board_mode`を必須フィールドとして追加する（既存差分なし）。Codexがログスキーマを変更する場合は`docs/schema/audit_event.md`の更新を伴わせる。
+- 監査ログ圧縮は`logs/audit/YYYYMMDD.jsonl.zst`形式。Codexに圧縮コマンド (`zstd -T0`) を実装させる場合は、圧縮後のハッシュと既存Runbook `AUD-ARCHIVE-01`のステップを照合させる。
+- 監査抽出CLI `tradectl audit export --type risk_consent`(M1.1計画)の仕様はAppendix Hで追補予定。Codexが下準備する際はFeature Flag `audit.enable_consent_export`を用意し、既定Falseとする。
+
+### 13.7 リリースコミュニケーション
+- リリース前日までにPO→トレーダー→運用で告知テンプレート（`docs/templates/release_announcement.md`）を更新し、Spread/KPI/Runbookの要点を共有する。
+- Codexが大きなUI変更を実装した場合は、デモ動画またはCLIリプレイ (`tools/replay_signals.py`) のスクリプトを`docs/releases/<tag>/demo.md`へ添付させる。
+- リリース後24hは`EventBus`/`metrics`/`logs/ops`を重点監視し、異常時は`feedback_loop.md`に記録。CodexにHotfixを依頼する際は、本設計書§12のテンプレートに則って迅速に依頼する。
+
+## 14. 参考プロンプト/PRメッセージテンプレート
+
+### 14.1 Pull Request テンプレート（Codex向け）
+```
+## Summary
+- (必須) 何を/なぜ
+- (リスク) Spread/Kill Switch/Consentへの影響
+- (運用) Runbook/手動手順の変化
+
+## Testing
+- [ ] poetry run pytest -k <keyword>
+- [ ] tradectl <command>
+- [ ] その他
+
+## Screenshots / Artifacts
+- CLIスナップショット or レポートパス
+
+## Rollback Plan
+- スナップショット/Configロールバック手順
+
+## Checklist
+- [ ] Feature Flag初期値確認
+- [ ] docs/runbooks 更新
+- [ ] KPI影響記録
+```
+- CodexにはPR本文を上記形式で提出させ、チェックボックスは実行済み項目のみ`[x]`にする。実行できない項目は理由をPRコメントで説明させる。
+
+### 14.2 Promptパッケージ保管ルール
+- `docs/prompt_packages/<YYYYMMDD>_<feature>.md`の冒頭に以下メタデータを記載:
+  - `feature_id`, `epic`, `status(draft|sent|accepted|rejected)`, `codex_version` (任意)、`reviewers`
+  - `related_kpi`, `runbook_refs`, `data_manifest_refs`
+- 本文末尾に`## Review Feedback`セクションを必須とし、差戻し理由/改善点/次回の留意事項を箇条書き。Codexからのフィードバックも同じファイルに追記し、学習サイクルを短縮。
+- 旧バージョンを再利用する場合は`---`区切り線で過去ログを残し、変更点は`diff`形式で明示する。
+
+### 14.3 Codexレビューメモ例
+```
+### Review Notes (2025-02-20 / EP-01 data.service)
+- 👍 Resyncログの`failover_used`がRunbookと一致。
+- ✅ pytest -k data_pipeline OK (ログ添付あり)。
+- ⚠️ SpreadCooldown解除文言がRunbook表現とズレ → 次回PRで共通化タスクを起票。
+- 📌 KPIログ `metrics/data_ingestion_sla.jsonl` でp95=178s。目標<180sギリギリのため、M1.1で追加改善を検討。
+```
+- レビューメモは`docs/review_log.md`へ日付順に追記する。トレーダーはこのログをもとに運用改善メモを作成する。
+
+---
+
+本節以降の更新は`v1.9`で予定されている追加機能（Spread自動解除、RiskDisclosure強制、Correlation Guard本番化等）の詳細を反映予定。Codexへ依頼する際は、本書該当箇所を最新版と照合し、差分がある場合は事前に更新してから依頼すること。
