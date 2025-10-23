@@ -180,13 +180,115 @@
 │  Notification (SMTP, Slack future)           │
 └──────────────────────────────────────────────┘
 ```
+- **1.1.1 コンポーネント図**
+
+```mermaid
+graph TD
+    subgraph CLI
+        A[tradectl CLI]
+    end
+    subgraph App[Application Service Layer]
+        B[SessionManager]
+        C[Workflow Orchestrator]
+        D[Scheduler]
+        E[HealthMonitor]
+        F[SnapshotManager]
+        G[EventBus]
+    end
+    subgraph Data[データ取得層]
+        H[DataIngestionService]
+        I[DataQualityGuard]
+        J[ManualCsvIngestionTask]
+    end
+    subgraph Analysis[分析層]
+        K[FeaturePipeline]
+        L[RegimeDetector]
+        M[StrategyEngine]
+        N[ScoringService]
+    end
+    subgraph Execution[執行層]
+        O[ExecutionModel]
+        P[RiskManager]
+        Q[CorrelationGuard]
+        R[PositionSizer]
+        S[TicketBuilder]
+    end
+    subgraph Monitoring[監視層]
+        T[MetricsWriter]
+        U[Reporter]
+        V[AlertDispatcher]
+        W[Persistence/Audit]
+    end
+    subgraph Infra[Infrastructure Layer]
+        X[(Market Data Providers)]
+        Y[(Broker Specs)]
+        Z[(Config Registry)]
+        AA[(Storage: Parquet/JSONL/SQLite)]
+        AB[(Notification Channels)]
+    end
+
+    A -->|CLI Command| B
+    B --> C
+    C --> H
+    C --> K
+    H --> I
+    I --> K
+    K --> L
+    L --> M
+    M --> N
+    M --> O
+    O --> P
+    P --> Q
+    Q --> R
+    R --> S
+    S --> W
+    P --> E
+    B --> F
+    B --> G
+    G --> T
+    G --> U
+    G --> V
+    G --> W
+    T --> G
+    U --> G
+    V --> G
+    W --> G
+    H --> X
+    J --> X
+    O --> Y
+    B --> Z
+    H --> AA
+    I --> AA
+    J --> AA
+    K --> AA
+    L --> AA
+    M --> AA
+    N --> AA
+    O --> AA
+    P --> AA
+    Q --> AA
+    R --> AA
+    S --> AA
+    T --> AA
+    U --> AA
+    V --> AB
+    W --> AA
+```
 - **M1 Coreスコープガード**: 上記ディレクトリのうち`scoreboard/`, `ideas/`, `ops_readiness/`, `governance/`, `reconciliation/`はM1 Coreでは最小スタブのみ配置し、必要なIFは`src/domain/governance/contracts.py`などの軽量スタブに限定する。Feature Flag `governance.alpha_scoreboard`等は`False`を既定とし、スタブは`pass`実装＋`logging.getLogger(__name__).info('noop')`に留める。将来有効化時は本設計書に追補する。
 
 
-### 1.2 レイヤー責務
-- **Application Service**: ランタイム管理（起動/停止/モード切替/Catch-up）、スケジューリング、イベント配信、CLI連携。副作用はEventBus/Alert/Snapshotへ委譲し、Fail-FastでKill Switchに連携する。
-- **Domain Core**: ドメインデータ処理を担う純粋ロジック群。状態は明示的データ構造で受け渡し、モード差分は`ModeContext`で吸収する。
-- **Infrastructure**: 外部システムとの境界。データプロバイダ、設定、永続化、通知、メトリクス。ユニットテストでは全てMock可能。
+### 1.2 レイヤー構成
+
+| レイヤ | 主な責務 | 代表コンポーネント | 入出力 | 監視/制約 |
+| --- | --- | --- | --- | --- |
+| データ取得層 | 市場データの取得・整形・品質担保。遅延/欠損の検知とフォールバック誘導を担当。 | DataIngestionService, DataQualityGuard, ManualCsvIngestionTask | 外部プロバイダ→正規化済みMarketFrame、Qualityレポート、Fallback指示イベント | `metrics/data_ingestion_sla.jsonl`、Runbook `RUN-DATA-05/06`、プロバイダレート制限 |
+| 分析層 | 特徴量生成・レジーム判定・戦略評価・スコアリング。決定論的出力でシグナルを抽出。 | FeaturePipeline, RegimeDetector, StrategyEngine, ScoringService | MarketFrame/FeatureFrame→RawSignal/RankedSignal/RegimeState | `tests/integration/test_strategy_determinism.py`、Feature FlagでM2機能を遮断 |
+| 執行層 | シグナルのリスク評価・ポジションサイジング・チケット構築。Spread監視とKill Switch連携。 | ExecutionModel, SpreadMonitor, RiskManager, CorrelationGuard, PositionSizer, TicketBuilder | SizedSignal/TicketPayload、Kill Switch操作、BoardMode推奨 | `metrics/risk.jsonl`、Kill Switch Runbook、BoardMode手動切替要件 |
+| 監視層 | メトリクス収集・監査ログ・レポート生成・通知。運用イベントと承認証跡を保持。 | MetricsWriter, Reporter, AuditWriter, AlertDispatcher, SnapshotManager | 各処理段階のメトリクス/イベント/レポート/スナップショット | `logs/audit/*.jsonl`、`reports/weekly/*.md`、Acceptable Degradation監視 |
+| アプリケーションサービス層 | セッション管理、ワークフロー実行、スケジューリング、モード制御、ヘルス監視。 | SessionManager, Workflow Orchestrator, Scheduler, HealthMonitor, EventBus, CLI | CLIコマンド/ModeProfile→イベント駆動パイプライン→状態遷移 | Kill Switch/BoardMode手動承認、Snapshot整合チェック |
+| インフラ層 | 外部API、永続化ストア、設定/秘密情報、通知チャネルを抽象化。 | ProviderAdapters, ConfigRegistry, StorageAdapters, Secrets, NotificationAdapters | 各レイヤへの依存性解決、I/O抽象 | プロバイダSLA、セキュリティ制約、バックアップポリシー |
+
+- **既存3層表現**（アプリケーションサービス/ドメインコア/インフラ）は上記拡張レイヤに内包される。分析・執行・監視レイヤはドメインコアの責務を細分化し、将来のスケーリング方針（分散処理、追加戦略、Ops自動化）に備えた依存分離を明示する。
 
 ### 1.3 ディレクトリ構成（M1）
 ```
@@ -383,16 +485,44 @@ tests/
 - **エラーハンドリング**: 重大例外は`HealthMonitor.raise("hard_stop", reason)`を経由しKill Switchを`STOP`に遷移。`graceful=False`でshutdownした場合、再起動時に`soft_stop(manual_review)`から開始。
 - **設定依存**: `config.profile_<name>.yaml`と`cfg.schema.json`。Profile切替時は`cfg_hash`を再計算し監査ログへ出力。
 
+#### APIインターフェース一覧
+| API/関数 | 入力 | 処理 | 出力 | 異常系 |
+| --- | --- | --- | --- | --- |
+| `SessionManager.start(profile, mode)` | プロファイルID、モード（Backtest/Paper/Live）、CLI起動引数、`ModeContextFactory` | プロファイル検証→`ModeController.attach(mode)`→`Workflow`起動→`HealthMonitor.reset_soft_stop` | `SessionHandle`（ジョブID、mode、cfg_hash） | プロファイル不正: `ProfileValidationError`。起動失敗: `SessionStartError`→Kill Switch `hard_stop(startup)` |
+| `SessionManager.catch_up(from_ts=None)` | 欠損開始時刻、省略時は`Snapshot.last_bar_ts`、対象シンボル集合 | `BackfillJob`生成→`resync_queue`投入→進捗監視→完了時イベント発火 | `ResyncCompleted`イベントID、`catch_up_elapsed_sec` | プロバイダ失敗3連続: `CatchUpFailed`（Kill Switch `soft_stop(data_latency)`）。スナップショット差異: `DataMismatchError` |
+| `SessionManager.shutdown(graceful=True)` | `graceful`フラグ、呼出元（CLI/自動化） | ジョブキャンセル→`Workflow.stop()`→`SnapshotManager.persist()`→EventBusクローズ | `ShutdownReport`（停止時刻、残ジョブ数） | `persist()`失敗: `SnapshotPersistError`（`hard_stop(recovery)`）。強制停止時は`ShutdownForcedWarning`をAudit記録 |
+| `SessionManager.status()` | なし（内部状態のみ） | `SessionState`参照→`ModeController.describe()`→Health/Kill Switch統合 | `SessionStatus`（mode、board_mode、health_state、lag指標） | `SessionState`欠落: `SessionNotInitializedError` |
+| `SessionManager.reset_kill_switch(reason, actor)` | 理由文字列、実行者ID | Kill Switch確認→`HealthMonitor.clear(reason)`→`audit.record_kill_switch_reset` | Kill Switch新状態 (`RUNNING`) | `HealthMonitor`未承認状態: `KillSwitchResetDenied`。Audit書込失敗: `AuditWriteError` |
+| `ModeController.switch(profile, mode)` | 新プロファイル、新モード、`ModeDiffPolicy` | 現在セッションのcfg差分計算→`cfg_hash`更新→依存サービス再構築 | `ModeContext`（データソース、I/Oスタブ） | cfg差分矛盾: `ModeSwitchError`。依存初期化失敗: `DependencyInitError` |
+
 ### 2.2 Workflow Orchestrator (`src/core/workflow.py`)
 - **役割**: トリガー時間足（M1:5分）に同期したバー処理ループの進行。`PipelineStep`の連鎖を構築し、各ステップの処理時間をメトリクスに記録。
 - **実装**: `asyncio`ベースで`AsyncIntervalJob`としてスケジュール。Catch-up時は`fast_forward`モードで順次処理し、途中で`HealthMonitor`ステータスをチェック。
 - **例外処理**: 各`PipelineStep`は`PipelineError`を投げ、オーケストレータが`HealthMonitor`へ通知。`retry_policy`を設定可能（既定は1回リトライ後soft_stop）。
 - **Backpressure**: `max_concurrent_steps`で同時実行数を制御し、過負荷時は`WorkflowLag`イベントを発生させKill Switchの判断材料とする。
 
+#### APIインターフェース一覧
+| API/関数 | 入力 | 処理 | 出力 | 異常系 |
+| --- | --- | --- | --- | --- |
+| `WorkflowOrchestrator.start(interval_sec)` | 実行間隔、`PipelineStep`連鎖、`Scheduler`インスタンス | Intervalジョブ登録→初回`execute_cycle()`呼出→EventBusへ`workflow.started` | ジョブID、次回実行予定時刻 | Scheduler登録失敗: `WorkflowScheduleError`。初回実行例外: `PipelineError`伝播→`HealthMonitor.soft_stop` |
+| `WorkflowOrchestrator.execute_cycle(context)` | `ModeContext`, 現在バー時刻, `PipelineStep`配列 | 各ステップ順次実行→処理時間計測→メトリクス記録→シグナル/リスク処理 | 更新済み`context`（FeatureFrame, Signals, Tickets） | ステップ例外: `PipelineError`→`handle_failure()`。タイムアウト: `WorkflowTimeoutError` |
+| `WorkflowOrchestrator.fast_forward(range)` | 欠損範囲、`catch_up=True`フラグ | Catch-upモードで過去バーを連続処理、`max_concurrent_steps`調整 | Catch-up統計（処理バー数、平均レイテンシ） | 途中中断: `CatchUpAborted`（Kill Switchへ通知）。入力期間不正: `InvalidCatchUpRange` |
+| `WorkflowOrchestrator.register_step(step)` | `PipelineStep`実装、依存タグ | ステップDI→順序検証→`step.initialize()` | 登録済みステップ一覧 | 依存未解決: `PipelineConfigurationError` |
+| `WorkflowOrchestrator.handle_failure(step, error)` | 失敗ステップ、例外オブジェクト、再試行ポリシー | リトライ判定→`Scheduler.defer_retry`→`HealthMonitor.raise`→Audit記録 | `FailureResolution`（retry/defer/abort） | リトライ不可: `WorkflowAbortError`。Audit書込失敗: `AuditWriteError` |
+
 ### 2.3 Scheduler (`src/core/scheduler.py`)
 - **コンポーネント**: `AsyncIntervalJob`, `AsyncOneShotJob`, `JobRegistry`。
 - **責務**: Intervalジョブ（バー処理、Spread監視、Funding更新）とOneShotジョブ（Resync、レポート生成、バックテスト）を統合管理。ジョブのキャンセル/再スケジュールをサポート。
 - **監視**: `metrics/scheduler.jsonl`へ`enqueue_ts`, `start_ts`, `end_ts`, `status`を記録。遅延が`config.scheduler.lag_warn_sec`を超えると`SchedulerLagWarning`イベントを発火。
+
+#### APIインターフェース一覧
+| API/関数 | 入力 | 処理 | 出力 | 異常系 |
+| --- | --- | --- | --- | --- |
+| `JobRegistry.register(job)` | `AsyncIntervalJob`または`AsyncOneShotJob`、優先度、再試行ポリシー | 重複チェック→イベントループへ登録→監査ログ | `JobHandle`（id、type、next_run） | ID重複: `JobRegistrationError`。イベントループ未初期化: `SchedulerNotReady` |
+| `AsyncIntervalJob.start()` | 実行間隔、`coroutine_fn`, `jitter`, `max_skips` | 次回実行計算→`Scheduler`へスケジュール→完了後再エンキュー | 実行履歴（start/end/duration） | コールバック例外: `JobExecutionError`→`retry_policy`適用。閾値超過遅延: `SchedulerLagWarning` |
+| `AsyncOneShotJob.run()` | 実行時刻、依存ジョブID、`timeout_sec` | 単発タスクを即時/指定時刻に実行→結果通知 | `JobResult`（status、payload） | 期限超過: `JobTimeoutError`。依存未完了: `DependencyNotMet` |
+| `Scheduler.cancel(job_id)` | ジョブID、キャンセル理由 | イベントループからジョブ削除→状態更新→Audit記録 | `CancellationReceipt` | 未登録ID: `JobNotFoundError`。キャンセル禁止状態: `JobCancelDenied` |
+| `Scheduler.defer_retry(job, delay)` | ジョブインスタンス、遅延秒数、最大再試行回数 | リトライ回数更新→遅延付き再登録 | `RetryHandle`（remaining_attempts） | 最大試行超過: `RetryExhaustedError` |
 
 ### 2.4 EventBus & SnapshotManager (`src/core/event_bus.py`, `src/core/snapshot.py`)
 - **EventBus**
@@ -404,6 +534,16 @@ tests/
   - `restore()`は最終スナップショットを読み込み、`health.status in {soft_stop, hard_stop}`の場合は`Paused`状態で起動しCLIに復旧手順を提示。
   - `compare_hash(data_hash)`でResync後のデータ整合性を検証し、差異があれば`DataMismatch`イベントを発行（FR-32）。
 
+#### APIインターフェース一覧
+| API/関数 | 入力 | 処理 | 出力 | 異常系 |
+| --- | --- | --- | --- | --- |
+| `EventBus.publish(event)` | `DomainEvent` dataclass、`context_metadata`、`persist=True/False` | `orjson`シリアライズ→JSONL追記→AsyncQueue配送 | 配信件数、ファイルオフセット | ファイル書込失敗: `EventWriteError`（リトライ3回後`hard_stop(audit)`）。Queue満杯: `EventBackpressure` |
+| `EventBus.subscribe(event_type, filter_fn)` | イベント型、フィルタ関数、`backlog_mode` | 購読ID発行→既存バッファ再生→Asyncジェネレータ提供 | `AsyncIterator[DomainEvent]` | イベント型未登録: `UnknownEventType`。購読解除失敗: `SubscriptionReleaseError` |
+| `EventBus.replay(from_ts)` | `from_ts`, `to_ts?`, `event_types` | JSONLファイルスキャン→条件一致イベントを順次yield | `Iterator[DomainEvent]` | ファイル欠損: `EventLogNotFound`。整合性NG: `EventLogCorrupted` |
+| `SnapshotManager.persist(snapshot)` | `SnapshotState`, `cfg_hash`, `data_hash`, `actor` | テンポラリ書込→fsync→アトミックrename→Audit記録 | `SnapshotPersistResult`（path, checksum） | 書込失敗: `SnapshotPersistError`。整合性計算失敗: `SnapshotHashError` |
+| `SnapshotManager.restore()` | 復旧モード、ロード対象パス | JSONL/Parquet読み込み→`SnapshotState`復元→`HealthMonitor`へ初期状態通知 | `SnapshotRestoreResult`（state, warnings） | ファイル欠損: `SnapshotNotFoundError`。ハッシュ不一致: `SnapshotCorruptedError` |
+| `SnapshotManager.compare_hash(data_hash)` | Resync後データハッシュ、期待ハッシュ | ハッシュ比較→差分検知→`DataMismatch`イベント送出 | `HashComparisonReport` | 差分あり: `DataMismatchDetected`（Kill Switch判断材料）。計算不能: `HashComputationError` |
+
 ### 2.5 HealthMonitor / Kill Switch (`src/core/health.py`)
 - **状態遷移**: `ok → degraded → soft_stop → hard_stop`。戻り条件はRunbookで管理し、Kill Switchは`RUNNING | STOP`を保持する。M1 Coreでは遷移判定をログ出力に留め、Opsが手動で状態を確定する。
 - **BoardMode遷移**: `normal`（既定）→`guarded`→`halted`のシーケンスをサポートするが、M1 Coreは`HealthMonitor`が`HealthState`とNTP逸脱を監視して`health.suggest_guarded`/`health.suggest_resume`イベントを発行し、オペレータが`tradectl board --guarded`/`--normal`で反映する。自動復帰はM1.1で有効化予定。`guarded`状態の証跡として承認ログに`degraded_ack`が必須。
@@ -412,6 +552,15 @@ tests/
 - **SPRT (M2+)**: `SPRTAlert`受信時に`soft_stop`へ移行しReduce-Onlyを発動。
 - **運用対応**: CLI `tradectl status`で理由/解除条件を表示。`--ack <id>`で承認ログを取った後Kill Switch解除可能。`tradectl board --guarded`/`tradectl kill-switch set --mode <state>`で手動操作し、`audit`に承認者を記録する。
 - **Acceptable Degradation管理**: `health.status=degraded`発生時に`health.suggest_guarded`イベントを出力し、OpsチームがRunbook `RUN-DATA-05`/`RUN-DATA-06`に従って`BoardMode=guarded`へ手動切替・代替ソース選択・`degraded_ack`登録を行う。`health.status=degraded`が**連続3営業日**または**ローリング30日で2回**発生した場合は`health.escalate`イベントでレビューを通知し、**5営業日**超継続または週次KPIレビュー2回未解消の場合はKill Switch `hard_stop`昇格を手動判断する。復帰時は`catch_up_lag_minutes<30`、`metrics/data_ingestion_sla.jsonl`で`fetch_p95`/`processing_p95`が目標以内、`tradectl benchmark validate-manual`結果一致、PO/Opsダブルサインを`reports/validation_log/AC-45_sla_<date>.md`へ記録する。Kill Switch自動昇格はM1.1で再評価する。
+
+#### APIインターフェース一覧
+| API/関数 | 入力 | 処理 | 出力 | 異常系 |
+| --- | --- | --- | --- | --- |
+| `HealthMonitor.raise(level, reason, metadata)` | レベル（`ok/degraded/soft_stop/hard_stop`）、理由コード、付帯メタデータ | 現状態と比較→遷移検証→EventBusへ`HealthStateChanged`→Kill Switch提案 | 新しい`HealthState`、`escalation_required`フラグ | 遷移禁止: `InvalidHealthTransition`。EventBus失敗: `EventWriteError` |
+| `HealthMonitor.clear(reason, actor)` | 解除理由、承認者ID、Runbook参照 | 承認ログ検証→`health.status`を`ok`へ→Audit追記→BoardMode復帰推奨 | `HealthClearanceResult`（status、notes） | 未承認: `HealthClearDenied`。Audit失敗: `AuditWriteError` |
+| `KillSwitch.set(mode, actor)` | `RUNNING/STOP`、操作ユーザ、チケットID | 現在モード検証→状態更新→EventBus通知→CLI/監査へ反映 | `KillSwitchState`（mode, updated_at） | 不許可状態: `KillSwitchOperationDenied`。通知失敗: `KillSwitchNotificationError` |
+| `HealthMonitor.suggest_guarded(reason)` | 理由コード、トリガーデータ（Spread、Latencyなど） | BoardMode推奨イベント生成→Ops Runbookリンク提示 | `BoardModeSuggestion`（`guarded`/`resume`） | 推奨条件不足: `SuggestionSuppressed` |
+| `HealthMonitor.register_source(source_id, heartbeat_fn)` | 健全性ソースID、ハートビート関数、タイムアウト閾値 | ソース状態登録→定期ハートビート監視→タイムアウトでWARN発火 | ソース監視ハンドル | 重複ID: `HealthSourceRegistrationError`。ハートビート失敗: `HeartbeatTimeout` |
 
 ### 2.6 CLI (`src/interfaces/cli/*.py`)
 - `tradectl board`: EventBus購読でTicket表示。`--filter`, `--view`, `--format json`（将来）を提供。TTL/ドリフトをリアルタイム更新し、Spreadクールダウンやニュースブロック理由をバッジ表示。`RiskMetricsSnapshot`を購読し、`R_eff`超過時はヘッダに赤バナー（`R_eff=2.8 (>2.5)`等）と通貨バケット別エクスポージャ表を表示する。Acceptable Degradation中は`BoardMode=guarded`を手動選択できるよう橙色バナーと代替ソース（dukascopy/yfinance/manual_fallback）バッジ、ダブルチェック入力を提示し、承認操作時に`degraded_ack`イベント記録とRunbookリンクを表示する（自動切替は行わない）。将来のCorrelation Guard本体と整合させるため`correlation_snapshot`ペイロードをそのまま`board`へ受け渡すIFを先行実装し、M1.1ではReduce-Only提案リンクを追加するだけで済む構造とする。
@@ -427,6 +576,16 @@ tests/
 - `tradectl events tail`: event_type絞り込みと`--since`指定。
 - `tradectl export`, `tradectl resync`, `tradectl spread inspect`: 運用補助。`resync`は進行状況をProgress Bar表示。
 
+#### APIインターフェース一覧
+| API/関数 | 入力 | 処理 | 出力 | 異常系 |
+| --- | --- | --- | --- | --- |
+| `cli.board(filter, view, format, guard_toggle)` | フィルタ条件、表示テンプレ、出力形式、BoardMode切替フラグ | EventBus購読→Ticketレンダリング→リスク/Spreadバッジ合成→人間操作受付 | Richテーブル/JSON表示、承認コマンド、`degraded_ack`リンク | EventBus接続失敗: `BoardStreamError`。承認時検証失敗: `TicketValidationError` |
+| `cli.ticket approve|reject|edit(ticket_id, payload)` | チケットID、操作ペイロード、承認者ID、コメント | TicketBuilder検証→`TicketAction`イベント送信→Audit書込→Board更新 | 操作結果サマリ、監査ID | `AuditWriteError`、`ConsentRequiredError`、入力不備: `TicketActionInvalid` |
+| `cli.status(detail, ack_id)` | 詳細表示フラグ、承認ID | `SessionManager.status()`呼出→Health/Kill Switch整合→承認登録 | 状態表、未承認アラート一覧 | Kill Switch操作拒否: `KillSwitchOperationDenied`。承認ID不正: `AckNotFoundError` |
+| `cli.resync(from_ts, symbols, dry_run)` | 再同期開始時刻、対象シンボル、ドライラン | `SessionManager.catch_up()`キック→進捗UI表示→結果まとめ | `ResyncSummary`（lag, failover, warnings） | Catch-up失敗: `CatchUpFailed`。CLI割込み: `UserAbortError` |
+| `cli.data manual-template/validate/...` | サブコマンド別パラメータ、ファイルパス、プロバイダ | Manual CSVテンプレ生成・検証・ハッシュ算出→Runbook進捗記録 | ファイル出力、検証レポート、ハッシュJSON | 入力ディレクトリ不正: `ManualCsvPathError`。検証NG: `ManualCsvValidationError` |
+| `cli.metrics report(window, output)` | 集計対象ウィンドウ、出力形式（md/json）、保存先 | `metrics/*.jsonl`読み込み→集計→テンプレレンダリング | Markdown/JSONレポート、ファイルパス | メトリクス欠落: `MetricsDataNotFound`。出力失敗: `MetricsReportError` |
+
 ### 2.7 プレフライト & ランタイムモニタ (`src/app/telemetry.py`, `src/core/health.py`)
 - **プレフライトチェック** (`tradectl preflight`, 起動時自動実行)
   1. Python/Poetryバージョン整合 (`python3 --version`, `poetry --version`)
@@ -441,6 +600,14 @@ tests/
   - `PreflightReminder`: プレフライト未実施状態で`tradectl start`した場合、初回バー処理前に警告。
   - `BackupReminder`: `logs/ops/backup.log`の最終更新から7日超過でWARNを発行。
 - **手動実行**: `tradectl preflight --silent`で結果をJSON, `tradectl preflight --export path`で報告書を出力。
+
+#### APIインターフェース一覧
+| API/関数 | 入力 | 処理 | 出力 | 異常系 |
+| --- | --- | --- | --- | --- |
+| `PreflightRunner.execute(profile, checks)` | プロファイル、実行対象チェックID集合、`--silent/--export`オプション | 各チェック関数を順次実行→結果集計→重大度判定→レポート生成 | `PreflightReport`（items, status, generated_at） | チェック失敗: `PreflightCheckError`（severity付）。レポート出力失敗: `PreflightReportWriteError` |
+| `HeartbeatTask.poll()` | 監視対象メトリクス定義、Interval秒数 | CPU/メモリ/ワークフロー遅延測定→`metrics/pipeline.jsonl`追記 | `HeartbeatSample` | メトリクス書込失敗: `MetricsWriteError`。取得失敗: `SystemMetricReadError` |
+| `BackupReminder.check()` | `logs/ops/backup.log`最終更新時刻、閾値日数 | 最終更新差分計算→閾値超過でWARNイベント発火 | `ReminderStatus` | ログファイル欠落: `BackupLogNotFound` |
+| `PreflightReminder.notify()` | 最終プレフライト実行時刻、起動中セッション情報 | 起動時に未実施チェック→CLI WARN表示→Audit記録 | 通知結果、必要アクション | 状態取得失敗: `PreflightStatusUnknown` |
 
 ## 3. ドメインサービス詳細
 
@@ -458,6 +625,16 @@ tests/
 - **遅延メトリクス**: `fetch_delay_sec = (queue_enqueue_ts - request_ts)`、`processing_delay_sec = (bar_ready_ts - queue_enqueue_ts)`を算出し、`metrics/data_ingestion_sla.jsonl`に`phase=fetch|processing`ラベルで記録。閾値（既定: fetch≤18秒、processing≤12秒）は`config.ingestion.sla.fetch_p95_sec`/`config.ingestion.sla.processing_p95_sec`で制御し、超過時は`HealthMonitor.raise('degraded','data_latency_fetch|process')`を行う。Prometheus Exporterでは`data_ingestion_delay_seconds{phase,symbol,provider}`として公開。
 - **Runbook連携**: 遅延アラート発生時はEventBusで`ingestion.latency_exceeded`を発火し、Runbook手順`RUN-DATA-05`（フォールバック調整）/`RUN-DATA-06`（手動補填）を通知。`FallbackRetryTask`/`ManualCsvIngestionTask`の完了を`tradectl data jobs --pending`で確認し、二重入力CSVは`tradectl benchmark validate-manual`の結果（ハッシュ一致・承認サイン）をRunbookチェックリストへ添付する。`make sla-report`出力（`reports/validation_log/AC-45_sla_<date>.md`）と合わせて`RUN-POST-03`に従い事後レビュー（原因/再発防止）を`logs/ops/review.log`へ追記する。
 
+#### APIインターフェース一覧
+| API/関数 | 入力 | 処理 | 出力 | 異常系 |
+| --- | --- | --- | --- | --- |
+| `DataIngestionService.fetch_latest(symbols, timeframe)` | シンボルリスト、タイムフレーム、優先プロバイダ、`ModeContext` | プロバイダ順に非同期取得→正規化→Quality Guard検証→`bar_ready_queue`へpush | `MarketFrame`、遅延メトリクス | プロバイダ失敗: `ProviderError`→フォールバック。品質不合格: `DataQualityError` |
+| `DataIngestionService.backfill(symbols, timeframe, start, end)` | シンボル、期間、開始/終了時刻、優先度 | Catch-upジョブ生成→履歴データ取得→欠損補完→`ResyncCompleted`通知 | 処理件数、catch_up統計 | 期間不正: `BackfillRangeError`。完全失敗: `BackfillFailed` |
+| `DataIngestionService.warm_cache()` | キャッシュTTL、対象シンボル | 起動時に最新バーを取得→`AsyncBuffer`初期化 | キャッシュ構築ステータス | 取得失敗: `CacheWarmupError` |
+| `DataIngestionService.spawn_provider_workers()` | プロバイダ設定、同時実行数 | Fetch/Parseワーカー生成→イベントループ登録 | ワーカーハンドル一覧 | ワーカー起動失敗: `WorkerSpawnError` |
+| `DataIngestionService.drain_buffers()` | 終了シグナル | 残バッファフラッシュ→未処理バーを`quarantine`へ移送 | ドレイン統計 | バッファ破損: `BufferDrainError` |
+| `ManualCsvIngestionTask.enqueue(request)` | プロバイダ、シンボル、日付、レビュアID、CSVパス | 双子CSV検証→Hash生成→`bar_ready_queue`へ挿入→Runbook進捗記録 | `ManualIngestionResult`（hash, reviewer, inserted_rows） | ハッシュ不一致: `ManualCsvMismatchError`。検証未完了: `ManualCsvPendingReview` |
+
 ### 3.2 DataQualityGuard (`src/data/quality.py`)
 - **公開API**: `validate(frame)`, `report()`, `compare(reference_series)`。
 - **ルール**: 連続欠損>1バーまたは欠損率>0.5%で`DataQualityAlert`。Z-score>5、スプライン乖離>3σで`quality_flag`=1し除外。外れ値は`anomaly_log`へ出力。
@@ -466,11 +643,27 @@ tests/
 - **イベントアノテーション**: 介入・災害など特異イベントは`data/annotations/<date>_<event>.yaml`に記録し、バックテスト時に該当期間を除外または重み調整。
 - **レポート**: `reports/data_quality/<date>.md`に欠損率/外れ値/ドリフト統計を出力し、週次QAレビューで確認。
 
+#### APIインターフェース一覧
+| API/関数 | 入力 | 処理 | 出力 | 異常系 |
+| --- | --- | --- | --- | --- |
+| `DataQualityGuard.validate(frame)` | `MarketFrame`, シンボル、タイムフレーム、品質閾値設定 | 欠損率測定→外れ値/ドリフト検知→`quality_flag`更新→アラート生成 | `QualityResult`（status, issues, recommended_action） | 欠損過多: `DataQualityAlert`。データ破損: `FrameIntegrityError` |
+| `DataQualityGuard.report()` | 期間、集計粒度、出力先 | 品質統計集約→Markdown/JSON生成 | レポートファイルパス | ファイル出力失敗: `QualityReportError` |
+| `DataQualityGuard.compare(reference_series)` | 参照系列、許容乖離閾値 | 差分計算→Z-score/スプライン比較→差異タグ付け | `QualityComparison`（diff_stats, drift_detected） | 参照不足: `ReferenceDataMissing` |
+| `DataQualityGuard.annotate(event)` | イベントメタデータ、期間 | 指定期間に`annotations`を追加→FeaturePipelineへ共有 | 更新済みアノテーション | ファイル更新失敗: `AnnotationWriteError` |
+
 ### 3.3 FeaturePipeline (`src/features/pipeline.py`)
 - **公開API**: `update(market_frame)`, `rebuild_range(symbols, start, end)`, `get_feature_frame(symbol)`。
 - **処理**: `resample`でマルチTF生成→`IndicatorSet`計算（MA/EMA/RSI/MACD/ATR/BB/Donchian）。差分更新で最新バーのみ再計算し、バックフィル時は指定範囲を再生成。
 - **最適化**: pandas rolling共有、Numba optional。GPUサポートはM3候補。
 - **エラーハンドリング**: 指標計算失敗で`IndicatorError`発生→リトライ後も失敗なら`HealthMonitor.hard_stop(indicator)`。
+
+#### APIインターフェース一覧
+| API/関数 | 入力 | 処理 | 出力 | 異常系 |
+| --- | --- | --- | --- | --- |
+| `FeaturePipeline.update(market_frame)` | 最新`MarketFrame`, 対象シンボル、再計算フラグ | 差分更新→各IndicatorSet計算→FeatureFrameマージ→キャッシュ更新 | 更新済み`FeatureFrame` | 指標計算エラー: `IndicatorError`。欠損多発: `FeatureInsufficientData` |
+| `FeaturePipeline.rebuild_range(symbols, start, end)` | シンボル集合、再計算期間、再サンプリング設定 | 指定期間の履歴再ロード→全指標再計算→キャッシュ差し替え | `RebuildReport`（bars_processed, duration） | 期間不整合: `FeatureRebuildError` |
+| `FeaturePipeline.get_feature_frame(symbol)` | シンボル、必要指標一覧、タイムフレーム | Featureキャッシュ読み出し→整形→`FeatureContext`へ提供 | `FeatureFrameView` | 未生成: `FeatureNotReadyError` |
+| `FeaturePipeline.register_indicator(indicator)` | 指標プラグイン、依存列情報 | Indicatorセットへ登録→依存関係検証→初期化 | 登録結果、`indicator_id` | 依存不足: `IndicatorDependencyError` |
 
 #### 3.3.1 マルチタイムフレーム指標計算式
 
@@ -492,11 +685,26 @@ tests/
 - **アルゴリズム**: ADX, TrueRange, 標準偏差, 自己相関, 平均リターンを0-1正規化→重み付き合算→Softmax。ヒステリシスにより急峻な切替を抑制。
 - **出力**: `RegimeState`（mode, volatility, score, history）。変化時は`RegimeChanged`イベントを出す。
 
+#### APIインターフェース一覧
+| API/関数 | 入力 | 処理 | 出力 | 異常系 |
+| --- | --- | --- | --- | --- |
+| `RegimeDetector.update(feature_frame)` | 最新FeatureFrame、シンボル、評価ウィンドウ設定 | 指標正規化→重み付け→Softmax→ヒステリシス適用 | 更新済み`RegimeState` | 入力不足: `RegimeInsufficientData` |
+| `RegimeDetector.current_state()` | なし（内部キャッシュ） | 最新`RegimeState`を返却 | `RegimeState` | 未計算: `RegimeStateUnavailable` |
+| `RegimeDetector.configure(weights, thresholds)` | 指標重み、ボラ閾値、ヒステリシス設定 | コンフィグ検証→内部パラメータ更新→Audit記録 | 適用結果、旧値とのDiff | 検証失敗: `RegimeConfigError` |
+
 ### 3.5 StrategyEngine (`src/strategies/registry.py`)
 - **公開API**: `run_all(strategy_context)`, `register_plugin`（デコレータ）
 - **入出力**: `StrategyContext`（FeatureContext, RegimeState, GateState, AccountState, Config）→`Iterable[RawSignal]`。
 - **プラグイン**: M1で`ma_rsi`, `donchian_breakout`。`metadata.required_features`でFeature不足を検知。`cooldown_bars`で連続エントリーを抑止。
 - **安全性**: 戦略から返却されたシグナルは`SignalSchema`で検証。レジーム不一致やGateStateブロック時は自動Reject。
+
+#### APIインターフェース一覧
+| API/関数 | 入力 | 処理 | 出力 | 異常系 |
+| --- | --- | --- | --- | --- |
+| `StrategyEngine.run_all(strategy_context)` | `StrategyContext`（Feature, Regime, Gate, Account, Config） | 登録戦略を順次実行→`SignalSchema`検証→GateState適用→スコアリングへ受け渡し | `Iterable[RawSignal]` | 戦略例外: `StrategyExecutionError`。検証失敗: `SignalValidationError` |
+| `StrategyRegistry.register_plugin(fn)` | 戦略関数、メタデータ、必須Feature | デコレータ経由でプラグイン登録→重複チェック→Manifest反映 | 登録済み戦略リスト | 重複ID: `StrategyRegistrationError` |
+| `StrategyEngine.load_manifest(manifest_path)` | `strategy_manifest.yaml`パス、環境識別子 | YAML読み込み→パラメータ検証→戦略有効/無効切替 | `StrategyManifest`オブジェクト | YAML不備: `ManifestParseError`。整合性NG: `ManifestValidationError` |
+| `StrategyEngine.evaluate_single(strategy_id, context)` | 戦略ID、`StrategyContext` | 指定戦略のみ実行→ログ記録→テスト/デバッグ用途 | `RawSignal`または`None` | 戦略不在: `StrategyNotFound` |
 
 #### 3.5.1 シグナル判定フロー（シーケンス図）
 
@@ -600,12 +808,28 @@ def run_signal_cycle(bar: MarketBar, ctx: ModeContext) -> list[TicketProposal]:
 - **M1 Core整合性**: `ExecutionAdjustments`の全フィールドを決定論的に供給し、Risk Manager/PositionSizer/Scoringが`expected_entry`/`ttl_seconds`を必須前提として参照できるようにする。M1.1で確率分布化する際も同じAPIシグネチャを維持する。
 - **エラーハンドリング**: Spreadデータ欠損で`SpreadDataDegraded`→`HealthMonitor.degraded`。Market snapshot不足は該当シグナルを拒否。
 
+#### APIインターフェース一覧
+| API/関数 | 入力 | 処理 | 出力 | 異常系 |
+| --- | --- | --- | --- | --- |
+| `ExecutionModel.apply(raw_signal, market_snapshot, spread_state)` | `RawSignal`, 市場スナップショット（価格、ボラ指標）、Spread状態、実行設定 | 遅延・滑り補正計算→TTL/保護幅決定→`ExecutionAdjustments`生成 | `ExecutionAdjustments`, `SizedSignal`候補 | 市場データ欠落: `ExecutionModelInputError`。ブローカー制約違反: `ExecutionRuleViolation` |
+| `ExecutionModel.validate_config(config)` | `execution_model.yaml`, 許容範囲設定 | 設定スキーマ検証→危険値（遅延>90s等）を警告→監査記録 | `ValidationReport` | スキーマ不正: `ExecutionConfigError` |
+| `SpreadMonitor.update(spread_frame)` | `SpreadMetrics`（最新スプレッド、分位、時間）、閾値設定 | ローリング統計更新→`cooldown_state`遷移→EventBus通知 | `SpreadCooldownState` | データ欠落: `SpreadDataDegraded` |
+| `SpreadMonitor.sample(symbol)` | シンボル、ウィンドウ長 | 現在状態と履歴サマリを返却 | `SpreadSample`（state, p95, p99, duration） | シンボル未登録: `SpreadMonitorNotFound` |
+
 ### 3.7 ScoringService (`src/scoring/basic.py`, `src/scoring/hybrid.py`, `src/scoring/stability.py`, `src/scoring/ranking.py`)
 - **公開API**: `rank(raw_signals, performance_stats, penalties)`。
 - **アルゴリズム（M1）**: `base_score = α·expected_R + β·PF_all − δ·drawdown_penalty − ε·spread_penalty`。既定係数は`α=0.6, β=0.4, δ=0.1, ε=0.05`。`drawdown_penalty`はバックテスト統計の最大DDから算出し、`spread_penalty`はSpread Monitorから供給。
 - **アルゴリズム（M2+）**: `hybrid_score = w_recency·PF_recent + w_global·PF_all − λ·DD_all − γ·(1-Stability) − δ·swap_penalty − ε·spread_penalty`。`Stability`は±10%パラメータ摂動で再計算し、`stability_cache.parquet`に保持。Feature Flag `scoring.hybrid_enabled`が真の時のみ適用。
 - **制約**: `config.scoring.max_signals_per_symbol`で上限管理。スコア閾値未満は`RejectedSignal(low_score)`として破棄。ハイブリッド有効時は`RankedSignal.hybrid_components`を監査ログへ出力し、M1では`base_components`のみ出力。
 - **モニタリング**: M1は`metrics/scoring_base.jsonl`にランキング結果と係数を記録。M2+では`metrics/scoring_hybrid.jsonl`へ構成要素を出力し、AC-07〜AC-09/AC-16用の統計値（PF_recent, PF_all, Stability Score, ランク反転率）をダッシュボードへ提供。
+
+#### APIインターフェース一覧
+| API/関数 | 入力 | 処理 | 出力 | 異常系 |
+| --- | --- | --- | --- | --- |
+| `ScoringService.rank(raw_signals, performance_stats, penalties)` | RawSignal一覧、過去PF/WinRate統計、Spread/Fundingペナルティ、BoardMode | 基本スコア算出→閾値適用→シンボル上限制御→`RankedSignal`生成 | `RankedSignal[]`, `RejectedSignal[]` | 入力統計欠落: `ScoringInputError`。スコア計算失敗: `ScoreComputationError` |
+| `BaseScoring.calculate_components(signal, stats, penalties)` | シグナル、戦略統計、Spread/Swap/遅延ペナルティ | 各コンポーネント（expected_R, PF_all, drawdown_penalty, spread_penalty）を算出 | `ScoreComponents` | データ不足: `ScoreComponentMissing` |
+| `RankingEngine.apply_thresholds(signals, config)` | `RankedSignal[]`, 閾値設定 (`min_score`, `max_per_symbol`, `max_drawdown`) | フィルタリング→順位調整→ボード表示順決定 | フィルタ済み`RankedSignal[]` | 設定矛盾: `RankingConfigError` |
+| `StabilityScoring.score(signal_history, perturbation)` | 戦略別履歴、摂動幅、`lookback_bars` | ±摂動でリプレイ→変動率をスコア化→`stability_flag`付与 | `StabilityScore` | 履歴不足: `StabilityDataError` |
 
 ### 3.8 RiskManager (`src/risk/manager.py`)
 - **公開API**: `evaluate(ranked_signals, context)`, `kill_switch_state()`, `capture_snapshot()`。
@@ -622,6 +846,14 @@ def run_signal_cycle(bar: MarketBar, ctx: ModeContext) -> list[TicketProposal]:
 - **出力**: `RiskVettedSignal`、`RiskAlert`（`drawdown`, `bucket_limit`, `r_eff`, `margin`）、`RiskMetricsSnapshot`（`bucket_exposures`, `correlation_matrix_hash`, `r_eff`, `ts`）。Reject理由は`risk_flags`に列挙し、Signal Boardがインラインで表示できるよう`ui_hints`（`severity`, `bucket`, `r_eff_delta`）を添付する。
 - **Kill Switch**: 連続ドローダウンで`soft_stop(drawdown)`→Spread/CorrelationによるReduce-Only提案（M2+）を指示。`r_eff`逸脱が継続する場合はKill Switchへ`reason='r_eff_guard'`を伝搬し、解除時は`RiskMetricsSnapshot`の`r_eff<=threshold`が2バー連続で確認できたことを条件とする。
 - **資本整合性チェック**: `RiskPolicy`に`base_capital_jpy`と`trade_frequency_estimate`を保持し、月次ジョブ`RiskSimulationJob`（CLI: `tradectl risk simulate --trials 10000 --horizon 252d`）が最新Paper実績（勝率/平均R/相関）をサンプルしてモンテカルロ試算を実行する。`Prob(max_drawdown>15%)`と`Prob(equity<0.8·base_capital)`を計算し、閾値（0.25/0.05）を超えた場合は`health.raise('degraded','risk_capital_gap')`→Kill Switchレビューをトリガーする。結果は`reports/risk/capital_adequacy/<YYYYMM>.md`へMarkdown出力し、PO＋Ops ManagerがRunbook `RUN-RISK-01`の月次レビュー節でサインする。
+
+#### APIインターフェース一覧
+| API/関数 | 入力 | 処理 | 出力 | 異常系 |
+| --- | --- | --- | --- | --- |
+| `RiskManager.evaluate(ranked_signals, context)` | `RankedSignal[]`, `AccountState`, `GateState`, `RiskPolicy`, `SpreadMetrics`, `CorrelationSnapshot` | ガードチェック→Kill Switch状態確認→エクスポージャ計算→R_eff評価→マージン/ドローダウン制約適用 | `RiskVettedSignal[]`, `RiskAlert[]`, `RiskMetricsSnapshot` | アカウント情報欠落: `AccountStateStale`. 相関計算失敗: `CorrelationMatrixError` |
+| `RiskManager.capture_snapshot()` | `timestamp`, `account_state`, `ranked_signals` | リスク指標算出→Parquet保存→EventBus通知 | `RiskSnapshot`（path, correlation_hash） | 保存失敗: `RiskSnapshotPersistError` |
+| `RiskManager.kill_switch_state()` | なし | Kill Switch現在状態と理由一覧を返却 | `KillSwitchStatus` | 状態未初期化: `KillSwitchStateError` |
+| `RiskSimulationJob.run(trials, horizon)` | シミュレーション試行回数、期間、勝率/平均Rサンプル、相関行列 | モンテカルロ試算→リスク指標（maxDD, ruin確率）算出→レポート生成 | `RiskSimulationReport` | 入力統計欠落: `RiskSimulationInputError` |
 
 ### 3.9 HealthMonitor (`src/core/health.py`)
 - **公開API**: `raise(level, reason)`, `snapshot()`, `ack(alert_id)`。
@@ -641,10 +873,23 @@ def run_signal_cycle(bar: MarketBar, ctx: ModeContext) -> list[TicketProposal]:
 - **アルゴリズム**: 通貨バケット別にRを集計し、`config.correlation.bucket_limits`を超える場合は信号を抑制。シンボル相関>閾値（既定0.7）で同方向ポジションを抑制し、`CorrelationSnapshot.ui_hints`をSignal Boardへ引き渡す。
 - **出力**: `CorrelationFilteredSignals`, `CorrelationAlert`（M2+でReduce-Only候補に利用）。
 
+#### APIインターフェース一覧
+| API/関数 | 入力 | 処理 | 出力 | 異常系 |
+| --- | --- | --- | --- | --- |
+| `CorrelationGuard.filter(signals, account_state, correlation_snapshot)` | シグナル一覧、口座状態、相関スナップショット、ポリシー設定 | 通貨バケットごとにR集計→相関閾値適用→制約違反を除外 | `CorrelationFilteredSignals`, `CorrelationAlert[]` | スナップショット欠落: `CorrelationSnapshotMissing`。計算失敗: `CorrelationComputationError` |
+| `ExposureAnalyzer.rebuild(account_state)` | ポジション一覧、口座残高、換算レート | 通貨別エクスポージャ計算→`ExposureByCurrency`生成 | `ExposureByCurrency` | 為替レート欠落: `FxRateMissingError` |
+
 ### 3.11 PositionSizer (`src/sizing/fractional.py`, `src/sizing/rounding.py`)
 - **公開API**: `size(signal, account_state, broker_specs, execution_adjustments)`。
 - **アルゴリズム**: `lot = per_trade * equity / (ATR_pips * pip_value)`でサイズ算出→`lot_step`丸め→`stop_level_pips`超過を検証。必要に応じてSL/TPを補正。
 - **出力**: `SizedSignal`（size, risk_R, margin_estimate, ttl_factor）。丸め誤差は`checklist.lot_round_ok`に反映。
+
+#### APIインターフェース一覧
+| API/関数 | 入力 | 処理 | 出力 | 異常系 |
+| --- | --- | --- | --- | --- |
+| `PositionSizer.size(signal, account_state, broker_specs, execution_adjustments)` | `RiskVettedSignal`, 口座状態、ブローカー仕様、Execution補正 | リスク許容計算→ロット上限比較→丸め→サイジング結果生成 | `SizedSignal`（lot, risk_R, margin_estimate） | 許容超過: `PositionSizeLimitError`。ブローカー仕様未定義: `BrokerSpecNotFound` |
+| `PositionSizer.validate(signal, sized_signal)` | 元シグナル、算出結果、許容乖離閾値 | サイズとATR/Stop距離をチェック→乖離があればWARN付与 | `SizeValidationResult` | 乖離過大: `SizeValidationError` |
+| `RoundingPolicy.round(lot, broker_specs)` | 提案ロット、ブローカー`lot_step`/最小/最大 | 仕様に合わせ丸め→残差を記録 | `RoundedLot`（value, residual） | 丸め不可: `RoundingOutOfRange` |
 
 ### 3.12 FundingService (`src/funding/service.py`)
 > **マイルストーン注記**: FundingServiceはPaper損益の正確性を確保するためM1 Coreへ「コア例外」として含め、`swap_rates.csv`手動更新＋Calendar連携までを必須化する。ブローカーAPI自動同期はM2で拡張する。
@@ -655,11 +900,27 @@ def run_signal_cycle(bar: MarketBar, ctx: ModeContext) -> list[TicketProposal]:
 - **運用要件**: `tradectl funding sync`でCSVを読み込み、更新結果を`funding_state.json`へ記録。M1ではCSVのハッシュと更新者を`reports/validation_log/AC-09_funding_<date>.md`に残し、IT-FUND-01統合テストで祝日前後の三倍日処理を検証する。
 - **エラーハンドリング**: データ欠損で`FundingDegraded`イベント→`HealthMonitor.degraded`。Fallbackで前回値保持。3営業日連続で更新が無い場合は`health.raise('degraded','funding_data_gap')`を発火し、Acceptable Degradation手順で手動CSV確認を要求。
 
+#### APIインターフェース一覧
+| API/関数 | 入力 | 処理 | 出力 | 異常系 |
+| --- | --- | --- | --- | --- |
+| `FundingService.update_forecast(account_positions)` | 口座ポジション、`swap_rates.csv`, Calendar情報 | 保持期間推定→スワップコスト計算→`swap_penalty`算出 | `FundingForecast`（per_symbol_penalty, triple_day_flags） | CSV欠損: `SwapRateNotFound`。計算失敗: `FundingComputationError` |
+| `FundingService.apply_daily_swap(now)` | 現在時刻、ポジション、`swap_rates` | ロールオーバー対象判定→`AccountState.swap_realized`更新→イベント発火 | `SwapApplicationResult` | 曜日判定失敗: `TripleDayCalculationError` |
+| `FundingService.status()` | なし | 最新CSV更新時刻、適用状態、警告フラグを返却 | `FundingStatus` | 状態未初期化: `FundingStatusUnavailable` |
+| `SwapRatesLoader.load(path)` | CSVパス、必須列、検証ルール | CSV読み込み→スキーマ検証→正規化 | `SwapRateTable` | スキーマ不一致: `SwapRateSchemaError` |
+
 ### 3.13 CalendarService (`src/calendar/service.py`)
 - **公開API**: `update(now)`, `is_blocked(symbol)`, `reload()`。
 - **入力**: `calendar/high_impact_events.csv`, `calendar/holidays.csv`, `config.trading_timezone`。
 - **処理**: UTC→ローカル変換→重要度別に±15/30分ブロック。祝日/週末ロールオーバーで`GateState.holiday_block`を設定。解除時は`CalendarWindowCleared`。
 - **拡張**: M2で外部API同期（adapters）がイベント強度を自動更新。
+
+#### APIインターフェース一覧
+| API/関数 | 入力 | 処理 | 出力 | 異常系 |
+| --- | --- | --- | --- | --- |
+| `CalendarService.update(now)` | 現在時刻、カレンダーデータ、タイムゾーン設定 | 新規イベントロード→ローカル時刻変換→ブロックウィンドウ生成 | `CalendarSnapshot`（blocked_symbols, window) | データ欠損: `CalendarDataMissing` |
+| `CalendarService.is_blocked(symbol)` | シンボル、モード（news/holiday）、`now` | 現在ウィンドウを参照してブロック可否判定 | `bool`, `BlockReason` | キャッシュ未更新: `CalendarNotReadyError` |
+| `CalendarService.reload()` | 強制リロードフラグ、ファイルパス | CSV再読み込み→スキーマ検証→差分適用 | `ReloadResult` | スキーマ不正: `CalendarSchemaError` |
+| `CalendarAdapters.fetch_external(source)` | 外部API識別子、認証情報 | API呼出→イベント正規化→`CalendarService`へ反映 | `FetchedEvents` | API失敗: `CalendarFetchError` |
 
 ### 3.14 AccountService & FxRateCache (`src/account/service.py`, `src/account/fx_rates.py`)
 - **公開API**: `refresh_state(mode_context)`, `apply_ticket_action(action)`, `sync_from_csv(path)`。
@@ -670,6 +931,15 @@ def run_signal_cycle(bar: MarketBar, ctx: ModeContext) -> list[TicketProposal]:
 - **監査イベント**: 正常に取り込んだレコードごとに`actual_fill_imported`イベントを生成し`logs/audit/live.jsonl`へ追記。メタデータとして`slippage_pips`, `fill_delay_sec`, `reconciled=true/false`, `csv_hash`を記録する。
 - **相関用エクスポージャ**: `ExposureByCurrency`で通貨別Rを保持し`CorrelationGuard`へ提供。
 - **エラーハンドリング**: CSV整合性NGで`AccountSyncError`→`HealthMonitor.soft_stop(account)`。監査書き込み失敗時は`AuditWriterError`を再throwしKill Switch=hard_stop。
+
+#### APIインターフェース一覧
+| API/関数 | 入力 | 処理 | 出力 | 異常系 |
+| --- | --- | --- | --- | --- |
+| `AccountService.refresh_state(mode_context)` | モード別データソース、Snapshot、`fx_rates` | 最新残高/証拠金計算→ポジション集計→Exposure算出 | `AccountState` | データ欠落: `AccountStateUnavailable`。換算失敗: `FxRateMissingError` |
+| `AccountService.apply_ticket_action(action)` | `TicketAction`イベント、Fill情報、`AccountState` | 承認/拒否/修正に応じたポジション更新→監査イベント発行 | 更新済み`AccountState`、`AuditRecord` | 整合性NG: `AccountActionConflict` |
+| `AccountService.sync_from_csv(path)` | CSVパス、必須列定義、バリデーションポリシー | CSV読込→検証→承認チケットと突合→`actual_fill_imported`イベント生成 | `AccountSyncResult`（processed, unmatched, hash） | スキーマ不一致: `AccountSyncError`。監査書込失敗: `AuditWriteError` |
+| `FxRateCache.load()` | `fx_rates.parquet`, 更新時刻 | パリティ通貨換算レート読み込み→キャッシュ化 | `FxRateTable` | ファイル欠損: `FxRateNotFound` |
+| `FxRateCache.refresh(from_provider)` | 外部レートソース、Fallback CSV | レート取得→検証→`fx_rates.parquet`更新 | `FxRateRefreshResult` | API失敗: `FxRateFetchError` |
 
 #### 3.14.1 Trade Journal（Live実績CSV）
 1. CLIまたはスケジュールジョブから`AccountService.sync_from_csv('data/account/live_account.csv')`を起動。
@@ -686,16 +956,40 @@ def run_signal_cycle(bar: MarketBar, ctx: ModeContext) -> list[TicketProposal]:
 - **遅延補正メトリクス**: Resync完了後に`resync_latency_sec = (resync_completed_ts - last_bar_ts)`を記録し、`resync_latency_ratio = resync_latency_sec / timeframe_sec`で評価。`ratio>24`の場合は`HealthMonitor.raise('degraded','resync_lag')`を行い、Runbookフォローアップを要求する。
 - **Runbook連携**: Resync開始時に`RUN-DATA-05`（手動再取得）ステップIDをEventBusへ通知し、完了後は`RUN-POST-03`に沿って事後レビュー（遅延原因、再発防止策、Kill Switch解除判断）を`logs/ops/review.log`へ追記。レビュー承認が完了するまで`HealthMonitor.ack`を保留する。M2+ではEmergency Orchestratorが`data_latency`シナリオを監視し、必要に応じてRunbookチェックリストを自動実行する。
 
+#### APIインターフェース一覧
+| API/関数 | 入力 | 処理 | 出力 | 異常系 |
+| --- | --- | --- | --- | --- |
+| `SnapshotManager.persist(context)` | `SnapshotModel`, `cfg_hash`, `data_hash`, `reason` | アトミック書込→ハッシュ計算→メタデータ保存 | `SnapshotPersistResult` | 書込失敗: `SnapshotPersistError` |
+| `SnapshotManager.restore()` | 復旧モード、パス | 最新スナップショット読込→整合性検証→`ModeContext`再初期化 | `SnapshotRestoreResult` | ファイル欠損: `SnapshotNotFoundError` |
+| `SnapshotManager.maybe_persist(last_bar_ts)` | 最終バー時刻、閾値 | 閾値超過時に差分スナップショットを保存 | `Optional[SnapshotPersistResult]` | ディスク不足: `SnapshotStorageError` |
+| `ResyncCoordinator.enqueue(from_ts, symbols)` | 開始時刻、対象シンボル、優先度 | `resync_queue`へジョブ追加→Catch-up実行 | `ResyncJobId` | キュー満杯: `ResyncQueueError` |
+
 ### 3.16 TicketBuilder (`src/ticket/builder.py`, `src/ticket/validator.py`, `src/ticket/checklist.py`)
 - **公開API**: `build(sized_signal, execution_adjustments, gate_state)`。
 - **処理**: 価格丸め→距離検証→TTL計算→Checklist生成（lot_round_ok, price_decimals_ok, spread_ok, news_ok, oco_set）。
 - **監査**: `TicketIssued`イベントと`logs/audit/*.jsonl`へ書き込み。`cfg_hash`, `data_hash`, `hybrid_components`を添付。
 - **エラーハンドリング**: バリデーションNGで`TicketValidationError`→SignalをReject。ユーザー編集時も同じバリデーションを実施。
 
+#### APIインターフェース一覧
+| API/関数 | 入力 | 処理 | 出力 | 異常系 |
+| --- | --- | --- | --- | --- |
+| `TicketBuilder.build(sized_signal, execution_adjustments, gate_state)` | `SizedSignal`, Execution補正、`GateState`, BoardMode, RiskDisclosure状態 | 価格丸め→TTL/SL/TP設定→チェックリスト生成→Ticket JSON組立 | `TicketProposal`（payload, badges, checklist) | バリデーション失敗: `TicketValidationError`。GateState遮断: `TicketBlockedError` |
+| `TicketValidator.validate(ticket)` | Ticket構造、ブローカー仕様、`RiskPolicy` | サイズ/価格/TTL/Spread検証→違反時にエラー化 | `ValidationResult` | ブローカー仕様不一致: `TicketBrokerRuleError` |
+| `ChecklistBuilder.generate(ticket, context)` | Ticket、BoardMode、Runbook要件 | 必須チェック項目生成→HITL項目（ダブルチェック等）割当 | `Checklist` | コンテキスト不足: `ChecklistContextError` |
+| `TicketRenderer.render(ticket, format)` | Ticket JSON、表示形式（CLI/JSON） | CLI表示用テーブル生成→承認操作ハンドラ付与 | レンダリング文字列/構造 | テンプレ不正: `TicketRenderError` |
+
 ### 3.17 Backtest & Optimizer (`src/backtest/engine.py`, `src/backtest/walkforward.py`, `src/backtest/optimizer.py`)
 - **Backtest**: Workflowと同じパイプラインを同期実行し、ExecutionModel統計値でFill判定。`PerformanceStats`にPF/Sharpe/DD/Stabilityを集計。
 - **Walk-Forward**: `(train_start, train_end, test_end)`スケジューラを処理。`config.optimizer.walkforward`でウィンドウ指定。
 - **Optimizer**: グリッド/ランダム探索。目的関数は`HybridScore`、制約として`MaxDD <= threshold`。結果は`reports/optimizer/<timestamp>.json`。
+
+#### APIインターフェース一覧
+| API/関数 | 入力 | 処理 | 出力 | 異常系 |
+| --- | --- | --- | --- | --- |
+| `BacktestEngine.run(profile, date_range, strategies)` | プロファイル、期間、戦略セット、初期資本 | 過去データ再生→パイプライン実行→Fill判定→パフォーマンス集計 | `BacktestReport`（performance_stats, trades, metrics） | データ欠損: `BacktestDataError`。戦略失敗: `BacktestStrategyError` |
+| `WalkForwardScheduler.execute(config)` | ウィンドウ設定、戦略、評価指標 | トレーニング/テスト期間を順次実行→指標比較 | `WalkForwardResult` | 設定不整合: `WalkForwardConfigError` |
+| `Optimizer.optimize(search_space, objective, constraints)` | パラメータ空間、目的関数、制約 | グリッド/ランダム探索→評価→最適パラメータ抽出 | `OptimizationResult` | 収束失敗: `OptimizationError` |
+| `BenchmarkLoader.load(feed, range)` | ベンチマーク識別子、期間 | 外部フィード取得→整形→Backtest比較用に供給 | `BenchmarkSeries` | フィード欠落: `BenchmarkDataError` |
 
 ### 3.18 Reporter (`src/reporter/generator.py`)
 - **公開API**: `generate_weekly(profile)`, `generate_daily(date)`, `emit_summary()`。
@@ -704,6 +998,15 @@ def run_signal_cycle(bar: MarketBar, ctx: ModeContext) -> list[TicketProposal]:
 - **依存**: M1 Coreでは`PerformanceStats`、`reports/performance/paper|live/*.parquet`、`logs/events`（主要コメント抽出のみ）に限定する。Feature Flag有効時にのみ`metrics/pipeline.jsonl`、`kill_switch_events.jsonl`、`config/diff/`を追加読み込みする。
 - **リスク概要/キルスイッチ連携**: `RiskSummaryBuilder`はM1.1で有効化し、Flag無効時は`RiskSummaryStub`が`None`を返す。M1.1では`risk_policy.yaml`の閾値と`kill_switch_events.jsonl`を集計し、逸脱時に`[ALERT]`バッジを付与、閾値変更は`reports/risk/threshold_change_<date>.md`へのリンクを付ける。
 - **同期メタデータ**: `kpi_snapshot_version`のみをM1 Coreで記録し、Feature Flagが有効化された際に`threshold_version`や`extended_block_version`を追加する。`tradectl risk status`はメタデータ齟齬を監視し、Flag無効時は拡張フィールドを`not_applicable`表示とする。
+
+#### APIインターフェース一覧
+| API/関数 | 入力 | 処理 | 出力 | 異常系 |
+| --- | --- | --- | --- | --- |
+| `Reporter.generate_weekly(profile)` | プロファイル、期間、`PerformanceStats`, `metrics` | KPI抽出→テンプレ適用→Markdown生成→保存 | `WeeklyReport`（path, summary) | データ欠落: `ReportDataMissing`。テンプレ適用失敗: `ReportRenderError` |
+| `Reporter.generate_daily(date)` | 日付、Paper/Live統計 | 日次KPI算出→Markdownテンプレ適用 | `DailyReport` | データ不足: `ReportDataMissing` |
+| `Reporter.emit_summary()` | 最新統計、Feature Flag状態 | サマリJSON組立→Signal Board/CLI向けに返却 | `ReportSummary`（metrics, status） | 集計失敗: `ReportSummaryError` |
+| `BenchmarkMonitor.sync(feed_source)` | 外部ベンチマーク設定、取得期間 | フィード取得→キャッシュ保存→Reporterへ連携 | `BenchmarkSyncResult` | API失敗: `BenchmarkSyncError` |
+| `BenchmarkCLI.compare(profile, range)` | CLI引数（基準、期間、フォーマット） | ベンチマークと戦略成績比較→CLI出力 | 表形式/JSON出力 | 比較対象欠落: `BenchmarkCompareError` |
 
 #### 3.18.1 Benchmark Monitor & Feed Loader (`src/reporter/benchmark.py`, `src/interfaces/cli/benchmark.py`)
 - **目的**: 市販シグナルツールとの比較KPIを算出し、`reports/benchmark/<YYYYWW>.md`および`reports/governance/benchmark_review/<YYYYQ>.md`へ自動反映する。
@@ -716,6 +1019,15 @@ def run_signal_cycle(bar: MarketBar, ctx: ModeContext) -> list[TicketProposal]:
 - **ConfigRegistry**: `load(profile)`, `apply_patch(diff)`, `validate(config)`。`safe_keys`はホットリロード、`dangerous_keys`は`NextBarChangeQueue`経由で遅延適用。
 - **監査**: Config差分は`ConfigChanged`イベントと`logs/audit`に記録。`cfg_hash`をSnapshotに反映。
 - **AlertDispatcher**: SMTP設定を`.env`から読み込み、`AlertEvent`をメール送信。将来Slack/Webhookに備え`Dispatcher`インターフェースを用意。
+
+#### APIインターフェース一覧
+| API/関数 | 入力 | 処理 | 出力 | 異常系 |
+| --- | --- | --- | --- | --- |
+| `ConfigRegistry.load(profile)` | プロファイル名、設定ファイルパス、スキーマ定義 | YAML読み込み→スキーマ検証→`cfg_hash`算出 | `ConfigSnapshot`（values, hash, dangerous_keys） | スキーマ違反: `ConfigValidationError` |
+| `ConfigRegistry.apply_patch(diff)` | 差分YAML、承認メタデータ、`NextBarChangeQueue` | 差分適用→危険キーを遅延キューへ送出→Audit記録 | `ConfigApplyResult`（status, next_effective_at） | 未承認: `ConfigChangeDenied` |
+| `ConfigRegistry.validate(config)` | 新設定、既存スナップショット | 制約チェック→危険キー警告生成 | `ValidationReport` | 危険キー閾値超過: `DangerousConfigError` |
+| `AlertDispatcher.dispatch(alert)` | `AlertEvent`, 通知チャネル設定 | SMTPメッセージ生成→送信→リトライ管理 | `AlertDispatchResult` | SMTP失敗: `AlertSendError`。テンプレ不備: `AlertTemplateError` |
+| `AlertDispatcher.test_channel(channel)` | チャネルID、テスト宛先 | テスト通知送信→レスポンス検証→結果記録 | `ChannelTestResult` | 設定不足: `AlertChannelConfigError` |
 
 #### 3.19.1 設定パラメータ分類
 | 設定キー例 | 既定値 (profile\_live) | 区分 | 反映方式 | 備考 |
@@ -742,12 +1054,38 @@ def run_signal_cycle(bar: MarketBar, ctx: ModeContext) -> list[TicketProposal]:
 - **AuditWriter**: HITL操作を`logs/audit/YYYYMMDD.jsonl`へ。`ticket_id`, `action`, `user`, `delta`, `note`, `cfg_hash`。Live実績取込時は`actual_fill_imported`/`actual_fill_import_summary`イベントを受け取り、`slippage_pips`や`reconciled`フラグを含めて永続化する。
 - **SQLite (拡張)**: `logs/audit.db`にテーブルを保持（M1 optional, M2+で強化）。
 
+#### 3.20.1 スキーマ/インデックス/更新ポリシー
+| ストア | スキーマ定義 | インデックス/パーティション | 更新ポリシー |
+| --- | --- | --- | --- |
+| イベントログ (`logs/events/YYYYMMDD.jsonl`) | JSON Lines。共通フィールド: `ts`, `event_type`, `version`, `payload`, `context`（`mode`, `board_mode`, `cfg_hash`, `data_hash`）。`payload`は§16.1参照。 | 日別ファイル分割。CLI `tradectl events tail --since`は日別読み込み。`ts`でソート済み、追加インデックス不要。将来SQLiteへインポートする際は`(event_type, ts)`複合インデックスを追加。 | 追記専用。日跨ぎで新ファイルを作成し、旧ファイルは7日ローテーション（圧縮アーカイブ）。削除禁止。 |
+| 監査ログ (`logs/audit/YYYYMMDD.jsonl`) | JSON Lines。フィールド: `ts`, `record_type`, `ticket_id`, `action`, `actor`, `delta`, `board_mode`, `spread_state`, `health_state`, `consent_reference_id`, `notes`, `cfg_hash`, `data_hash`. `delta`はbefore/after差分を含む。 | 日別ファイル。承認追跡用に`ticket_id`でgrep可能にするため`ticket_id`を先頭に固定。M2+でSQLite `audit_records`テーブルを作成し、`ticket_id`, `action`, `ts`インデックスを付与。 | 追記専用。監査ログは90日保管後にアーカイブし、`logs/audit/archive/`へ移動。手動削除禁止。 |
+| スナップショット (`snapshots/latest/*.json`) | JSON。構造体: `account_state`, `open_tickets[]`, `gate_state`, `health_state`, `cfg_hash`, `data_hash`, `last_bar_ts`, `version`. `account_state`内は`balance`, `equity`, `margin`, `open_positions[]`, `swap_realized`. | 最新のみ保持し、世代管理 (`snapshots/history/YYYYMMDDHHMM.json`) をオプションで保存。ファイル名に時刻を含め疑似インデックス。復旧時は`last_bar_ts`でソート。 | `SnapshotManager.persist()`が`ttl_minutes`ごと、または重大イベント後に更新。履歴世代は14件まで保持し、それ以上は最古を削除（監査除外）。 |
+| メトリクス (`metrics/*.jsonl`) | JSON Lines。共通フィールド: `ts`, `metric`, `value`, `labels`. 例: `metric='data_ingestion_delay_sec'`, `labels={'phase':'fetch','provider':'yfinance','symbol':'EURUSD'}`。 | ファイル別にメトリクス種別を分割 (`pipeline`, `data_ingestion_sla`, `scheduler`, `risk`). 集計用にPrometheus Exporterへ転送する際は`metric+label`でインメモリインデックス。 | 24時間ごとにローテーション。`tradectl metrics purge --days N`で古いファイルをアーカイブ。 |
+| SQLite (`logs/audit.db`) | テーブル例: `audit_records(id INTEGER PRIMARY KEY, ts TEXT, ticket_id TEXT, action TEXT, actor TEXT, delta JSON, consent_reference_id TEXT, board_mode TEXT, spread_state TEXT, health_state TEXT, cfg_hash TEXT, data_hash TEXT)`. | `CREATE INDEX idx_audit_ticket_ts ON audit_records(ticket_id, ts)`、`idx_audit_actor_ts(actor, ts)`。 | M1はオプション。利用時は`AuditWriter`がJSONLと二重書込。VACUUMは週次ジョブで実行。 |
+
+#### 3.20.2 APIインターフェース一覧
+| API/関数 | 入力 | 処理 | 出力 | 異常系 |
+| --- | --- | --- | --- | --- |
+| `EventsWriter.append(event)` | `DomainEvent`, ファイルハンドル、`persist=True/False` | JSONシリアライズ→日別ファイルへ追記→バッファフラッシュ | 書き込みバイト数、ファイルオフセット | 書込失敗: `EventWriteError`（3回リトライ後`hard_stop(audit)`) |
+| `EventsWriter.replay(from_ts, to_ts, filter)` | 時刻範囲、イベントタイプ集合 | 対象ファイル読み込み→フィルタ適用→イテレータ返却 | `Iterator[DomainEvent]` | ファイル欠損: `EventLogNotFound` |
+| `AuditWriter.record_ticket_action(record)` | `AuditRecord`, `cfg_hash`, `data_hash`, `diff` | JSONL追記→必要に応じSQLiteへ二重書込→`audit`イベント発行 | `AuditWriteResult`（path, seq_no) | 書込失敗: `AuditWriteError`。検証失敗: `AuditRecordInvalid` |
+| `AuditWriter.flush()` | なし | バッファフラッシュ→ファイルシンク | `FlushResult` | IO失敗: `AuditFlushError` |
+| `SnapshotStore.rotate(history_limit)` | 履歴保存ディレクトリ、上限数 | 最新スナップショットを履歴へコピー→上限超過分を削除 | `RotationReport` | ファイル操作失敗: `SnapshotRotateError` |
+
 ### 3.21 Metrics & Telemetry (`src/infra/metrics.py`)
 - **収集対象**: パイプライン処理時間、SpreadCooldown滞留時間、Kill Switch遷移、CLIレスポンス、**Data Ingestionのfetch/processing遅延**。
 - **フォーマット**: JSON Lines (`metrics/pipeline.jsonl`, `metrics/cli_perf.jsonl`, `metrics/data_ingestion_sla.jsonl`)でローリング1日ごとにローテーション。レコードは`ts, metric, value, labels`を共通スキーマとし、Data Ingestionは`metric=data_ingestion_delay_sec`、`labels={phase,provider,symbol}`を付与する。
 - **M1出力経路**: `JSONLMetricsWriter`がバックグラウンドワーカーで書き込み、`tradectl metrics report --window 24h`がJSONLから集計してMarkdown/JSONサマリーを`reports/metrics/<timestamp>/summary.{md,json}`へ出力（Runbook添付用）。
 - **Exporterインターフェース**: `PrometheusExporter`クラスを定義し`register_histogram/register_gauge`でメトリクスを登録できるようにするが、M1では`start_http()`はFeature Flag無効時にNo-OpとなりHTTPサーバを起動しない。M2で`127.0.0.1:9108/metrics`を公開する実装を追加予定。
 - **アラート**: 閾値（pipeline p95>250ms, spread mismatch>5%, fetch_delay_p95>fetch目標, processing_delay_p95>processing目標）超過で`AlertDispatcher`へ通知し、CLIにもWARNを表示する。
+
+#### APIインターフェース一覧
+| API/関数 | 入力 | 処理 | 出力 | 異常系 |
+| --- | --- | --- | --- | --- |
+| `MetricsWriter.write(metric, value, labels)` | メトリクス名、値、ラベル辞書、タイムスタンプ | JSONレコード生成→対象ファイルへ追記→バッファ管理 | `MetricsWriteResult` | IO失敗: `MetricsWriteError` |
+| `MetricsReporter.aggregate(window, metric)` | 時間ウィンドウ、メトリクス名、集計関数 | JSONL読み込み→フィルタ→統計計算→サマリ生成 | `MetricsSummary` | データ欠落: `MetricsDataNotFound` |
+| `PrometheusExporter.register_histogram(name, labels)` | メトリクス名、ラベル定義、バケット設定 | ヒストグラム作成→内部レジストリ追加 | `HistogramHandle` | 重複登録: `MetricsRegistrationError` |
+| `PrometheusExporter.start_http()` | ポート、バインドアドレス、Feature Flag | HTTPサーバ起動→エンドポイント公開 | サーバ起動結果 | ポート占有: `MetricsServerBindError` |
 
 ### 3.22 依存ライブラリとバージョン管理
 - **パッケージ管理**: Poetry (Python 3.11)。`pyproject.toml`に厳格バージョンとハッシュ (`poetry.lock`) を保持し、`poetry install --no-root`を標準化。
