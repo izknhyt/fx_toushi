@@ -178,7 +178,7 @@
 | FR-04 シグナルエンジン | §3 FR-04, Feature Flagスタブ方針 | §2 コンポーネント表 (Signal Engine), §3.2 ユースケース⑪, §3.3 チケット状態遷移 | `FeatureFrame`, `GateState`, Strategyプラグイン, `board_mode`/Health情報 | `signal.generated`イベント, ガードモード時のブロック, `badges`やScore反映 | BoardMode=guarded時は新規提案抑止、Feature Flagでガバナンス機構無効化、`strategy_manifest.yaml`と整合 | Strategyプラグイン群, Config Registry | 優先度/重み/有効フラグは`config/strategy_manifest.yaml`で一元管理することでPO/Ops/開発が合意。`config/feature_pipeline.yaml`や`risk_policy.yaml`等は指標やリスク閾値のみを保持し、Manifestと重複定義しない。 |
 | FR-05 リスクマネージャ | §3 FR-05, Kill Switch解除条件 | §2 コンポーネント表 (Risk Manager), §3.2 ユースケース⑮, §3.2 Health Monitor, §3.2 CLI | `AccountState`, `FundingCurve`, Spread/Correlationメトリクス, `risk_policy.yaml` | `risk.decision`イベント, Kill Switch推奨, `health.changed`でdegraded通知, BoardMode切替推奨 | 0.75%/2.5%/5%閾値遵守, Acceptable Degradation期間はReduce-Only限定, 手動Kill Switch操作とRunbookチェック必須 | ローカルポリシーYAML, metrics JSONL | なし |
 | FR-06 ポジションサイジング | §3 FR-06, §3.2 戦略仕様(OCO推奨) | §2 コンポーネント表 (Position Sizer), §3.2 ユースケース⑰ | `AccountState`, `BrokerSpecs`, ATR派生値, Protect幅設定 | ロットサイズ/OCO値提案, `oco_recommendation`をTicket Builderへ送信 | Fixed Fractional 0.75%リスク、Broker最小ロット/距離順守、Marketable Limit保護幅適用 | `risk_policy.yaml`, `broker_rules.yaml` | なし |
-| FR-07 注文チケット/HITL | §3 FR-07, FR-30, FR-39 | §2 コンポーネント表 (Ticket Builder), §3.2 ユースケース⑱⑲, §3.3 チケット遷移, §3.2 CLI board/ticket | SizedSignal, `BrokerSpecs`, Risk Disclosureステータス, TTL/Spread情報 | チケットJSON Lines出力, ヒューマンエラーチェック/バッジ, `audit`ログ生成 | BoardMode=guarded時はReduce-Onlyのみ表示, TTL監視と未入力警告, リスク承諾状況をヘッダ表示 | ローカルイベントログ, CLI (`tradectl board/ticket`) | チェックリスト項目（ダブルチェック/手入力コメント）の最終レイアウトと必須入力項目が文書間で明文化されていないため要確認。 |
+| FR-07 注文チケット/HITL | §3 FR-07, FR-30, FR-39 | §2 コンポーネント表 (Ticket Builder), §3.2 ユースケース⑱⑲, §3.3 チケット遷移, §3.2 CLI board/ticket | SizedSignal, `BrokerSpecs`, Risk Disclosureステータス, TTL/Spread情報 | チケットJSON Lines出力, ヒューマンエラーチェック/バッジ, `audit`ログ生成 | BoardMode=guarded時はReduce-Onlyのみ表示, TTL監視と未入力警告, リスク承諾状況をヘッダ表示 | ローカルイベントログ, CLI (`tradectl board/ticket`) | `HumanErrorChecklist`は`spread_window_clear`→`double_entry_confirmed`→`sl_tp_verified`→`lot_round_ok`→`price_decimals_ok`→`oco_ack_received`→`manual_comment_logged`の順で必須化し、CLI表示・監査ログとも同一英字ラベルを使用する。 |
 | FR-08 モード切替 | §3 FR-08, §3.1 M1 Core範囲 | §1 システム概要, §2 コンポーネント表 (Mode Controller, Account Service), §3.2 ユースケース①⑦ | プロファイル設定, ModeContext, モード別データソース（Backtest台帳/Paperレポート/Live CSV） | ModeContext遷移, I/O差分ハンドラ, CLI起動モード決定 | 全モードでHITLフロー共通化、`tradectl start --profile`で選択、Resync後にConsistencyチェック | ローカルファイル/CSV、将来ブローカーAPI | なし |
 | FR-10 週次レポート | §3 FR-10 (M1縮小範囲) | §2 コンポーネント表 (Reporter), §3.2 ユースケース⑭・⑲・ステップ24, §7.6 KPI評価ガイド | `reports/kpi_snapshots/*.json`, `metrics/data_ingestion_sla.jsonl`, `risk_summary`, `reports/weekly/templates/m1_core.md` | 週次Markdown生成, KPI単点値出力, `reports/performance/<mode>/`更新 | Sharpe/最大DD/WinRate/累積Rのみ出力, Paper90日ウォームアップ時はmetric_state=provisional扱い | ローカルテンプレート/レポート, `MarketRatesFetcher` | 週次コメント欄（A/Bテスト結果・次週ToDo）の入力責務と提出締切をドキュメント間で統一する必要あり。 |
 | FR-16/FR-18 Resync & Snapshot | §3 FR-16, FR-18 | §2 コンポーネント表 (Snapshot Manager, Session Manager), §3.2 ユースケース①④⑯, §3.2 処理シーケンス④, §4 データ構造 | `snapshots/latest/*.json`, `resync_queue`, Catch-upメトリクス | Resyncジョブ投入, `catch_up_lag_minutes`記録, Snapshot更新, `ResyncCompleted`イベント | 20分遅延でwarning/30分でdegraded, Runbook承認後に復旧、再起動時はSnapshot整合チェック | ローカルスナップショット/Parquet, metrics JSONL | なし |
@@ -1106,17 +1106,18 @@ Runbook references: RUN-FUND-01 (daily update), RUN-FUND-02 (degraded ops)
 ### 3.16 TicketBuilder (`src/ticket/builder.py`, `src/ticket/validator.py`, `src/ticket/checklist.py`)
 - **公開API**: `build(sized_signal, execution_adjustments, gate_state)`。
 - **処理**: 価格丸め→距離検証→TTL計算→Checklist生成（必須項目は下表参照）→`TicketProposal`組立。
-- **チェックリスト定義**: `ChecklistBuilder.generate()`は`HumanErrorChecklist`に以下の必須項目を付与し、順序・必須性・検証ロジックを固定する。
+- **入力順序と表示統一**: `ChecklistBuilder.generate()`は`HumanErrorChecklist`を必ず `spread_window_clear`→`double_entry_confirmed`→`sl_tp_verified`→`lot_round_ok`→`price_decimals_ok`→`oco_ack_received`→`manual_comment_logged` の順で整列し、`label`/`field`をCLI表示（`tradectl board/ticket`) と監査ログ (`audit_writer`) の両方で同一の英字表記に固定する。CLIは番号付きリストを同順序で表示し、監査ログの`extras.checklist[].field`にも同じフィールド名が書き込まれる。
+- **チェックリスト定義**: 下表の項目は全て`mandatory=true`で、検証ロジック/Runbook紐づけを固定する。`ChecklistBuilder`は順序崩れやラベル改変を検知した場合`ChecklistInvariantError`（新設予定の例外）を送出し、監査ログとCLI双方の整合を守る。
 
 | フィールド名 (`checklist[].field`) | CLI表示ラベル | 必須 | 検証ルール | Runbook/検証スクリプト連携 |
 | --- | --- | --- | --- | --- |
+| `spread_window_clear` | `Spread & news window clear` | ✅ | `SpreadMonitor.latest()`が`gates.spread_max_pips`以下かつ`news_blackout.active=False`。Signal Board上のSpreadバッジと同期。 | `RUN-HITL-01` §1-2（Board確認）、`RUN-SPREAD-03`参照、AC-02補助 |
 | `double_entry_confirmed` | `Double-entry confirmed` | ✅ | 2名目承認者（`secondary_operator_id`）が`TicketBuilder.build()`に渡された`gate_state.human.double_entry_required=True`時にACKを記録。CLI `tradectl ticket approve --double-entry <user_id>`が`RUN-HITL-01`手順3-1/3-2で実行される。 | `RUN-HITL-01` §3 人的エラーチェックリスト、AC-10 `tradectl ticket checklist --id <ticket_id>` |
 | `sl_tp_verified` | `SL/TP distances verified` | ✅ | `ticket.payload.tp_price`と`sl_price`が`SizedSignal`推奨値±`broker_rules.slop_pips`内。`tradectl ticket inspect`出力と突合する。 | `RUN-HITL-01` §2-2、AC-02/AC-10 `tradectl ticket inspect --id <ticket_id>` |
-| `oco_ack_received` | `OCO acknowledged` | ✅ | `EventBus`に`ticket.oco_ack`イベントが届き`latency_ms<=120000`。CLI `tradectl ticket monitor --watch 120`が結果を検証。 | `RUN-HITL-01` §2-3、AC-02スクリプト |
-| `manual_comment_logged` | `Manual comment recorded` | ✅ | `ticket.payload.manual_comment`が非空で、`tradectl ticket approve --comment`により`len(comment)>=12`を満たす。 | `RUN-HITL-01` §3-3、AC-10 `reports/validation_log/AC-10_<date>.md` 更新手順 |
 | `lot_round_ok` | `Lot & quantity rounding OK` | ✅ | `TicketValidator.validate()`が`broker_rules.min_lot`/`lot_step`を満たす。`tradectl ticket check-size`によるバッチ検証を同期。 | `RUN-HITL-01` §4-1/§4-3、AC-10/AC-11スクリプト |
 | `price_decimals_ok` | `Price precision OK` | ✅ | `ticket.payload.entry_price`/`sl_price`/`tp_price`が`broker_rules.precision`桁と一致。 | `RUN-HITL-01` §4-2、AC-11 `tradectl ticket check-batch --csv` |
-| `spread_window_clear` | `Spread & news window clear` | ✅ | `SpreadMonitor.latest()`が`gates.spread_max_pips`以下かつ`news_blackout.active=False`。Signal Board上のSpreadバッジと同期。 | `RUN-HITL-01` §1-2（Board確認）、`RUN-SPREAD-03`参照、AC-02補助 |
+| `oco_ack_received` | `OCO acknowledged` | ✅ | `EventBus`に`ticket.oco_ack`イベントが届き`latency_ms<=120000`。CLI `tradectl ticket monitor --watch 120`が結果を検証。 | `RUN-HITL-01` §2-3、AC-02スクリプト |
+| `manual_comment_logged` | `Manual comment recorded` | ✅ | `ticket.payload.manual_comment`が非空で、`tradectl ticket approve --comment`により`len(comment)>=12`を満たす。 | `RUN-HITL-01` §3-3、AC-10 `reports/validation_log/AC-10_<date>.md` 更新手順 |
 
 - **レンダリング例**:
 
@@ -1124,26 +1125,26 @@ Runbook references: RUN-FUND-01 (daily update), RUN-FUND-02 (degraded ops)
 {
   "ticket_id": "TCK-20250308-001",
   "checklist": [
+    {"field": "spread_window_clear", "label": "Spread & news window clear", "mandatory": true, "status": "warn", "validation": "spread <= 1.5 pips"},
     {"field": "double_entry_confirmed", "label": "Double-entry confirmed", "mandatory": true, "status": "pending", "validation": "requires secondary_operator_id"},
     {"field": "sl_tp_verified", "label": "SL/TP distances verified", "mandatory": true, "status": "pending", "validation": "tp/sl within tolerance"},
-    {"field": "oco_ack_received", "label": "OCO acknowledged", "mandatory": true, "status": "pending", "validation": "oco_ack latency <= 120s"},
-    {"field": "manual_comment_logged", "label": "Manual comment recorded", "mandatory": true, "status": "pending", "validation": "comment length >= 12"},
     {"field": "lot_round_ok", "label": "Lot & quantity rounding OK", "mandatory": true, "status": "ok", "validation": "min_lot/step satisfied"},
     {"field": "price_decimals_ok", "label": "Price precision OK", "mandatory": true, "status": "ok", "validation": "precision matches broker"},
-    {"field": "spread_window_clear", "label": "Spread & news window clear", "mandatory": true, "status": "warn", "validation": "spread <= 1.5 pips"}
+    {"field": "oco_ack_received", "label": "OCO acknowledged", "mandatory": true, "status": "pending", "validation": "oco_ack latency <= 120s"},
+    {"field": "manual_comment_logged", "label": "Manual comment recorded", "mandatory": true, "status": "pending", "validation": "comment length >= 12"}
   ]
 }
 ```
 
 ```text
 Checklist (mandatory items marked with *):
-  1. * Double-entry confirmed ............ [PENDING] – requires secondary_operator_id (RUN-HITL-01 §3)
-  2. * SL/TP distances verified .......... [PENDING] – tp/sl within tolerance (AC-02/AC-10)
-  3. * OCO acknowledged .................. [PENDING] – oco_ack latency <= 120s (RUN-HITL-01 §2)
-  4. * Manual comment recorded ........... [PENDING] – comment length >= 12 chars (AC-10)
-  5. * Lot & quantity rounding OK ........ [OK]
-  6. * Price precision OK ................ [OK]
-  7. * Spread & news window clear ........ [WARN] – monitor RUN-SPREAD-03 escalations
+  1. * Spread & news window clear ........ [WARN] – monitor RUN-SPREAD-03 escalations
+  2. * Double-entry confirmed ............ [PENDING] – requires secondary_operator_id (RUN-HITL-01 §3)
+  3. * SL/TP distances verified .......... [PENDING] – tp/sl within tolerance (AC-02/AC-10)
+  4. * Lot & quantity rounding OK ........ [OK]
+  5. * Price precision OK ................ [OK]
+  6. * OCO acknowledged .................. [PENDING] – oco_ack latency <= 120s (RUN-HITL-01 §2)
+  7. * Manual comment recorded ........... [PENDING] – comment length >= 12 chars (AC-10)
 ```
 
 - **監査**: `TicketIssued`イベントと`logs/audit/*.jsonl`へ書き込み。`cfg_hash`, `data_hash`, `hybrid_components`を添付し、各チェックリストACKで`ticket.checklist.ack`イベント（`event_key='ticket.checklist.<field>'`）を発行。ACKは`audit_id`（`AUD-<timestamp>-<ticket_id>`）で`audit_writer.append()`へ格納し、`ack_actor`, `ack_ts`, `cli_command`, `runbook_ref`を`extras.checklist`配下に保存する。
@@ -1544,6 +1545,7 @@ ModeController遷移: `BACKTEST ↔ PAPER ↔ LIVE`は`active_jobs=0`かつ未�
 4. Liveモード: `tradectl account import --csv data/account/live_account.csv`等で実績CSVを取り込み、`actual_fill_imported`/`actual_fill_import_summary`イベントを生成。承認済チケットと突合し、スリッページ統計と監査ログを更新。
 5. TTL経過/Drift超過: `TicketExpired`→CLIで失効表示。
 6. Kill Switch `STOP`: 未承認チケットを`TicketForceCancelled`として整理。
+7. チェックリスト仕様が変わった場合は`pytest-approvaltests`のCLIスナップショットを更新する。具体的には`tests/approval/cli/board`および`tests/approval/cli/ticket`配下の承認ファイルを`pytest -k "board or ticket" --approve`で再生成し、Runbook `RUN-HITL-01`に記載した手順と一致するかを目視確認してからコミットする。
 
 ### 5.6 Config変更フロー
 1. `config/profile_<name>.yaml`更新→`ConfigRegistry.apply_patch`。
@@ -2033,6 +2035,7 @@ Flag切替時は`ConfigChanged`イベントに`flag_delta`が記録され、Repo
 - KPI成績は`metrics/performance.jsonl`と`reports/kpi_snapshot.md`に出力し、PO承認を得る。
 - KPI未達時のアクション: `sprt_guard`で提案頻度縮小→戦略OFF→パラメータ調整→Backtest再検証。決定はPO/運用/開発のレビューで確定。
 - KPI達成を維持するため、Paper/LIVE乖離が継続する場合は`walkforward`再評価とFeature Flagの切替を実施。
+- HITLチケット仕様が変わった場合、`tests/approval/cli/board`と`tests/approval/cli/ticket`のスナップショット差分がKPIレビュー結果に影響するため、§5.5の更新方針に従い`pytest-approvaltests`を再実行し、`reports/validation_log/AC-02_<date>.md`と`RUN-HITL-01`で参照するスクリーンショットも同期させる。
 
 ### 9.4 M1ベース戦略データセット/パラメータ参照
 
