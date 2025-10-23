@@ -1,4 +1,4 @@
-# FXヒューマン・インザループ投資ツール 詳細設計書 v1.11
+# FXヒューマン・インザループ投資ツール 詳細設計書 v1.12
 
 ## 0. 文書情報
 - 作成日: 2025-02-20
@@ -9,6 +9,7 @@
 ### 0.1 改訂履歴
 | 版 | 日付 | 改訂概要 |
 | --- | --- | --- |
+| v1.12 | 2025-02-21 | レポート/監査テンプレート類を整備し、§3.18/§3.20/§3.24/§7.3/§13.6/§13.7を更新。 |
 | v1.11 | 2025-02-21 | §3.30 RiskDisclosureService仕様の統合整理、関連参照を最新化。 |
 | v1.10 | 2025-02-21 | Codexスプリントパッケージ、RiskDisclosure詳細、Acceptable Degradation実務フロー、トレーダー受入チェックリストを追加。 |
 | v1.9 | 2025-02-21 | Codex向けエピック別実装指示セット、レビュー観点テンプレ、トレーダー受入チェックの粒度を拡充。 |
@@ -1176,7 +1177,7 @@ Checklist (mandatory items marked with *):
 
 ### 3.18 Reporter (`src/reporter/generator.py`)
 - **公開API**: `generate_weekly(profile)`, `generate_daily(date)`, `emit_summary()`。
-- **M1 Core出力範囲**: `PerformanceStats`からSharpe/最大DD/WinRate/累積Rを抽出し、`primary_comment`（主要イベント1件の短文）と共にMarkdownを生成する。テンプレートは`docs/templates/reports/weekly_m1_core.md`（週次）と`docs/templates/reports/daily_m1_core.md`を使用し、欠損メトリクスは`status=pending`で表示する。`emit_summary()`は同じ4指標をJSONで返し、Signal Boardヘッダに埋め込む（FR-10）。
+- **M1 Core出力範囲**: `PerformanceStats`からSharpe/最大DD/WinRate/累積Rを抽出し、`primary_comment`（主要イベント1件の短文）と共にMarkdownを生成する。テンプレートは[docs/templates/reports/weekly_m1_core.md](docs/templates/reports/weekly_m1_core.md)（週次）と[docs/templates/reports/daily_m1_core.md](docs/templates/reports/daily_m1_core.md)（日次）を使用し、欠損メトリクスは`status=pending`で表示する。`emit_summary()`は同じ4指標をJSONで返し、Signal Boardヘッダに埋め込む（FR-10）。
 - **拡張要素の段階的有効化**: Spread統計、Correlationガード履歴、Resync/StressTest/Journal要約、Kill Switchログ、Config差分はFeature Flag `feature_flags.reporter.enable_extended_blocks`配下で管理し、既定`False`（M1 Core）とする。M1.1以降で同FlagをON、または派生Flag（例:`reporter.enable_spread_block`, `reporter.enable_kill_switch_block`）を用意して順次解放する。Flagが無効の場合は対応ブロックをスキップし、テンプレートには`<!-- deferred:M1.1 -->`コメントを残すのみとする。
 - **依存**: M1 Coreでは`PerformanceStats`、`reports/performance/paper|live/*.parquet`、`logs/events`（主要コメント抽出のみ）に限定する。Feature Flag有効時にのみ`metrics/pipeline.jsonl`、`kill_switch_events.jsonl`、`config/diff/`を追加読み込みする。
 - **リスク概要/キルスイッチ連携**: `RiskSummaryBuilder`はM1.1で有効化し、Flag無効時は`RiskSummaryStub`が`None`を返す。M1.1では`risk_policy.yaml`の閾値と`kill_switch_events.jsonl`を集計し、逸脱時に`[ALERT]`バッジを付与、閾値変更は`reports/risk/threshold_change_<date>.md`へのリンクを付ける。
@@ -1237,6 +1238,8 @@ Checklist (mandatory items marked with *):
 - **EventsWriter**: DomainEvent→`logs/events/YYYYMMDD.jsonl`。書込失敗で`EventWriteError`をリトライ3回。その後`hard_stop(audit)`。
 - **AuditWriter**: HITL操作を`logs/audit/YYYYMMDD.jsonl`へ。`ticket_id`, `action`, `user`, `delta`, `note`, `cfg_hash`。Live実績取込時は`actual_fill_imported`/`actual_fill_import_summary`イベントを受け取り、`slippage_pips`や`reconciled`フラグを含めて永続化する。
 - **SQLite (拡張)**: `logs/audit.db`にテーブルを保持（M1 optional, M2+で強化）。
+
+`AuditWriter`の出力フィールド仕様は[docs/schema/audit_event.md](docs/schema/audit_event.md)に定義し、将来の正式JSON Schemaは`docs/schemas/`配下に配置する方針とする。
 
 #### 3.20.1 スキーマ/インデックス/更新ポリシー
 | ストア | スキーマ定義 | インデックス/パーティション | 更新ポリシー |
@@ -1303,8 +1306,9 @@ Checklist (mandatory items marked with *):
 | `scripts/backup.sh` | バックアップ | `data/`と`logs/events/`を外部ストレージへ同期 | LaunchAgent化予定 |
 | `scripts/restore_snapshot.sh` | 復旧 | 指定スナップショットを復元し`tradectl resync`を実行 | ドリルトレーニングで利用 |
 | `scripts/preflight.sh` | プレフライト | 起動前にチェック項目を実行し結果をJSONで出力 | `tradectl preflight`から呼び出し |
-| `docs/templates/incident_report.md` | 事故レポート | 障害対応後の振り返り | Runbook付録参照 |
-| `docs/templates/config_change.md` | 設定変更計画 | 危険設定変更時の計画書 | Configレビューで必須 |
+| [docs/templates/incident_report.md](docs/templates/incident_report.md) | 事故レポート | 障害対応後の振り返り | Runbook付録参照 |
+| [docs/templates/config_change.md](docs/templates/config_change.md) | 設定変更計画 | 危険設定変更時の計画書 | Configレビューで必須 |
+| [docs/templates/release_announcement.md](docs/templates/release_announcement.md) | リリース告知 | リリース前日連絡テンプレ | §13.7参照 |
 
 - 各スクリプトには`--dry-run`オプションを持たせ、運用前に影響を確認できるようにする。
 - ドキュメントテンプレートはリポジトリに保存し、Pull Requestテンプレート(`.github/PULL_REQUEST_TEMPLATE.md`)から参照する。
@@ -1834,6 +1838,7 @@ HealthMonitor.ack()
 - **テストデータ**: スタブ検証では軽量モックのみ使用。`tests/fixtures/scoreboard/returns_24w.parquet`等のデータセットはM2+用として保持し、M1ではロードしない。
 - **CIフック**: `pytest -k "governance_stub"`をPR必須テストに追加し、副作用ゼロを担保する。M2+テスト用コマンドは`pytest -k "(scoreboard or ideas or ops_readiness or model_risk or reconciliation)"`としてコメントアウト状態で`ci/config.yml`にプレースホルダ記載。
 - **回帰ライン**: M1期間中はFeature Flagを`False`で維持することを`docs/governance/feature_flag_register.md`で監査。承認後にFlagを切り替える際はAppendix G記載の統合テストを再実施する。
+- ガバナンス系サービスで使用する正式なJSON Schemaは`docs/schemas/`配下に集約し、テストケースから`schema_version`と併せて参照する。M2以降でSchemaを追加する際は本節にリンクを追記する。
 #### 7.4 運用監視メトリクスとアラート条件
 | メトリクス | 定義/収集方法 | WARN閾値 | CRITICAL閾値 | アラート経路 | 主担当/Runbook |
 | --- | --- | --- | --- | --- | --- |
@@ -1850,7 +1855,7 @@ HealthMonitor.ack()
 - メール通知は`ops@domain`グループへ送付。M2でPrometheus/Slack連携予定。閾値超過イベントはRunbookに沿って対応ログ（開始/完了時刻・担当者）を`logs/ops/alerts.log`へ追記する。
 
 #### 7.5 インシデント対応フローとエスカレーション
-1. **検知**: 監視メトリクス閾値超過、CLIアラート、ユーザー報告をトリガーとして`IncidentChannel`（メール件名`[tradectl][INCIDENT]`）を自動生成し、`logs/ops/incident_<timestamp>.md`をテンプレから作成する。
+1. **検知**: 監視メトリクス閾値超過、CLIアラート、ユーザー報告をトリガーとして`IncidentChannel`（メール件名`[tradectl][INCIDENT]`）を自動生成し、`logs/ops/incident_<timestamp>.md`をテンプレから作成する（[docs/templates/incident_report.md](docs/templates/incident_report.md)を使用）。
 2. **初動評価 (T+5分以内)**: 值番運用担当が影響範囲（モード/シンボル/時間）、重大度（§7.1）を判定。Kill Switch必要時は即時STOP→Runbook記載の確認コマンド（`tradectl status`, `tradectl metrics report --window 15m`）を実行。
 3. **封じ込め・復旧**: 根本原因に応じて該当Runbookを起動（データ遅延=`RUN-DATA-05/06`, リスク逸脱=`RUN-RISK-03`, Config異常=`RUN-CFG-02`等）。対応進捗は10分単位でインシデントノートに記録し、必要に応じて代替運用（Paperモード移行、手動チケット停止）を実施。
 4. **報告・エスカレーション**: 復旧目標を超過しそうな場合、下表に従い上位者へエスカレート。CRITICALは即時PO/リスク責任者へ電話連絡。外部影響（ブローカー障害等）が疑われる場合はブローカー窓口へ連絡し、連絡記録を添付。
@@ -2535,12 +2540,12 @@ def test_<case>(...):
 - 各レビュー結果は`docs/review_log.md`へ転記し、未解決課題は`docs/risk_review/<date>.md`でフォローアップ。
 
 ### 13.6 監査・証跡統合
-- `AuditWriter`が吐き出すログに`consent_reference_id`, `cfg_hash`, `board_mode`を必須フィールドとして追加する（既存差分なし）。Codexがログスキーマを変更する場合は`docs/schema/audit_event.md`の更新を伴わせる。
+- `AuditWriter`が吐き出すログに`consent_reference_id`, `cfg_hash`, `board_mode`を必須フィールドとして追加する（既存差分なし）。Codexがログスキーマを変更する場合は[docs/schema/audit_event.md](docs/schema/audit_event.md)の更新を伴わせる。
 - 監査ログ圧縮は`logs/audit/YYYYMMDD.jsonl.zst`形式。Codexに圧縮コマンド (`zstd -T0`) を実装させる場合は、圧縮後のハッシュと既存Runbook `AUD-ARCHIVE-01`のステップを照合させる。
 - 監査抽出CLI `tradectl audit export --type risk_consent`(M1.1計画)の仕様はAppendix Hで追補予定。Codexが下準備する際はFeature Flag `audit.enable_consent_export`を用意し、既定Falseとする。
 
 ### 13.7 リリースコミュニケーション
-- リリース前日までにPO→トレーダー→運用で告知テンプレート（`docs/templates/release_announcement.md`）を更新し、Spread/KPI/Runbookの要点を共有する。
+- リリース前日までにPO→トレーダー→運用で告知テンプレート（[docs/templates/release_announcement.md](docs/templates/release_announcement.md)）を更新し、Spread/KPI/Runbookの要点を共有する。
 - Codexが大きなUI変更を実装した場合は、デモ動画またはCLIリプレイ (`tools/replay_signals.py`) のスクリプトを`docs/releases/<tag>/demo.md`へ添付させる。
 - リリース後24hは`EventBus`/`metrics`/`logs/ops`を重点監視し、異常時は`feedback_loop.md`に記録。CodexにHotfixを依頼する際は、本設計書§12のテンプレートに則って迅速に依頼する。
 
