@@ -1,4 +1,4 @@
-# FXヒューマン・インザループ投資ツール 詳細設計書 v1.16
+# FXヒューマン・インザループ投資ツール 詳細設計書 v1.17
 
 ## 0. 文書情報
 - 作成日: 2025-02-20
@@ -9,6 +9,7 @@
 ### 0.1 改訂履歴
 | 版 | 日付 | 改訂概要 |
 | --- | --- | --- |
+| v1.17 | 2025-02-23 | §34〜§37にトレードジャーナル/パラメータドリフト/ベンチマークリプレイ/運用健全性ダッシュボード設計を追加し、FR-44/FR-45/FR-46/FR-48の実装指針をCodex Packet化。 |
 | v1.16 | 2025-02-22 | §23〜§25にストレステスト/流動性監視/ステートメント突合の詳細設計を追加し、FR-43/FR-49/FR-64対応ロードマップをCodex Packet化。 |
 | v1.15 | 2025-02-22 | §20にデータプロベナンス/Validation Data Playbook実装設計を追加し、FR-52/FR-62のM1.1準備方針を明文化。 |
 | v1.14 | 2025-02-22 | §19にEmergency Orchestrator/Reduce-Only Advisor設計ロードマップを追加し、FR-42/FR-47の下準備を明文化。 |
@@ -4034,4 +4035,163 @@ FR-63はRunbook整備・訓練・バックアップ整合をスコア化し、75
 
 ---
 
-これらの章を追加することで、研究〜運用ガバナンス・監査・リリース管理・OpsレディネスといったM2以降の高度要件に対する詳細設計が揃い、Codexが段階的に実装パケットへ落とし込める。
+## 34. トレードジャーナル & レビューエンジン詳細設計（FR-44, M1.1準備 → M2実装）
+
+FR-44は承認済みチケットと実績を紐づけ、戦略別/レジーム別の振り返りを自動化する。M1.1でデータモデルとCLI基盤、M2でダッシュボード/ハイライト生成を実装するロードマップとする。
+
+### 34.1 JournalService (`src/journal/service.py`)
+
+- **データモデル**:
+  | モデル | 主フィールド | 説明 |
+  | --- | --- | --- |
+  | `JournalEntry` | `ticket_id`, `signal_id`, `strategy_id`, `mode`, `status`, `approved_by`, `approved_ts`, `fill_ts`, `fill_price`, `lots`, `gross_r`, `net_r`, `slippage_pips`, `notes`, `tags[]` | チケット〜実績紐付け。`status∈{'open','filled','partial','cancelled','expired'}` |
+  | `ReviewAnnotation` | `entry_id`, `author`, `category ∈ {'execution','risk','psychology','ops'}`, `comment`, `action_items[]`, `created_ts` | ヒューマンレビューコメント |
+  | `Highlight` | `week_id`, `category`, `title`, `summary`, `evidence_path`, `owner`, `impact_score` | 週次レポートへ差し込むハイライト |
+- **イベント連携**: `TicketAction`（承認/却下）と`fill.imported`（Live/Paper約定取り込み）をsubscribeして`JournalEntry`を生成。`fill`未到着でも`status='open'`で仮登録し、`ttl`超過で`expired`扱い。
+- **リレーション**: `RiskDisclosureService`の`consent_reference_id`、`RiskManager`の`RiskMetricsSnapshot`ハッシュ、`StrategyScoringService`の`alpha/decay`を外部キー参照し、勝ち筋/リスク逸脱の振り返りを一画面で確認できるようにする。
+- **スキーマ保持**: `data/journal/journal_entries.parquet`（行指向）＋`data/journal/annotations.jsonl`（コメント追記）。週次ローテーションで`reports/journal/<YYYYWW>.md`を自動生成し、Runbook `RES-JOURNAL-01`へリンク。
+- **API**:
+  | 関数 | 入力 | 処理 | 出力 | 異常系 |
+  | --- | --- | --- | --- | --- |
+  | `JournalService.record_ticket(ticket_event)` | `TicketAction`イベント | Ticket/Strategy/Accountを突合→`JournalEntry` upsert | `JournalEntry` | 不整合: `JournalValidationError` |
+  | `JournalService.attach_fill(fill_event)` | Fillイベント、`fill_source` | 価格・数量整合チェック→`slippage_pips`算出→`net_r`更新 | 更新済み`JournalEntry` | 差分>閾値: `JournalFillMismatch` |
+  | `JournalService.annotate(entry_id, annotation)` | `ReviewAnnotation` | カテゴリ別コメント保存→`actions_pending`更新 | `AnnotationReceipt` | Entry欠落: `JournalEntryNotFound` |
+  | `JournalService.generate_weekly_summary(window)` | 期間、フィルタ | KPI集計→Top/Bottom3抽出→`Highlight`作成 | `JournalWeeklySummary` | 集計失敗: `JournalSummaryError` |
+- **データ品質**: `Validation Data Playbook`に`journal_entries.hash`を追加し、手動編集時は双子入力（`op`/`review`）とSHA256突合を必須化。`AuditWriter`は承認コメントの差分を監査ログへ転記する。
+
+### 34.2 CLI & レポート統合 (`src/interfaces/cli/journal.py`)
+
+- `tradectl journal list --window 14d --strategy <id> --status filled --format table|json`
+- `tradectl journal annotate <ticket_id> --category execution --comment "..." --tag drift`
+- `tradectl journal review --week <YYYYWW> --export reports/journal/<YYYYWW>.md`
+- **UX**: Richテーブルに`expected_R` vs `realized_R`、`slippage`バー、`alpha_score`/`decay_score`ラベルを表示。`--filter anomalies`で`abs(realized_R - expected_R) > config.journal.anomaly_r`を抽出。
+- **Runbook連携**: Opsレビューで`actions_pending`が残存している場合は`health.raise('degraded','journal_actions_overdue')`を推奨。Runbook `RES-JOURNAL-01.md`にヒアリングテンプレと承認フローを記載。
+- **テスト**: `tests/unit/test_journal_service.py`, `tests/integration/test_journal_cli.py`, `tests/approval/journal_weekly_summary/`。
+- **Codex Packet**: `EP05-P8`（M2）でJournalService/CLI/レポートを実装。テスト指示: `pytest -k journal_service`, `tradectl journal review --week <YYYYWW> --dry-run`。
+
+### 34.3 テレメトリ & KPI連動
+
+- `metrics/journal.jsonl`に`anomaly_count`, `slippage_avg`, `actions_pending`, `review_completion_pct`を記録。`anomaly_count>config.journal.max_weekly_anomalies`で`journal.anomaly_alert`イベントを発火。
+- `reports/weekly/<YYYYWW>.md`の`Journal Highlights`節へ`Highlight`を自動挿入。`AttributionEngine`と連携し、カテゴリ別貢献度とコメントの整合をレビュー。
+- `ops_worklog`に`journal_review`タスクを追加し、レビュー所要時間を計測。Acceptable Degradation時は作業負荷増加をダッシュボード（§37）で可視化。
+
+---
+
+## 35. パラメータドリフト監視設計（FR-45, M2準備）
+
+FR-45は最適化時のパラメータ分布と最新運用値の乖離を検知し、ベースライン復帰を促す。本節は`src/research/drift_monitor.py`とCLI `tradectl research drift`の詳細を定義する。
+
+### 35.1 DriftMonitor (`src/research/drift_monitor.py`)
+
+- **データソース**:
+  1. `research/optimizations/<strategy_id>/<run_id>/params.parquet`（最適化履歴）
+  2. `config/strategy_manifest.yaml`（現在値）
+  3. `reports/performance/<mode>/rolling_90d.parquet`（実績指標）
+- **メトリクス**: KLダイバージェンス、Wasserstein距離、`delta_weight = |current_weight - median_weight|`、`performance_delta = PF_recent - PF_optimization`。
+- **検知ロジック**: `kl_divergence > config.drift.kl_threshold`または`|delta_weight| > config.drift.weight_threshold`に加え、`performance_delta < -config.drift.performance_drop`を満たす場合に`strategy.drift_detected`イベントを出力し、`StrategyRegistry`へ`watchlist`タグ付けを依頼。
+- **API**:
+  | 関数 | 入力 | 処理 | 出力 | 異常系 |
+  | --- | --- | --- | --- | --- |
+  | `DriftMonitor.scan(strategy_id, window=180d)` | 戦略ID、ウィンドウ | パラメータ分布読み込み→距離計算→結果集計 | `DriftReport` | データ欠落: `DriftDataMissing` |
+  | `DriftMonitor.evaluate_all()` | プロファイル設定 | 全戦略走査→閾値比較→イベント生成 | `list[DriftReport]` | 設定不整合: `DriftConfigError` |
+  | `DriftMonitor.publish(report)` | `DriftReport` | EventBus送信→Audit記録 | `PublishResult` | Event失敗: `DriftPublishError` |
+- **キャッシュ**: `data/drift/drift_history.parquet`で過去判定を保持し、週次比較の負荷を低減。`cfg_hash`と`optimization_run_id`で整合性を検証。
+
+### 35.2 CLI & ワークフロー (`src/interfaces/cli/research.py`)
+
+- `tradectl research drift scan --strategy <id> --window 180d --export reports/research/drift/<strategy>_<YYYYMMDD>.md`
+- `tradectl research drift evaluate --all --notify`
+- CLIは`RiskDisclosure`ステータスと連携し、警告が`warning/pending`の場合は`--ack`入力を要求。
+- **UX**: Richチャート（Sparkline）でパラメータ推移と最適化分布ヒストグラムを表示。`--explain`で各指標の算出根拠をMarkdownで出力し、トレーダーが根拠を即確認できるようにする。
+- **Runbook**: `docs/runbooks/RES-DRIFT-01.md`に判定後の対応手順（再最適化/ロールバック/ガード値調整）と承認フローを記載。`DriftReport`はRunbook添付必須。
+- **テレメトリ**: `metrics/drift_monitor.jsonl`で`kl_divergence`, `distance_wasserstein`, `drift_alerts`を記録。連続2週で警告の場合は`health.raise('degraded','parameter_drift')`を推奨。
+- **テスト**: `tests/unit/test_drift_monitor.py`, `tests/integration/test_research_cli_drift.py`, `tests/property/test_drift_metrics.py`。
+- **Codex Packet**: `EP06-P6`（M2）でDriftMonitor/CLI/レポート整備。テスト指示: `pytest -k drift_monitor`, `tradectl research drift scan --strategy trend_ma --dry-run`。
+
+---
+
+## 36. ベンチマークリプレイ & 差分分析ワークベンチ（FR-46, M2準備 → M3実装）
+
+FR-46は外部シグナル履歴を再生し、同期間で自戦略と比較するリプレイ環境を提供する。§3.18.1の`Benchmark Monitor`を基盤とし、リプレイパイプライン・CLI・差分可視化を追加する。
+
+### 36.1 BenchmarkReplayEngine (`src/reporter/benchmark_replay.py`)
+
+- **入力**: `benchmark_runs/normalized/*.parquet`, `reports/kpi_snapshots/*.json`, `FeatureFrame`キャッシュ。
+- **フロー**:
+  1. `load_series(provider, window)`でベンチマーク信号を取得し、`ReplaySeries`（`entries[]`, `exit`, `sl`, `tp`, `tags`）へ変換。
+  2. `align_series(replay_series, strategy_series, window)`で提案タイムラインを揃え、欠損は`manual_fallback`フォルダから補完（§20参照）。
+  3. `simulate_execution(replay_series, execution_model)`でExecutionModel/Spread/Slip設定を共通適用。
+  4. `compare_metrics()`でSharpe/最大DD/WinRate/平均レイテンシ/提案頻度差を算出。
+  5. `generate_diff_report()`でEquity/Drawdown/Latency差分チャートを生成。
+- **API**:
+  | 関数 | 入力 | 処理 | 出力 | 異常系 |
+  | --- | --- | --- | --- | --- |
+  | `BenchmarkReplayEngine.run(provider, window, strategy_ids, execution_profile)` | プロバイダ、期間、比較対象戦略、実行設定 | データ取得→整合→シミュレーション→差分計算 | `BenchmarkReplayResult` | データ欠落: `BenchmarkReplayDataError` |
+  | `BenchmarkReplayEngine.render(result, format)` | リプレイ結果、`format ∈ {'md','json','html'}` | テンプレート適用→出力保存 | `BenchmarkReplayReport` | レンダリング失敗: `BenchmarkReplayRenderError` |
+  | `BenchmarkReplayEngine.publish_events(result)` | リプレイ結果 | `benchmark.replay.completed`イベント発火→`ops_worklog`タスク追加 | `PublishReceipt` | Event失敗: `BenchmarkReplayEventError` |
+- **テレメトリ**: `metrics/benchmark_replay.jsonl`に`latency_sec`, `proposal_diff`, `latency_diff_median`, `sharpe_delta`, `drawdown_delta`を記録。
+- **アーカイブ**: リプレイ結果は`reports/benchmark/replay/<provider>/<YYYYMMDD>.md`＋`diff.svg`として保存。`Validation Data Playbook`に`benchmark_replay.hash`を追加。
+
+### 36.2 CLI & UI (`src/interfaces/cli/benchmark.py`)
+
+- `tradectl benchmark replay --provider tradingview --window 90d --strategy trend_ma --strategy mean_revert --execution-profile live`
+- `--chart`でSVG差分図を生成し、`--export-html`でインタラクティブレポート（Plotly）を出力（M3）。
+- `--fail-on-gap`は欠損率>10%で非ゼロ終了コードを返し、Runbook `GOV-BENCHMARK-01`の再入力手順を促す。
+- **UX**: タイムライン表示（提案時刻 vs ベンチマーク）、`latency_delta`ヒストグラム、`R_contrib`比較テーブル。トレーダーが勝ち筋/弱点を即把握できる視覚化を重視。
+- **テスト**: `tests/unit/test_benchmark_replay_engine.py`, `tests/integration/test_benchmark_replay_cli.py`, `tests/approval/benchmark_replay_reports/`。
+- **Codex Packet**: `EP05-P9`（M2→M3）でReplayEngine/CLI/可視化を段階実装。テスト指示: `pytest -k benchmark_replay`, `tradectl benchmark replay --provider tradingview --window 30d --dry-run`。
+
+### 36.3 Ops/トレーダー受入基準
+
+- 週次レビューで`BenchmarkReplayReport`を確認し、Sharpe差/最大DD差が閾値を下回った場合は改善アクション（戦略調整/ガード調整）をRunbookへ追記。
+- Acceptable Degradation時はリプレイ頻度を週次→日次に引き上げ、`ops_worklog`の負荷をダッシュボード（§37）で監視。
+- ベンチマーク差分が改善した場合は`reports/governance/benchmark_review/<YYYYQ>.md`へ成果を記録し、Packet完了条件とする。
+
+---
+
+## 37. 運用健全性ダッシュボード設計（FR-48, M1.1準備 → M2実装）
+
+FR-48はHealth/Kill Switch/Spread/Benchmark差分/ジャーナルハイライト等を単一ビューで提示し、ヒューマン・トレーダーが判断を瞬時に下せる環境を整える。M1.1でCLIダッシュボード、M2でGUI/Tauri拡張の下地を整備する。
+
+### 37.1 OpsDashboardService (`src/ops/dashboard.py`)
+
+- **データ統合**:
+  - `HealthMonitor.snapshot()` → `health_state`, `reasons`, `recommended_actions`
+  - `KillSwitch.status()` → `mode`, `since`, `ack_required`
+  - `SpreadMonitor.sample_all()` → `spread_state`, `p95`, `cooldown_remaining`
+  - `BenchmarkReplayEngine.latest_delta()` → `sharpe_delta`, `latency_delta`
+  - `JournalService.highlight_summary()` → `anomaly_count`, `actions_pending`
+  - `OpsReadinessService.latest_score()` → `readiness_score`, `trend`
+- **アーキテクチャ**: `OpsDashboardService`が各サービスから非同期でデータ取得→`DashboardSnapshot`（pydanticモデル）へ集約→EventBus `ops.dashboard.updated`を配信。CLI/将来GUIはこのスナップショットを購読。
+- **API**:
+  | 関数 | 入力 | 処理 | 出力 | 異常系 |
+  | --- | --- | --- | --- | --- |
+  | `OpsDashboardService.refresh(force=False)` | `force`フラグ、`ModeContext` | ソースから並列取得→スナップショット生成→キャッシュ更新 | `DashboardSnapshot` | 取得失敗: `DashboardSourceError` |
+  | `OpsDashboardService.subscribe()` | フィルタ | Asyncジェネレータで最新スナップショットをpush | `AsyncIterator[DashboardSnapshot]` | 購読エラー: `DashboardSubscriptionError` |
+  | `OpsDashboardService.render(snapshot, layout)` | スナップショット、レイアウト（`rich`, `json`, `prometheus`） | 表示向けテンプレ適用 | `RenderedDashboard` | レンダリング失敗: `DashboardRenderError` |
+- **キャッシュ**: `data/dashboard/latest.json`＋`metrics/dashboard.jsonl`で履歴保存。`last_updated`が`config.dashboard.stale_threshold_sec`超過で警告表示。
+- **拡張ポイント**: GUI化時はWebSocketサーバへ配信し、Tauriフロントが`ops.dashboard.updated`を購読する。
+
+### 37.2 CLI & UX (`src/interfaces/cli/ops_dashboard.py`)
+
+- `tradectl ops dashboard --auto-refresh 15 --layout compact`
+- `--focus spread`, `--focus benchmark`で特定モジュールを拡大表示。
+- `BoardMode`操作ショートカットをバインドし、`g`キーで`guarded`切替コマンドを発行（M2+）。
+- **視覚要素**:
+  - 上段: Health/Kill Switchカード（色分け: 緑=OK, 黄=Degraded, 赤=Soft/Hard Stop）。
+  - 中段: Spread分布（sparkline）、Benchmark差分（Sharpe/Latencyダブルバー）、Journal anomalyトレンド。
+  - 下段: Ops Readinessゲージ、未完了Runbookタスク数、`ops_worklog`直近24hサマリ。
+- **通知**: `--notify`で重大アラート発生時にメール送信（`AlertDispatcher`経由）。CLIは色変更＋ベル音で即座に気付けるようにする。
+- **テスト**: `tests/unit/test_ops_dashboard_service.py`, `tests/integration/test_ops_dashboard_cli.py`, `tests/approval/ops_dashboard_render/`。
+- **Codex Packet**: `EP07-P3`（M2）でDashboardService/CLI/通知連携を実装。テスト指示: `pytest -k ops_dashboard`, `tradectl ops dashboard --auto-refresh 1 --dry-run`。
+
+### 37.3 トレーダー/Ops受入基準
+
+- Acceptable Degradation時はSpread/Benchmark/Journals欄が橙色で強調され、Runbookリンクと承認ID入力欄を即表示。
+- Kill Switch=STOP時は全カードを赤でロックし、解除条件とRunbook IDを明示。手動解除後は`ops.dashboard.updated`が1分以内に新状態を反映。
+- Ops Readiness<75の場合、Dashboard上で`soft_stop`推奨とタスク一覧を提示し、`tradectl ops readiness --json`の出力リンクを提供。
+- 週次Opsレビューでは`tradectl ops dashboard --export-img ops_dashboard_<date>.png`でスクリーンショットを取得し、`reports/ops/dashboard/<YYYYWW>.md`に添付。将来のGUI/Tauri版でも同フォーマットを踏襲する。
+
+---
+
+これらの章を追加することで、ジャーナル/パラメータ監視/ベンチマーク比較/運用健全性のエコシステムが整備され、トレーダー視点でのフィードバックループとOps判断スピードが向上する。Codexは各Packetを順次実装することでFR-44/FR-45/FR-46/FR-48の達成に必要な詳細仕様を把握できる。
