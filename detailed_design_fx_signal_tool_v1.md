@@ -1,4 +1,4 @@
-# FXヒューマン・インザループ投資ツール 詳細設計書 v1.10
+# FXヒューマン・インザループ投資ツール 詳細設計書 v1.11
 
 ## 0. 文書情報
 - 作成日: 2025-02-20
@@ -9,6 +9,7 @@
 ### 0.1 改訂履歴
 | 版 | 日付 | 改訂概要 |
 | --- | --- | --- |
+| v1.11 | 2025-02-21 | §3.30 RiskDisclosureService仕様の統合整理、関連参照を最新化。 |
 | v1.10 | 2025-02-21 | Codexスプリントパッケージ、RiskDisclosure詳細、Acceptable Degradation実務フロー、トレーダー受入チェックリストを追加。 |
 | v1.9 | 2025-02-21 | Codex向けエピック別実装指示セット、レビュー観点テンプレ、トレーダー受入チェックの粒度を拡充。 |
 | v1.8 | 2025-02-20 | Codex実装前提の開発オペレーション/プロンプト設計/テストシナリオを体系化。ヒューマン・トレーダー視点の期待KPI/UXと整合させた。 |
@@ -631,7 +632,7 @@ M2以降で変更が見込まれる領域について、実装/運用負荷を�
 
 ### 2.6 CLI (`src/interfaces/cli/*.py`)
 - `tradectl board`: EventBus購読でTicket表示。`--filter`, `--view`, `--format json`（将来）を提供。TTL/ドリフトをリアルタイム更新し、Spreadクールダウンやニュースブロック理由をバッジ表示。`RiskMetricsSnapshot`を購読し、`R_eff`超過時はヘッダに赤バナー（`R_eff=2.8 (>2.5)`等）と通貨バケット別エクスポージャ表を表示する。Acceptable Degradation中は`BoardMode=guarded`を手動選択できるよう橙色バナーと代替ソース（dukascopy/yfinance/manual_fallback）バッジ、ダブルチェック入力を提示し、承認操作時に`degraded_ack`イベント記録とRunbookリンクを表示する（自動切替は行わない）。将来のCorrelation Guard本体と整合させるため`correlation_snapshot`ペイロードをそのまま`board`へ受け渡すIFを先行実装し、M1.1ではReduce-Only提案リンクを追加するだけで済む構造とする。
-  - **リスク開示分岐**: `RiskDisclosureService.fetch_state()`で承諾状況を取得。M1 Coreでは`state.status in {'pending','expired'}`の際にヘッダへ警告バナーと承諾誘導リンクを表示し、`board_mode='read_only'`で承認/却下コマンドに`warn_only`フラグを付与する。M1.1以降は同条件でCLIを一時停止し、`RiskDisclosureService.prompt()`が同意ダイアログを起動。承諾完了まで`BoardRenderer`は`render_locked()`で「同意待ち」画面を表示し、高リスク操作（Approve/Kill Switch/Emergency）は`ConsentRequiredError`でブロックする。
+  - **リスク開示分岐**: `RiskDisclosureService.fetch_state()`で承諾状況を取得。M1 Coreでは`state.status in {'pending','warning','expired'}`の際にヘッダへ警告バナーと承諾誘導リンクを表示し、`board_mode='read_only'`で承認/却下コマンドに`warn_only`フラグを付与する。`warning`は拒否/差戻し直後の暫定許可状態を表し、Approve時には`RiskDisclosureService.link_event()`で`consent_reference_id`を付与し監査へ残す。M1.1以降は同条件でCLIを一時停止し、`RiskDisclosureService.prompt()`が同意ダイアログを起動。承諾完了まで`BoardRenderer`は`render_locked()`で「同意待ち」画面を表示し、高リスク操作（Approve/Kill Switch/Emergency）は`ConsentRequiredError`でブロックする。
 - `tradectl data ...`（`src/interfaces/cli/data.py`）: 手動フォールバックオペレーションの専用CLI。`ManualCsvIngestionTask`/`ManualCsvReconciler`と直結し、Acceptable Degradation時のRunbook `RUN-DATA-05`/`RUN-DATA-06`の各手順をCLI内で誘導する。サブコマンドは以下の通り。
   - `manual-template --provider <name> --symbol <pair> --date <YYYY-MM-DD> --timeframe {m5,h1}`: 双子CSV雛形（`fallback_<provider>_<symbol>_<tf>_<YYYYMMDD>_{op,review}.csv`）を`data/manual_fallback/<provider>/<symbol>/<YYYYMMDD>/`へ生成し、UTC/JSTヘッダを自動記入。5分足の場合は`HH:MM`が5分刻みで昇順となるスケルトンを出力する。生成時に`RunbookStepCompleted(task="RUN-DATA-05.step2")`イベントを記録し、`metrics/rate_limit_window.jsonl`へ手動切替タイムスタンプを追記する。
   - `validate-csv --path <dir> [--provider <name>] [--symbol <pair>] [--date <YYYY-MM-DD>]`: `ManualCsvReconciler`を呼び出し、(a) UTC/JST相互変換の整合、(b) 5分足/1時間足境界チェック（先頭バーが`00/05/10...`、タイムゾーン境界で欠損なし）、(c) `low ≤ open,close ≤ high`、(d) 双子CSV（`op`/`review`）のSHA256ハッシュ一致を検証。`ManualCsvIngestionTask`が`bar_ready_queue`へ投入する前提条件としてExit code 0を要求し、不一致はExit code 120で`RUN-DATA-06.step4`を未完に設定する。結果サマリは`reports/validation_log/manual_csv_<provider>_<symbol>_<YYYYMMDD>.md`にMarkdownで追記し、ハッシュ値は`logs/ops/manual_csv.log`と`metrics/rate_limit_window.jsonl`へ同期書込する。
@@ -1359,32 +1360,36 @@ Checklist (mandatory items marked with *):
 - **M2+実装**: ステートメント突合やKill Switch連携の詳細は付録G.5を参照。
 
 ### 3.30 RiskDisclosureService (`src/compliance/risk_disclosure.py`)
-- **目的**: 重要事項説明の承諾状況を管理し、未承諾時にSignal Board操作を制限。FR-53/FR-54 (M1.1) を満たすため、M1 CoreでWARN運用→M1.1で強制停止に拡張できる構造とする。
+- **目的**: 重要事項説明の承諾状況と証跡を統合管理し、未承諾・失効・拒否時にSignal Boardの操作レベルを段階制御する。FR-53/FR-54 (M1.1) を満たすため、M1 CoreではWARN運用、M1.1以降で強制停止へ昇格できるアーキテクチャとする。
 - **主要データモデル**:
-  - `RiskDisclosureState`: `status ∈ {'accepted','pending','expired'}`, `accepted_at`, `expires_at`, `version`, `ack_user`, `source`（`manual`, `cli`, `import`）。
-  - `RiskDisclosureNotice`: CLIへ表示する文言/リンク。`id`, `title`, `body`, `action_url`, `required`。
-  - `RiskDisclosureAudit`: 承諾時のチェックリスト（`ip`, `device`, `note`, `document_hash`）。`audit_writer`へ同時記録。
+  - `RiskDisclosureState`: `status ∈ {'accepted','pending','warning','expired'}`、`accepted_at`, `expires_at`, `version`, `document_hash`, `ack_user`, `ack_source ∈ {'manual','cli','import'}`, `consent_reference_id`, `device_fingerprint`, `last_prompted_at`, `grace_window_hours`。`warning`は拒否または一時承認（`--ack`）時に設定され、承諾が必要な暫定許可状態を表す。
+  - `RiskDisclosureNotice`: CLI/GUIへ表示する文言/リンク。`id`, `title`, `body_md`, `action_url`, `required`, `ack_checklist`（Runbook項目ID列挙）。
+  - `RiskDisclosureAudit`: `consent_reference_id`, `decision ∈ {'accept','reject','ack_warn'}`, `ip`, `device_fingerprint`, `note`, `document_hash`, `evidence_path`, `actor`, `recorded_at` を保持し、`audit_writer`へWORM保存する。
 - **公開API**:
-  - `fetch_state() -> RiskDisclosureState`: `data/compliance/risk_disclosure_state.json`（pydantic検証）を読み込む。未存在時は`pending`初期化。
-  - `record_consent(user, note, evidence_path=None) -> RiskDisclosureState`: CLIまたはGUIから承諾を登録。`document_hash`は`hashlib.sha256`で算出し、`logs/audit`へ`RiskDisclosureAccepted`イベントを出力。
-  - `refresh_from_profile(profile)`: `config/compliance/risk_disclosure_<profile>.yaml`から最新版の文書ハッシュ/有効期限を取得し、バージョン差分があれば`status='expired'`に遷移。
-  - `prompt(mode: Literal['warn','enforce'], renderer)` (M1.1+): CLIへRichプロンプトを表示し、承諾完了まで`renderer.render_locked()`を繰り返す。M1 Coreでは`mode='warn'`のみ呼び出され、バナー表示に留める。
+  - `fetch_state(*, now: datetime | None = None) -> RiskDisclosureState`: `data/compliance/risk_disclosure_state.json`をpydanticで検証し、`expires_at-now`が`grace_window_hours`未満の場合は`status='warning'`へ遷移させた上で返却。ファイル未存在時は`pending`で初期化し、`consent_reference_id=None`として保存する。
+  - `record_consent(decision: Literal['accept','reject','ack_warn'], user, note, evidence_path=None) -> tuple[RiskDisclosureState, str]`: CLI/GUIから承諾/拒否/暫定承諾を登録。`document_hash`は`hashlib.sha256`で文書ファイルから算出し、`consent_reference_id`（UUIDv7）を生成して`logs/audit/risk_consent_<date>.jsonl`へ`RiskDisclosureAccepted|Rejected`イベントとして追記。戻り値は更新後`RiskDisclosureState`と`consent_reference_id`。
+  - `refresh_from_profile(profile, *, auto_expire: bool = True) -> RiskDisclosureState`: `config/compliance/risk_disclosure_<profile>.yaml`から`version`, `document_url`, `document_hash`, `expires_in_days`, `grace_window_hours`, `device_fingerprint_salt`等を読み込み、差分がある場合は`status='expired'`に遷移し、`health.reasons['risk_disclosure']`へ記録。`auto_expire=False`の場合は状態のみ更新しエスカレーションは呼び出し側に委ねる。
+  - `prompt(mode: Literal['warn','enforce'], renderer, *, state: RiskDisclosureState) -> RiskDisclosureState`: CLIへRichプロンプト/Markdownダイアログを描画。`mode='warn'`では概要・Runbookリンクのみ表示し操作を許容、`mode='enforce'`では承諾完了まで`renderer.render_locked()`を繰り返し`ConsentRequiredError`解除条件を返す。
+  - `link_event(consent_reference_id: str | None, event_payload: dict) -> dict`: Ticket/Healthイベントに承諾IDと`document_hash`を付与するヘルパ。`consent_reference_id`不一致や`state.status in {'pending','expired'}`の場合は`RiskDisclosureLinkError`を送出し、イベントを`consent_required`タグ付きで返却する。
 - **状態遷移**:
-  1. `pending` → `accepted`: `record_consent`成功時。`expires_at`が過去の場合は承諾不可で`RiskDisclosureExpiredError`。
-  2. `accepted` → `expired`: `refresh_from_profile`でバージョン更新検知、または`expires_at`経過。CLIは`board_mode='read_only'`で操作を`warn_only`に制限。
-  3. `expired` → `pending`: 新バージョン公開時の初期化。Runbook `COMPLIANCE-01`で再承諾手順を実施する。
+  1. `pending` → `accepted`: `record_consent('accept', ...)`成功時。`expires_at`が過去の場合は`RiskDisclosureExpiredError`。
+  2. `pending`/`accepted` → `warning`: `record_consent('ack_warn' | 'reject', ...)`または`fetch_state`で有効期限が`grace_window_hours`未満と判定されたとき。Signal Boardは読取専用でApprove時に監査リンク必須。
+  3. `accepted`/`warning` → `expired`: `refresh_from_profile`で新バージョン検知、`expires_at`経過、もしくは`document_hash`不一致検知時。HealthMonitorは`level='degraded'`で通知し、Kill Switch `soft_stop(compliance)`を推奨。
+  4. `expired`/`warning` → `pending`: 新バージョン公開時やRunbook `COMPLIANCE-01`で承諾再取得を開始した際に手動リセット。`consent_reference_id`は無効化され、監査ログに差分メモを追記。
 - **連携**:
-  - `BoardRenderer`: `state.status in {'pending','expired'}`のときヘッダに黄色（warn）/赤（expired）バナーと承諾要求リンクを表示。M1.1以降は`expired`でApprove/Rejectをブロックし、`ConsentRequiredError`を返す。
-  - `SessionManager`: 起動時に`refresh_from_profile(profile)`を実行し、`status='expired'`なら`HealthMonitor.raise(level='degraded', reason='risk_disclosure_expired')`を発火。`health.reasons['risk_disclosure']`にバージョン差分を記録。
-  - `AuditWriter`: `RiskDisclosureAccepted`/`RiskDisclosureRejected`イベントをJSONLへ追記し、署名済PDF等の証跡パスを記録。`ops_worklog`へ承諾作業時間を追加。
+  - `BoardRenderer`: `state.status in {'pending','warning','expired'}`のとき黄色（pending/warning）/赤（expired）バナーを表示し、Approve/Reject時に`RiskDisclosureService.link_event(...)`で`consent_reference_id`を強制付与。M1.1以降は`mode='enforce'`で高リスク操作をロックする。
+  - `SessionManager`: プロファイルロード直後に`refresh_from_profile(profile)`→`fetch_state()`を実行し、`status in {'warning','expired'}`なら`HealthMonitor.raise(level='degraded', reason='risk_disclosure_'+status)`を発火。復帰時は`HealthMonitor.clear`へRunbook番号と`consent_reference_id`を添付する。
+  - `AuditWriter`: `RiskDisclosureAccepted`/`RiskDisclosureRejected`/`RiskDisclosureAckWarn`イベントをJSONLへ追記し、`ops_worklog`には承諾作業時間と`decision`を記録。Reporter週次レポートは`RiskDisclosureState`を参照し、`consent_reference_id`と有効期限を表示する。
+  - `EventBus`: `RiskDisclosureEvent`をpublishし、CLI/Reporter/Telemetryが同一ペイロードを再利用できるよう`renderer_hint`（バナー種別）と`required_action`（`ack`, `renew`, `contact_ops`等）を含める。
 - **ファイル配置**:
-  - `config/compliance/risk_disclosure_live.yaml`: `version`, `document_url`, `expires_in_days`, `ack_checklist`（Runbook項目ID）。
-  - `data/compliance/risk_disclosure_state.json`: 実行環境ごとに保持。暗号化はM2検討。バックアップは`reports/compliance/archive/<YYYYMM>/`へ日次コピー。
+  - `config/compliance/risk_disclosure_<profile>.yaml`: `version`, `document_url`, `document_hash`, `expires_in_days`, `grace_window_hours`, `ack_checklist`, `device_fingerprint_salt`。
+  - `data/compliance/risk_disclosure_state.json`: 実行環境ごとに保持し、`consent_reference_id`と`last_prompted_at`を含む。バックアップは`reports/compliance/archive/<YYYYMM>/`へ日次コピー。
+  - `logs/audit/risk_consent_<YYYYMMDD>.jsonl`: `RiskDisclosureAudit`イベントを追記。`tradectl audit export --type risk_consent`の出力元となる。
 - **テスト**:
-  - `tests/unit/test_risk_disclosure.py`: `record_consent`が`accepted`へ遷移し、監査ログ出力をモック検証。
-  - `tests/integration/test_cli_risk_disclosure.py`: CLIバナー/ロックのスナップショットテスト。`Feature Flag feature_flags.risk_disclosure_enforce`が`True`のときApproveコマンドが`ConsentRequiredError`になることを検証。
-- **M1→M1.1移行**: M1 Coreでは`mode='warn'`のみ実装し、`feature_flags.risk_disclosure_enforce`が`False`。M1.1でFlagを`True`に切り替えると`prompt(mode='enforce')`が有効化され、CLIロック＋Kill Switch `soft_stop(compliance)`提案が動作する。移行時はRunbook `COMPLIANCE-01`で承諾状況を確認し、`tradectl status --verbose`に`RiskDisclosure: pending (version x.y)`が表示されるか検証する。
-- **トレーダー運用**: 承諾期限7日前から`AlertDispatcher`でリマインダ送信。日次プレフライトで`RiskDisclosureState.status!='accepted'`の場合、運用開始前に承諾再取得を完了させる。承諾実施者と確認者をダブルサインでRunbookへ記録する。
+  - `tests/unit/test_risk_disclosure.py`: `record_consent`が`status`と`consent_reference_id`を更新し、`link_event`が承諾ID付与・例外を適切に扱うことをモック検証。
+  - `tests/integration/test_cli_risk_disclosure.py`: CLIバナー/ロック/監査リンクのスナップショットテスト。`feature_flags.risk_disclosure_enforce=True`でApproveが`ConsentRequiredError`になること、`--ack`運用時に`warning`表示へ遷移することを確認。
+- **M1→M1.1移行**: M1 Coreでは`feature_flags.risk_disclosure_enforce=False`で`mode='warn'`のみ有効化。M1.1でFlagを`True`に切り替えると`prompt(mode='enforce')`と`link_event`強制が活性化し、Kill Switch `soft_stop(compliance)`提案と`ConsentRequiredError`で高リスク操作を停止。移行チェックリストでは`tradectl status --verbose`に`RiskDisclosure: pending (version x.y)`が表示されること、`risk_consent`監査ファイルが追記可能であることを確認する。
+- **トレーダー運用**: 承諾期限7日前から`AlertDispatcher`でリマインダ送信。日次プレフライトで`state.status!='accepted'`の場合は運用開始前に再承諾を完了し、`--ack`で暫定許可した場合は`warning`状態のままOpsレビュー（ダブルサイン）をRunbookへ記録する。CLI `tradectl status --ack <consent_reference_id>`は監査ログへ連動し、承諾完了後に`link_event`で全操作イベントへIDを必須付与する。
 ## 4. データモデル
 
 ### 4.1 時系列フレーム
@@ -2347,14 +2352,6 @@ linked_runbook: docs/runbooks/RUN-XXXX-YY.md
 - ログは`orjson`で出力し、`tag`フィールドを必須化。タグプレフィックスでフィルタリングを容易にする。
 - メトリクスはJSONLのほか、M2でPrometheus Exporterを実装する際に同タグをラベルに使用する。
 
-### 3.30 RiskDisclosureService (`src/compliance/risk_disclosure.py`)
-- **公開API**: `fetch_state()`（最新承諾ステータス取得）、`prompt(current_state)`（CLI対話の起動）、`record_consent(decision, metadata)`（承諾/拒否イベントの保存）、`link_event(consent_id, event_payload)`（監査イベントへの紐付けヘルパ）。
-- **データモデル**: `ConsentState`は`status∈{accepted,pending,expired,warning}`、`consent_version_hash`, `accepted_at`, `expires_at`, `device_fingerprint`, `last_prompted_at`を保持。永続化は`consent_state.json`（ローカル）と`logs/audit/risk_consent_*.jsonl`（イベント）。
-- **M1 Core実装**: `fetch_state()`で期限切れ/未承諾の場合は`status=pending`を返し、Signal Boardは読み取り専用モードへ切り替える。`prompt()`は承諾文面を表示せずRunbookリンクとTODOを出すのみで、ユーザーが`--ack`オプションで暫定承諾時刻を記録できる。`record_consent()`は`consent_state.json`更新と`audit`イベントへ`consent_warning=true`フラグを付与するが、高リスク操作はブロックしない。`link_event()`は`consent_reference_id=None`のまま警告を残す。
-- **M1.1以降の拡張**: `prompt()`がMarkdownダイアログ（投資助言禁止・主要リスク・損失可能性・利用範囲・約款リンク・前回承諾ログ）を描画し、承諾完了までは`ConsentRequiredError`を発生させてCLI制御を停止。`record_consent()`は`audit`イベントストアへ`risk_consent`エントリをWORM保存し、`consent_reference_id`と`consent_version_hash`を返却。`link_event()`は各操作イベントへ上記IDを付与し、週次ガバナンスレポートと`tradectl audit export --type risk_consent`に連携する。拒否時は`status=warning`を維持し、Signal Boardは高リスク操作を不可・低リスク閲覧もロックする。
-- **異常系**: `consent_state.json`破損→`ConsentStateCorrupted`例外で`BoardMode=halted(consent)`へ遷移。`audit`書き込み失敗時はM1 CoreではWARNログのみ、M1.1では`HealthMonitor.soft_stop(consent_audit)`でKill Switchを保持し再承諾を禁止する。
-- **設定**: `config/compliance/risk_disclosure.yaml`に承諾有効期間（日数）、文面ファイルパス、端末識別子算出方式（シリアル+MACハッシュ）、四半期レビュー週定義、Runbookリンクを定義。M1 Coreでは`enforce=false`、M1.1以降は`enforce=true`として同一コードパスで切り替える。
-
 ### 付録G: ガバナンスサービス（M2+実装ガイド）
 
 #### 付録G.1 Strategy Scoreboard Service (`src/scoreboard/service.py`)
@@ -2739,7 +2736,7 @@ Codex実装で差異が生じやすいイベント/監査/メトリクスのス�
 
 ---
 
-本節以降の更新は`v1.10`で予定されている追加機能（Spread自動解除、RiskDisclosure強制、Correlation Guard本番化等）の詳細を反映予定。Codexへ依頼する際は、本書該当箇所を最新版と照合し、差分がある場合は事前に更新してから依頼すること。
+本節以降の更新は`v1.11`で確定した追加機能（Spread自動解除、RiskDisclosure強制、Correlation Guard本番化等）の詳細を反映予定。Codexへ依頼する際は、本書該当箇所を最新版と照合し、差分がある場合は事前に更新してから依頼すること。
 ## 17. CLIコマンド契約カタログ
 
 CodexがCLI層を安全に実装・改修できるよう、`tradectl`コマンド群のI/O契約・副作用・テスト要求を明文化する。各コマンドはTyperエントリ（§2.6, `src/interfaces/cli/*.py`）として実装し、出力はRichテーブル/Markdown/JSON Linesのいずれかに統一する。凡例:
