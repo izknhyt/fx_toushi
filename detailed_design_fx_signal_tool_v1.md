@@ -778,6 +778,26 @@ M2以降で変更が見込まれる領域について、実装/運用負荷を�
 | `StrategyEngine.load_manifest(manifest_path)` | `strategy_manifest.yaml`パス、環境識別子 | YAML読み込み→パラメータ検証→戦略有効/無効切替 | `StrategyManifest`オブジェクト | YAML不備: `ManifestParseError`。整合性NG: `ManifestValidationError` |
 | `StrategyEngine.evaluate_single(strategy_id, context)` | 戦略ID、`StrategyContext` | 指定戦略のみ実行→ログ記録→テスト/デバッグ用途 | `RawSignal`または`None` | 戦略不在: `StrategyNotFound` |
 
+**`strategy_manifest.yaml`構造**
+- ルートキー`strategies`配下に戦略IDごとのオブジェクトを保持し、`enabled`/`priority`/`weight`/`feature_flags`を定義する。優先度は数値が小さいほど先に評価され、同値の場合は`weight`でスコアリングサービスが正規化を行う。`enabled=false`の戦略はロード時に除外される。
+- `priority`は`int`（0〜255、欠落時は`ManifestValidationError`）、`weight`は`float`（0.0〜1.0、累積1.0以内）、`enabled`は`bool`。`feature_flags`は任意の`str->bool`辞書で、StrategyEngineは`True`のキーのみをプラグインへ伝播する。
+- 設定変更時は§6.7「戦略ガバナンスと縮退手順（Config Governance）」を参照し、Manifestが戦略順序の単一情報源であることをIssue/PRで明示する。
+
+```yaml
+version: 1
+strategies:
+  m1_baseline_ma_rsi:
+    enabled: true
+    priority: 10      # 小さいほど先にrun_allで評価
+    weight: 1.0       # ScoringServiceで正規化
+    feature_flags:
+      sprt_guard_opt_in: false
+  donchian_breakout:
+    enabled: false    # Config Governanceで停止中
+    priority: 20
+    weight: 0.6
+```
+
 #### 3.5.1 シグナル判定フロー（シーケンス図）
 
 ```mermaid
@@ -1329,6 +1349,15 @@ class GateState:
 ### 4.4 設定ファイル
 - `config/profile_<name>.yaml`主要キー: `provider`, `timeframes.trigger`, `timeframes.regime_ref`, `risk.*`, `gates.*`, `strategies[]`, `execution.*`, `spread.*`, `funding.*`, `correlation.*`, `scheduler.*`。
 - `cfg.schema.json`で型/範囲検証。`apply_patch`時は`jsonschema`+独自検査（丸め、閾値相互制約）。
+- `strategy_manifest.yaml`のキー構成は下表を参照。Manifestは§6.7 Config Governanceのレビュー対象であり、戦略順序・有効化状態の単一情報源となる。
+
+| キー | 説明 | バリデーション |
+| --- | --- | --- |
+| `strategies.<id>.enabled` | 戦略を`run_all`へ登録するかどうか | `bool`必須。`true`の戦略が最低1件存在しないと`ManifestValidationError`。
+| `strategies.<id>.priority` | 実行順序（小さいほど先） | `int`必須。範囲0〜255。重複は警告ログ、Issue/PRで理由説明必須。
+| `strategies.<id>.weight` | スコアリング時の重み | `float`必須。0.0〜1.0。環境ごとの合計は1.0以内。欠落時はデフォルト不可。
+| `strategies.<id>.feature_flags` | 戦略固有のFeature Flag群 | `dict[str,bool]`任意。キーは`[a-z0-9_]+`。`true`のみStrategyContextへ伝搬。
+
 
 ### 4.5 イベントスキーマ
 | event_type | 主フィールド |
@@ -2040,6 +2069,7 @@ Flag切替時は`ConfigChanged`イベントに`flag_delta`が記録され、Repo
 ### 12.2 Packetチェックリスト（Codex向け共通テンプレ）
 - **設計整合**: 対象セクション引用、I/O契約、例外、Feature Flag初期値をIssue本文にコピペ。差分がある場合は本書更新→再レビュー。
 - **テスト指示**: `pytest`コマンド、CLIスナップショット、必要なダミーデータ生成コマンドを列挙。Codexが実行困難な外部依存（SMTP等）は`--skip-smtp`等のオプションを用意し、テスト結果に`SKIP`が出る想定を明示する。
+- **戦略マニフェスト**: 戦略の有効化/順序/重みを変更するPacketは`strategy_manifest.yaml`差分を明記し、`strategies.<id>.enabled|priority|weight|feature_flags`の更新値と§3.5/§4.4/§6.7（Config Governance）参照先をPR本文に記載する。CodexはManifestを単一情報源とみなし、他ファイルへの重複定義を禁止。
 - **監査ログ検証**: `pytest -k audit_snapshot`など監査ログをファイル比較するテストを定義し、Codexには出力例を提供する。`git diff logs/audit`があれば差戻し。
 - **UX確認**: トレーダーはCLIスクリーンショットと`tradectl status`出力をレビュー。`docs/trader_signoff/<packet>.md`テンプレに沿って(1) 画面キャプチャ、(2) 操作所要時間、(3) コメントを記入する。
 - **Rollback手順**: 各Packetで変更した設定/Flag/データを明記。例: `cfg change: config/profile_live.yaml (feature_flags.risk_disclosure_enforce)` → `git checkout -- config/profile_live.yaml`で戻す。データ生成の場合は削除コマンドも記載。
@@ -2447,6 +2477,7 @@ Codexへ依頼する際にそのまま転記できる粒度で、各エピック
 ### 15.2 EP-02 Strategy Determinism（シグナル決定論）
 - **目的/KPI**: Backtest/Paper/Liveのシグナル/サイズを完全一致させ、`pytest -k strategy_determinism`が乱数固定後に安定成功すること。
 - **前提**: `data_manifest`で参照するParquetハッシュを要件と突合し、`ModeContext.deterministic_seed`の既存利用箇所を確認しておく。
+- **Manifest整合**: 戦略の順序やON/OFFを調整する場合は`strategy_manifest.yaml`の`strategies.<id>.priority`/`weight`/`enabled`/`feature_flags`を更新し、PRでは§3.5・§4.4・§6.7（Config Governance）の参照を明記する。Config Governanceレビュー結果をチケットへ貼付。
 
 | タスクID | 対象コンポーネント | 変更指示 | テスト/証跡 | Codexプロンプト要点 |
 | --- | --- | --- | --- | --- |
