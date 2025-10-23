@@ -1,4 +1,4 @@
-# FXヒューマン・インザループ投資ツール 詳細設計書 v1.15
+# FXヒューマン・インザループ投資ツール 詳細設計書 v1.16
 
 ## 0. 文書情報
 - 作成日: 2025-02-20
@@ -9,6 +9,7 @@
 ### 0.1 改訂履歴
 | 版 | 日付 | 改訂概要 |
 | --- | --- | --- |
+| v1.16 | 2025-02-22 | §23〜§25にストレステスト/流動性監視/ステートメント突合の詳細設計を追加し、FR-43/FR-49/FR-64対応ロードマップをCodex Packet化。 |
 | v1.15 | 2025-02-22 | §20にデータプロベナンス/Validation Data Playbook実装設計を追加し、FR-52/FR-62のM1.1準備方針を明文化。 |
 | v1.14 | 2025-02-22 | §19にEmergency Orchestrator/Reduce-Only Advisor設計ロードマップを追加し、FR-42/FR-47の下準備を明文化。 |
 | v1.13 | 2025-02-22 | §2.7 Telemetryを拡張しOpsワークログ/自動化指標の詳細を追記。§18にツール/自動化スクリプト集を新設し、Codex向け運用補助を体系化。 |
@@ -3556,3 +3557,199 @@ M1.1ではリスク開示ダイアログの表示と同意取得を**必須ゲ�
 ---
 
 本節により、FR-53/FR-54で要求されるリスク開示ゲートが実装可能となり、CodexはM1.1で承諾強制モードを安全に導入できる。承諾証跡・監査・Runbookが統合されることで、ヒューマン・トレーダーとOpsが同意状態を即座に把握し、規制順守のリスクを最小化できる。
+
+## 23. ストレステスト & シナリオ分析基盤設計（FR-43, FR-27, M1.1準備 → M2実装）
+
+ストレステストはFR-43/FR-27の要件に基づき、Backtestと同一パイプラインを使用しつつ外生ショックや遅延・スプレッド拡張を注入することで、戦略とHITL運用の限界を定量化する。M1 CoreではシナリオデータセットとCLI骨格を整備し、M1.1で最小限の自動テストを導入、M2で完全自動化とOpsレポート統合を行う。
+
+### 23.1 ScenarioDatasetRegistry (`src/stress/datasets.py`)
+
+- **目的**: 歴史的イベント・仮想シナリオを`ScenarioDataset`として登録し、Backtest/Diagnosticsに供給する。
+- **データモデル**:
+  | モデル | フィールド | 説明 |
+  | --- | --- | --- |
+  | `ScenarioDataset` | `id`, `name`, `category ∈ {'historical','synthetic','liquidity','latency'}`, `symbols`, `timeframe`, `bar_path`, `spread_path?`, `slippage_profile`, `notes`, `runbook_ref`, `validation_playbook_id`, `status ∈ {'draft','ready','retired'}` | シナリオメタ情報。`bar_path`はParquet/CSV。`slippage_profile`は`p10/p50/p90`配列を保持。 |
+  | `ShockProfile` | `spread_multiplier`, `slippage_override`, `fill_delay_sec`, `price_gap_pips`, `cooldown_bars` | ショックの注入パラメータ。 |
+  | `ScenarioResult` | `scenario_id`, `profile_id`, `metrics`, `tickets`, `alerts`, `r_eff_peak`, `max_dd`, `ops_timeline`, `notes` | 実行結果サマリ。 |
+- **格納**: `data/scenarios/<scenario_id>/`配下に`bars.parquet`, `spread.csv`, `metadata.json`を保存。`ScenarioDatasetRegistry.load()`がpydanticで検証。
+- **バリデーション**: `validate(dataset)`は`Validation Data Playbook`の該当IDと突合。欠損/重複バー、Spread/Slippage列の整合を検証し、`ScenarioValidationError`をraise。
+- **Runbook連携**: `RUN-DIAG-01`（ストレステスト手順）で各シナリオの根拠と承認者を記録。`status='ready'`へ昇格するにはOps+Quantダブルサインが必要。
+
+### 23.2 StressTestEngine (`src/stress/engine.py`)
+
+- **構成**: Backtestエンジンを継承し、`ShockProfile`を適用するミドルウェアを追加。`StressContext`が`ScenarioDataset`と`ShockProfile`を束ね、`Workflow`ステップへ注入。
+- **機能**:
+  1. `apply_shock(bar)`で価格ギャップ、Spread倍率、フィル遅延を注入。
+  2. `slippage_sampler`が`slippage_profile`と`ShockProfile.slippage_override`を合成。
+  3. `fill_delay_simulator`がヒューマン遅延と追加遅延を合成し、TTL違反/未約定率を算出。
+  4. `ops_timeline_builder`がRunbook手動対応（BoardMode切替、Kill Switch推奨、Manual CSV投入）のタイムラインを生成。
+- **出力**: `StressReport`（`equity_curve`, `drawdown`, `ticket_outcomes`, `latency_stats`, `spread_stats`, `ops_timeline`）。`ops_timeline`は`{"ts","action","runbook_ref","actor"}`形式。
+- **EventBus**: `diagnostics.stress_started/completed`イベントをpublishし、`reports/diagnostics/stress/<scenario_id>_<timestamp>.md`へMarkdown生成。
+- **失敗時挙動**: データ欠損で`StressDataError`、Shock適用中に閾値超過で`StressAbort`（`reason`に`max_slippage`, `max_gap`など）。
+
+#### 23.2.1 APIインターフェース
+| API/関数 | 入力 | 処理 | 出力 | 異常系 |
+| --- | --- | --- | --- | --- |
+| `StressTestEngine.run(scenario_id, profile_id, shock_profile)` | シナリオID、プロファイルID、ショック設定、`ModeContext` | データセットロード→Shock適用→Workflow実行→結果集計 | `StressReport` | データ欠損: `StressDataError`。Shock不整合: `ShockProfileError` |
+| `StressContext.from_manifest(manifest_path)` | `scenario_manifest.yaml` | YAML読込→pydantic検証→`ScenarioDataset`構築 | `StressContext` | スキーマ不一致: `ScenarioManifestError` |
+| `ShockProfile.apply(raw_signal)` | RawSignal, Spread/Slippage統計 | 滑り上書き、TTL短縮、許容超過判定 | `ShockAdjustedSignal` | 閾値超過: `ShockViolation` |
+| `StressReport.export(format, output_path)` | `format∈{'md','json','zip'}`、保存先 | Markdown/JSON生成→証跡添付→ハッシュ計算 | `ExportResult` | 出力失敗: `StressReportExportError` |
+
+### 23.3 CLI・レポート統合 (`src/interfaces/cli/diagnostics.py`)
+
+- **サブコマンド**:
+  | コマンド | 説明 | 主オプション | 出力/副作用 |
+  | --- | --- | --- | --- |
+  | `tradectl diagnostics stress-test run --scenario <id>` | ストレステスト実行 | `--profile`, `--shock <preset|path>`, `--compare-baseline`, `--export` | CLI進捗+Markdown生成、`StressReport`保存、`ops_timeline`を`reports/diagnostics/stress/`へ出力 |
+  | `tradectl diagnostics stress-test list` | シナリオ一覧表示 | `--status`, `--json` | `ScenarioDataset`テーブル、`status`, `runbook_ref` |
+  | `tradectl diagnostics stress-test validate --scenario <id>` | シナリオ検証 | `--fix`（欠損埋め提案）, `--export-md` | バリデーションレポート、`Validation Data Playbook`リンク |
+  | `tradectl diagnostics shock-profile create` | Shockプリセット生成 | `--template <brexit|covid|flash-crash>`, `--output` | `shock_profile.yaml` |
+- **UX要件**: CLIはRichでドローダウン曲線、R分布ヒストグラム、Opsタイムライン（Gantt風）を表示。`--compare-baseline`指定時は最新Backtest結果と差分表を表示し、`max_dd`, `win_rate`, `avg_latency_sec`の差を強調。
+- **レポート**: `reports/diagnostics/stress/<YYYYMMDD>_<scenario_id>.md`に以下を出力。
+  1. KPI差分表（Baseline vs Stress）。
+  2. Opsタイムライン（表形式）。
+  3. Runbook要アクション一覧（`required_actions`）。
+  4. Validation Data Playbook/ScenarioManifestリンク。
+- **Runbook連携**: `RUN-DIAG-01`（ストレステスト実行）、`RUN-RISK-04`（結果レビュー）を更新し、Ops会議アジェンダへ`stress_pending`項目を追加。
+
+### 23.4 テスト & Codex Packet計画
+
+- **ユニットテスト**:
+  - `tests/unit/test_scenario_registry.py`: シナリオメタ検証、ハッシュ整合、`status`遷移。
+  - `tests/unit/test_shock_profile.py`: Shock適用時のTTL短縮、Spread倍率、エラー処理。
+- **統合テスト**:
+  - `tests/integration/test_stress_engine.py`: Brexitシナリオ再生、`ShockProfile`適用、`StressReport`差分検証。
+  - `tests/approval/cli/diagnostics_stress/`: CLI出力スナップショット（進捗、差分表、Opsタイムライン）。
+- **Codex Packet提案**:
+  | Packet ID | スコープ | 依存セクション | 成果物 | テスト |
+  | --- | --- | --- | --- | --- |
+  | `EP04-P1` | `ScenarioDatasetRegistry`実装と検証CLI | §23.1, §23.3 | `src/stress/datasets.py`, CLI list/validate, シナリオテンプレ | `pytest -k scenario_registry` |
+  | `EP04-P2` | `StressTestEngine`骨格と`tradectl diagnostics stress-test run` | §23.2, §23.3 | Engine実装、Shock適用、Markdownエクスポート | `pytest -k stress_engine`, `pytest-approvaltests -k diagnostics_stress` |
+  | `EP04-P3`（M2） | Opsタイムライン生成とRunbook連携 | §23.3 | Opsタイムライン整形、Runbookリンク自動添付 | `tradectl diagnostics stress-test run --scenario brexit --export` |
+- **Ops受入**: `TR-10`（新設）: Brexitシナリオ実行→Opsタイムラインレビュー→Runbookアクション記録。`TR-11`: Flash CrashシナリオでSpreadガードの閾値妥当性検証。
+- **テレメトリ**: `metrics/diagnostics_stress.jsonl`を新設し、`scenario_id`, `max_dd`, `avg_slippage_pips`, `ops_actions_required`を記録。閾値（`max_dd_baseline_diff <= -3R`）超過で`health.raise('warning','stress_result')`を発火。
+
+---
+
+## 24. 流動性乖離 & スプレッド品質監視設計（FR-49, FR-41, M1.1準備）
+
+FR-49では複数レートソースを比較して流動性の劣化や乖離を検知し、FR-41のSpreadクールダウンと連動して新規提案を抑制する。M1 Coreでは`liquidity_monitor`をスタブ化しているため、M1.1でデータ収集・検知ロジック・CLI表示を実装し、M2で自動エスカレーションとEmergency Orchestrator連携を行う。
+
+### 24.1 LiquidityMonitorService (`src/risk/liquidity_monitor.py`)
+
+- **役割**: yfinance/Dukascopy/ブローカー試験CSV/手動入力（`manual_liquidity.csv`）を統合し、Bid/Ask乖離・更新頻度低下・スプレッド急拡大を検知する。
+- **入力**: `LiquiditySample`（`source`, `symbol`, `ts`, `bid`, `ask`, `spread`, `depth?`, `update_latency_ms`）。`ConfigRegistry`は`liquidity.thresholds.*`を提供。
+- **アルゴリズム**:
+  1. **乖離検知**: `divergence_pips = |price_source_a - price_source_b| / pip_size`を算出し、`rolling_p95`超過で`LiquidityAlert(code='price_divergence')`。
+  2. **更新遅延**: `update_latency_ms`が閾値を超えた場合に`stale_quote`アラート。
+  3. **スプレッド異常**: SpreadMonitorの`SpreadCooldownState`と比較し、2倍超で`spread_shock`アラート。
+  4. **板厚低下（M2）**: `depth`がしきい値未満で`depth_thin`アラート。
+- **出力**: `LiquiditySnapshot`（`state`, `divergence_p95`, `stale_ratio`, `alerts[]`, `recommendation`）。`recommendation`は`{'monitor','guarded','halted','manual_check'}`。
+- **EventBus**: `liquidity.alert`/`liquidity.snapshot`をpublishし、Signal Boardヘッダに`LiquidityState`を表示。
+- **メトリクス**: `metrics/liquidity_monitor.jsonl`に`divergence_p95`, `update_latency_p95`, `alerts_count`, `state`を追記。
+
+#### 24.1.1 APIインターフェース
+| API/関数 | 入力 | 処理 | 出力 | 異常系 |
+| --- | --- | --- | --- | --- |
+| `LiquidityMonitorService.update(sample_batch)` | `LiquiditySample[]`, `window_sec`, `thresholds` | サンプル標準化→ローリング統計更新→アラート生成 | `LiquiditySnapshot` | データ欠落: `LiquiditySampleError` |
+| `LiquidityMonitorService.evaluate(symbol)` | 通貨ペア、評価期間 | 指標抽出→`LiquidityAssessment`生成 | `LiquidityAssessment` | シンボル未登録: `LiquiditySymbolNotFound` |
+| `LiquidityMonitorService.export_state()` | なし | 最新スナップショット、閾値、アラート履歴 | `ExportResult`（JSON/Markdown） | エクスポート失敗: `LiquidityExportError` |
+
+### 24.2 Signal Board / Spread Guard 統合
+
+- `SpreadMonitor`と`LiquidityMonitor`を`GateState`へ統合し、`gate_state.liquidity.state`を追加。`state`が`guarded`以上の場合はSignal Boardが橙バナーで「流動性要注意」と表示し、`--guarded`切替を推奨。
+- `TicketBuilder`は`LiquiditySnapshot.recommendation in {'guarded','halted'}`の間、`checklist.spread_window_clear`にWARNを表示。
+- `RiskManager.evaluate`は`liquidity.alert`受信時に`risk_flags=['liquidity_watch']`を付与し、`ops_worklog`へ`{"task":"liquidity_watch","symbol":...,"alert":"price_divergence"}`を追記。
+- `Emergency Orchestrator`（§19）との連携ポイントを確保し、`liquidity.alert`受信時に`EmergencyPlaybook`の`liquidity_divergence`ステップをトリガー可能にする。
+
+### 24.3 CLI & Ops連携 (`src/interfaces/cli/liquidity.py`)
+
+- **サブコマンド**:
+  | コマンド | 説明 | オプション | 出力 |
+  | --- | --- | --- | --- |
+  | `tradectl liquidity status` | 最新スナップショット | `--json`, `--symbol`, `--window` | 指標テーブル、アラート一覧、推奨Runbook |
+  | `tradectl liquidity compare --from <source_a> --to <source_b>` | ソース間乖離分析 | `--symbol`, `--window`, `--export-md` | 乖離グラフ（ASCIIチャート/Markdown） |
+  | `tradectl liquidity ingest --source manual --path <csv>` | 手動データ取り込み | `--symbol`, `--weight` | インポート結果、ハッシュ、`Validation Data Playbook`リンク |
+- **UX要件**: CLIはRichで`divergence_p95`, `update_latency_p95`, `spread_multiplier`を色付きバー表示。重大アラートは赤背景でRunbook `RUN-SPREAD-03`と`RUN-LIQ-01`を表示。
+- **Runbook**: `RUN-LIQ-01`を策定し、乖離アラート発生時の手順（データソース確認→BoardMode判断→Manual CSV発注）を定義。`docs/runbooks/RUN-SPREAD-03.md`へ`LiquidityMonitor`参照を追記する。
+- **Ops証跡**: `reports/validation_log/liquidity_alert_<YYYYMMDD>.md`を生成し、`alert_id`, `metrics_snapshot`, `actions`, `runbook_ref`, `ack_user`を記録。`ops_worklog`へ対応時間を自動追記。
+
+### 24.4 テスト & Codex Packet計画
+
+- **ユニットテスト**:
+  - `tests/unit/test_liquidity_monitor.py`: 乖離/遅延/Spread異常の検知、閾値調整、WARN→ALERT遷移。
+  - `tests/unit/test_cli_liquidity.py`: CLIテーブル表示、JSON出力、Runbookリンク。
+- **統合テスト**:
+  - `tests/integration/test_liquidity_spread_bridge.py`: Liquidityアラート→Spread Guard遷移→Ticket WARN付与の一連を検証。
+  - `tests/approval/cli/liquidity_status/`: CLIスナップショット（通常/警告/重大）。
+- **Codex Packet提案**:
+  | Packet ID | スコープ | 依存セクション | 成果物 | テスト |
+  | --- | --- | --- | --- | --- |
+  | `EP03-P6` | `LiquidityMonitorService`実装＋メトリクス | §24.1, §24.2 | サービス本体、`metrics/liquidity_monitor.jsonl`, `EventBus`配線 | `pytest -k liquidity_monitor` |
+  | `EP03-P7` | CLI/Signal Board統合 | §24.2, §24.3 | CLI `tradectl liquidity *`, Boardバナー、Ticket WARN統合 | `pytest -k cli_liquidity`, `pytest-approvaltests -k liquidity_status` |
+  | `EP03-P8`（M2） | Emergency Orchestrator連携・Ops自動ログ | §19, §24.2 | `EmergencyPlaybook`連携、`ops_worklog`自動記録 | `tradectl emergency trigger --simulate liquidity_divergence` |
+- **Ops受入**: `TR-12`: Liquidityアラート→BoardMode guarded→Manual CSVフォールバック→解除。`TR-13`: 遅延アラートの閾値調整とRunbook適用。
+- **テレメトリ**: `metrics/liquidity_monitor.jsonl`の`alerts_count`が週次で0→>0へ変化した場合、`reports/weekly/templates/m1_core.md`へ「Liquidity Watch」節を自動追記（§9.3連携）。
+
+---
+
+## 25. ブローカーステートメント突合 & 監査パッケージ設計（FR-64, FR-11, M1.2準備）
+
+FR-64はPaper/Live約定ログとブローカーステートメントを突合し、残高差分や未計上スワップを検知する。M1.2での実装を見据え、M1.1でデータモデル・CLI・Runbookを整備し、Codexに実装を委任できるよう詳細設計を定義する。
+
+### 25.1 StatementReconciliationService (`src/reconcile/statements.py`)
+
+- **データモデル**:
+  | モデル | フィールド | 説明 |
+  | --- | --- | --- |
+  | `StatementConfig` | `broker_id`, `format ∈ {'csv','xlsx','pdf-csv'}`, `timezone`, `columns`, `mapping`, `fee_columns`, `swap_columns`, `rounding_rules`, `delimiter`, `encoding`, `tz_offset` | `statement_reconciliation.yaml`からロード。 |
+  | `StatementRecord` | `ts`, `ticket_id?`, `symbol`, `side`, `lots`, `price`, `commission`, `swap`, `tax`, `balance`, `comment` | ブローカーステートメントの標準化行。 |
+  | `FillRecord` | `ticket_id`, `signal_id`, `fill_ts`, `fill_price`, `lots`, `slippage`, `pnl`, `swap` | `logs/fills/*.jsonl`由来。 |
+  | `ReconciliationResult` | `match_rate`, `balance_diff`, `unmatched_statements[]`, `unmatched_fills[]`, `swap_diff`, `commission_diff`, `actions_required` | 突合結果。 |
+- **処理フロー**:
+  1. `load_statement(file_path, config)`でフォーマット毎に正規化。PDFは事前に`pdf_to_csv`ツール（M1.2 Packet）で変換。
+  2. `match_records(statement_records, fill_records)`が`ticket_id`/`symbol`/`lots`/`ts±tolerance`でマッチング。許容ずれ`time_tolerance_sec`は`config`で設定。
+  3. `calculate_balance_diff`で累積残高とAccountStateとの差を算出。
+  4. `detect_swap_missing`で`swap`列が0かつFill側に`swap != 0`のケースを抽出。
+- **出力**: `ReconciliationResult`をJSON/Markdownで保存し、`reports/audit/reconciliation/<date>_<broker>.md`を生成。差分>閾値で`health.raise('degraded','statement_gap')`。
+- **イベント**: `reconciliation.completed`イベントに`match_rate`, `balance_diff`, `swap_diff`, `actions_required`, `runbook_ref`を含める。
+
+### 25.2 CLI & ワークフロー (`src/interfaces/cli/reconcile.py`)
+
+- **コマンド設計**:
+  | コマンド | 用途 | 主なオプション | 出力 |
+  | --- | --- | --- | --- |
+  | `tradectl reconcile statements --from <date>` | ステートメント読み込み・突合 | `--to`, `--broker`, `--statement-dir`, `--fills-dir`, `--config`, `--export-md`, `--threshold-balance`, `--threshold-match` | Markdownレポート、JSON結果、アラート |
+  | `tradectl reconcile preview --statement <file>` | ステートメントフォーマット検査 | `--broker`, `--show-mapping`, `--save-sample` | 標準化サンプル、欠損列警告 |
+  | `tradectl reconcile config scaffold --broker <id>` | 新規ブローカー設定テンプレ生成 | `--format`, `--output` | `statement_reconciliation/<broker>.yaml`テンプレ |
+- **UX**: CLIはRichで`match_rate`をゲージ表示、`balance_diff`/`swap_diff`を色分け表示。閾値超過時は赤背景でRunbook `RUN-AUD-02`リンクを提示。
+- **Ops自動化**: `Scheduler`に週次ジョブ`ReconciliationJob`を登録し、日曜23:00 JSTに自動実行。結果を`reports/weekly/<YYYYWW>.md`へ要約する（`Reconciliation`セクション追加）。
+- **監査**: `logs/audit/reconciliation_<YYYYMMDD>.jsonl`に`ReconciliationCompleted`イベントを保存。`SignatureEnvelope`（§20.2）と同じ仕組みで署名し、`audit_manifest.json`へ登録。
+
+### 25.3 Runbook・Validation Data Playbook統合
+
+- **Runbook**: `docs/runbooks/RUN-AUD-02.md`を新設し、(1) ステートメント取得、(2) `tradectl reconcile`実行、(3) 差分レビュー、(4) Kill Switch判断、(5) Validation Data Playbook更新を手順化。`actions_required`に対応するチェックリストをRunbook内にマッピング。
+- **Validation Data Playbook**: `validation_playbook_id='AC-64_reconciliation'`を割り当て、ステートメントCSV/結果レポート/署名を添付。`DataManifestService.record()`で`kind='ops_log'`として登録。
+- **Ops会議**: 月次Ops会議で`ReconciliationResult`をレビューし、`match_rate<0.99`または`balance_diff>|0.5R|`の場合は改善タスクを`docs/change_requests/`へ起票。`ops_worklog`へ対応時間を記録。
+- **Rollback計画**: 突合失敗時は`ReconciliationRollbackPlan`（テンプレ）に従い、(a) `tradectl reconcile statements --from <date> --dry-run`で再検証、(b) `config/reconciliation_overrides.yaml`で一時的に許容差分を設定、(c) Runbookで手動調整。
+
+### 25.4 テスト & Codex Packet計画
+
+- **ユニットテスト**:
+  - `tests/unit/test_statement_parser.py`: 各フォーマットのパーサ、タイムゾーン補正、丸め規則。
+  - `tests/unit/test_reconciliation_engine.py`: マッチングロジック、差分計算、閾値判定。
+- **統合テスト**:
+  - `tests/integration/test_reconciliation_cli.py`: ダミーステートメントとFillログを突合、結果Markdown確認。
+  - `tests/approval/cli/reconcile_statements/`: CLI出力スナップショット。
+- **Codex Packet提案**:
+  | Packet ID | スコープ | 依存セクション | 成果物 | テスト |
+  | --- | --- | --- | --- | --- |
+  | `EP05-P3` | Statementパーサと設定テンプレ | §25.1 | `src/reconcile/statements.py`, `statement_reconciliation.yaml`テンプレ | `pytest -k statement_parser` |
+  | `EP05-P4` | CLI `tradectl reconcile statements`とレポート生成 | §25.2 | CLI実装、Markdownテンプレ、Schedulerジョブ | `pytest -k reconciliation_cli`, `pytest-approvaltests -k reconcile_statements` |
+  | `EP05-P5`（M1.2+） | Validation Data Playbook/署名統合 | §25.3 | `DataManifestService`連携、Runbook更新、署名スクリプト | `tradectl reconcile statements --from <date> --export-md` |
+- **Ops受入**: `TR-14`: ステートメントCSV（デモ口座）とPaper Fillを突合→差分レビュー→Runbook記録。`TR-15`: 連続2日差分発生時のKill Switch判断シミュレーション。
+- **テレメトリ**: `metrics/reconciliation.jsonl`に`match_rate`, `balance_diff`, `swap_diff`, `last_statement_ts`を記録。`match_rate<0.98`で`health.raise('degraded','statement_gap')`。週次レポート（§9.3）へ自動反映。
+
+---
+
+これらの節により、ストレステスト・流動性監視・ステートメント突合といったM1.1〜M1.2で強化すべきリスク管制領域の詳細設計が整備された。Codexへ実装を委任する際は、本書の該当節とRunbook/Validation Data Playbookのリンクを必ず添付し、テスト指示・監査証跡要件を事前に明示することで、後続スプリントの品質とスループットを維持できる。
