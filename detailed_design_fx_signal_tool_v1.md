@@ -1455,6 +1455,16 @@ class GateState:
 
 ## 5. シーケンス / ワークフロー
 
+### 5.0 AC-01〜AC-06 ワークフロー・証跡マップ
+| AC | 対応ワークフロー/図 | テレメトリ・Validation Data Playbookデータセット | 監査・Runbook証跡 |
+| --- | --- | --- | --- |
+| **AC-01**<br>バックテスト再現性 | §5.2 バー処理パイプライン（Figure §3.5.1 シグナル判定シーケンスと同一制御）、§5.7 Backtest/最適化実行 | `metrics/backtest_replay.jsonl`、`reports/research/m1_baseline/metrics_*.json`、Validation Data Playbook要件定義§8.2 AC-01行（`data/research/curated/<symbol>_m5_20210101_20241231.parquet`、`data_manifest.json::m1_baseline_ma_rsi::2024-12-31`ハッシュ） | `docs/runbooks/STRAT-M1-VALIDATION.md`、`tradectl backtest run --strategy m1_baseline_ma_rsi --since 90d --export metrics`実行ログ、`reports/validation_log/AC-01_<date>.md` |
+| **AC-02**<br>OCO保護付きPaperトレード | §5.5 Ticketライフサイクル（CLI承認フロー）、§5.3 Kill Switch遷移（Reduce-Only強制手順） | `logs/events/ticket.oco_ack.jsonl`、`reports/performance/paper/sample_orders.parquet`、Validation Data Playbook AC-02行（`reports/performance/paper/sample_orders.parquet`、`journal_entries.db`） | `docs/runbooks/RUN-HITL-01.md`、`tradectl ticket monitor --watch 120` CLIスナップショット、`reports/validation_log/AC-02_<date>.md` |
+| **AC-03**<br>ドローダウンKill Switch | §5.3 Kill Switch / Health State遷移、付録A Health/Kill Switch状態遷移図 | `logs/events/risk.kill_switch_*.jsonl`、`metrics/drawdown_guard.jsonl`、Validation Data Playbook AC-03行（`reports/validation_log/AC-03_<date>.md`、`reports/audit/drawdown_guard/<date>.md`） | `docs/runbooks/RUN-RISK-01.md`、`tradectl status --history kill-switch`出力、`tradectl killswitch stop/start`承認ログ |
+| **AC-04**<br>Resync/Catch-up整合 | §5.1 起動〜Resyncフロー、§5.2 バー処理パイプライン（Resync後の通常遷移） | `logs/resync/resync_events.jsonl`、`snapshots/session_<ts>.json`、Validation Data Playbook AC-04行（`reports/audit/resync/<date>.md`、`metrics/data_ingestion_sla.jsonl::catch_up_lag_minutes`） | `docs/runbooks/RUN-DATA-05.md` / `docs/runbooks/RUN-DATA-06.md`、`tradectl resync --since <ts>`証跡、`reports/validation_log/AC-04_<date>.md` |
+| **AC-05**<br>パイプライン処理遅延 | §5.2 バー処理パイプライン、§5.14 パフォーマンス計測とSLA検証 | `metrics/pipeline.jsonl`、`metrics/data_ingestion_sla.jsonl`（`phase=fetch|processing`）、Validation Data Playbook AC-05行（`reports/validation_log/AC-45_sla_<date>.md`のSLA抜粋、`reports/performance/data_latency/<YYYYMMDD>.md`） | `docs/runbooks/RUN-PERF-01.md`、`docs/runbooks/RUN-DATA-05.md`フェイルオーバードリルログ、`tradectl metrics report --kind latency --window 7d`出力 |
+| **AC-06**<br>注文トレーサビリティ | §5.5 Ticketライフサイクル、§5.3 Kill Switch（承認後停止時の証跡要求） | `audit_events.db`、`logs/events/ticket.*.jsonl`、Validation Data Playbook AC-06行（`reports/audit/order_trace/<ticket_id>.md`、`reports/validation_log/AC-06_<date>.md`） | `docs/runbooks/GOV-AUD-01.md`、`tradectl audit trace --order <ticket_id>` CLI出力、`docs/runbooks/RUN-HITL-01.md`チェックリスト |
+
 ### 5.1 起動〜Resyncフロー
 1. `tradectl start --profile <name>` → `SessionManager.start`。
 2. `SnapshotManager.restore`で前回状態読込。`cfg_hash`差異があればResync必須フラグ。
@@ -1944,6 +1954,16 @@ Flag切替時は`ConfigChanged`イベントに`flag_delta`が記録され、Repo
 | FUT-SCORE-01 | AC-07/AC-08 (M2+) | `scoring.hybrid_enabled`時にPF_recent/PF_all/レジーム別PFが閾値を満たすか検証 | 拡張 |
 | FUT-SCORE-02 | AC-09/AC-16 (M2+) | Stabilityスコアと±5〜10%摂動時ランク反転率をリグレッションテスト | 拡張 |
 
+### 9.5 AC-01〜AC-06受入テスト
+| テストID | 対象AC | コマンド (`poetry run ...`) | 期待結果 | ログ/証跡パス |
+| --- | --- | --- | --- | --- |
+| AT-AC01 | AC-01 | `tradectl backtest run --strategy m1_baseline_ma_rsi --since 2024-01-01 --export metrics --snapshot reports/research/m1_baseline/validation_$(date +%Y%m%d).md` | 実行完了ステータス0、`metrics/backtest_replay.jsonl`の`replay_diff_bps≤10`、`data_manifest.json::m1_baseline_ma_rsi::2024-12-31.sha256`と一致 | `reports/validation_log/AC-01_$(date +%Y%m%d).md`, `reports/research/m1_baseline/validation_*.md`, Validation Data Playbook AC-01エントリ |
+| AT-AC02 | AC-02 | `pytest -k "paper_ticket_oco" && tradectl ticket monitor --watch 120 --export reports/performance/paper/sample_orders.parquet` | `ticket.oco_ack`イベントLatency≤120s、CLIログにOCO常駐確認、pytest成功 | `reports/validation_log/AC-02_$(date +%Y%m%d).md`, `logs/events/ticket.oco_ack.jsonl`, `reports/performance/paper/sample_orders.parquet` |
+| AT-AC03 | AC-03 | `pytest -k "drawdown_guard" && tradectl status --history kill-switch --export reports/audit/drawdown_guard/$(date +%Y%m%d).md` | Pytest成功、CLI履歴に`KillSwitch: STOP`→`RUNNING`と承認者記録、`metrics/drawdown_guard.jsonl`に閾値到達イベント | `reports/validation_log/AC-03_$(date +%Y%m%d).md`, `reports/audit/drawdown_guard/*.md`, `logs/events/risk.kill_switch_*.jsonl` |
+| AT-AC04 | AC-04 | `tradectl resync --since "2024-01-01T00:00:00Z" --export reports/audit/resync/$(date +%Y%m%d).md && pytest -k "resync_ttl_drift"` | Resync完了後に`logs/resync/resync_events.jsonl`へ`status=success`、pytestでTTL/ドリフト整合、`catch_up_lag_minutes≤30` | `reports/validation_log/AC-04_$(date +%Y%m%d).md`, `logs/resync/resync_events.jsonl`, `snapshots/session_*.json` |
+| AT-AC05 | AC-05 | `tradectl metrics report --kind latency --window 7d --export reports/performance/data_latency/$(date +%Y%m%d).md && pytest -k "pipeline_latency"` | CLIレポートに`bar_to_board_p95<100ms`、pytest成功、`metrics/data_ingestion_sla.jsonl`で`workers_active_mean≥4`記録 | `reports/validation_log/AC-45_sla_$(date +%Y%m%d).md`内AC-05節、`metrics/pipeline.jsonl`, `metrics/data_ingestion_sla.jsonl` |
+| AT-AC06 | AC-06 | `tradectl audit trace --order <ticket_id> --export reports/audit/order_trace/<ticket_id>.md && pytest -k "audit_chain"` | CLI出力にシグナル→リスク→承認の経路とハッシュを表示、pytest成功、`audit_events.db`に対応イベント存在 | `reports/validation_log/AC-06_$(date +%Y%m%d).md`, `reports/audit/order_trace/<ticket_id>.md`, `audit_events.db` |
+
 ### 9.0 機能別テストケースマトリクス
 | 機能領域 | 単体テスト (例) | 結合テスト (例) | バックテスト検証 | シミュレーション/リプレイ |
 | --- | --- | --- | --- | --- |
@@ -2046,51 +2066,57 @@ Flag切替時は`ConfigChanged`イベントに`flag_delta`が記録され、Repo
 
 ## 10. 要件トレーサビリティ
 
-| 要件ID | 本書記載箇所 |
-| --- | --- |
-| FR-01, FR-02 | §3.1, §3.2, §4.1, §5.2 |
-| FR-03 | §3.3, §5.2 |
-| FR-04 | §3.5, §5.2 |
-| FR-05 | §3.8, §3.9, §5.3, §7 |
-| FR-06 | §3.11 |
-| FR-07, FR-38 | §3.16, §4.3, §5.5 |
-| FR-08 | §2.1, §2.2, §5.2 |
-| FR-09 | §3.17, §5.7 |
-| FR-10 | §3.18 |
-| FR-11 | §2.4, §3.20, §4.5 |
-| FR-12 | §3.9, §3.19, §7 |
-| FR-13 | §3.13, §5.2 |
-| FR-14, FR-33 | §3.19, §4.4, §5.6 |
-| FR-15 | §3.13 |
-| FR-16, FR-18 | §2.1, §2.4, §3.15, §5.1 |
-| FR-17 | §3.16, §5.5 |
-| FR-19, FR-21 | §3.7（M2+ハイブリッド設計）, §3.17 |
-| FR-20 | §3.4 |
-| FR-22 | §3.8, §3.9, §7 (M2フック含む) |
-| FR-23 | §3.19, §5.6 |
-| FR-24 | §3.11, §4.4 |
-| FR-25 | §8 |
-| FR-26 | §3.13, §5.2 |
-| FR-27 | §3.6, §5.2 |
-| FR-28 | §3.12 |
-| FR-29 | §3.6 |
-| FR-30 | §3.16 |
-| FR-31 | §3.14, §4.1 |
-| FR-32 | §2.4, §3.1, §5.1 |
-| FR-34 | §3.6, §5.4 |
-| FR-35 | §3.16, §3.17 |
-| FR-36 | §3.8 |
-| FR-37 | §3.10 |
-| FR-39 | §3.6, §3.16 |
-| FR-40 | §3.13, §5.2 |
-| FR-41 | §3.6, §5.4 |
-| FR-42 | §3.10 (M2+), §5.3 |
-| FR-61 | §1.3, §3.25, §5.11, §7.3 |
-| FR-62 | §1.3, §3.26, §3.28, §5.11, §7.3 |
-| FR-63 | §1.3, §3.27, §5.12, §7.3 |
-| FR-64 | §1.3, §3.29, §5.13, §7.3 |
-| AC-G1/G2 | §2.6, §5.5 |
-| NFR-04/05/06/07/08/11 | §8 |
+| 要件ID | 関連AC | 本書記載箇所（図・表含む） |
+| --- | --- | --- |
+| FR-01, FR-02 | AC-01, AC-04, AC-05 | §3.1, §3.2, §4.1, §5.0, §5.1, §5.2, §9.5 |
+| FR-03 | AC-01, AC-05 | §3.3, §5.0, §5.2, §5.14, §9.5 |
+| FR-04 | AC-01, AC-06 | §3.5, §5.0, §5.2, §5.5, §5.7, §9.5 |
+| FR-05 | AC-03, AC-05 | §3.8, §3.9, §5.0, §5.3, §5.14, §7, §9.5 |
+| FR-06 | AC-02, AC-06 | §3.11, §5.0, §5.2, §5.5, §9.5 |
+| FR-07, FR-38 | AC-02, AC-06 | §3.16, §4.3, §5.0, §5.5, §9.5 |
+| FR-08 | AC-04 | §2.1, §2.2, §5.0, §5.1, §5.2, §9.5 |
+| FR-09 | AC-01 | §3.17, §5.0, §5.7, §9.5 |
+| FR-10 | AC-06 | §3.18, §5.0, §5.5, §9.5 |
+| FR-11 | AC-06 | §2.4, §3.20, §4.5, §5.0, §5.5, §9.5 |
+| FR-12 | AC-03 | §3.9, §3.19, §5.0, §5.3, §7, §9.5 |
+| FR-13 | AC-01, AC-04 | §3.13, §5.0, §5.1, §5.2, §9.5 |
+| FR-14, FR-33 | AC-06 | §3.19, §4.4, §5.0, §5.6, §9.5 |
+| FR-15 | AC-05 | §3.13, §5.0, §5.14, §9.5 |
+| FR-16, FR-18 | AC-04 | §2.1, §2.4, §3.15, §5.0, §5.1, §5.2, §9.5 |
+| FR-17 | AC-02 | §3.16, §5.0, §5.5, §9.5 |
+| FR-19, FR-21 | AC-03 (M1.1以降) | §3.7（M2+ハイブリッド設計）, §3.17, §5.0, 付録A |
+| FR-20 | AC-06 | §3.4, §5.0, §5.5 |
+| FR-22 | AC-03, AC-05 | §3.8, §3.9, §5.0, §5.3, §5.14, §7 |
+| FR-23 | AC-02 | §3.19, §5.0, §5.6, §9.5 |
+| FR-24 | AC-01 | §3.11, §4.4, §5.0, §5.7 |
+| FR-25 | AC-03, AC-05 | §8, §5.0, §5.3, §5.14 |
+| FR-26 | AC-04, AC-05 | §3.13, §5.0, §5.1, §5.2, §5.14 |
+| FR-27 | AC-02, AC-05 | §3.6, §5.0, §5.2, §5.5, §5.14 |
+| FR-28 | AC-05 (SLA), AC-06 (監査) | §3.12, §5.0, §5.14, §5.15.1, §9.5 |
+| FR-29 | AC-02 | §3.6, §5.0, §5.5 |
+| FR-30 | AC-02, AC-06 | §3.16, §5.0, §5.5, §9.5 |
+| FR-31 | AC-04 | §3.14, §4.1, §5.0, §5.1 |
+| FR-32 | AC-04 | §2.4, §3.1, §5.0, §5.1 |
+| FR-34 | AC-02, AC-05 | §3.6, §5.0, §5.4, §5.5, §5.14 |
+| FR-35 | AC-03 | §3.16, §3.17, §5.0, §5.3 |
+| FR-36 | AC-03, AC-05 | §3.8, §5.0, §5.3, §5.14 |
+| FR-37 | AC-02, AC-03 | §3.10, §5.0, §5.3, §5.5 |
+| FR-39 | AC-02 | §3.6, §3.16, §5.0, §5.5 |
+| FR-40 | AC-06 | §3.13, §5.0, §5.5 |
+| FR-41 | AC-02 | §3.6, §5.0, §5.4, §5.5 |
+| FR-42 | AC-03 | §3.10 (M2+), §5.0, §5.3 |
+| FR-61 | AC-05 | §1.3, §3.25, §5.0, §5.11, §5.14, §7.3 |
+| FR-62 | AC-05 | §1.3, §3.26, §3.28, §5.0, §5.11, §5.14, §7.3 |
+| FR-63 | AC-03, AC-05 | §1.3, §3.27, §5.0, §5.12, §5.14, §7.3 |
+| FR-64 | AC-03, AC-06 | §1.3, §3.29, §5.0, §5.13, §5.5, §7.3 |
+| AC-01 | - | §5.0, §5.2, §5.7, §9.5 |
+| AC-02 | - | §5.0, §5.3, §5.5, §9.5 |
+| AC-03 | - | §5.0, §5.3, 付録A, §9.5 |
+| AC-04 | - | §5.0, §5.1, §5.2, §9.5 |
+| AC-05 | - | §5.0, §5.2, §5.14, §9.5 |
+| AC-06 | - | §5.0, §5.3, §5.5, §9.5 |
+| AC-G1/G2 | - | §2.6, §5.5 |
+| NFR-04/05/06/07/08/11 | - | §8 |
 
 ## 11. リスクと未解決課題
 
