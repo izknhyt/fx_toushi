@@ -1,4 +1,4 @@
-# FXヒューマン・インザループ投資ツール 詳細設計書 v1.19
+# FXヒューマン・インザループ投資ツール 詳細設計書 v1.20
 
 ## 0. 文書情報
 - 作成日: 2025-02-20
@@ -9,6 +9,7 @@
 ### 0.1 改訂履歴
 | 版 | 日付 | 改訂概要 |
 | --- | --- | --- |
+| v1.20 | 2025-03-02 | §49〜§50にリアルタイムフィード評価/ライセンスガバナンス（M1.2準備, NFR-05/17, AC-45拡張）を追加し、Data Ingestion/HealthMonitor/BackOfficeとの連携、契約証跡/コスト評価/Runbook整備をCodex Packet化。 |
 | v1.19 | 2025-02-28 | §46にモデルリスクレジスタ/Explainability監査（NFR-26, AC-52, FR-55/56連携）を追記し、Scoreboard/Idea Pipeline/Complianceゲートとの連携、証跡テンプレ/CLI/テレメトリ/Packetを整備。 |
 | v1.18 | 2025-02-27 | §43〜§45にスケーリング/リソースガバナンス、プロファイル差分署名、Ops証跡管理（NFR-19/25/28）を追加し、Capacity診断/Config署名/証跡リセット制御のCodex Packetを整備。 |
 | v1.17 | 2025-02-26 | §41〜§42にオフラインバンドル/サプライチェーン保証設計を追加し、NFR-06/12/18/24およびAC-27/28の実装指針をCodex Packet化。 |
@@ -4932,3 +4933,119 @@ M1 Coreではスタブに留めているModel Risk Registerを、M1.1〜M2で段
 ---
 
 これらの追補により、バックオフィス・税務対応と外部共有ガバナンスが明確化され、FR-59/FR-64の監査証跡を税務用途へ拡張しつつ、NFR-05/17が求める追跡性とセキュア配送をCodexが実装できる。Ledger/Taxレポート/共有チャネルは既存の監査パック・データプロベナンス・モデルリスク管理と接続され、トレーダー/Ops/バックオフィス/外部パートナー間で一貫した証跡管理フローを構築できる。
+
+## 49. リアルタイムフィード評価 & M1.2導入準備設計（FR-01/FR-02強化, AC-45拡張, NFR-05/17）
+
+M1.2では無料フィードで満たせない`fetch_p95≤12秒`目標に備え、有償リアルタイムフィード候補（Refinitiv Elektron Lite, dxFeed FX, OANDA Premium等）を比較し、Data Ingestion/HealthMonitorへ切替可能な枠組みを整備する。本節では`RealTimeFeedEvaluator`と`ProviderCapabilityRegistry`、CLI/レポート/Runbook連携を詳細化し、AC-45拡張に対応したPoC→契約判断→本番切替のトレーサブルなプロセスをCodexが実装できるようにする。
+
+### 49.1 RealTimeFeedEvaluator (`src/data/realtime_evaluator.py`)
+
+- **入力**: `provider_profile`（`config/providers/real_time_candidates.yaml`）、評価ジョブ設定（`evaluation.duration_minutes`, `symbols`, `poll_interval`, `burst_pattern`）、計測窓（既定=24h, 最短=2h）。`ProviderCapabilityRegistry`が利用規約/コストメタデータを付与。
+- **処理フロー**:
+  1. `setup_trial(provider)`で対象アダプタ（REST/WebSocket）を初期化。既存の`DataIngestionService`アダプタを再利用しつつ、評価専用`EvaluationContext`（専用APIキー/レート制限）を付与。
+  2. `capture_metrics()`がfetch/processing遅延、429/403発生率、APIレスポンスコード、再接続回数、コスト単価（分/呼び出しあたり課金試算）を記録し`metrics/feed_evaluation_<provider>.jsonl`へ追記。
+  3. `compare_baseline()`でDukascopy/yfinanceとの遅延差分、欠損率差、価格乖離（pip）を算出。`Acceptable Degradation`閾値に照らし`evaluation_decision`を生成。
+  4. `generate_report()`で`reports/performance/feed_evaluation/<provider>/<YYYYMMDD>.md`を出力し、PoC概要、SLA達成率、コスト試算、コンプライアンス注意事項（ライセンス条項要約）を記載。
+- **出力**: `FeedEvaluationResult`（`provider`, `window`, `fetch_p95`, `fetch_p99`, `processing_p95`, `uptime_pct`, `throttle_events`, `cost_estimate_per_month`, `decision{candidate|hold|reject}`, `notes`）。`HealthMonitor`へ`feed_candidate.available`イベントをpublishし、SLA閾値と切替手順を更新候補として登録。
+- **例外**: `FeedEvaluationError`（接続失敗）, `FeedLicensingError`（利用規約違反/キー未登録）, `FeedCostOverflow`（コスト上限超過）。例外発生時は`RUN-DATA-05`の`feed_eval_failure`セクションへ記録。
+- **連携**:
+  - `DataIngestionService`は`provider_profile.mode in {'evaluation','shadow','primary'}`をサポートし、影響範囲を限定した影同時比較を可能にする。
+  - `HealthMonitor`は`feed_candidate`情報からSLAしきい値セットを作成し、`tradectl health sla --profile real_time_candidate`で確認できるようにする。
+  - `OpsWorklog`に評価開始/終了・承認者・所要時間を追記し、自動化効果測定（§9.1）と連携。
+
+| メソッド | 入力 | 処理 | 出力 | 例外 |
+| --- | --- | --- | --- | --- |
+| `RealTimeFeedEvaluator.run(provider_id, window)` | 候補ID, 評価窓 | アダプタ初期化→計測→比較→レポート生成 | `FeedEvaluationResult` | `FeedEvaluationError`, `FeedLicensingError` |
+| `RealTimeFeedEvaluator.shadow_compare(provider_id, duration)` | 候補ID, 影稼働時間 | プライマリ+候補の同時取得→遅延/欠損比較 | `ShadowComparisonReport` | `FeedComparisonError` |
+| `RealTimeFeedEvaluator.apply_thresholds(result)` | 評価結果 | HealthMonitor閾値更新ドラフト生成 | `ThresholdProposal` | - |
+| `ProviderCapabilityRegistry.load()` | なし | 候補定義/契約上限/法的注意を読み込み | `ProviderCapability`辞書 | `ProviderProfileError` |
+
+### 49.2 CLI/ワークフロー統合 (`src/interfaces/cli/feed_eval.py`)
+
+- `tradectl data feed-eval plan --provider refinitiv --window 24h --symbols USDJPY,EURUSD`：評価ジョブ雛形生成。Runbook `RUN-DATA-05`に添付するチェックリスト（APIキー準備、ライセンス確認、Ops当番割り当て）をMarkdownで出力。
+- `tradectl data feed-eval run --provider refinitiv --window 12h --shadow`：影稼働付き評価。結果は`reports/performance/feed_evaluation/refinitiv/<timestamp>.md`へ保存し、`metrics/feed_evaluation_refinitiv.jsonl`に追記。
+- `tradectl data feed-eval compare --primary dukascopy --candidate refinitiv --window 6h`：遅延/欠損/価格乖離チャートを生成し、`plots/feed_eval/<provider>/<timestamp>/*.png`へ保存。
+- `tradectl data feed-eval promote --provider refinitiv --effective <YYYY-MM-DD>`：契約締結・本番切替を宣言。`DataIngestionService`の`provider_priority`を更新し、`HealthMonitor`の閾値セットを`real_time_refinitiv`へ切替。切替後は自動で`tradectl data manifest update`を呼び出し、`DataManifest`へ新ソースを刻印。
+- **CLI保護**: `promote`は`--yes --confirm-cost`とコンプライアンス承認者ID（`--compliance-id`)を必須化。承認ログを`audit.feed_provider_promoted`イベントとして記録。
+
+### 49.3 レポート/Runbook/テレメトリ/テスト
+
+- **レポート**: `reports/performance/feed_evaluation/<provider>/<YYYYMMDD>.md`テンプレートに`SLA達成率`, `429率`, `コスト概算`, `ライセンス要件`, `Opsコメント`, `コンプライアンスサイン`を含める。四半期レビュー用に`reports/governance/feed_readiness/<YYYYQ>.md`へ集約。
+- **Runbook**: `RUN-DATA-07`（新設）「リアルタイムフィードPoC手順」を整備。①候補選定→②APIキー取得→③評価実行→④結果レビュー→⑤契約判断→⑥本番切替→⑦DataManifest更新→⑧Runbook差分レビューのステップを定義。`RUN-DATA-05`へPoC失敗時のロールバック手順を追記。
+- **テレメトリ**: `metrics/feed_evaluation_<provider>.jsonl`に`fetch_latency_ms`, `processing_latency_ms`, `uptime_pct`, `rate_limit_hits`, `cost_per_hour_jpy`, `comparison_gap_p95_pips`を記録。`AlertDispatcher`は`fetch_latency_ms_p95>12_000`または`cost_per_hour_jpy>config.feed_eval.max_hourly_cost`でWARN発砲。
+- **Validation Data Playbook**: `validation_playbook_id='M12_feed_readiness'`を追加し、PoCログ（metrics, reports, CLI transcript, contract checklist）と承認サインを格納。`make check-validation`で必須添付を検証。
+- **テスト**:
+  - `tests/unit/test_real_time_feed_evaluator.py`: メトリクス計算、例外、ThresholdProposal生成を検証。
+  - `tests/integration/test_feed_eval_shadow.py`: 影稼働（候補+プライマリ）比較、差分レポート生成、HealthMonitor閾値ドラフト反映を確認。
+  - `tests/cli/test_tradectl_feed_eval.py`: plan/run/compare/promoteフローをSnapshotテスト。`promote`はモック契約承認を要求。
+  - `pytest -k feed_evaluation --m2plus`: M1.2スコープのテストマーカー。
+
+### 49.4 Codex Packet計画（Real-time Feed Track）
+
+| Packet ID | スコープ | 依存セクション | 成果物 | テスト/証跡 |
+| --- | --- | --- | --- | --- |
+| `EP09-RTF-P1` | RealTimeFeedEvaluator実装、ProviderCapabilityRegistry、メトリクス出力 | §49.1 | `src/data/realtime_evaluator.py`, `config/providers/real_time_candidates.yaml`, `metrics/feed_evaluation_TEMPL.jsonl` | `pytest -k real_time_feed_evaluator` |
+| `EP09-RTF-P2` | CLI `tradectl data feed-eval`とレポートテンプレ、Runbook `RUN-DATA-07`ドラフト | §49.2, §49.3 | `src/interfaces/cli/feed_eval.py`, `reports/performance/feed_evaluation/templates/eval.md`, `docs/runbooks/RUN-DATA-07.md` | `pytest -k tradectl_feed_eval`, CLI snapshot |
+| `EP09-RTF-P3` | HealthMonitor閾値連携、DataManifest更新、自動アラート、Validation Data Playbook統合 | §49.1, §49.3 | `src/core/health.py`拡張, `src/data/manifest.py`連携, `validation_playbook/M12_feed_readiness.yaml` | `pytest -k feed_eval_integration`, `make check-validation` |
+
+- **Ops受入テスト**: `TR-21`: Refinitiv候補24h評価→SLA未達→Runbookロールバック。`TR-22`: OANDA候補12h評価→promote→DataManifest更新→`tradectl start`で新プロバイダが有効。
+
+## 50. マーケットデータライセンス & コンプライアンス証跡管理設計（NFR-05/17, FR-50連携, M1.2準備）
+
+有償フィード導入時は契約条項・費用・利用制限の遵守が必須であり、コンプライアンスレビューとOps手順を一元化する必要がある。本節では`LicenseRegistryService`と`ComplianceChecklistGenerator`、共有テンプレート、テレメトリ、Codex Packetを定義し、`reports/governance/licensing/`とRisk/BackOfficeモジュールをつなぐ。
+
+### 50.1 LicenseRegistryService (`src/governance/license_registry.py`)
+
+- **データモデル**: `LicenseRecord`（`provider_id`, `contract_id`, `effective_from`, `effective_to`, `cost_plan`, `rate_limit_terms`, `redistribution_rules`, `usage_scope`, `contact`, `status`, `documents[]`）。`documents`は署名済みPDFハッシュ、契約メモ、利用制限チェックリスト、費用試算シートを格納。
+- **機能**:
+  - `load_registry()`で`reports/governance/licensing/license_registry.yaml`を読み込みSchema検証。欠損フィールドは`ValidationError`。
+  - `attach_contract(provider_id, file_path)`で契約書PDFハッシュを計算し、`documents`に`kind='contract_pdf'`として登録。`SecureShareService`（§48）に連携して外部共有対象をタグ付け。
+  - `record_usage(provider_id, metrics_snapshot)`で`feed_evaluation`結果から推定費用/レート制限消費率を計算し、`usage_history.jsonl`へ追記。
+  - `compliance_status(provider_id)`で必須チェック（法的制限、データ再配布禁止、展示制限、APIキー保護）を評価。未完了項目は`status='provisional'`として`tradectl governance licensing`に警告表示。
+  - `next_review_due(provider_id)`で契約更新日90日前通知を生成。`AlertDispatcher`へ`licensing.review_due`イベントを送信。
+- **連携**:
+  - `RealTimeFeedEvaluator`は`ProviderCapabilityRegistry`経由でライセンス情報を参照し、評価実行前に`LicenseRegistryService.ensure_precheck(provider_id)`で利用許諾確認。
+  - `ComplianceValidator`（§21）と`RiskDisclosureService`（§22）がライセンス条項（例: 再配信禁止）に違反する操作を検知した際、`license_violation`イベントを発行しOpsへエスカレーション。
+  - `BackOfficeLedgerService`（§47）へコスト配賦を提供し、税務レポートに経費計上する。
+
+| API | 入力 | 出力 | 副作用 | 例外 |
+| --- | --- | --- | --- | --- |
+| `LicenseRegistryService.load_registry(path)` | YAMLパス | `LicenseRegistry` | キャッシュ更新 | `LicenseSchemaError` |
+| `LicenseRegistryService.attach_contract(provider_id, pdf_path)` | プロバイダID, PDF | 更新済み`LicenseRecord` | `documents`へハッシュ追加 | `FileNotFoundError`, `HashMismatchError` |
+| `LicenseRegistryService.record_usage(provider_id, evaluation_result)` | プロバイダID, `FeedEvaluationResult` | 更新済み`usage_history.jsonl` | コスト推定, レート制限統計保存 | `LicenseNotFound` |
+| `LicenseRegistryService.generate_summary(provider_id)` | プロバイダID | Markdownサマリ | `reports/governance/licensing/<provider>_<date>.md`出力 | `LicenseNotFound` |
+
+### 50.2 CLI/Runbook/ガバナンス統合 (`src/interfaces/cli/licensing.py`)
+
+- `tradectl governance licensing list`：登録済みプロバイダ一覧、契約期間、ステータス、次回レビュー日を表示。
+- `tradectl governance licensing show --provider refinitiv`：ライセンス詳細、利用制限、契約書ハッシュ、最新使用量、コスト推定をMarkdownで出力。
+- `tradectl governance licensing attach --provider refinitiv --contract docs/contracts/refinitiv_2025Q2.pdf`：契約書添付。添付時にSHA256計算と`SecureShareService`連携を自動実行。
+- `tradectl governance licensing checklist --provider refinitiv`：Runbook `GOV-LIC-01`テンプレからチェックリストを生成（例: 利用範囲確認、再配布禁止周知、費用承認）。Ops/Complianceサイン欄を含む。
+- `tradectl governance licensing review --provider refinitiv --notes <file>`：レビュー結果を`reports/governance/licensing/review_<provider>_<YYYYMMDD>.md`へ保存し、`LicenseRegistry`の`last_review_at`更新。
+- CLIは`--compliance-id`必須（監査証跡）。操作は`audit.license_updated`としてログ化。
+
+- **Runbook**: `GOV-LIC-01`（新設）に契約取得→利用制限レビュー→Ops教育→費用承認→SecureShare登録→`LicenseRegistry`更新→`feed_eval`スケジュール設定のステップを定義。`RUN-DATA-07`と双方向リンク。
+- **Validation Data Playbook**: `validation_playbook_id='M12_license_compliance'`を追加し、契約PDFハッシュ、レビュー議事録、費用承認ログ、`tradectl governance licensing review`出力を格納。
+- **テレメトリ**: `metrics/licensing.jsonl`に`active_contracts`, `renewal_due_in_days`, `license_violation_events`, `estimated_monthly_cost_jpy`, `usage_to_quota_pct`を記録。`renewal_due_in_days<30`でWARN。
+- **レポート**: 月次`reports/governance/licensing_dashboard_<YYYYMM>.md`に契約状況、コスト推移、未完チェックリストを可視化。四半期`feed_readiness`レポートと連携。
+
+### 50.3 テスト & Codex Packet計画（Licensing Track）
+
+- **テスト**:
+  - `tests/unit/test_license_registry.py`: YAML検証、契約添付、使用量記録、レビュー期限計算。
+  - `tests/integration/test_licensing_cli.py`: list/show/attach/checklist/reviewフローと監査イベント。
+  - `tests/integration/test_feed_eval_with_license.py`: ライセンス未完了時に`FeedLicensingError`で評価をブロックすることを確認。
+  - `pytest -k licensing --m2plus`でM1.2対象。
+- **Codex Packet**:
+
+| Packet ID | スコープ | 依存セクション | 成果物 | テスト/証跡 |
+| --- | --- | --- | --- | --- |
+| `EP09-LIC-P1` | LicenseRegistryService実装、YAMLスキーマ、メトリクス出力 | §50.1 | `src/governance/license_registry.py`, `reports/governance/licensing/license_registry.yaml`, `metrics/licensing.jsonl` | `pytest -k license_registry` |
+| `EP09-LIC-P2` | CLI/Runbook/テンプレ整備、SecureShare連携 | §50.2 | `src/interfaces/cli/licensing.py`, `docs/runbooks/GOV-LIC-01.md`, `reports/governance/licensing/templates/review.md` | `pytest -k licensing_cli`, CLI snapshot |
+| `EP09-LIC-P3` | RealTimeFeedEvaluator統合、BackOfficeコスト配賦、Validation Data Playbook | §49, §50.1 | `src/data/realtime_evaluator.py`拡張, `src/backoffice/ledger.py`連携, `validation_playbook/M12_license_compliance.yaml` | `pytest -k feed_eval_with_license`, `make check-validation` |
+
+- **Ops受入テスト**: `TR-23`: Refinitiv契約添付→`LicenseRegistry`更新→`tradectl data feed-eval run`でライセンス検証通過。`TR-24`: レビュー期限超過で`AlertDispatcher`通知→`tradectl governance licensing review`実行→ステータス復旧。
+
+---
+
+リアルタイムフィード評価とライセンスガバナンスの設計を追補したことで、M1.2で想定される有償フィード導入を事前に準備できる。Data Ingestion/HealthMonitor/BackOffice/Complianceが共通のPoC手順・契約証跡・SLA閾値を参照できるため、プロバイダ切替時のリスクを最小化しつつ監査可能性とコスト透明性を確保できる。
