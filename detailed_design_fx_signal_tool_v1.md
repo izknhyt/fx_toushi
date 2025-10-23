@@ -4771,3 +4771,164 @@ M1 Coreではスタブに留めているModel Risk Registerを、M1.1〜M2で段
 
 これらの追補により、ジャーナル・ドリフト監視・ベンチマークリプレイ・運用健全性ダッシュボード・モデルリスクガバナンスに加えて、オフライン配布/サプライチェーン/セキュリティ統制までカバーする詳細設計が整備された。CodexへM1.1〜M2向けの実装パケットを明確に提示するとともに、トレーダー/Ops/研究チームがRunbookとValidation Data Playbookを基に運用・監査を継続改善できる構成とした。
 
+## 47. バックオフィス・税務サポート統合設計（FR-59/FR-64, NFR-05/NFR-18, M2準備）
+
+バックオフィス支援・税務証跡は要件定義§1「ステークホルダー」および§3.1「マイルストーン別優先度」、FR-59/FR-64で明示された責務であり、監査パックやステートメント突合（§25, §30）と連動して外部税理士/監査人へ提出可能な帳票を生成する必要がある。本節では、Paper/Live双方の約定・残高・手動調整を集約し、税務区分や証跡リンクを付与して`reports/tax/`配下へ出力する**BackOfficeLedgerService**と、その上で年度別の税務レポート/CSVを生成する**TaxReportGenerator**の詳細設計を定義する。M1 Coreでは帳票テンプレートとRunbook導線を整備し、M2で自動生成と監査パック統合を実装する。
+
+### 47.1 BackOfficeLedgerService (`src/backoffice/ledger.py`)
+
+- **目的**: ヒューマン承認チケット、実約定ログ、Funding/Swap、ステートメント突合結果を1本化し、税務・会計区分付きのレジャー（仕訳台帳）を生成する。FR-64の差分検知結果をLedgerへ自動反映し、FR-59監査パックの根拠として再利用できる状態を整える。
+- **データモデル**:
+  | モデル | フィールド | 説明 |
+  | --- | --- | --- |
+  | `LedgerEntry` | `entry_id`, `trade_id`, `mode`, `symbol`, `side`, `opened_at`, `closed_at`, `gross_pnl`, `fees`, `swap`, `tax_category ∈ {'spot_fx','swap_income','expense','other'}`, `source_event_id`, `statement_ref`, `reconciliation_status`, `notes` | 最小仕訳単位。`tax_category`は要件§2「税引前」の区分に合わせる。 |
+  | `StatementMatch` | `statement_id`, `broker`, `period`, `matched_trade_ids`, `unmatched_statement_rows`, `balance_delta`, `status` | ステートメント突合の結果。`status='pending'`で`LedgerEntry.reconciliation_status='pending'`に反映。 |
+  | `TaxLot` | `lot_id`, `symbol`, `open_entry_id`, `close_entry_id`, `quantity`, `pnl`, `holding_period_days`, `category` | 先入先出（FIFO）ベースのLot計算結果。短期/長期区分（将来国内税制対応）を保持。 |
+  | `AdjustmentRecord` | `adjustment_id`, `type ∈ {'manual_correction','broker_fee','tax_adjustment'}`, `amount`, `created_by`, `reason`, `supporting_document` | 手動補正。Runbook `RUN-TAX-01`へ証跡リンク。 |
+  | `LedgerSnapshot` | `generated_at`, `mode`, `period`, `entries_hash`, `statement_hash`, `schema_version` | Runbook添付・監査用。
+- **入力ソース**:
+  - `logs/events/<date>.jsonl` の `ticket.approved`, `execution.filled`, `funding.applied`, `reconciliation.discrepancy`。
+  - `reports/audit/reconciliation/<date>.md` の差分集計（§25）。Markdown内のテーブルをAST解析。
+  - 手動調整フォーム `docs/backoffice/adjustments/<YYYYMM>.md`（M2）をパースし`AdjustmentRecord`へ変換。
+  - `account/balances.parquet`, `account/exposure.parquet` で残高/証拠金情報を補完。
+- **処理フロー**:
+  1. `LedgerBuilder.collect_events()`が指定期間のイベントをストリーム処理し、`LedgerEntry`候補を生成。欠損項目は`status='draft'`で保持し、後続のステートメント突合/調整で確定する。
+  2. `StatementIntegrator.merge(statement_match)`が`StatementMatch`を適用し、`LedgerEntry.reconciliation_status`を`matched/pending/variance`に更新。`variance`はRunbook `RUN-REC-02`へ自動TODO登録。
+  3. `TaxLotEngine.build(lots_strategy='fifo')`が`LedgerEntry`から`TaxLot`を生成。日次リポートでは全Lot、年次決算時は年度Lotを抽出。
+  4. `AdjustmentApplier.apply(record)`が手動調整を加算/減算し、`LedgerEntry.notes`へ追記。`audit.backoffice_adjustment`イベントを出力。
+  5. `LedgerSerializer.persist()`が`parquet/backoffice/ledger_<mode>_<YYYYMM>.parquet`と`jsonl/backoffice/ledger_<mode>.jsonl`へ保存し、`LedgerSnapshot`を生成。
+- **API**:
+  | API/関数 | 入力 | 処理 | 出力 | 異常系 |
+  | --- | --- | --- | --- | --- |
+  | `BackOfficeLedgerService.generate(period, mode, include_pending=True)` | `period`（`YYYYMM`/`YYYY`）、`mode`、`include_pending` | イベント収集→Statement統合→TaxLot生成→調整適用→スナップショット保存 | `LedgerSnapshot` | 入力期間不正: `LedgerPeriodError`。イベント欠損: `LedgerSourceMissing`→`status='pending'`で継続。 |
+  | `BackOfficeLedgerService.apply_adjustment(record)` | `AdjustmentRecord` | 検証→Ledger更新→Auditログ | 更新済み`LedgerEntry`/`AdjustmentReceipt` | 署名欠落: `AdjustmentSignatureError`。 |
+  | `BackOfficeLedgerService.export(format='parquet|json|csv', scope='ledger|taxlots')` | 出力形式、対象スコープ、フィルタ | スナップショット読み込み→整形 | ファイルパス | 出力先書込失敗: `LedgerExportError`。 |
+  | `BackOfficeLedgerService.sync_with_audit_bundle(bundle_id)` | `bundle_id`, `ledger_snapshot` | 監査パックへLedgerファイルを添付しハッシュ整合性検証 | `AuditAttachmentReceipt` | ハッシュ不一致: `AuditAttachmentError`。 |
+- **ストレージ**: `parquet/backoffice/ledger_<mode>_<period>.parquet`, `jsonl/backoffice/taxlots_<period>.jsonl`, `snapshots/backoffice/ledger_<timestamp>.json`, `reports/tax/ledger_summary_<period>.md`（テンプレ）。
+- **運用**: Ledger生成後に`ops_worklog`へ`{"task":"ledger_generate","period":"2025-02","duration_min":<input>}`を追記。未整合項目は`docs/backoffice/issues/<period>.md`へ自動転記。
+
+### 47.2 TaxReportGenerator (`src/backoffice/tax_report.py` & `tools/generate_tax_report.py`)
+
+- **目的**: Ledgerから年度別の損益内訳・費用・スワップ等をまとめ、日本国内の雑所得（先物OP換算）想定フォーマットとバックオフィスレビュー資料を生成する。税務アドバイザ向けのCSV/Markdown、監査パック向けのJSONを同時に出力する。
+- **主な機能**:
+  - `TaxReportGenerator.generate(year, mode, template)`が`LedgerEntry`と`TaxLot`を集計し、`income`, `expenses`, `withholding`, `swap_income`, `fx_conversion`を算出。`config/tax/<jurisdiction>.yaml`で税区分・換算レート（年平均/スポット切替）を定義。
+  - `tools/generate_tax_report.py --year 2025 --mode live --template docs/templates/tax_report_jp.md`でMarkdownを生成し、`reports/tax/2025/live_tax_report.md`へ保存。`--export-csv`で税理士向けCSV（`reports/tax/2025/live_tax_report.csv`）。
+  - 住民税/所得税概算用に`--scenario`引数を提供（`baseline`, `with_fee_writeoff`, `with_fx_conversion_adjustment`）。
+  - `TaxDisclosureAttachment`を生成し、監査パック（§30）へ自動添付。`audit.tax_report_generated`イベントを出力。
+- **テンプレート構造** (`docs/templates/tax_report_jp.md`):
+  1. Summary（年度損益、課税所得推計、換算レート）
+  2. Detailed Breakdown（カテゴリー別P/L、手数料、スワップ、調整）
+  3. Statement Reconciliation（FR-64差分のステータス）
+  4. Manual Adjustments（`AdjustmentRecord`リスト）
+  5. Supporting Documents（`audit_pack/<period>/`リンク）
+- **CLI統合**:
+  | コマンド | 説明 | 主なオプション | 出力 |
+  | --- | --- | --- | --- |
+  | `tradectl finance ledger generate --period 2025-02 --mode live` | Ledger生成 | `--include-pending`, `--statement reports/audit/reconciliation/20250202.md`, `--adjustment docs/backoffice/adjustments/202502.md` | `LedgerSnapshot`概要、保存パス | 
+  | `tradectl finance tax-report --year 2025 --mode live` | 年次税務レポート | `--template`, `--export-csv`, `--scenario`, `--jurisdiction jp` | Markdown/CSV/JSONレポート、`audit.tax_report_generated`イベント |
+  | `tradectl finance ledger diff --period 2025-01..2025-02` | 2期間比較 | `--format table|json` | 損益/手数料/差異表 |
+  | `tradectl finance adjustments add --file docs/backoffice/adjustments/202502.md` | 手動調整反映 | `--signer`, `--note` | `AdjustmentReceipt`、監査ログ |
+
+### 47.3 ワークフロー統合と監査連携
+
+- `BackOfficeLedgerService`は`SessionManager`終了時の`shutdown(graceful=True)`で`auto_generate_ledger`フラグがONの場合に当日分Ledgerを生成（Paper/Liveのみ）。
+- `ReconciliationService`（§25）完了時に`statement_match`をLedgerへPushし、差分が解消したら`LedgerEntry.reconciliation_status`を更新。解消されない場合は`ops_readiness`スコア（§33）から減点。
+- `AuditBundleBuilder`（§30）はLedger/Taxレポートを`audit_pack/<period>/finance/`へコピーし、`audit_manifest.json`へ`ledger_hash`, `tax_report_hash`を追記。`DataManifestService`（§20）ともハッシュ整合を行う。
+- Runbook連携: `RUN-TAX-01`（新設）でLedger生成→差分確認→税理士レビュー依頼→承認記録までの手順を定義。`RUN-REC-02`（既存/拡張）では差分調査のステップに`tradectl finance ledger diff`出力の貼付を追加。
+- Feature Flag: `feature_flags.finance.backoffice_enabled`（既定`false`）でM1 Core時はCLIが「バックオフィス機能はM2で有効化予定」と表示する。Flag ON時のみLedger生成/レポート出力を許可。
+
+### 47.4 テレメトリ & テスト計画
+
+- **メトリクス** (`metrics/backoffice_ledger.jsonl`): `entries_total`, `pending_entries`, `reconciliation_variance`, `taxlots_generated`, `adjustments_applied`, `generation_duration_ms`。`pending_entries>0`が7日継続で`health.raise('warn','backoffice_pending')`。
+- **監査ログ**: `audit.backoffice_ledger_generated`, `audit.backoffice_adjustment`, `audit.tax_report_generated`を`logs/audit/backoffice_<YYYYMMDD>.jsonl`へ出力。`AdjustmentRecord`には承認者の電子署名（`SignatureEnvelope`）を付与。
+- **テスト**:
+  - `tests/unit/test_backoffice_ledger.py`: イベント→LedgerEntry生成、ステートメント統合、TaxLot計算、調整適用。
+  - `tests/unit/test_tax_report_generator.py`: テンプレ適用、Jurisdiction設定（JP/USスタブ）、Scenario切替。
+  - `tests/integration/test_finance_cli.py`: CLIコマンド（generate/diff/tax-report）実行とスナップショット。
+  - `tests/fixtures/backoffice/`にサンプルイベント・ステートメント・調整Markdownを配置。Propertyテストで金額合計がStatement差分と一致するか検証。
+- **Runbook演習**: `reports/drill/tax_ready_<YYYYMM>.md`にLedger生成→差分調査→税理士レビュー依頼の演習結果を残す。四半期レビュー時に`Back Office支援`が参照。
+
+### 47.5 Codex Packet計画（BackOffice/Tax Track）
+
+| Packet ID | スコープ | 依存セクション | 成果物 | テスト/証跡 |
+| --- | --- | --- | --- | --- |
+| `EP07-BO-P1` | BackOfficeLedgerService基盤（イベント収集、LedgerEntry生成、Parquet永続化、CLI `finance ledger generate`） | §47.1, §47.3 | `src/backoffice/ledger.py`, `tradectl finance ledger`サブコマンド、テンプレ`reports/tax/ledger_summary_TEMPLATE.md` | `pytest -k backoffice_ledger`, CLIスナップショット |
+| `EP07-BO-P2` | TaxLot計算＆TaxReportGenerator、テンプレ/CSV出力、監査イベント | §47.2, §47.3 | `src/backoffice/tax_report.py`, `tools/generate_tax_report.py`, テンプレ/Runbook更新 | `pytest -k tax_report_generator`, `pytest-approvaltests -k finance_cli` |
+| `EP07-BO-P3` | AuditBundle統合、DataManifest連携、テレメトリ/Runbook整備 | §47.3, §47.4 | Audit添付更新、`metrics/backoffice_ledger.jsonl`記録、`RUN-TAX-01`ドラフト | `tradectl audit bundle --period 2025-02 --with-finance`, `pytest -k audit_bundle_finance` |
+
+---
+
+## 48. 外部監査・共有チャンネル強化設計（NFR-05/NFR-17, FR-59/FR-62/FR-64連携, M2準備）
+
+外部監査人・税理士・研究レビューボードへ証跡を安全に提供する仕組みを整備する。NFR-05/17は監査性・セキュア共有の両立を要求し、FR-59監査パック、FR-62 Idea Pipeline証跡、FR-64ステートメント突合結果を同梱できる配布チャネルが必要である。本節では`SecureShareService`と`EvidenceBundlePublisher`を定義し、オフラインバンドル（§41）やサプライチェーン保証（§42）、DataManifest（§20）と連携した外部共有フローを具体化する。
+
+### 48.1 SecureShareService (`src/governance/secure_share.py`)
+
+- **責務**: 共有対象（税理士、監査人、研究レビューボード）ごとに公開鍵・アクセススコープを管理し、暗号化済み`evidence_package`を生成する。バックオフィス/監査/研究証跡を分類し、外部へ渡すファイルと内部専用ファイルを分離する。
+- **データモデル**:
+  | モデル | フィールド | 説明 |
+  | --- | --- | --- |
+  | `ShareProfile` | `profile_id`, `recipient`, `purpose ∈ {'tax','audit','research'}`, `allowed_paths`, `retention_days`, `public_key_path`, `contact`, `runbook_refs` | 共有先設定。Runbook `GOV-SHARE-01`に紐付け。 |
+  | `EvidencePackage` | `package_id`, `profile_id`, `period`, `files:list[EvidenceFile]`, `manifest_hash`, `signature`, `created_by`, `expires_at`, `schema_version` | 共有する暗号化アーカイブ。 |
+  | `EvidenceFile` | `path`, `hash`, `size`, `classification ∈ {'public','restricted','internal'}`, `source_manifest_entry` | 添付ファイル。`classification`により共有対象を制御。 |
+  | `DeliveryRecord` | `package_id`, `recipient`, `delivered_at`, `channel`, `status ∈ {'pending','delivered','acknowledged'}`, `notes` | 送付記録。 |
+- **API**:
+  | API/関数 | 入力 | 処理 | 出力 | 異常系 |
+  | --- | --- | --- | --- | --- |
+  | `SecureShareService.load_profile(profile_id)` | `profile_id` | YAML（`config/share_profiles/<id>.yaml`）読み込み→Schema検証 | `ShareProfile` | `ShareProfileNotFound`, `ShareProfileInvalid` |
+  | `SecureShareService.prepare_package(profile_id, period, sources, include_internal=False)` | 共有先ID、期間、ソース定義（監査パックID、LedgerSnapshot、IdeaEvidence等） | DataManifest参照→許可パス抽出→EvidenceFile作成→`EvidencePackage`構築 | `EvidencePackage` | 許可外ファイル: `EvidenceScopeError`。ハッシュ欠損: `EvidenceManifestError` |
+  | `SecureShareService.encrypt_package(package, output_path)` | `EvidencePackage`, 出力パス | `tar` → `gzip` → `age`/`openssl`で受領者公開鍵暗号化→ハッシュ計算 | 暗号化ファイルパス、`signature`更新 | 暗号化失敗: `EvidenceEncryptionError` |
+  | `SecureShareService.publish(package, channel)` | 暗号化ファイル、共有チャネル（`local`, `sftp`, `s3`, `email`(将来)） | チャネルごとに転送→`DeliveryRecord`作成→`audit.evidence_shared`イベント | `DeliveryRecord` | 転送失敗: `EvidenceDeliveryError` |
+  | `SecureShareService.revoke(package_id)` | `package_id` | 期限前削除/共有停止→`DeliveryRecord.status='revoked'`更新 | `RevocationReceipt` | 共有期限超過: `EvidenceRevocationError` |
+- **入力**:
+  - `audit_pack/<period>/`（§30）
+  - `backoffice/ledger_<period>.parquet`（§47）
+  - `reports/validation_log/AC-*.md`, `docs/validation_playbook/*.md`（§20）
+  - `research/ideas/<id>/evidence/`（§26）
+  - `model_risk/register/`（§46）
+- **暗号化**: 既定は`age`（Go製）をCLIラッパー経由で利用。`config/share_profiles/<id>.yaml`に`encryption_method`を記載。macOSで`age`が未インストールの場合は`feature_flags.governance.secure_share_cli`がOFFになり、`NotImplementedError`とRunbook誘導メッセージを返す。
+- **監査**: `audit.evidence_shared`イベントに`package_id`, `profile_id`, `hash`, `channel`, `recipient`, `expiry`を記録。`DeliveryRecord`は`logs/audit/share_<YYYYMMDD>.jsonl`に保存。
+
+### 48.2 EvidenceBundlePublisher (`tools/publish_evidence_bundle.py`)
+
+- **目的**: SecureShareServiceをCLI/自動化から利用し、共有パッケージの作成・検証・転送を一括で行う。CodexがCIから呼び出す場合は`--dry-run`で検証のみ行い、公開鍵とファイル一覧を表示する。
+- **主要オプション**:
+  - `--profile tax_accountant --period 2025-Q1 --sources audit:2025-Q1,ledger:live-2025-Q1`。
+  - `--include-internal`で内部限定資料（例: Ops incidentログ）を含める。既定は共有対象に応じた`classification='public'|'restricted'`のみ。
+  - `--channel local --out artifacts/share/2025Q1_tax.age`（オフライン転送）または`--channel sftp --host <...>`。
+  - `--summary-only`で添付ファイル一覧とハッシュをMarkdown化し、`reports/governance/share_summary_<profile>_<period>.md`に出力。
+- **検証**:
+  - DataManifest差分チェック: `manifest_hash`が`DataManifestService`（§20）と一致しない場合は`Exit 74`。
+  - 共有前に`ops_readiness_score`（§33）が閾値未満の場合はWARN表示し、Runbook `OPS-READINESS-01`を参照するよう案内。
+- **自動化**: `make evidence-publish PROFILE=tax_accountant PERIOD=2025-Q1`を定義し、CIでは`--dry-run`で検証のみ実施。実転送は手動承認後にローカルで行う。
+
+### 48.3 ガバナンスフロー統合
+
+- `docs/governance/share_register.md`を新設し、共有履歴をMarkdownテーブルで管理（`package_id`, `profile_id`, `period`, `status`, `delivered_at`, `notes`）。`SecureShareService.publish`成功時に自動追記。
+- `RUN-GOV-02`（新設）で共有プロセス（承認者、暗号化手順、検証ステップ、保管期限）をRunbook化。共有前にPO＋Ops Managerダブルサイン、共有後に受領確認（`DeliveryRecord.status='acknowledged'`）を記録。
+- `RiskDisclosureService`（§22）と連動し、リスク承諾未完了時は`SecureShareService`が`EvidenceScopeError`を返して共有を拒否（規制対応）。
+- `IdeaPipelineManager`（§26）と連携し、`ShareProfile.purpose='research'`の場合は`idea.stage`が`ready`以上のエビデンスのみ共有可能。`stage<'ready'`のファイルは自動除外し、警告ログを出力。
+- `BackOfficeLedgerService`（§47）との整合: Ledger生成後に共有予約がある場合は`LedgerSnapshot`に`pending_share_profiles`を追記。共有完了後に`ops_worklog`へ`{"task":"evidence_share","profile":"tax_accountant","period":"2025-Q1","duration_min":<input>}`を追記。
+
+### 48.4 テレメトリ・セキュリティ監査・テスト
+
+- **メトリクス** (`metrics/secure_share.jsonl`): `packages_generated`, `packages_delivered`, `delivery_failures`, `revocations`, `avg_prepare_duration_ms`, `files_per_package`. `delivery_failures>0`で`AlertDispatcher`がWARNを送信し、`RUN-GOV-02`の再実施を促す。
+- **監査ログ**: `audit.evidence_shared`, `audit.evidence_revoked`, `audit.share_profile_accessed`。`share_profile`閲覧時もログを残し、権限トレーサビリティを確保。
+- **テスト**:
+  - `tests/unit/test_secure_share_service.py`: プロファイル読み込み、ファイルフィルタリング、暗号化ダミー、例外ケース。
+  - `tests/integration/test_evidence_bundle_publisher.py`: `--dry-run`と実際の`--channel local`で暗号化ファイル生成を確認。ハッシュとManifest整合性を検証。
+  - `tests/cli/test_tradectl_finance_share.py`: CLIワークフロー（profile list, prepare, publish, revoke）。
+  - セキュリティ検証: 模擬公開鍵（テスト用）を使用し、暗号化ファイルが復号不可（誤鍵）で失敗することを確認。
+- **Runbook演習**: 四半期ごとに`reports/drill/share_channel_<YYYYQ>.md`で共有手順のドリル結果を記録。失敗時は`ops_worklog`へ`task='share_channel_retry'`を追記し、原因分析と次回改善策を残す。
+
+### 48.5 Codex Packet計画（Secure Sharing Track）
+
+| Packet ID | スコープ | 依存セクション | 成果物 | テスト/証跡 |
+| --- | --- | --- | --- | --- |
+| `EP08-SS-P1` | SecureShareServiceコア実装（プロファイル読み込み、パッケージ構築、暗号化スタブ、監査ログ） | §48.1 | `src/governance/secure_share.py`, `config/share_profiles/TEMPLATE.yaml`, ユニットテスト | `pytest -k secure_share_service` |
+| `EP08-SS-P2` | EvidenceBundlePublisherツールとCLI、DataManifest整合チェック、Runbook/テンプレ整備 | §48.2, §48.3 | `tools/publish_evidence_bundle.py`, `tradectl finance share`サブコマンド、`docs/governance/share_register.md`, `RUN-GOV-02`ドラフト | `pytest -k evidence_bundle_publisher`, CLIスナップショット |
+| `EP08-SS-P3` | メトリクス/Alert/CI統合、BackOffice/Idea/ModelRisk連携フック | §48.3, §48.4 | `metrics/secure_share.jsonl`収集、Alert設定、Opsワークログ連動 | `tradectl finance share --dry-run --profile tax_accountant`, `pytest -k secure_share_integration` |
+
+---
+
+これらの追補により、バックオフィス・税務対応と外部共有ガバナンスが明確化され、FR-59/FR-64の監査証跡を税務用途へ拡張しつつ、NFR-05/17が求める追跡性とセキュア配送をCodexが実装できる。Ledger/Taxレポート/共有チャネルは既存の監査パック・データプロベナンス・モデルリスク管理と接続され、トレーダー/Ops/バックオフィス/外部パートナー間で一貫した証跡管理フローを構築できる。
