@@ -187,6 +187,16 @@
 | FR-16/FR-18 Resync & Snapshot | §3 FR-16, FR-18 | §2 コンポーネント表 (Snapshot Manager, Session Manager), §3.2 ユースケース①④⑯, §3.2 処理シーケンス④, §4 データ構造 | `snapshots/latest/*.json`, `resync_queue`, Catch-upメトリクス | Resyncジョブ投入, `catch_up_lag_minutes`記録, Snapshot更新, `ResyncCompleted`イベント | 20分遅延でwarning/30分でdegraded, Runbook承認後に復旧、再起動時はSnapshot整合チェック | ローカルスナップショット/Parquet, metrics JSONL | なし |
 | FR-28 Funding Service | §3 FR-28, §3.1 M1 Core例外 | §2 コンポーネント表 (Funding Service), §3.2 ユースケース⑥⑭, §4 データ構造（swap_rates.csv）, §6 Funding Service | `config/swap_rates.csv`, `broker_rules.yaml`, Calendarイベント, Paper/Liveポジション | `FundingCurve`生成, `swap_penalty`供給, `tradectl funding sync/status` CLI, スワップ計算をAccount/Reporterへ反映 | 日次更新（祝日三倍日補正）, Calendar連携で倍率補正, 取得失敗時はRunbook指示で手動CSV更新 | 手入力/公開CSV, Calendar Service, 将来ブローカーフィード | OpsがRunbook `RUN-FUND-01`に従い平日15:00 JSTまでに`config/swap_rates.csv`を更新し、Riskがshadow CSVでダブルチェック→POが`tradectl funding sync`/`status`証跡を承認。証跡は`reports/validation_log/templates/funding_daily.md`に基づき`reports/validation_log/AC-09_funding_<date>.md`へ記録し、Validation Data Playbook台帳へ転記する。 |
 
+### 0.8 付録リンク（目次）
+- [付録A: Health/Kill Switch状態遷移簡易図](#付録a-healthkill-switch状態遷移簡易図)
+- [付録B: Feature Flag導入チェックリスト](#付録b-feature-flag導入チェックリスト)
+- [付録C: CLI操作例](#付録c-cli操作例)
+- [付録D: エラーコードと通知マッピング](#付録d-エラーコードと通知マッピング)
+- [付録E: ログ/メトリクスタグ規約](#付録e-ログメトリクスタグ規約)
+- [付録F: Validation Data Playbookテンプレート](#付録f-validation-data-playbookテンプレート)
+- [付録G: ガバナンスサービス（M2+実装ガイド）](#付録g-ガバナンスサービスm2実装ガイド)
+- [付録H: Risk Consent Export CLI仕様 (`tradectl audit export --type risk_consent`)](#付録h-risk-consent-export-cli仕様-tradectl-audit-export---type-risk_consent)
+
 ## 1. アーキテクチャ概要
 
 本システムはヒューマン・インザ・ループ（HITL）運用を前提としたPython 3.11アプリケーションであり、データ取得からシグナル生成・リスク制御・チケット発行・監査記録までをイベント駆動で統合する。Backtest/Paper/Liveの各モードは同一ドメインロジックを共有し、I/Oと副作用はインフラ層で抽象化することでトレーサビリティと再現性（AC-13, FR-08）を担保する。
@@ -1237,7 +1247,7 @@ Checklist (mandatory items marked with *):
 
 ### 3.20 Persistence & Audit (`src/persistence/*.py`)
 - **EventsWriter**: DomainEvent→`logs/events/YYYYMMDD.jsonl`。書込失敗で`EventWriteError`をリトライ3回。その後`hard_stop(audit)`。
-- **AuditWriter**: HITL操作を`logs/audit/YYYYMMDD.jsonl`へ。`ticket_id`, `action`, `user`, `delta`, `note`, `cfg_hash`。Live実績取込時は`actual_fill_imported`/`actual_fill_import_summary`イベントを受け取り、`slippage_pips`や`reconciled`フラグを含めて永続化する。
+- **AuditWriter**: HITL操作を`logs/audit/YYYYMMDD.jsonl`へ。`ticket_id`, `action`, `user`, `delta`, `note`, `cfg_hash`。Live実績取込時は`actual_fill_imported`/`actual_fill_import_summary`イベントを受け取り、`slippage_pips`や`reconciled`フラグを含めて永続化する。リスク承諾エクスポート（`tradectl audit export --type risk_consent`）が利用するフィールド構成と検証手順は付録Hを参照。
 - **SQLite (拡張)**: `logs/audit.db`にテーブルを保持（M1 optional, M2+で強化）。
 
 #### 3.20.1 スキーマ/インデックス/更新ポリシー
@@ -2398,6 +2408,88 @@ linked_runbook: docs/runbooks/RUN-XXXX-YY.md
 - **異常系**: ステートメントファイル欠損/解析失敗→`StatementImportError`でリトライ案内。差分特定不可の場合は`reconciliation.escalated`を発火しRunbook `AUD-REC-02`手順へ誘導。証跡出力失敗はOps Readiness Evaluatorの証跡欠損として扱う。
 - **設定ファイル**: `config/reconciliation.yaml`（ブローカー別カラムマッピング、差分閾値、フェイルセーフ条件、Kill Switchハンドリング）。CLI `tradectl reconcile statements --from <date>`が`reconcile`を呼び出し監査に結果を追記。
 
+### 付録H: Risk Consent Export CLI仕様 (`tradectl audit export --type risk_consent`)
+
+#### H.1 目的
+- リスク開示の承諾/拒否/警告ACKの証跡を外部共有・監査レビュー用に抽出する。Runbook `GOV-AUD-01`（監査レビュー）および`RUN-POST-03`（事後報告）で、`reports/audit/exports/`配下の出力を添付することを想定する。
+- `audit.enable_consent_export` Feature Flag（§13.6）でガードし、コンプライアンス承認済みの環境でのみ有効化する。無効時はCLIが`EX_UNAVAILABLE(69)`で終了し、Runbook `COMPLIANCE-01`に従った手動証跡共有へフォールバックする。
+
+#### H.2 入力と事前条件
+| 項目 | 内容 |
+| --- | --- |
+| コマンド | `tradectl audit export --type risk_consent [--from <YYYY-MM-DD>] [--to <YYYY-MM-DD>] [--out <path>] [--format json|jsonl]` |
+| 対象ログ | `logs/audit/risk_consent_<YYYYMMDD>.jsonl` および圧縮アーカイブ `logs/audit/YYYYMMDD.jsonl.zst`（§13.6）。`AuditWriter`が出力した`action='risk.consent'`レコードのみ抽出する。 |
+| フィルタ条件 | `ts`が`--from`〜`--to`のUTC範囲に含まれ、`record_type`が`RiskDisclosureAccepted`/`RiskDisclosureRejected`/`RiskDisclosureAckWarn`。省略時は過去7日分。 |
+| 事前検証 | `FeatureFlagService.ensure_enabled('audit.enable_consent_export')`、`SchemaRegistry.require('audit_record_v1')`、`reports/audit/exports/`書込権限。 |
+| 出力先 | 既定: `reports/audit/exports/risk_consent/<YYYYMMDD>/risk_consent_<timestamp>.json`。`--out`指定時はそのパスへ保存し、ディレクトリが無ければ作成する。 |
+
+#### H.3 出力フォーマット（`json`）
+`AuditWriter`スキーマ（§3.20.1）と互換な構造をJSONオブジェクトとして保存する。
+
+```json
+{
+  "schema_version": "audit.risk_consent.v1",
+  "generated_at": "2025-02-21T12:34:56Z",
+  "filters": {
+    "from": "2025-02-14T00:00:00Z",
+    "to": "2025-02-21T00:00:00Z",
+    "record_types": ["RiskDisclosureAccepted", "RiskDisclosureRejected", "RiskDisclosureAckWarn"]
+  },
+  "source_files": [
+    "logs/audit/risk_consent_20250220.jsonl",
+    "logs/audit/20250214.jsonl.zst"
+  ],
+  "records": [
+    {
+      "ts": "2025-02-20T07:15:00Z",
+      "record_type": "RiskDisclosureAccepted",
+      "ticket_id": null,
+      "action": "risk.consent",
+      "actor": "ops_manager",
+      "consent_reference_id": "rc-20250220-0001",
+      "board_mode": "guarded",
+      "spread_state": "normal",
+      "health_state": "ok",
+      "cfg_hash": "cfg_abcd",
+      "data_hash": "data_efgh",
+      "notes": "Doc v2.3 acknowledged",
+      "delta": {
+        "decision": "accept",
+        "document_hash": "sha256:...",
+        "consent_version": "2.3",
+        "expires_at": "2025-05-20T00:00:00Z",
+        "ack_user": "ops_manager",
+        "ack_evidence": "docs/risk_disclosure/signoff_20250220.pdf"
+      }
+    }
+  ]
+}
+```
+
+`--format jsonl`指定時は`records`配列を個別行として書き出し、共通メタデータ（`schema_version`, `generated_at`, `filters`）をヘッダー行として別ファイル `<out>.meta.json` に保存する。
+
+#### H.4 CLI処理シーケンス（表）
+| ステップ | コンポーネント | 処理内容 | スキーマ/Runbook連携 |
+| --- | --- | --- | --- |
+| 1 | Typer CLI層 | 引数解析後に`FeatureFlagService`へ問い合わせ。無効時は例外`AuditExportDisabled`をraiseしExit 69。 | Flag要件: §13.6、Runbook `COMPLIANCE-01`フォールバック。 |
+| 2 | `AuditExportService.prepare_sources()` | `--from/--to`に基づき`logs/audit/risk_consent_<date>.jsonl`と圧縮ファイル一覧を解決し、存在確認とZstandard解凍を行う。 | ファイル構成: §13.6、欠損検出時は`AuditExportSourceMissing`。 |
+| 3 | `AuditExportService.read()` | 各レコードを`AuditRecord`モデル（§3.20）でデシリアライズし、`action='risk.consent'`かつ指定`record_type`/時刻に合致するものだけを保持。 | スキーマ検証: `AuditRecord.validate()`。 |
+| 4 | `AuditExportService.enrich()` | 抽出件数・期間・ソースファイルをメタデータ化し、`schema_version`と`generated_at`を付与。 | 付録H.3スキーマを構築。 |
+| 5 | `AuditExportService.write()` | JSON/JSONLとして`reports/audit/exports/risk_consent/`へ書き出し。書込成功時にCLIへ`path`と`record_count`を表示。 | Runbook `GOV-AUD-01`/`RUN-POST-03`で利用するため、ファイルパスを標準出力。 |
+| 6 | `AuditWriter.record_ticket_action`（オプション） | エクスポート操作自体を`action='audit.export'`, `delta={'type':'risk_consent','record_count':N}`で追記し、追跡性を担保。 | `AuditWriter`スキーマ (§3.20.1)。Runbook `GOV-AUD-01`の「誰がいつ抽出したか」証跡欄と整合。 |
+
+#### H.5 エラーハンドリング/リトライ
+- **Feature Flag無効**: `AuditExportDisabled`→Exit 69。CLIは「Runbook COMPLIANCE-01参照」とWARNを表示。再実行はFlag有効化後。
+- **期間指定エラー**: `--from` > `--to` または形式不正で`AuditExportValidationError`→Exit 121（バリデーション系）。利用者は日付修正後に再実行。
+- **ソース欠損/IO例外**: `AuditExportSourceMissing`または`AuditExportIOError`→Exit 74。Runbook `AUD-ARCHIVE-01`でアーカイブ整合を確認し、必要に応じてバックアップから復元。
+- **スキーマ不一致**: `AuditRecordInvalid`→Exit 122。`docs/schema/audit_event.md`と付録H.3の差分を照合し、`SchemaRegistry`を更新する。CIで検知するため`pytest -k audit_cli`にもケースを追加。
+- **抽出件数0件**: Exit 0（成功）だがCLIに`record_count=0`を表示し、Runbook `GOV-AUD-01`の承認欄には「対象期間なし」と記載する。
+
+#### H.6 監査ログ項目
+- エクスポート対象レコードは`AuditWriter`が保持する以下フィールドを必須とする: `ts`, `record_type`, `ticket_id`, `action`, `actor`, `consent_reference_id`, `board_mode`, `spread_state`, `health_state`, `cfg_hash`, `data_hash`, `notes`, `delta.decision`, `delta.document_hash`, `delta.consent_version`, `delta.expires_at`, `delta.ack_user`, `delta.ack_evidence`。
+- エクスポート処理自体の監査レコード（ステップ6）は`ticket_id=None`, `action='audit.export'`, `delta={'type':'risk_consent','filters':{...},'record_count':N}`とし、`consent_reference_id`は未設定。CLIユーザIDを`actor`に設定し、`notes`へ出力ファイルパスを格納する。
+- 監査ログの保存先とローテーションは§13.6の規約（`logs/audit/YYYYMMDD.jsonl(.zst)`）に従い、エクスポート結果は`reports/audit/exports/`配下に保管する。Runbook `GOV-AUD-01`はこの両者を突合し、`COMPLIANCE-01`の承諾台帳と`consent_reference_id`を一致確認する。
+
 ## 12. Codex実装オーケストレーションガイド
 
 Codexに安全かつ高品質な実装を委任するため、エピック→タスク→指示テンプレートの分解規約と、出力レビュー/受入のダブルチェック手順を定義する。本節の適用により、ヒューマンレビュー工数を削減しながらもトレーダー観点の精度と再現性を担保する。
@@ -2541,7 +2633,7 @@ def test_<case>(...):
 ### 13.6 監査・証跡統合
 - `AuditWriter`が吐き出すログに`consent_reference_id`, `cfg_hash`, `board_mode`を必須フィールドとして追加する（既存差分なし）。Codexがログスキーマを変更する場合は`docs/schema/audit_event.md`の更新を伴わせる。
 - 監査ログ圧縮は`logs/audit/YYYYMMDD.jsonl.zst`形式。Codexに圧縮コマンド (`zstd -T0`) を実装させる場合は、圧縮後のハッシュと既存Runbook `AUD-ARCHIVE-01`のステップを照合させる。
-- 監査抽出CLI `tradectl audit export --type risk_consent`(M1.1計画)の仕様はAppendix Hで追補予定。Codexが下準備する際はFeature Flag `audit.enable_consent_export`を用意し、既定Falseとする。
+- 監査抽出CLI `tradectl audit export --type risk_consent`(M1.1計画)の詳細仕様は付録Hに集約した。Codexが下準備する際はFeature Flag `audit.enable_consent_export`（既定False）と、`logs/audit/YYYYMMDD.jsonl(.zst)`→`reports/audit/exports/`への証跡ファイル構成を遵守すること。
 
 ### 13.7 リリースコミュニケーション
 - リリース前日までにPO→トレーダー→運用で告知テンプレート（`docs/templates/release_announcement.md`）を更新し、Spread/KPI/Runbookの要点を共有する。
