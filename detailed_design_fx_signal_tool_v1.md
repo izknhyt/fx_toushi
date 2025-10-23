@@ -1,4 +1,4 @@
-# FXヒューマン・インザループ投資ツール 詳細設計書 v1.13
+# FXヒューマン・インザループ投資ツール 詳細設計書 v1.14
 
 ## 0. 文書情報
 - 作成日: 2025-02-20
@@ -9,6 +9,7 @@
 ### 0.1 改訂履歴
 | 版 | 日付 | 改訂概要 |
 | --- | --- | --- |
+| v1.14 | 2025-02-22 | §19にEmergency Orchestrator/Reduce-Only Advisor設計ロードマップを追加し、FR-42/FR-47の下準備を明文化。 |
 | v1.13 | 2025-02-22 | §2.7 Telemetryを拡張しOpsワークログ/自動化指標の詳細を追記。§18にツール/自動化スクリプト集を新設し、Codex向け運用補助を体系化。 |
 | v1.12 | 2025-02-21 | レポート/監査テンプレート類を整備し、§3.18/§3.20/§3.24/§7.3/§13.6/§13.7を更新。 |
 | v1.12 | 2025-02-21 | Packetテンプレ資産整備、Codexフィードバック運用手順のテンプレ参照追記。 |
@@ -3103,3 +3104,114 @@ CodexがCLI層を安全に実装・改修できるよう、`tradectl`コマン�
   - 例外は`ToolError`を継承し、Exitコード範囲は70〜79に収める。
   - CIで長時間かかる処理（大量生成・画像出力）は`--fast`/`--headless`フラグを提供し、Codexにはテスト対象のフラグセットをIssue/PRで明示する。
   - 生成物は`artifacts/<tool>/<timestamp>/`へ配置し、Runbook/レポートから参照できるようにする。
+## 19. エマージェンシー／Reduce-Only 自動化設計ロードマップ（M1.1+準備）
+
+本節はFR-42（Reduce-Onlyセーフティ）およびFR-47（エマージェンシープロトコル）の実装下準備として、M1 Coreの手動運用と両立する拡張ポイント、Codexへ依頼する際の実装ガイド、Ops/トレーダー視点の受入要件を整理する。M1 Coreではスタブ/手動運用で止め、M1.1以降の段階導入を想定した設計ドキュメントとして扱う。
+
+### 19.1 Emergency Orchestrator (`src/emergency/orchestrator.py`)
+
+- **責務**: `HealthMonitor`/`RiskManager`/`SpreadMonitor`/`DataQualityGuard`からの重大イベントを集約し、`config/emergency.yaml`で宣言したプレイブックを選択的に実行する。手動Runbookを置き換えるのではなく「必要アクションの提示」「CLIショートカット提供」「証跡化」を担う。
+- **コンポーネント構成**:
+  - `EmergencyOrchestrator`: プレイブック登録・実行コントローラ。
+  - `PlaybookRegistry`: YAML/JSON（`config/emergency.yaml`）から`EmergencyPlaybook`をロードし、Feature Flag `emergency.autorun_enabled`が`false`の場合は`mode=advisory`で実行ログのみ出力。
+  - `EmergencyContext`: 発火時点の`HealthState`, `KillSwitch`, `BoardMode`, `metrics`スナップショットを束ね、Runbook参照リンクを提供。
+  - `ActionExecutor`: 各アクション（Reduce-Only提案生成、CLIコマンド提示、通知送信）を順次処理。M1.1ではヒューマン確認を要求し、承認後に`ActionResult.status=confirmed`を記録する。
+- **状態管理**: プレイブックは`pending -> acknowledged -> completed/aborted`の状態遷移を持ち、CLIから`tradectl emergency ack --playbook <id>`で承認。未承認のままKill Switchが`hard_stop`に遷移した場合は自動的に`aborted(reason='killswitch_hard_stop')`を記録する。
+- **イベント連携**:
+  - `health.changed(to='hard_stop')`, `risk.alert(type='r_eff')`, `data.latency_alert(severity='critical')`, `spread.cooldown(state='halt')`を購読。
+  - `EmergencyPlaybookTriggered`イベントを`logs/events`へ記録し、`AuditWriter`に`action='emergency.playbook'`を追記。
+  - 完了時は`EmergencyPlaybookCompleted`イベントでRunbookステップ/承認者/所要時間を出力。`ops_worklog`へ`task='emergency_playbook'`を追記。
+
+#### 19.1.1 トリガー→プレイブックマッピング
+
+| Trigger | 条件 | デフォルトプレイブック | Runbook参照 | 備考 |
+| --- | --- | --- | --- | --- |
+| `data.latency_alert` (critical) | `lag_seconds≥config.emergency.data_latency_critical` | `PB-DATA-STOP`（Data feed停止→Kill Switch審査） | `RUN-DATA-05`, `RUN-DATA-06` | `action_sequence`: guard提示→手動CSVテンプレ生成→Kill Switch STOP確認。 |
+| `spread.cooldown` (halt) | 連続`config.emergency.spread_halt_bars`バーでHALT | `PB-SPREAD-REDUCE`（Reduce-Only推奨 + BoardMode固定） | `RUN-RISK-02` | Reduce-Only Advisor連携あり。 |
+| `risk.alert` (r_eff) | `R_eff > R_cap_critical`かつ`KillSwitch=RUNNING` | `PB-RISK-REDUCE`（通貨バケット別Reduce-Only、ポジション間引き） | `RUN-RISK-03` | `CorrelationGuard`と連携し、手動承認必須。 |
+| `health.changed` (hard_stop) | `from∈{soft_stop,degraded}`→`to=hard_stop` | `PB-DR-RESTORE`（スナップショット復旧 + 監査ログ検査） | `RUN-DR-01` | `SnapshotManager.restore`支援、`ops_worklog`記録。 |
+
+- 各プレイブックは`id`, `description`, `severity`, `actions[]`, `required_roles`, `runbook_refs[]`を持つ。`actions`は`{type: 'prompt'|'reduce_only'|'cli'|'notify', params: {...}}`で定義。
+- `ActionExecutor`は`type='cli'`の場合、実行せずに提案コマンドをCLIに表示（M1.1）。`type='reduce_only'`はReduce-Only Advisorへ委譲し提案チケットを生成する。
+
+#### 19.1.2 APIインターフェース一覧
+
+| API/関数 | 入力 | 処理 | 出力 | 異常系 |
+| --- | --- | --- | --- | --- |
+| `EmergencyOrchestrator.register_playbook(playbook)` | `EmergencyPlaybook`, Feature Flag | 重複チェック→`PlaybookRegistry`へ追加 | `PlaybookHandle` | 重複ID: `PlaybookRegistrationError` |
+| `EmergencyOrchestrator.handle_trigger(trigger)` | `EmergencyTrigger`（event, context） | 該当プレイブック検索→`ExecutionSession`生成→EventBus通知 | `ExecutionSession` | プレイブック無し: `PlaybookNotFound`（ログのみ） |
+| `ExecutionSession.execute(approval)` | 承認者ID、Runbook参照、手動確認結果 | アクション列を順次処理→`ActionResult[]`生成→Audit記録 | `ExecutionSummary`（status, actions, notes） | アクション失敗: `ActionExecutionError`（残りは停止） |
+| `ExecutionSession.abort(reason)` | 理由、実行者ID | 状態を`aborted`に更新→Audit追記 | `AbortReceipt` | 状態遷移不正: `InvalidSessionState` |
+| `PlaybookRegistry.reload()` | `config/emergency.yaml`, Feature Flag | YAML再読込→Schema検証→既存セッションへ影響通知 | `ReloadResult` | スキーマ不正: `EmergencyConfigError` |
+
+- **ログ/監査**: `audit.emergency`カテゴリで`action`, `playbook_id`, `trigger`, `approver`, `runbook_refs`, `duration_sec`を記録。`EmergencyPlaybookTriggered`イベントの`schema_version=1.0.0`を固定し、将来変更時は付録Eへ追記。
+- **テスト計画**: `tests/unit/test_emergency_orchestrator.py`で登録/発火/承認フローをモック検証。`tests/integration/test_emergency_playbooks.py`で`data.latency_alert`→`PB-DATA-STOP`までの一連動作をスナップショット。CLIは`pytest-approvaltests`で`tradectl emergency trigger --simulate <trigger>`出力を保護。
+
+### 19.2 Reduce-Only Advisor (`src/execution/reduce_only.py`)
+
+- **目的**: Acceptable Degradation／リスク異常時に、ポジション縮小案と撤退優先順を定量化し、トレーダーへチケット形式で提示する。M1 CoreはRunbook手動計算、M1.1でアドバイザ実装→M2で半自動化を想定。
+- **入力**: `RiskMetricsSnapshot`（`r_eff`, `bucket_exposures`, `drawdown`, `margin_buffer`）、`AccountState`（ポジション一覧/サイズ/方向）、`config/reduce_only.yaml`（優先順位ルール、最小縮小単位、ロック対象シンボル）、`HealthState`。
+- **出力**: `ReduceOnlyProposal`（`ticket_id`, `symbol`, `size_delta`, `target_risk_after`, `r_eff_before`, `justification`, `runbook_ref`, `requires_double_ack`）。`TicketBuilder`と同形式のJSONでCLIボードに表示し、`action='reduce_only.propose'`のイベント/Auditを生成。
+- **アルゴリズム**:
+  1. **優先順位決定**: ルール式`priority = w_r*R_contrib + w_corr*CorrHotness + w_margin*MarginStress + w_swap*SwapPenalty`を用い、`config/reduce_only.yaml::weights`で調整。`CorrHotness`は相関行列から算出（`ρ>=0.7`の同方向ポジションにペナルティ）。
+  2. **サイズ計算**: `size_delta = round_to_lot(min(current_R - target_R, max_reduce_per_step))`。`target_R`は`R_eff`を`config.reduce_only.target_r_eff`まで戻すのに必要な削減量から算出。`round_to_lot`は`PositionSizer`の丸めルールを再利用。
+  3. **チェックリスト付帯**: `checklist`に`reduce_only_calculated`, `double_ack_pending`, `position_roundtrip_review`等を追加。`BoardMode=guarded`時のみ提示。Kill Switch `STOP`の場合は`requires_double_ack=True`で二重承認が必要。
+  4. **承認フロー**: CLI `tradectl ticket approve`時に`--double-ack <user>`が必須。承認後、`OpsWorklog`に所要時間を記録。未承認で状態が`ok`に戻った場合は提案を`auto_expire(reason='health_recovered')`。
+
+#### 19.2.1 APIインターフェース一覧
+
+| API/関数 | 入力 | 処理 | 出力 | 異常系 |
+| --- | --- | --- | --- | --- |
+| `ReduceOnlyAdvisor.generate(context)` | `RiskMetricsSnapshot`, `AccountState`, `HealthState`, `ReduceOnlyPolicy` | 優先順位→サイズ計算→`ReduceOnlyProposal[]`生成 | `ReduceOnlyProposal[]` | 入力欠損: `ReduceOnlyInputError` |
+| `ReduceOnlyAdvisor.enrich_with_runbook(proposal)` | `ReduceOnlyProposal`, `HealthState` | 状態とRunbook対応表から`runbook_ref`/`requires_double_ack`を設定 | `ReduceOnlyProposal` | マッピング不備: `RunbookMappingError` |
+| `ReduceOnlyAdvisor.record_outcome(proposal, action)` | 提案、承認/却下結果、承認者 | `audit.reduce_only`へ記録→`ops_worklog`更新 | `ReduceOnlyOutcomeRecord` | Audit書込失敗: `ReduceOnlyAuditError` |
+| `ReduceOnlyAdvisor.cancel_all(reason)` | 理由コード、実行者 | 未承認提案を`auto_expire`→Audit/イベント発行 | `CancelSummary` | 状態不整合: `ReduceOnlyCancelError` |
+
+- **Config項目** (`config/reduce_only.yaml`): `weights`, `max_reduce_per_step`, `double_ack_roles`, `disable_symbols`, `board_banner_copy`, `ops_worklog_default_min`。`dangerous_keys`として扱い、`ConfigRegistry`経由で遅延適用。
+- **メトリクス**: `metrics/reduce_only.jsonl`に`proposal_count`, `accepted_count`, `avg_gain_R`, `avg_ack_latency_sec`を記録し、`tradectl metrics report --kind reduce-only`で集計。Acceptable Degradation解除時に改善効果を分析できるようにする。
+- **テスト**: `tests/unit/test_reduce_only_advisor.py`（優先順位、サイズ丸め、ダブルアック判定）、`tests/integration/test_reduce_only_cli.py`（CLI承認フロー、監査ログ）を想定。`pytest-approvaltests`でReduce-OnlyチケットのJSON/CLIスナップショットを管理。
+
+### 19.3 CLI連携 (`tradectl emergency`, `tradectl risk reduce-only`)
+
+- **`tradectl emergency trigger`**: 手動で特定プレイブックを試験実行。`--id PB-DATA-STOP --simulate`でDry-Runし、`--commit`で承認フローに入る。`simulate`時はイベントを出さずCLIに手順提示のみ。`--ack <playbook_id>`で承認。`--list`で登録済みプレイブック一覧とFeature Flag状態を表示（`enabled`/`advisory`/`disabled`）。
+- **`tradectl emergency status`**: 現在の実行中プレイブック、承認待ちアクション、Runbookリンク、所要時間をテーブル表示。`--export reports/ops/emergency_<date>.md`でMarkdown保存。`ops_worklog`へ自動記録（`task='emergency_review'`）。
+- **`tradectl risk reduce-only`**:
+  - `generate`: 現在の`RiskMetricsSnapshot`からReduce-Only提案を即時生成。`--auto-approve`はM2+向けオプション（M1.1では警告して無効）。
+  - `list`: 未承認提案一覧とダブルアック状態を表示。
+  - `approve/reject`: `ticket_id`指定で承認/却下、Runbookリンクと`--note`を必須入力。`approve`は`--ack-user <id>`必須で監査ログに残す。
+  - `cancel-all`: `health_state=ok`復帰時に未処理提案を一括クローズし、理由をAuditへ記録。
+- **ガードレール**: Feature Flag `reduce_only.advisor_enabled`, `emergency.orchestrator_enabled`で切り替え。M1 Coreでは既定`false`でCLIコマンドはプレイブック一覧とRunbook案内のみ表示する。
+- **Runbook整合**: CLI出力にRunbook節番号（例: `RUN-RISK-02#step4`）を明記し、承認時にRunbookチェックリストへの追記内容を標準出力で案内。承認操作は`docs/runbooks/`の自動生成差分（`make runbook-log`）で追跡する。
+
+### 19.4 Ops/トレーダー受入基準（M1.1以降）
+
+| 観点 | 期待結果 | 検証手段 | テレメトリ/証跡 |
+| --- | --- | --- | --- |
+| プレイブック提示 | 重大イベント発生時に適切なプレイブックが自動提示され、Runbookリンクと推奨コマンドが表示される | `poetry run pytest tests/integration/test_emergency_playbooks.py`、`tradectl emergency trigger --simulate` | `EmergencyPlaybookTriggered`イベント、`audit.emergency`ログ |
+| Reduce-Only提案精度 | `target_risk_after`が`config.reduce_only.target_r_eff`±0.05以内に収束し、通貨バケットのR超過が解消 | `pytest -k reduce_only_advisor`、Paperモードで実測 | `metrics/reduce_only.jsonl`、`reports/ops/degradation_log` |
+| ダブルアック運用 | Kill Switch `STOP`時は承認が二重サイン必須となり、監査ログに`ack_user`が記録される | CLI承認シナリオ (`tradectl risk reduce-only approve --double-ack`) | `logs/audit/YYYYMMDD.jsonl`、`ops_worklog` |
+| Opsワークロード記録 | プレイブック実行・Reduce-Only承認の所要時間が`ops_worklog.jsonl`に記録され、`automation_effect.jsonl`と突合できる | `tradectl ops agenda --date <today>` | `ops_worklog`イベント、`AutomationEffectTracker`メトリクス |
+| 手動バックアウト | Feature Flag無効化時にプレイブック/Reduce-Only機能が即座にスタブへ戻り、既存手動Runbookと矛盾しない | `config/profile_live.yaml`でFlag切替後に`tradectl emergency status` | `audit.feature_flag`、`EmergencyOrchestrator`の`mode=disabled`ログ |
+
+### 19.5 Codex実装ハンドオフメモ
+
+- **分割方針**:
+  1. `EP03-P2`（仮）: Emergency Orchestrator骨格＋Playbook Registry（Feature Flag `advisory`）。
+  2. `EP03-P3`: Reduce-Only Advisor + CLI連携（Feature Flag `false`）。
+  3. `EP03-P4`: 監査/メトリクス統合 + Ops Worklog連携 + Runbookリンク整備。
+- **プロンプト必須要素**:
+  - 対象節: §19.1〜19.3、関連Runbook (`RUN-DATA-05/06`, `RUN-RISK-02/03`, `RUN-DR-01`).
+  - I/O契約: `EmergencyPlaybook`, `ReduceOnlyProposal`, `ActionResult` dataclassのスキーマを提示。
+  - テスト: `pytest -k emergency_orchestrator`, `pytest -k reduce_only_advisor`, `pytest-approvaltests` CLIスナップショット。
+  - Feature Flag: `config/profile_*.yaml`での初期値と切替手順（`ConfigRegistry`経由）を記述。
+  - 監査/メトリクス: `audit.emergency`, `metrics/reduce_only.jsonl`へ追記するフィールド、`schema_version`更新時の手順。
+- **レビュー観点**:
+  - 主要トリガー（Spread/Data/Risk/Health）の検知ロジックが既存§5.15/§5.3と矛盾しないか。
+  - Runbook参照文字列（`RUN-XXXX-YY#stepZ`）が正確か、Opsチェックリストに転記可能か。
+  - ダブルアックのUX: CLIが承認待ち状態を明示し、承認者/レビュー者が迷わない文言になっているか。
+  - 自動化によるオーバーリーチ防止: Feature Flag OFF時に既存手動手順のみになること、Kill Switch `STOP`中に自動ポジション変更を行わないこと。
+- **エビデンス**: Codexには`docs/prompt_packages/`テンプレを利用させ、出力PRで`EmergencyPlaybookTriggered`/`ReduceOnlyProposal`のサンプルイベント・監査ログを添付させる。受入レビューはトレーダーが`tradectl emergency trigger --simulate`、`tradectl risk reduce-only generate`のCLIスクリーンショットを撮影し、`docs/trader_signoff/EP03-P2.md`等へ保存する。
+
+---
+
+本節の仕様はM1 Coreではスタブ保持を前提とし、Runbook運用の整備とKPI計測が完了した段階でM1.1スプリント計画へ移行する。Codexへ実装を委任する際は、ここで定義したIF/Runbook整合を必ず確認し、必要に応じて付録B・付録Eの更新をセットで依頼すること。
