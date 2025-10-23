@@ -5053,3 +5053,107 @@ M1.2では無料フィードで満たせない`fetch_p95≤12秒`目標に備え
 ---
 
 リアルタイムフィード評価とライセンスガバナンスの設計を追補したことで、M1.2で想定される有償フィード導入を事前に準備できる。Data Ingestion/HealthMonitor/BackOffice/Complianceが共通のPoC手順・契約証跡・SLA閾値を参照できるため、プロバイダ切替時のリスクを最小化しつつ監査可能性とコスト透明性を確保できる。
+## 51. 複数口座統合 & ポートフォリオ監査設計（FR-58, FR-51連携, M2準備）
+
+M2で必須となるFR-58「複数口座統合」とFR-51「キャピタル配分ガード拡張」に備え、Paper＋Live混在口座の残高・証拠金・エクスポージャを横断集計し、リスクモジュールと監査証跡を同期する仕組みを定義する。`AccountAggregatorService`と`PortfolioExposureAnalyzer`を中心に、帳票（BackOffice）、Capital Guard/Correlation Guard、Validation Data Playbook、Runbook `RUN-ACCOUNT-02`を接続する。M1 Coreでは単一口座に限定されているため本節はFeature Flag下で非活性とし、M2スプリントでCodexが段階的に実装できるようパケット化する。
+
+### 51.1 AccountAggregatorService (`src/accounts/aggregator.py`)
+
+- **責務**: `accounts/<broker>/<account_id>.yaml`で定義された口座設定を読み込み、日次/週次の`AccountSnapshot`を統合して`PortfolioState`を生成する。紙運用（Paper）と実口座（Live）の差異を吸収し、換算レートとヘッジ口座を考慮した正味エクスポージャを算出する。
+- **データモデル**:
+  | モデル | フィールド | 説明 |
+  | --- | --- | --- |
+  | `AccountProfile` | `account_id`, `broker`, `mode ∈ {'paper','live'}`, `base_currency`, `weight`, `margin_mode`, `max_leverage`, `is_hedge`, `statement_path`, `import_schedule_cron` | 口座設定（要件§12.1）。`weight`はポートフォリオ比率、`is_hedge`はヘッジ専用口座の識別。 |
+  | `AccountSnapshot` | `account_id`, `ts`, `equity`, `balance`, `margin_used`, `margin_available`, `floating_pnl`, `open_positions[list[PositionExposure]]`, `cash_transfers` | 口座ごとの最新状態。`open_positions`は通貨ペア別ノッチサイズ・方向・平均価格を保持。 |
+  | `PortfolioState` | `ts`, `base_currency`, `total_equity`, `total_margin_used`, `risk_exposure[list[SymbolExposure]]`, `cash_allocation`, `hedge_offsets`, `per_account_metrics`, `variance_flags` | 集約結果。`variance_flags`は欠損/異常を保持しHealthMonitorとRunbookに通知。 |
+  | `SymbolExposure` | `symbol`, `gross`, `net`, `direction_bias`, `risk_contribution_R`, `bucket` | 通貨ペア単位のエクスポージャ。`bucket`はCorrelation Guardのバケット（要件§4.6）と整合。 |
+  | `PortfolioVariance` | `kind ∈ {'statement','config','fx_rate'}`, `severity`, `details`, `detected_at`, `recommended_action` | 乖離や欠損の記録。Runbook `RUN-ACCOUNT-02`で参照。 |
+- **処理フロー**:
+  1. `load_profiles()`が`accounts/**/*.yaml`を読み込みJSON Schema検証（`schema/accounts_profile.schema.json`）を実施。`margin_mode`や`base_currency`の未定義は`AccountProfileValidationError`でブロック。
+  2. `collect_snapshots(since)`が`reports/performance/<mode>/<date>.parquet`とブローカーCSV/APIインポート（`data/account/<broker>/<YYYYMMDD>.csv`）をロードし、`AccountSnapshot`へ正規化。Paperでは`Reporter`出力、Liveでは`StatementIntegrator`（§47）経由の実績を利用。換算レートは`fx_rates`サービス（§6）を参照。
+  3. `aggregate(portfolio_currency='JPY')`が全`AccountSnapshot`を共通通貨に換算し、`weight`に基づく基準配分と比較。ヘッジ口座(`is_hedge=True`)は対象シンボルの逆方向ポジションと相殺し、純エクスポージャと合成`R_eff`を算出。
+  4. `analyze_variance()`が`StatementIntegrator`（§47）・`CapitalAllocationGuard`（§21）・`CorrelationGuard`（§6）と比較し、しきい値（例: `equity_diff_pct>0.5%`, `net_exposure_diff_R>0.05`）を超えた場合に`PortfolioVariance`を生成。
+  5. `persist()`が`reports/performance/portfolio/portfolio_state_<YYYYMMDD>.parquet`と`jsonl/accounts/portfolio_state.jsonl`へ保存。DataManifestService（§20）と連携し、`portfolio_manifest.json`を生成。
+- **API**:
+  | 関数 | 入力 | 出力 | 副作用 | 例外 |
+  | --- | --- | --- | --- | --- |
+  | `AccountAggregatorService.aggregate(date: date | None, portfolio_currency='JPY')` | 日付/期間 | `PortfolioState` | `metrics/account_aggregator.jsonl`追記、`audit.account_aggregated`イベント | `AccountProfileValidationError`, `SnapshotMissingError` |
+  | `AccountAggregatorService.diff(period_a, period_b)` | 2期間ID | `PortfolioDiffReport` | Markdown差分出力 (`reports/performance/portfolio/diff_<A>_<B>.md`) | `PortfolioDiffError` |
+  | `AccountAggregatorService.attach_statement(account_id, path)` | 口座ID, ステートメントパス | `StatementAttachmentReceipt` | `StatementIntegrator`へ連携、`audit.statement_attached` | `FileNotFoundError`, `StatementSchemaError` |
+  | `AccountAggregatorService.rebalance(proposed_weights)` | 口座ウェイト案 | `RebalancePlan`（推奨資金移動） | `CapitalAllocationGuard`（§21.2）へ通知、`automation_effect`連携 | `WeightValidationError`, `RebalanceConflictError` |
+- **Feature Flag**: `feature_flags.accounts.multi_portfolio`（既定`false`）。Flagが`true`の場合のみ複数口座コマンド/レポート/警告が有効。CIでは`pytest -k account_aggregator --m2`をマーカー化し、Flag無効時はスキップ。
+
+### 51.2 PortfolioExposureAnalyzer & リスク統合 (`src/risk/portfolio_exposure.py`)
+
+- **目的**: 集約された`PortfolioState`をリスク制御へ橋渡しする。`CapitalAllocationGuard`（§21.2）・`CorrelationGuard`（§6.4）・`RiskManager`（§6.1）に共通指標を提供し、連動ブロックやサイズ調整を自動/半自動でトリガーする。
+- **機能**:
+  - `PortfolioExposureAnalyzer.compute_guard_inputs(portfolio_state)`が`total_equity`, `net_R_eff`, `margin_utilization`, `per_bucket_exposure`, `hedge_ratio`を算出し、`CapitalAllocationGuard.evaluate()`へ渡す。M2以降で`auto_board_mode`が有効な場合は`status='throttle'`以上で`BoardMode=guarded`へ自動切替。
+  - `CorrelationGuardBridge.sync_from_portfolio(state)`がシンボル別/バケット別`net`値を`CorrelationGuard`へ更新し、閾値超過時に`correlation.alert`イベントを発行。
+  - `RiskManagerAdapter.update_from_portfolio(state)`が`RiskBudget`の`base_capital`・`available_margin`をリアルタイム反映し、Kill Switch（§9.2）閾値調整をサポート。Paper/Live混在時はLive口座比重を優先。
+  - `BackOfficeLedgerService`（§47）へ`capital_distribution`メタデータを提供し、TaxReport生成時に口座別費用配賦を自動計算。
+  - `AlertDispatcher`は`PortfolioVariance.severity ∈ {'warn','critical'}`を検知すると`account_aggregator.variance_detected`を送信し、Ops Agenda（§18）にTODOを自動挿入。
+- **アルゴリズム/閾値**:
+  | 指標 | 計算 | デフォルト閾値 | アクション |
+  | --- | --- | --- | --- |
+  | `margin_utilization` | `total_margin_used / total_equity` | 0.45（M2初期） | `>0.45`で`CapitalAllocationGuard`が`status='warn'`、`>0.6`で`status='throttle'`提案。 |
+  | `hedge_ratio` | `abs(hedge_offsets)/total_equity` | 0.30 | `>0.3`で`PortfolioVariance(kind='hedge')`、Runbook `RUN-ACCOUNT-02`でヘッジ再計画。 |
+  | `bucket_exposure_diff` | `|portfolio_bucket - guard_bucket| / guard_bucket` | 0.15 | 超過で`CorrelationGuard`がアラートを発火、リバランス案を生成。 |
+  | `net_R_eff` | 合成R（`sum(size_i*R_i)/total_equity`） | ±0.8 | 絶対値が閾値超過でKill Switchレビュー。 |
+- **監査**: `logs/audit/account_aggregator/<YYYYMMDD>.jsonl`へ`account_aggregator.portfolio_generated`, `account_aggregator.variance_detected`, `account_aggregator.rebalance_plan`を記録。`SignatureEnvelope`を付与し、Ops Manager＋BackOfficeのダブルサインをRunbookで要求。
+
+### 51.3 データ永続化・レポート・Runbook連携
+
+- **ファイル出力**:
+  - `reports/performance/portfolio/portfolio_state_<YYYYMMDD>.parquet`: `PortfolioState`の主記録。`schema_version='portfolio_state.v1'`を付与。
+  - `reports/performance/portfolio/portfolio_state_<YYYYMMDD>.md`: Markdownサマリ（総残高、エクスポージャ、Variance一覧、推奨アクション）。テンプレ`reports/performance/portfolio/templates/state.md`。
+  - `reports/performance/portfolio/diff_<YYYYMMDD>_<YYYYMMDD>.md`: 期間差分。`equity_delta`, `margin_delta`, `bucket_shift`を表形式で表示。
+  - `reports/performance/portfolio/verification_<YYYYMMDD>.md`: Validation Data Playbook向け証跡（要件§12.1）。`statement_hash`, `aggregated_equity`, `per_account_variance`、承認者サイン欄を含む。
+  - `jsonl/accounts/portfolio_state.jsonl`: 日次追記ログ。Ops Worklog（§18）とリンクし、`automation_effect`で省力化効果を測定。
+- **DataManifest連携**: `DataManifestService.register(path, kind='portfolio_state', status='pending')`→検証成功で`status='confirmed'`。`manifest`には`input_hashes`（各口座ステートメント/Parquet）、`conversion_rates`、`validator_version`を記録し、`make check-validation`で必須添付を検証。
+- **Runbook**: `RUN-ACCOUNT-02`（M2整備）に以下ステップを追加。
+  1. `tradectl account aggregate --date <today>`実行→`portfolio_state`/`variance`確認。
+  2. `verification_<date>.md`へステートメント突合結果とサインを記録。
+  3. Variance発生時は`tradectl account rebalance --plan`で資金移動案作成→承認後に`BackOfficeLedgerService`へ通知。
+  4. Ops Agenda（§18）の翌営業日TODOへ`portfolio_rebalance`を追加し、未実施の場合は`automation_effect`候補として記録。
+- **レポート連携**: 月次`reports/governance/capital_allocation_<YYYYMM>.md`に`PortfolioState`ハイライト（VaR/ES、口座別R貢献、Variance履歴）を自動挿入。週次`Reporter`（§7.1）にも`portfolio_summary`セクションを追加し、POレビューで参照できるようにする。
+
+### 51.4 CLI & ワークフロー統合 (`src/interfaces/cli/account.py`)
+
+- サブコマンド構成:
+  | コマンド | 概要 | 主なオプション | 出力/副作用 |
+  | --- | --- | --- | --- |
+  | `tradectl account aggregate [--date <YYYY-MM-DD>] [--currency JPY]` | 指定日のポートフォリオ集計 | `--include-variance`, `--export-md`, `--no-persist` | `PortfolioState`を表示/保存。`--include-variance`でVariance詳細をテーブル表示。 |
+  | `tradectl account diff --from 2025-03-01 --to 2025-03-08` | 2期間差分比較 | `--format table|json`, `--threshold <pct>` | 差分Markdown/JSON出力。閾値超過でExitCode≠0（CI利用）。 |
+  | `tradectl account coverage --window 30d` | ステートメントカバレッジとDataManifest整合 | `--details` | 欠損期間・未署名エントリ・Fx換算差分を一覧化。 |
+  | `tradectl account rebalance --plan docs/rebalance/202503.md` | 重み案読み込み→資金移動計画生成 | `--dry-run`, `--apply` | `RebalancePlan`をMarkdownで出力。`--apply`は`CapitalAllocationGuard.record()`とBackOffice調整を実行。 |
+  | `tradectl account topology` | 口座構成図とGuard設定を表示 | `--format ascii|json` | 各口座の役割、Weight、Guard閾値、ヘッジ関係を可視化。 |
+- CLIは`--governance-ticket <ID>`必須（M2）。操作結果は`audit.account_cli`イベントに記録し、`SecureShareService`（§48）で共有対象に含める。
+- Ops Agenda統合: 集計結果に`variance_flags`が存在する場合、`AutomationEffectTracker`（§18）へ`{"task":"portfolio_variance","severity":...,"due":"next_business_day"}`を登録し、翌営業日のアジェンダ先頭に配置。
+
+### 51.5 テレメトリ・監査・テスト
+
+- **メトリクス** (`metrics/account_aggregator.jsonl`): `accounts_active`, `total_equity`, `margin_utilization`, `hedge_ratio`, `variance_count`, `statement_coverage_pct`, `fx_conversion_lag_sec`。`statement_coverage_pct<95`でWARN、`margin_utilization>0.6`でCRITICAL。
+- **Health Monitor連携**: `health.raise('warn','account_variance')`をVariance検出時に発火し、Acceptable Degradation（§13.4）へ`degraded_reason='account_variance'`を追加。`BoardMode`切替時はVariance解消まで`resume`不可にするオプションを提供。
+- **監査ログ**: `audit.account_aggregated`, `audit.account_diff_generated`, `audit.account_rebalance_applied`。各イベントには`portfolio_state_hash`, `input_statements`, `capital_guard_status`, `signatures`を含める。`SecureShareService`向けに`classification='restricted'`で暗号化。
+- **Validation Data Playbook**: `validation_playbook/M2_account_aggregation.yaml`を新設し、`reports/performance/portfolio/verification_<date>.md`とステートメントハッシュを添付。`due_date`超過で`tradectl validation audit --window 7d`が赤字表示。
+- **テスト計画**:
+  - `tests/unit/test_account_aggregator.py`: プロファイル検証、換算ロジック、ヘッジ相殺、Variance検出。
+  - `tests/unit/test_portfolio_exposure_analyzer.py`: Guard入力計算、閾値トリガ、BackOfficeメタデータ連携。
+  - `tests/integration/test_account_cli.py`: aggregate/diff/rebalance/coverageコマンドのSnapshotテスト、Feature Flag切替。
+  - `tests/integration/test_account_guard_integration.py`: Aggregator→Capital Guard→Kill Switch連動をシミュレート。
+  - `pytest -k account_aggregation --m2plus`: M2専用マーカー。CIではFlag無効時に自動スキップ。
+  - 将来の負荷テストとして`tools/loadtest_account_aggregator.py`で30口座・10年分ステートメントを処理し、所要時間<60sを検証。
+
+### 51.6 Codex Packet計画（Multi-Account Track）
+
+| Packet ID | スコープ | 依存セクション | 成果物 | テスト/証跡 |
+| --- | --- | --- | --- | --- |
+| `EP10-ACC-P1` | AccountProfileスキーマ、Aggregator基盤（load/collect/aggregate/persist）、CLI `account aggregate`/`diff`初期実装 | §51.1, §51.4 | `src/accounts/aggregator.py`, `accounts/`サンプル, `reports/performance/portfolio/templates/state.md` | `pytest -k account_aggregator`, CLI snapshot |
+| `EP10-ACC-P2` | PortfolioExposureAnalyzerとCapital/Correlation Guard連携、Health/Telemetry出力、Variance検出 | §51.2, §51.5 | `src/risk/portfolio_exposure.py`, `metrics/account_aggregator.jsonl`, Guard設定更新 | `pytest -k portfolio_exposure`, `pytest -k account_guard_integration` |
+| `EP10-ACC-P3` | Runbook/Validation Playbook/BackOffice統合、Rebalance計画、SecureShare連携 | §51.3, §51.4, §51.5 | `docs/runbooks/RUN-ACCOUNT-02.md`, `validation_playbook/M2_account_aggregation.yaml`, CLI `account rebalance`, レポートテンプレ | `tradectl account coverage`, `make check-validation`, Ops演習`TR-31` |
+
+- **Ops受入テスト**: `TR-31`: Paper＋Live＋ヘッジ口座を登録→`tradectl account aggregate`→Variance 0確認→`RUN-ACCOUNT-02`にサイン→`reports/performance/portfolio/verification_<date>.md`をValidation Playbookへ添付。`TR-32`: Live口座のステートメント欠損を検知→Variance発生→Ops AgendaにTODO→ステートメント補完後にVariance解消。
+
+---
+
+本章により、複数口座運用へ拡張する際の計測・監査・リスク連携の土台が整い、Capital Guard/Correlation Guard/BackOfficeとの整合を保ちながらCodexが段階的にM2実装へ移行できる。トレーダー視点では、ポートフォリオ全体の証拠金とリスク余力が一目で把握でき、Variance検知からRebalance実行までの導線がRunbookとCLIで一本化される。
