@@ -161,6 +161,7 @@
 #### 0.6.7 Codexスプリント計画とレビューゲート
 - **スプリント粒度**: 1スプリント=5営業日。エピック単位（§0.6.3）を`Implementation Packet`に分解し、1 PacketでCodex作業→ヒューマンレビュー→Ops影響確認まで完了させる。
 - **Packet構造**: `docs/implementation_packets/<YYYYMMDD>_<epic>_<packet>.md`を作成し、(1) 目的/KPIリンク、(2) 対象ファイル/セクション引用、(3) テスト指示、(4) トレーダー受入チェックリスト、(5) Rollback手順を記載。Codexへはこのファイルと要約を同梱する。
+- **Funding Packet特記事項**: Fundingロジックを変更するPacketでは§3.12.1と§5.15.1の運用手順を引用し、`tradectl funding sync/status`の証跡（CLIログ、`funding_state.json`, `reports/validation_log/AC-09_funding_<date>.md`）を`/evidence`配下に添付する。Runbook `RUN-FUND-01/02`の更新要否とOps/Risk/POのサイン有無もチェックリストに追加すること。
 - **レビューゲート**:
   1. *設計整合チェック*: プロダクトオーナー/トレーダーがPacket内容と本書該当節を照合。逸脱時は`docs/change_requests/`で再承認。
   2. *Codex出力レビュー*: Diff/テスト/ログ確認に加え、`ops_worklog`への影響推定をコメントする。未確認の場合は`ops_review_pending`ラベルを付与。
@@ -992,6 +993,29 @@ def run_signal_cycle(bar: MarketBar, ctx: ModeContext) -> list[TicketProposal]:
 - **運用要件**: `tradectl funding sync`でCSVを読み込み、更新結果を`funding_state.json`へ記録。M1ではCSVのハッシュと更新者を`reports/validation_log/AC-09_funding_<date>.md`に残し、IT-FUND-01統合テストで祝日前後の三倍日処理を検証する。
 - **エラーハンドリング**: データ欠損で`FundingDegraded`イベント→`HealthMonitor.degraded`。Fallbackで前回値保持。3営業日連続で更新が無い場合は`health.raise('degraded','funding_data_gap')`を発火し、Acceptable Degradation手順で手動CSV確認を要求。
 
+#### 3.12.1 手動CSV運用体制
+- **責任分掌**: オペレーション担当（Ops）が`config/swap_rates.csv`のドラフトを作成し、リスクレビュー担当（Risk）が独立入力した`reports/funding/swap_rates_shadow.csv`と突合する。Risk承認後にプロダクトオーナー（PO）が`tradectl funding sync`の完了メッセージへ電子サイン（イニシャル入力）し、同日の`reports/validation_log/AC-09_funding_<date>.md`へOps/Risk/POの署名とハッシュ値を残す。
+- **更新頻度**: 原則、ロールオーバー前営業日（JST 17:00）までに翌営業日分を更新する。祝日前後やブローカーの三倍日判定は`CalendarService`の`triple_day`情報を参照し、祝前営業日には追加でレビュー（Ops→Risk→PO）を走らせる。`funding_state.json.last_synced_at`が48時間を超過した場合は自動で`FundingDegraded`を発火する。
+- **双子ファイル突合**: Opsが`config/swap_rates.csv`を編集後、Riskは`reports/funding/swap_rates_shadow.csv`に同じ日付行を手入力し、`tradectl funding sync --shadow reports/funding/swap_rates_shadow.csv`で差分チェックを実行する。CLIは双方のCSVを正規化し、通貨ペアごとにレート一致を検証。ミスマッチ時は同期処理を中断し、`reports/validation_log/AC-09_funding_<date>.md`へ「shadow mismatch」項目を追記して再レビューを要求する。
+- **監査ファイル**: `tradectl funding sync`成功時は`funding_state.json`に`{"last_synced_at","csv_sha256","shadow_sha256","prepared_by","reviewed_by"}`を上書きし、同値を`reports/validation_log/AC-09_funding_<date>.md`へMarkdownテーブルで転記する。署名済みログは週次で`docs/runbooks/RUN-FUND-01.md`に添付指定された場所へ保管する。
+
+```console
+$ tradectl funding sync --shadow reports/funding/swap_rates_shadow.csv
+> Prepared by (Ops initials):    TK
+> Reviewed by (Risk initials):   MY
+> Approved by (PO initials):     HS
+> Detected triple-day pairs:     AUDJPY, GBPUSD
+> CSV sha256 (config/swap_rates.csv):   4f1c9...
+> Shadow sha256 (reports/funding/swap_rates_shadow.csv): 4f1c9...
+Sync OK — funding_state.json updated, log appended to reports/validation_log/AC-09_funding_20240112.md
+
+$ tradectl funding status
+Last synced at: 2024-01-12T08:05:11Z (sha256=4f1c9...)
+Prepared/Reviewed/Approved: TK / MY / HS
+Shadow reconciliation: PASS (reports/funding/swap_rates_shadow.csv)
+Runbook references: RUN-FUND-01 (daily update), RUN-FUND-02 (degraded ops)
+```
+
 #### APIインターフェース一覧
 | API/関数 | 入力 | 処理 | 出力 | 異常系 |
 | --- | --- | --- | --- | --- |
@@ -1609,6 +1633,13 @@ Kill Switch解除 & Scoreboard閾値通常運用へ復帰
 5. **解除判定**: `catch_up_lag_minutes<30`かつ`SpreadCooldownState`が`normal`に戻り、直近3バーの`data_ingestion_delay_sec`が`warning`未満であることを確認。Runbook `RUN-DATA-06`で承認者ダブルサイン→`tradectl board --normal`→`health.ack(reason='data_latency')`を実行。
 6. **事後レビュー**: `reports/ops/degradation_log/<YYYYMMDD>.md`に原因・所要時間・使用代替ソース・改善案を記録。Codexへ改善依頼を行う場合は`docs/implementation_packets/`にフィードバックし、`feature_flags.reduce_only_advisor`など将来自動化候補を評価する。
 7. **M1.1自動化準備**: Spread/データ双方で解除条件が整った場合、`health.suggest_resume`イベントを自動発火し、CLIに解除提案を表示する。M1 Coreでは手動承認必須だが、メトリクスとRunbook整備によりM1.1での自動解除可否を判断する。
+
+#### 5.15.1 Fundingデータ欠落時の対応（AC-09, FR-28）
+1. **検知**: `funding_state.json`の`last_synced_at`が48時間超過、または`tradectl funding status`で`shadow_reconciliation="fail"`が表示された場合に`FundingDegraded`イベントが発火し、`health.raise('degraded','funding_data_gap')`が記録される。監視メトリクスは`funding_state.json`, `reports/validation_log/AC-09_funding_<date>.md`, `logs/health/funding_events.jsonl`の3点を必須とする。
+2. **Runbook参照**: OpsはRunbook `RUN-FUND-02`（Fundingデグレ対応）に従い、`tradectl funding status --json`で現状をエクスポートし、`docs/runbooks/RUN-FUND-02.md`のチェックリストへ貼り付ける。影響評価と暫定措置は`RUN-FUND-01`（日次更新）と対になる手順で実施する。
+3. **双子ファイル再作成**: Ops/Riskがそれぞれ`config/swap_rates.csv`と`reports/funding/swap_rates_shadow.csv`を更新し、`tradectl funding sync --shadow ...`を再実行。CLIが提示するOps/Risk/POのイニシャルとハッシュ値をRunbook所定欄と`reports/validation_log/AC-09_funding_<date>.md`へ転記する。差分が解消されるまで`status`コマンドの`shadow_reconciliation`が`PASS`になることを確認する。
+4. **サインオフ**: 復旧後はPOが`reports/validation_log/AC-09_funding_<date>.md`の「Recovery Sign-off」にイニシャルを追記し、`tradectl funding status`出力を`docs/implementation_packets/<packet>/evidence/`へ保存する。Acceptable Degradation解除時はRunbook `RUN-FUND-02`に定義されたメトリクス（最新`csv_sha256`, `delta_pnl_estimate`)を添付し、`health.ack(reason='funding_data_gap')`を実行する。
+5. **事後レビュー**: `reports/ops/degradation_log/<YYYYMMDD>.md`へFundingデグレ期間・原因・影響ペア一覧・復旧担当を記録し、週次OpsレビューでRunbook差分とImplementation Packet改善点を議論する。
 
 > **M2+想定**: Appendix G.5参照。M1では`StatementReconciliationServiceStub`が`status="not_available"`を返し、下記フローは監査用ログのみ残す。
 ```
