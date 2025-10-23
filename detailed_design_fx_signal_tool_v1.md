@@ -1,4 +1,4 @@
-# FXヒューマン・インザループ投資ツール 詳細設計書 v1.12
+# FXヒューマン・インザループ投資ツール 詳細設計書 v1.13
 
 ## 0. 文書情報
 - 作成日: 2025-02-20
@@ -9,6 +9,7 @@
 ### 0.1 改訂履歴
 | 版 | 日付 | 改訂概要 |
 | --- | --- | --- |
+| v1.13 | 2025-02-22 | §2.7 Telemetryを拡張しOpsワークログ/自動化指標の詳細を追記。§18にツール/自動化スクリプト集を新設し、Codex向け運用補助を体系化。 |
 | v1.12 | 2025-02-21 | レポート/監査テンプレート類を整備し、§3.18/§3.20/§3.24/§7.3/§13.6/§13.7を更新。 |
 | v1.12 | 2025-02-21 | Packetテンプレ資産整備、Codexフィードバック運用手順のテンプレ参照追記。 |
 | v1.11 | 2025-02-21 | §3.30 RiskDisclosureService仕様の統合整理、関連参照を最新化。 |
@@ -680,6 +681,11 @@ M2以降で変更が見込まれる領域について、実装/運用負荷を�
   - `telemetry.HeartbeatTask`: 30秒ごとに処理遅延/CPU/メモリを`metrics/pipeline.jsonl`へ記録。
   - `PreflightReminder`: プレフライト未実施状態で`tradectl start`した場合、初回バー処理前に警告。
   - `BackupReminder`: `logs/ops/backup.log`の最終更新から7日超過でWARNを発行。
+- **Opsワークログ/自動化メトリクス**
+  - `OpsWorklogRecorder`: CLI層（board/data/report/ops系）から`record(task, duration_min, owner, source, notes)`を受け取り`ops_worklog.jsonl`へ`DomainEvent`として記録。既定時間は`config/ops/workload_defaults.yaml`で定義し、CLIオプション`--log-duration`で上書き。記録フォーマットは`{"task","duration_min","owner","source","notes","ts"}`で、`ops_worklog.recorded`イベントとしてEventBusへも配信する（§16参照）。
+  - `OpsWorkloadAggregator`: 毎日24:00 JSTに`ops_worklog.jsonl`を集計し、カテゴリ別の`total_min`,`median_min`,`p90_min`,`samples`を算出。結果を`metrics/ops_workload.json`および`reports/ops/workload_<YYYYMM>.md`へ出力し、`automation_effect.jsonl`と結合して削減時間を算出する。詳細な出力仕様は§18.3/§18.4を参照。
+  - `AutomationEffectTracker`: `automation_effect.jsonl`への追記を監視し、Ops Workload集計と差分比較。削減時間が閾値（既定: 30分/週）を超えると`automation.effect_achieved`イベントを発行し、`docs/review_log.md`への記録を促す。CLI `tradectl ops automation log`は本サービスを介して更新する。
+  - `TelemetrySyncTask`: `ops_worklog`と`automation_effect`の最新サマリを`tradectl status --metrics`へ提供し、Acceptable Degradation時の作業負荷を即座に把握できるようにする。
 - **手動実行**: `tradectl preflight --silent`で結果をJSON, `tradectl preflight --export path`で報告書を出力。
 
 #### APIインターフェース一覧
@@ -689,6 +695,9 @@ M2以降で変更が見込まれる領域について、実装/運用負荷を�
 | `HeartbeatTask.poll()` | 監視対象メトリクス定義、Interval秒数 | CPU/メモリ/ワークフロー遅延測定→`metrics/pipeline.jsonl`追記 | `HeartbeatSample` | メトリクス書込失敗: `MetricsWriteError`。取得失敗: `SystemMetricReadError` |
 | `BackupReminder.check()` | `logs/ops/backup.log`最終更新時刻、閾値日数 | 最終更新差分計算→閾値超過でWARNイベント発火 | `ReminderStatus` | ログファイル欠落: `BackupLogNotFound` |
 | `PreflightReminder.notify()` | 最終プレフライト実行時刻、起動中セッション情報 | 起動時に未実施チェック→CLI WARN表示→Audit記録 | 通知結果、必要アクション | 状態取得失敗: `PreflightStatusUnknown` |
+| `OpsWorklogRecorder.record(entry)` | `task`, `duration_min`, `owner`, `source`, `notes`, `ts?` | 入力を検証（`duration_min>0`/カテゴリ妥当性）→`ops_worklog.jsonl`追記→EventBus発火 | `OpsWorklogRecorded`イベントID、ログオフセット | バリデーションNG: `OpsWorklogValidationError`。書込失敗: `OpsWorklogWriteError` |
+| `OpsWorkloadAggregator.run(window)` | 集計対象期間（月単位）、閾値設定 | `ops_worklog.jsonl`と`automation_effect.jsonl`読込→統計計算→ファイル出力→EventBusへ`ops_workload.updated`通知 | `OpsWorkloadSummary`（by_task, totals, automation_gain） | 入力欠損: `OpsWorklogNotFound`。統計失敗: `OpsWorkloadAggregationError` |
+| `AutomationEffectTracker.apply(delta)` | `task`, `before_min`, `after_min`, `effective_date` | 差分検証→`automation_effect.jsonl`追記→削減効果を`OpsWorkloadAggregator`へ通知 | `AutomationEffectApplied`（gain_min, status） | フォーマット不備: `AutomationEffectValidationError`。書込失敗: `AutomationEffectWriteError` |
 
 ## 3. ドメインサービス詳細
 
@@ -3001,3 +3010,96 @@ CodexがCLI層を安全に実装・改修できるよう、`tradectl`コマン�
 - Exit codeはPOSIX規約に合わせ、再試行可能エラーは70〜79、バリデーション系は120台、未実装は`EX_UNAVAILABLE (69)`。
 - ドキュメント更新: 新コマンド追加時は本節、Runbook、テストケース、`docs/templates/cli_reference.md`を同時更新。
 - Codex向けPRでは`## CLI`セクションに変更コマンド・オプション・出力差分を記載し、Approvalテストを添付すること。
+
+## 18. ツール & 自動化スクリプト設計
+
+運用・検証・教育用途のスタンドアロンツールを体系化し、Codexが追加実装する際の入出力契約と検証手順を明確化する。全ツールは`poetry run python tools/<script>.py`形式で起動し、`--help`に詳細な使用方法を表示する。テストは`tests/tools/`配下に配置し、主要シナリオは`pytest -k tools`タグで実行する。
+
+### 18.1 シグナルリプレイ & CLIキャプチャ (`tools/replay_signals.py`)
+- **目的**: `logs/events/*.jsonl`を再生し、Signal Boardのレンダリングや承認フローをオフラインで再現。トレーダー教育、回帰確認、デモ資料作成に使用（§13.7、§17参照）。
+- **主な引数**:
+  - `--mode {backtest,paper,live}`: モード別のイベントフィルタ。
+  - `--since/--until <ISO8601>`: 期間指定。
+  - `--tickets-only`: Ticketイベントのみを抽出。
+  - `--snapshot <path>`: 指定スナップショットを初期状態に適用。
+  - `--export-md <path>`: CLIのレンダリング結果をMarkdown化し、`docs/releases/<tag>/demo.md`等へ貼り付け可能な形式で出力。
+- **処理**: EventBus JSONLをストリーミング読み込み→`SignalReplayEngine`がBoardテンプレへ流し込み→`RichCapture`でスクリーンショット/テキスト化→`ops_worklog`に`{"task":"replay_training","duration_min":<入力>}`を追記。
+- **出力**: CLIログ（標準出力）、オプションで`artifacts/replay/<timestamp>/`配下にMarkdown・PNG（将来GUI連携）を生成。
+- **テスト**: `pytest -k replay_signals`で、(1) 代表イベントファイルの再生、(2) `--tickets-only`フィルタ、(3) Markdown整形のスナップショットテストを実施。
+- **失敗時挙動**: 入力ログが欠損した場合は`ReplaySourceNotFound (Exit 74)`、フォーマット不整合は`ReplayEventDecodeError (Exit 122)`として扱い、Runbook `RUN-PERF-01`で手動確認に切り替える。
+
+### 18.2 テストフィクスチャ生成 (`tools/gen_fixture.py`)
+- **目的**: テスト/検証用の擬似OHLCV・スプレッド・リスクイベントデータを生成し、`tests/fixtures/`配下へ配置。`EP-02 Strategy Determinism`やデータ品質検証（§3.1, §3.3, §9.1）で使用。
+- **主な引数**:
+  - `--symbol <pair>`、`--timeframe {m5,h1,d1}`、`--start/--end <YYYY-MM-DD>`。
+  - `--inject-lag <seconds>`: 遅延挿入でデータSLAテスト用サンプルを生成。
+  - `--volatility {low,mid,high}`: ボラティリティプロファイル切替。
+  - `--seed <int>`: 決定論再現用シード（§3.5.2の`deterministic_seed`と整合）。
+- **処理**: パラメータに従ってシミュレータがレートを生成→`FeaturePipeline`互換のParquet/CSVを吐き出し→`reports/data_manifest.json`へハッシュ登録。
+- **出力**: `tests/fixtures/market/<symbol>_<tf>_<profile>.parquet`、必要に応じて`fixtures/spread_<profile>.csv`。生成時に`automation_effect`へ削減見積もり（手動収集30分→自動5分など）を追記可能。
+- **テスト**: `pytest -k gen_fixture`で、生成データの`nan`率や窓整合を検証。CIでは`--fast`で14日分のみ生成し、フル生成はローカルで実行。
+
+### 18.3 Opsワークロードレポートテンプレ (`tools/ops_workload_report.py`)
+- **目的**: `OpsWorkloadAggregator`が出力する`metrics/ops_workload.json`と`reports/ops/workload_<YYYYMM>.md`のスキーマ/テンプレートを定義し、Opsレビューで活用できる形に整える（§2.7, §8.9, §13.5）。
+- **JSONスキーマ** (`metrics/ops_workload.json`):
+  ```json
+  {
+    "schema_version": "ops.workload.v1",
+    "generated_at": "2025-02-22T00:05:00Z",
+    "period": "2025-02",
+    "totals": {"minutes": 1450, "automation_gain_min": 210},
+    "tasks": {
+      "manual_fallback_review": {"samples": 12, "total_min": 420, "median_min": 32, "p90_min": 48},
+      "board_review": {"samples": 38, "total_min": 570, "median_min": 12, "p90_min": 18},
+      "packet_review": {"samples": 6, "total_min": 110, "median_min": 16, "p90_min": 24}
+    }
+  }
+  ```
+- **Markdownテンプレ** (`reports/ops/workload_<YYYYMM>.md`): セクション`Summary`（総時間・自動化削減）、`Breakdown`（タスク表）、`Automation Candidates`（`automation_effect`の閾値未達項目）、`Runbook Notes`（未完了手順）で構成。テンプレベースは`docs/templates/ops_workload_report.md`。
+- **ツール処理**: `tools/ops_workload_report.py --period 2025-02 --from-json metrics/ops_workload.json --out reports/ops/workload_202502.md`でテンプレへ反映し、`ops_worklog`の生レコード添付をオプション`--append-log-snippets`で制御。
+- **テスト**: `pytest -k ops_workload_report`がJSONスキーマ検証とMarkdown差分を確認。スナップショット更新時は`tests/approval/tools/test_ops_workload_report.approved.md`を同時更新。
+
+### 18.4 自動化効果サマライザ (`tools/automation_effect_report.py`)
+- **目的**: `automation_effect.jsonl`を集計し、削減時間が閾値を超えたタスクの一覧とRunbook影響を可視化。OpsレビューおよびKPI会議（§13.5）で活用し、`automation.effect_achieved`イベントの根拠を提供する。
+- **主な機能**:
+  - `--period <YYYYWW>`: 週次集計単位。
+  - `--threshold-min <int>`: 削減時間の閾値上書き。
+  - `--export-json/--export-md`: JSON/Markdown出力。Markdownは`docs/templates/automation_effect_report.md`に準拠し、`Summary`/`Details`/`Next Actions`を含む。
+  - `--compare-workload metrics/ops_workload.json`: Opsワークロードとの乖離分析。
+- **出力例（JSON）**:
+  ```json
+  {
+    "schema_version": "ops.automation_effect.v1",
+    "period": "2025-W08",
+    "entries": [
+      {"task": "sla_review", "before_min": 60, "after_min": 25, "gain_min": 35, "effective_date": "2025-02-18", "runbook_ref": "RUN-DATA-05", "status": "achieved"},
+      {"task": "board_review_notes", "before_min": 20, "after_min": 12, "gain_min": 8, "status": "monitor"}
+    ]
+  }
+  ```
+- **連携**: 生成結果は`docs/review_log.md`の週次エントリと`ops_worklog`集計にリンクされる。Codex実装時は`§2.7`の`AutomationEffectTracker`に沿ってイベント同期を行う。
+- **テスト**: `pytest -k automation_effect_report`でJSONスキーマとMarkdown差分を検証。閾値超過の判定ロジックはPropertyベーステストで±1分の境界を確認する。
+
+### 18.5 CLIパフォーマンス測定 (`tools/measure_cli_perf.py`, `tools/render_perf_chart.py`)
+- **目的**: `tradectl board/ticket/status`の描画・応答時間を計測し、`metrics/cli_perf.jsonl`とパフォーマンスチャートを生成（§8.1, §13.5）。
+- **measure_cli_perf.py**:
+  - `--command board --iterations 50 --profile paper`: 指定コマンドを複数回実行し、`render_ms`, `fetch_ms`, `persist_ms`を測定。
+  - `--input-log logs/events/sample.jsonl`: リプレイ用イベントファイルを指定。
+  - `--warmup`: 初回実行を除外。
+  - 出力: JSONL（各試行）＋集計JSON（p50/p95/p99）。
+- **render_perf_chart.py**:
+  - `--metrics metrics/cli_perf.jsonl --out reports/perf/cli_perf_<date>.png`でスパークライン・箱ひげ図を生成し、Runbook `RUN-PERF-01`に添付。
+- **テスト**: `pytest -k cli_perf_tools`で、ダミーイベントに対する計測結果（閾値内）とPNG生成の存在確認を行う。画像比較はハッシュベース。
+- **失敗時対応**: 測定中に例外が発生した場合は`PerfMeasurementError (Exit 75)`で終了し、`metrics/cli_perf.jsonl`へエラーサンプルを追記。`tools/replay_signals.py --perf`で手動再計測を支援する。
+
+### 18.6 スナップショット・ログ保全 (`tools/cleanup_snapshots.py`, `tools/redact_logs.py`, `tools/replay_audit.py`)
+- **cleanup_snapshots.py**: `--older-than 7d --dry-run`で古い`snapshots/`と`logs/resync`を整理。`--preserve latest,tagged`で保護対象を指定。実行後に`ops_worklog`へ`{"task":"cleanup_snapshot","duration_min":<入力>}`を記録し、`reports/drill/<date>_snapshot_cleanup.md`へ証跡を出力。
+- **redact_logs.py**: 監査ログからPIIをマスク。`--input logs/audit/20250220.jsonl --out artifacts/redacted/audit_20250220.jsonl --schema docs/schema/audit_event.md`で、指定スキーマに基づき`actor`,`notes`等をハッシュ化。Runbook `GOV-AUD-01`で外部共有時に必須。
+- **replay_audit.py**: 監査イベントチェーンを追跡し、`tradectl audit trace`の裏側で利用。`--ticket-id TK-20250220-001`で関係イベントを整列し、CSV/Markdownに出力。`tests/tools/test_replay_audit.py`で整合性を検証し、`§6`の外部インターフェース仕様と整合すること。
+- **テスト**: `pytest -k audit_tools`でログマスク/再生の境界ケース（欠損フィールド、未知フィールド）を確認。マスク処理は元データハッシュを保持し、検証可能にする。
+
+- **共通実装ガイド**:
+  - すべてのツールは`logging`で`tool.<name>`名前空間を使用し、`--verbose`でDEBUG出力を有効化。
+  - 例外は`ToolError`を継承し、Exitコード範囲は70〜79に収める。
+  - CIで長時間かかる処理（大量生成・画像出力）は`--fast`/`--headless`フラグを提供し、Codexにはテスト対象のフラグセットをIssue/PRで明示する。
+  - 生成物は`artifacts/<tool>/<timestamp>/`へ配置し、Runbook/レポートから参照できるようにする。
