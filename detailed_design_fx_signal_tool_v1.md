@@ -3289,3 +3289,169 @@ M1 Coreでは`Validation Data Playbook`テンプレートとRunbook運用でデ�
 ---
 
 本節の設計により、CodexはM1.1でデータ完全性の自動証跡化を実装できる。Runbook/Validation Playbook/監査ログが統合されることで、手動CSVや研究データの差し替え時にヒューマンレビューを最小限に抑えつつ、トレーダーとOpsの双方が信頼できるKPI基盤を維持できる。
+
+## 21. プレトレード・コンプライアンス & キャピタルアロケーションガード設計（FR-50/FR-51, M1.1準備）
+
+M1.1ではヒューマン承認前の**規制順守チェック（FR-50）**と、日次/週次/月次の資本配分制御（FR-51）を自動化し、手動Runbookの負荷を削減する。本節は`src/compliance/pretrade.py`および`src/risk/capital_guard.py`を中心に、Ticket Builder・Risk Manager・CLIとの統合方法を定義する。M1 Coreでは警告出力のみ、M1.1 Packetで強制ブロックへ昇格させる。
+
+### 21.1 PreTradeComplianceService (`src/compliance/pretrade.py`)
+
+- **目的**: チケット承認前に「レバレッジ上限」「建玉上限」「ヘッジ規制/FIFO」「禁止銘柄・時間帯」などのチェックを行い、違反時は承認操作をブロックまたはReduce-Only代替案を提示する。`RiskDisclosureService`と同様に`BoardMode`や`HealthState`と連動し、エスカレーション先Runbookを明示する。
+- **データモデル**:
+  | モデル | フィールド | 説明 |
+  | --- | --- | --- |
+  | `PreTradeCheckRequest` | `ticket_id`, `symbol`, `side`, `size`, `price`, `account_state`, `existing_positions`, `profile`, `mode`, `timestamp`, `reason_tags:set[str]` | チケット承認時にTicket Builderが生成。`reason_tags`はスプレッド拡張やReduce-Only要求などの文脈を引き継ぐ。 |
+  | `ComplianceRule` | `id`, `kind ∈ {'leverage','position_limit','fifo','hedge','symbol_block','time_block'}`, `parameters: dict[str, Any]`, `severity ∈ {'info','warn','block'}`, `runbook_ref`, `message_template` | ルール定義。`parameters`には`max_leverage`, `max_positions`, `fifo_required`, `block_pairs`, `block_hours`, `hedge_allowed`などを格納。 |
+  | `ViolationDetail` | `rule_id`, `code`, `severity`, `explanation`, `suggested_actions:list[SuggestedAction]`, `runbook_ref`, `audit_payload` | 違反内容。`code`は`LEVERAGE_LIMIT`, `FIFO_REQUIRED`, `HEDGE_BLOCKED`など。 |
+  | `PreTradeCheckResult` | `ticket_id`, `status ∈ {'pass','warn','blocked'}`, `violations:list[ViolationDetail]`, `auto_suggest: Optional[ReduceOnlyProposal]`, `generated_at`, `schema_version` | チェック結果。`auto_suggest`はReduce-Only Advisor統合（§19参照）用。 |
+
+- **処理フロー**:
+  1. Ticket Builderは`SizedSignal`生成後に`PreTradeComplianceService.evaluate(request)`を呼び出し、`PreTradeCheckResult`を受け取る。
+  2. `status='blocked'`の場合はチケットに`badge='compliance_block'`を付与し、CLI `tradectl ticket view`ではRunbookへのリンクと代替提案（Reduce-Only/サイズ縮小）を表示。承認操作は`PreTradeBlockedError`をraiseして停止。
+  3. `status='warn'`の場合はダイアログにRunbook引用を表示し、`--force`承認を要求。承認時は`audit.pretrade_override`を記録し、`ops_worklog`へ`task='pretrade_override'`を追記。
+  4. `status='pass'`の場合は従来通り承認可能。全結果は`audit.pretrade_check`イベントに記録し、監査CLI（§17.13）で抽出できるようにする。
+- **例外処理**: ルールロード失敗時は`PreTradeRulesUnavailable`として`HealthMonitor`へ`reason='compliance_rules_unavailable'`を通知し、BoardModeを`guarded`へ手動切替推奨。
+
+#### 21.1.1 公開API
+
+| API/関数 | 入力 | 処理 | 出力 | 異常系 |
+| --- | --- | --- | --- | --- |
+| `PreTradeComplianceService.load_rules(profile)` | プロファイルID、`ConfigRegistry` | YAML読み込み→`ComplianceRule`へバリデーション→キャッシュ | `ComplianceRuleSet` | ファイル欠損: `PreTradeRuleNotFound`。バリデーション失敗: `PreTradeRuleValidationError` |
+| `PreTradeComplianceService.evaluate(request)` | `PreTradeCheckRequest`, `ComplianceRuleSet`, `AccountState`, `MarketCalendar` | ルール別に評価→違反詳細を生成→Reduce-Only候補を計算（必要時） | `PreTradeCheckResult` | 入力不足: `PreTradeInputError`。Reduce-Only連携失敗: `ReduceOnlyNotAvailable`（`status='warn'`で代替案なし） |
+| `PreTradeComplianceService.summarize(result)` | `PreTradeCheckResult`, `*, locale='ja'` | CLI表示用メッセージ整形（Rich Table） | `ComplianceSummary`（text/json） | テンプレ不備: `ComplianceSummaryError` |
+| `PreTradeComplianceService.audit(result, actor)` | `PreTradeCheckResult`, `user_id`, `mode`, `board_mode` | `audit.pretrade_check`イベント生成→`logs/audit/*.jsonl`へ追記 | `AuditRecordId` | ファイル書込失敗: `PreTradeAuditError` |
+
+#### 21.1.2 コンフィグ/データ
+
+- `config/compliance/pretrade_rules_<profile>.yaml`:
+  ```yaml
+  schema_version: compliance.pretrade.v1
+  max_leverage: 25
+  fifo_required: true
+  hedge_allowed: false
+  position_limits:
+    total_open_positions: 6
+    symbol:
+      USDJPY: {max_lots: 5.0, max_side: both}
+      EURUSD: {max_lots: 4.0, max_side: net_long}
+  blocked_pairs: ["TRYJPY", "ZARJPY"]
+  blocked_time_windows:
+    - {weekday: "fri", start: "20:00", end: "23:00", reason: "rollover"}
+  override_roles: ["PO", "OpsManager"]
+  runbook_map:
+    leverage: "RUN-RISK-03#step2"
+    fifo: "RUN-RISK-03#step5"
+    hedge: "RUN-RISK-03#step6"
+  ```
+- `dangerous_keys`: `max_leverage`, `blocked_pairs`, `blocked_time_windows`, `override_roles`。Config変更時は`ConfigRegistry`が`audit.config_change`を発行し、`docs/change_requests/`経由で承認。
+- `tests/fixtures/compliance/pretrade_rules_sample.yaml`を用意し、Codexがローカルで検証できるようにする。
+
+#### 21.1.3 ワークフロー統合
+
+- Ticket Builder (`src/ticket/builder.py`) は`build(ticket_ctx)`内で`PreTradeComplianceService`をDI。結果を`TicketPayload.compliance`フィールドに埋め込み、CLIレンダラーがバッジ/Runbookリンクを描画できるようにする。
+- CLI `tradectl ticket approve`は承認前に`PreTradeComplianceService.evaluate`を再実行し、キャッシュが古い場合は最新状態を取得。Override実行時は`--note`必須。
+- `WorkflowOrchestrator`は`PreTradeComplianceService.health()`をポーリングし、ルール読み込み失敗が続く場合は`HealthMonitor.soft_stop('compliance_rules')`を推奨。
+- Reduce-Only Advisor（§19）と連携し、`status='blocked'`かつ`severity='block'`な違反に対して自動Reduce-Only試算を添付。利用可否はFeature Flag `compliance.reduce_only_suggest`で制御する（M1.1では既定OFF）。
+
+#### 21.1.4 テレメトリ/監査
+
+- `metrics/compliance_pretrade.jsonl`に`check_latency_ms`, `status`, `violation_codes`, `override`, `board_mode`, `mode`を記録。
+- `audit.pretrade_check`イベントスキーマ：`{"ticket_id","status","violations":[{"rule_id","code","severity","value","threshold"}],"override_user","override_reason"}`。`schema_version='audit.pretrade.v1'`。
+- `ops_worklog`には`{"task":"pretrade_review","result":status,"duration_min":<input>}`を記録し、自動化効果追跡（§18.4）に連携。
+- Acceptable Degradation中（`board_mode=guarded`）は`severity='warn'`でも承認不可とし、Runbook `RUN-RISK-03`が指示する手動対応を優先。
+
+### 21.2 CapitalAllocationGuard (`src/risk/capital_guard.py`)
+
+- **目的**: プロファイル別に設定したVaR/ES目標や日次/週次/月次のR消費上限を監視し、提案頻度・サイズ・Reduce-Onlyへの切替条件を制御する。FR-51達成のため、`AccountService`, `RiskManager`, `Reporter`と連携して資本配分状況を定量化する。
+- **データモデル**:
+  | モデル | フィールド | 説明 |
+  | --- | --- | --- |
+  | `CapitalGuardPolicy` | `profile`, `max_daily_r`, `max_weekly_r`, `max_monthly_r`, `var_limit`, `es_limit`, `cooldown_minutes`, `resume_threshold`, `throttle_step`, `runbook_ref_map` | プロファイルごとの制約設定。 |
+  | `CapitalUsageSnapshot` | `generated_at`, `period`, `current_r`, `var_p95`, `es_p97`, `breach_flags:set[str]`, `recent_trades:list[TradeRef]` | 現在のR消費/リスク指標スナップショット。 |
+  | `ThrottleDecision` | `status ∈ {'ok','warn','throttle','halt'}`, `allowed_symbols`, `max_ticket_per_hour`, `size_multiplier`, `cooldown_until`, `runbook_ref`, `reason_codes` | Ticket BuilderとBoardに伝達する制御指示。 |
+
+- **処理フロー**:
+  1. `CapitalAllocationGuard.update(snapshot)`が`AccountService`/`Reporter`からの残高・実現損益・未実現Rを集計し、期間別のR消費を計算。
+  2. `max_daily_r`/`max_weekly_r`/`max_monthly_r`のいずれかを超えた場合は`status='throttle'`（Reduce-Only優先、`max_ticket_per_hour`減少）または`status='halt'`（Kill Switch推奨）を判定。
+  3. VaR/ESが閾値超過の場合は`reason_codes`に`VAR_BREACH`/`ES_BREACH`を追加し、`HealthMonitor.raise('risk_capital')`を呼び出す。
+  4. `cooldown_minutes`経過かつ`current_r`が`resume_threshold`未満に戻るまで、Boardは`guarded`または`halted`モードを維持。解除条件はRunbook `RUN-RISK-02`に明記。
+
+#### 21.2.1 公開API
+
+| API/関数 | 入力 | 処理 | 出力 | 異常系 |
+| --- | --- | --- | --- | --- |
+| `CapitalAllocationGuard.load_policy(profile)` | プロファイルID、`ConfigRegistry` | YAML読み込み→`CapitalGuardPolicy`検証 | `CapitalGuardPolicy` | `PolicyNotFound`、`PolicyValidationError` |
+| `CapitalAllocationGuard.update(account_snapshot, metrics_snapshot)` | `AccountState`, `RiskMetricsSnapshot`, `RecentPnL`, `ModeContext` | 期間別R計算→VaR/ES評価→`ThrottleDecision`算出 | `ThrottleDecision` | 計算不能: `CapitalComputationError` |
+| `CapitalAllocationGuard.record(decision)` | `ThrottleDecision`, `actor` | `metrics/capital_guard.jsonl`へ記録→`audit.capital_guard`イベント | `AuditRecordId` | 書込失敗: `CapitalGuardAuditError` |
+| `CapitalAllocationGuard.recommend_for_ticket(ticket_ctx)` | `TicketContext`, `ThrottleDecision` | チケットに`throttle_badge`/`size_multiplier`適用、承認可否決定 | `TicketThrottleAdvice` | `decision`不整合: `ThrottleAdviceError` |
+
+#### 21.2.2 コンフィグ/計算ロジック
+
+- `config/risk/capital_guard_<profile>.yaml`:
+  ```yaml
+  schema_version: risk.capital_guard.v1
+  max_daily_r: 3.5
+  max_weekly_r: 8.0
+  max_monthly_r: 18.0
+  var_limit: {horizon_hours: 24, percentile: 0.95, max_r: 4.5}
+  es_limit: {horizon_hours: 24, percentile: 0.97, max_r: 5.5}
+  cooldown_minutes: 180
+  resume_threshold: 2.0
+  throttle_step:
+    warn: {size_multiplier: 0.7, max_ticket_per_hour: 2}
+    throttle: {size_multiplier: 0.4, max_ticket_per_hour: 1, allowed_symbols: ["USDJPY","EURUSD"]}
+    halt: {size_multiplier: 0.0, max_ticket_per_hour: 0}
+  runbook_ref_map:
+    warn: "RUN-RISK-02#step3"
+    throttle: "RUN-RISK-02#step5"
+    halt: "RUN-RISK-02#step7"
+  ```
+- VaR/ESは`metrics/risk.jsonl`の履歴を使用。計算は`RiskMetricsSnapshot.pnl_distribution`からブートストラップ（M1.1 Packet）。M1 Coreでは履歴不足時に`status='warn'`で手動レビューを要求。
+- `dangerous_keys`: `max_daily_r`, `max_weekly_r`, `max_monthly_r`, `var_limit`, `es_limit`, `throttle_step`。Config変更は`docs/change_requests/`で承認を得る。
+
+#### 21.2.3 モード差分
+
+- Backtest/Paperでは違反時に`status='warn'`で通知し、トレーダーが手動で`tradectl board --guarded`を実行。Liveでは`status='throttle'`以降で自動的に`BoardMode=guarded`へ切替（Feature Flag `capital_guard.auto_board_mode`, M1.1では既定OFF）。
+- Acceptable Degradation中は`status='warn'`でもReduce-Only提案を優先し、`tradectl ticket approve`は`--force`禁止。Runbook `RUN-RISK-02`に従い、`capital_guard.override`チェックリストを実施。
+
+### 21.3 CLI/Signal Board連携
+
+- `tradectl board`は`PreTradeCheckResult`と`ThrottleDecision`をヘッダーバナーに表示。`status='warn'`以上の場合は`[COMPLIANCE WARN]`バナーとRunbookリンクを表示し、`status='blocked'`のチケットには「承認不可」バッジを付与。
+- `tradectl ticket approve`は`--force`利用時に`override_roles`チェックを実施。承認者が権限外の場合は`PreTradeOverrideDenied`をraise。
+- `tradectl compliance pretrade`（新設）:
+  | コマンド | 説明 |
+  | --- | --- |
+  | `tradectl compliance pretrade rules --profile <id>` | 現在のルールセットと`dangerous_keys`を表示。`--json`/`--runbook`オプション対応。 |
+  | `tradectl compliance pretrade dry-run --ticket <path>` | JSONチケットを入力し、違反一覧をシミュレーション。`Exit 70`で再試行可能。 |
+  | `tradectl compliance pretrade overrides --period <YYYYWW>` | Override履歴を一覧表示し、`audit.pretrade_override`を抽出。 |
+- `tradectl risk capital`（サブコマンド拡張）:
+  - `status`: 現在のR消費、VaR/ES、`ThrottleDecision`を表形式表示。
+  - `simulate --delta-r <value>`: 追加R消費を仮定し、`ThrottleDecision`の変化を試算。Runbookドリルに活用。
+- CLIは全て`logger.info("cli.compliance_pretrade", extra={...})`で監査ログを残し、Approvalテスト（§21.5）で差分管理する。
+
+### 21.4 Runbook/運用連携
+
+- Runbook `RUN-RISK-02`（Capital Guard）と`RUN-RISK-03`（Pre-Trade Compliance）を更新し、以下を追記:
+  1. `status='warn'`発生時の承認フロー（ダブルチェック者、Override記録先）。
+  2. `status='blocked'`時のReduce-Only提案活用方法と手動ポジション調整手順。
+  3. `capital_guard.override`チェックリストで`ops_worklog`記録と`automation_effect`評価を義務化。
+- Opsレビュー: 週次Ops会議で`metrics/compliance_pretrade.jsonl`と`metrics/capital_guard.jsonl`の集計を`tools/automation_effect_report.py --period <week>`へ取り込み、Override頻度と自動化効果を評価。
+- トレーダーUX: Boardバナーには`override_roles`の役職を表示し、承認者が迷わないようにする。`board_mode=guarded`時は`status='pass'`のチケットでも`size_multiplier`適用結果を明示。
+
+### 21.5 テスト & Codex Packet計画
+
+- **ユニットテスト**:
+  - `tests/unit/test_pretrade_compliance_service.py`: 各ルール違反、Override権限、Reduce-Only提案の添付、`--force`時の監査ログを検証。Propertyテストでレバレッジ閾値の境界（±0.01）を確認。
+  - `tests/unit/test_capital_allocation_guard.py`: R消費計算、VaR/ES閾値、Throttle判定、Resume条件を検証。`pytest.mark.parametrize`で日次/週次/月次ケースを網羅。
+- **統合テスト**: `tests/integration/test_compliance_and_capital_guard.py`でTicket承認フローとBoard表示を再現。`pytest-approvaltests`でCLIスナップショット（`tradectl ticket approve --dry-run`、`tradectl risk capital status`）を管理。
+- **Codex Packet**:
+  - `EP03-P5`（提案）: PreTradeComplianceService実装＋Ticket Builder/CLI統合。
+  - `EP03-P6`: CapitalAllocationGuard実装＋Risk Manager連携＋Boardバナー更新。
+  - 依存: `docs/templates/compliance_pretrade_report.md`, Runbook更新、Configテンプレ。
+  - テスト指示: `pytest -k pretrade_compliance`, `pytest -k capital_guard`, `pytest -k compliance_and_capital_guard`, CLIスナップショット更新。
+- **Ops受入**: `TR-07`シナリオとして、新規チケット→レバレッジ違反→Override→Reduce-Only提案→承認拒否の一連を実行。`docs/trader_signoff/EP03-P5.md`を作成し、OverrideログとBoardスクリーンショットを添付。
+- **テレメトリ**: `metrics/compliance_pretrade.jsonl`・`metrics/capital_guard.jsonl`は`schema_version`付きで保存。`tools/automation_effect_report.py`が自動化効果を可視化し、Override減少が閾値に届かない場合は次スプリントでさらなる自動化（例: ポジション自動調整）を検討する。
+
+---
+
+本節の仕様により、CodexはM1.1でプレトレードコンプライアンスと資本配分制御を実装し、ヒューマン承認のリスクを低減できる。Runbook・CLI・テレメトリが連携することで、トレーダーとOpsは違反理由と代替手段を即座に把握し、Override行為を可視化しながら運用改善の効果測定を継続できる。
