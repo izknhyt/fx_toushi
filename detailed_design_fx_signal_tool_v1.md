@@ -4275,4 +4275,145 @@ FR-48はHealth/Kill Switch/Spread/Benchmarkギャップ/Journalハイライト�
 
 ---
 
-これらの追補により、ジャーナル・ドリフト監視・ベンチマークリプレイ・運用健全性ダッシュボードといったFR-44〜FR-48の要件に対する詳細設計が揃い、CodexへM1.1〜M2向けの実装パケットを明確に提示できる。トレーダー/Ops視点のコメントやRunbook連携も設計段階で織り込み、将来のGUI化や自動化拡張にも耐えられる構成とした。
+## 38. セキュリティ・シークレット管理強化設計（NFR-04, NFR-17, NFR-23）
+
+NFR-04/17/23に基づき、macOSローカル環境での機微情報保護と監査性を高める。M1 Coreでは`.env`＋FileVaultによる最小限保護だが、M1.1で`SecretsVaultService`を導入し、APIキー暗号化・アクセス監査・四半期セキュリティレビューをCodex実装へ委任する。
+
+### 38.1 SecretsVaultService (`src/infra/secrets.py`)
+
+- **役割**: `.env`/`config/secret/*.yaml`をAES-256-GCMで暗号化し、復号時にmacOS Keychain（`security` CLI）またはパスフレーズ入力を要求。復号履歴と利用コンテキストを`logs/audit/secrets/YYYYMMDD.jsonl`へ記録する。
+- **構成**:
+  | コンポーネント | 説明 | 備考 |
+  | --- | --- | --- |
+  | `SecretsVaultService` | `load(secret_id, *, purpose)`/`store(secret_id, payload, *, rotation_at)`を公開。 | `purpose`は`{'data_provider','smtp','slack','broker_api'}`等。 |
+  | `KeychainAdapter` | macOS Keychainと連携。M1ではオプション、Keychain非利用時は`passphrase_provider`を要求。 | テストでは`DummyKeychainAdapter`。 |
+  | `SecretMetadataStore` | `config/secret/metadata.json`を管理し、`rotation_at`, `last_used_at`, `checksum`を保持。 | 変更時は`ConfigRegistry`と連携。 |
+- **フロー**:
+  1. `store()`呼出時、payloadを`orjson`→暗号化→`secret_<id>.enc`保存。メタデータにハッシュ/アルゴリズム/rotation期限を記録。
+  2. `load()`はKeychainトークンを解決→復号→呼出元へ返却し、監査ログへ`actor`,`purpose`,`cfg_hash`を追記。
+  3. `rotation_due(within_days=30)`で期限接近を検出し、`AlertDispatcher`へ`security.rotation_due`イベントを送信。
+- **例外**: 復号失敗→`SecretDecryptionError`（CRITICAL）。メタデータ欠落→`SecretMetadataMissing`で`HealthMonitor.raise('warning','secret_metadata_gap')`。
+- **Runbook**: `docs/runbooks/SEC-SECRETS-01.md`を新設し、(1) 初期登録、(2) ローテーションテスト、(3) 期限切れ対応、(4) 侵入テストログの添付手順を定義。
+
+### 38.2 CLI & 監査連携 (`src/interfaces/cli/secrets.py`)
+
+- **コマンド**:
+  | コマンド | 用途 | 主なオプション | 出力/副作用 |
+  | --- | --- | --- | --- |
+  | `tradectl secrets list` | 登録済み秘密一覧 | `--json`, `--show-rotation` | メタデータ表、rotation期限、`audit`イベント。 |
+  | `tradectl secrets rotate --id <secret>` | 秘密の再登録 | `--input <file>`/`--prompt` | 新暗号化ファイル、`secret.rotated`イベント。 |
+  | `tradectl secrets audit --since 30d` | 利用履歴参照 | `--format table|json` | `logs/audit/secrets/*.jsonl`から抽出。 |
+  | `tradectl secrets test --id <secret>` | 復号テスト | `--dry-run` | Keychain/パスフレーズ確認、成功時`status=ok`。 |
+- **UXガイド**: CLIは平文表示を禁止し、`--prompt`入力は`getpass`。復号結果は「利用者数」「最終利用時刻」のみ表示。Critical操作はダブル確認。
+- **監査**: `audit.secrets`カテゴリに`action`, `secret_id`, `actor`, `purpose`, `rotation_at`, `checksum`を保存。`AuditBundleService`は本カテゴリを自動収集。
+- **セキュリティレビュー**: `tradectl secrets review --quarter 2025Q2`でテンプレ（`reports/governance/security_review_<quarter>.md`）を生成し、侵入テスト結果（`security_scan.log`）を添付。
+
+### 38.3 テスト & Codex Packet
+
+- **テスト**:
+  - `tests/unit/test_secrets_vault.py`: 暗号化/復号、Keychainモック、rotation計算。
+  - `tests/cli/test_secrets_cli.py`: CLI操作、監査ログ生成、復号失敗時の例外。
+  - `tests/security/test_intrusion_check.py`: 侵入テストログがRunbook指定パスへ保存されるか検証。
+- **Codex Packet案**:
+  | Packet ID | 範囲 | テスト |
+  | --- | --- | --- |
+  | `SEC-P1` | `SecretsVaultService`実装＋Keychain統合 | `pytest -k secrets_vault` |
+  | `SEC-P2` | CLI/監査/AlertDispatcher統合 | `pytest -k secrets_cli`, `tradectl secrets rotate --id smtp --prompt --dry-run` |
+- **Ops受入**: `TR-23`（秘密登録→復号テスト→rotation→監査エクスポート）をRunbook`SEC-SECRETS-01`で実施し、`docs/trader_signoff/SEC-P2.md`へ証跡を格納。
+
+---
+
+## 39. データ保持・WORMアーカイブ運用設計（NFR-18, NFR-24）
+
+NFR-18/24に従い、市場データ・監査・スナップショットを90日ローカル保持＋年次アーカイブし、RPO≤1日/RTO≤4時間を担保する。`ArchivePlanner`と`WormVaultSync`を追加し、Codexがバックアップ自動化を実装できるよう仕様化する。
+
+### 39.1 ArchivePlanner (`src/infra/archive.py`)
+
+- **責務**: 保持ポリシーを解釈し、`archive_plan.json`を生成。`schedule()`が対象ファイルを分類し、`rsync`/`tar`コマンド実行計画を返す。
+- **保持ポリシー定義**:
+  | 区分 | ローカル保持 | アーカイブ | 備考 |
+  | --- | --- | --- | --- |
+  | `logs/events` | 30日 | 月次gz→`archive/events/<YYYYMM>.tar.gz` | WORMコピー対象。 |
+  | `logs/audit` | 365日 | 四半期ごとに暗号化tar | `audit_pack`へ同梱。 |
+  | `snapshots/latest` | 3世代 | 週次diff→`archive/snapshots/` | 暗号化zip。 |
+  | `data/raw` | 12ヶ月 | 年次`tar.zst` | 再取得可データは要約のみ。 |
+- **API**:
+  | メソッド | 説明 |
+  | --- | --- |
+  | `ArchivePlanner.build_plan(window='monthly')` | 対象ファイル一覧・圧縮方式・検証ハッシュを返却。 |
+  | `ArchivePlanner.execute(plan, *, dry_run)` | 圧縮/コピー実行。WORM宛先は`WormVaultSync`へ委譲。 |
+  | `ArchivePlanner.verify(plan)` | `sha256sum`照合・Integrityレポート生成。 |
+- **失敗時**: コピー失敗→`ArchiveExecutionError`。ハッシュ不一致→`ArchiveVerificationFailed`で`health.raise('warning','archive_integrity')`。
+- **メトリクス**: `metrics/archive.jsonl`に`files_archived`,`bytes_total`,`duration_sec`,`status`。閾値（`duration>1800s`）でAlert。
+
+### 39.2 WORM同期 & Runbook (`src/infra/worm_vault.py`)
+
+- **WormVaultSync**:
+  - `configure(target_mount, encryption_key)`で宛先設定。APFS/外付けSSD等を想定。
+  - `sync(plan)`が`rsync --append-verify`で転送後、`tmutil snapshot`（macOS）や`zfs snapshot`コマンドを実行。
+  - 転送結果を`reports/archive/worm_<YYYYMMDD>.md`へMarkdown記録し、Runbook`DR-LOCAL-01`に添付。
+- **復旧手順**: `tradectl archive restore --from <archive_tar> --dest <path>`で展開→`SnapshotManager.restore()`→`tradectl resync --since`。
+- **侵入テスト**: `security_scan.sh`で外部ストレージの暗号化設定を確認。結果を`reports/security/vault_scan_<date>.md`へ保管。
+- **Runbook**: `docs/runbooks/DR-LOCAL-01.md`を更新し、(1) 日次差分、(2) 週次フル、(3) 月次WORMコピー、(4) 半期リストア演習をチェックリスト化。
+- **Validation Data Playbook**: `validation_playbook_id='NFR-24_archive'`を追加し、リストア演習ログ・ハッシュリストを格納。
+
+### 39.3 テスト & Codex Packet
+
+- **テスト**:
+  - `tests/unit/test_archive_planner.py`: ポリシー適用、計画生成、dry-run出力。
+  - `tests/integration/test_archive_execution.py`: テンポラリディレクトリで圧縮→復元→ハッシュ照合。
+  - `tests/integration/test_restore_drill.py`: スナップショット復元＋`tradectl resync`シミュレーション。
+- **Codex Packet案**:
+  | Packet ID | 範囲 | テスト |
+  | --- | --- | --- |
+  | `DR-P1` | `ArchivePlanner`実装＋メトリクス出力 | `pytest -k archive_planner` |
+  | `DR-P2` | `WormVaultSync`＋CLI `tradectl archive` | `pytest -k archive_execution`, `tradectl archive run --window monthly --dry-run` |
+- **Ops受入**: `TR-24`（月次アーカイブ→WORMコピー→復元テスト）を実施し、Runbookチェックリストと`reports/archive/worm_<date>.md`をダブルサイン。
+
+---
+
+## 40. 研究ワークスペース整合 & モデルガバナンス連携（NFR-21, NFR-26, NFR-27）
+
+研究環境（notebooks）と本番パイプラインの整合、モデルリスク台帳更新、アルファ持続性レビュー（NFR-21/26/27）を自動化する。`ResearchSyncService`と`ModelGovernanceBridge`を追加し、戦略昇格前のエビデンス確認を標準化する。
+
+### 40.1 ResearchSyncService (`src/research/sync.py`)
+
+- **機能**:
+  1. `requirements-research.lock`と`pyproject.toml`を突合し、差分があれば`research.sync_report`を生成。
+  2. `notebooks/`内のインジケータ実装を抽出し、`src/features/`の対応関数とAST比較（許容差±0.5%）。差異>閾値で`ResearchSyncMismatch`を発火。
+  3. `make research-sync`コマンドのラッパとして、依存解決→単体テスト（`pytest -m research`）→成果物コピー（`research/artifacts/`）。
+- **API**:
+  | メソッド | 説明 |
+  | --- | --- |
+  | `ResearchSyncService.compare_dependencies()` | 依存ロック差分をJSONで返却。 |
+  | `ResearchSyncService.sync(notebooks, *, dry_run)` | AST比較とコピー実行。 |
+  | `ResearchSyncService.generate_report()` | Markdownまとめを`reports/research/sync_<date>.md`へ出力。 |
+- **メトリクス**: `metrics/research_sync.jsonl`に`diff_count`, `max_indicator_error`, `duration_sec`。閾値（`max_indicator_error>0.5%`）で`health.raise('warning','research_drift')`。
+- **Runbook**: `docs/runbooks/RES-SYNC-01.md`で、(1) sync前チェック、(2) テスト、(3) 差分レビュー、(4) Manifest更新ステップを定義。
+
+### 40.2 ModelGovernanceBridge (`src/governance/model_bridge.py`)
+
+- **役割**: `strategy_manifest.yaml`, `reports/research/<strategy>/`、`model_risk_register.md`を突合し、更新遅延>90日で`health.raise('warning','model_risk_gap')`を発火。
+- **機能詳細**:
+  - `collect_manifest(strategy_id)`で`validation_metrics`, `dataset_hash`, `last_validated_at`を抽出。
+  - `compare_register()`で`model_risk_register.md`の`residual_risk`, `mitigation`を解析。欠損時は`ModelRiskEvidenceMissing`。
+  - `schedule_reviews()`がローリング12週の`alpha_score`/`decay_score`推移を確認し、閾値割れで`tickets/model_revalidate/<id>.md`を自動生成。
+- **CLI**: `tradectl governance model-check --strategy <id>`が差分サマリとRunbookリンク（`GOV-MODEL-01`）を表示。`--export`でMarkdown化。
+- **Validation Data Playbook**: `validation_playbook_id='NFR-26_model_governance'`を追加し、Manifest/レポート/議事録ハッシュを保存。
+
+### 40.3 テスト & Codex Packet
+
+- **テスト**:
+  - `tests/unit/test_research_sync.py`: 依存差分、AST比較、閾値判定。
+  - `tests/unit/test_model_governance_bridge.py`: Manifest/登録簿の突合、レビュータスク生成。
+  - `tests/integration/test_governance_cli.py`: `tradectl governance model-check` CLI出力とValidation Data Playbook更新。
+- **Codex Packet案**:
+  | Packet ID | 範囲 | テスト |
+  | --- | --- | --- |
+  | `RES-P1` | `ResearchSyncService`＋`make research-sync`統合 | `pytest -k research_sync`, `make research-sync --dry-run` |
+  | `GOV-P1` | `ModelGovernanceBridge`＋CLI | `pytest -k model_governance_bridge`, `tradectl governance model-check --strategy m1_baseline` |
+- **Ops/Research受入**: `TR-25`（研究依存差分検出→sync→Manifest更新→モデルリスクレビュー）を週次研究会で実施し、`docs/trader_signoff/RES-P1.md`と`docs/review_log.md`に結果を記録。
+
+---
+
+これらの追補により、ジャーナル・ドリフト監視・ベンチマークリプレイ・運用健全性ダッシュボードに加えて、セキュリティ強化・アーカイブ運用・研究ガバナンスといったNFR-04/17/18/21/26/27/23の要求にも応える詳細設計が整備された。CodexへM1.1〜M2向けの実装パケットを明確に提示するとともに、トレーダー/Ops/研究チームがRunbookとValidation Data Playbookを基に運用・監査を継続改善できる構成とした。
