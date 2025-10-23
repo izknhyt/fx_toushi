@@ -1,4 +1,4 @@
-# FXヒューマン・インザループ投資ツール 詳細設計書 v1.17
+# FXヒューマン・インザループ投資ツール 詳細設計書 v1.18
 
 ## 0. 文書情報
 - 作成日: 2025-02-20
@@ -9,6 +9,7 @@
 ### 0.1 改訂履歴
 | 版 | 日付 | 改訂概要 |
 | --- | --- | --- |
+| v1.18 | 2025-02-27 | §43〜§45にスケーリング/リソースガバナンス、プロファイル差分署名、Ops証跡管理（NFR-19/25/28）を追加し、Capacity診断/Config署名/証跡リセット制御のCodex Packetを整備。 |
 | v1.17 | 2025-02-26 | §41〜§42にオフラインバンドル/サプライチェーン保証設計を追加し、NFR-06/12/18/24およびAC-27/28の実装指針をCodex Packet化。 |
 | v1.16 | 2025-02-22 | §23〜§25にストレステスト/流動性監視/ステートメント突合の詳細設計を追加し、FR-43/FR-49/FR-64対応ロードマップをCodex Packet化。 |
 | v1.15 | 2025-02-22 | §20にデータプロベナンス/Validation Data Playbook実装設計を追加し、FR-52/FR-62のM1.1準備方針を明文化。 |
@@ -4523,5 +4524,161 @@ Offline Bundleと連動し、依存性の脆弱性・ライセンス・署名情
 - **Ops/Release受入**: `TR-27`（deps audit→Runbook判断→Offline Bundle再生成）を実施し、`docs/trader_signoff/SEC-P4.md`と`reports/release/dependency_audit_<version>.md`へ記録。
 
 ---
+
+## 43. リソースキャパシティ & スケーリング管理設計（NFR-01, NFR-19, FR-01, FR-09）
+
+M1 Coreでは主要4ペア前提だが、NFR-19で求められる最大12ペア・並列Backtest 4本までの拡張を想定し、CPU<70%・メモリ<60%を維持できるようリソース監視と動的並列制御を設計する。`ResourceBudgetPlanner`と`AdaptiveConcurrencyController`を導入し、Data Ingestion/Backtest/Schedulerジョブが共通の予算を参照してスロットルする。
+
+### 43.1 ResourceBudgetPlanner (`src/infra/resource_budget.py`)
+
+- **責務**: システム全体のCPU/メモリ/IO/ネットワーク予算を管理し、各サービスに使用可能スロットを配分する。`psutil`と`platform`情報を用いてmacOSでの制御を最適化する。
+- **構成**:
+  | コンポーネント | 役割 | 設定/ソース |
+  | --- | --- | --- |
+  | `ResourceBudget` dataclass | `cpu_limit_pct`, `mem_limit_pct`, `io_read_mb_s`, `io_write_mb_s`, `net_outbound_kbps` を保持 | `config/resource_budget.yaml`（プロファイル別値） |
+  | `ResourceBudgetPlanner.load(profile)` | プロファイルに応じた予算を読み込み、`psutil.cpu_count(logical)`から`max_parallel_jobs`を算出 | YAML/`pyproject.toml`の`tool.tradectl.resource_defaults` |
+  | `ResourceBudgetPlanner.observe()` | 1秒間隔でCPU/メモリをサンプリングし、`metrics/resource_budget.jsonl`へ記録 | `psutil.Process(os.getpid())` |
+  | `ResourceBudgetPlanner.reserve(namespace, slots)` | Data Ingestion等がスロット予約。予約合計が閾値を超えると`BudgetExceededError`をraise | 内部`ReservationRegistry` |
+  | `ResourceBudgetPlanner.release(namespace, slots)` | 完了後にスロット返却。リーク検知で`health.raise('warning','resource_leak')` |  |
+- **閾値計算例** (macOS M2, 8core/16GB): `cpu_limit_pct=70`, `mem_limit_pct=0.60`, `max_parallel_backtests = floor((cpu_limit_pct/100)*core_count/2)` = 2（既定）、拡張時は3。
+- **監査/Runbook連携**: `reports/ops/resource_budget/<YYYYWW>.md`に自動エクスポートし、Runbook `OPS-CAPACITY-01`で週次レビュー。超過時は`tradectl capacity diagnose`で再現ログ取得を要求。
+- **Failure Modes**: `BudgetExceededError`→`Scheduler`は該当ジョブを`deferred`にし、`HealthMonitor`へ`resource_budget_exceeded`を通知。`observe()`失敗時は`ResourceSamplingError`をraiseし、`AutomationEffectTracker`へ影響記録。
+
+### 43.2 AdaptiveConcurrencyController (`src/core/concurrency.py`)
+
+- **目的**: Data IngestionやBacktestが予算に基づいて自律的に並列数を調整する。`ResourceBudgetPlanner`と`Scheduler`の間で動的スロットルを実現。
+- **API**:
+  | メソッド | 説明 | 主なロジック |
+  | --- | --- | --- |
+  | `AdaptiveConcurrencyController.register(namespace, base_concurrency, min_concurrency=1, max_concurrency=None)` | リソース消費の特性（CPU/IO/メモリ重み）を宣言 | `config/concurrency_profiles.yaml`で重みとヒステリシスを定義 |
+  | `AdaptiveConcurrencyController.next_limit(namespace)` | 現在のリソース使用率・待ち行列長・SLA（例:`fetch_p95`）から並列数を算出 | `EMA`で平滑化し、±1の段階的変化のみ許容（スパイク防止） |
+  | `AdaptiveConcurrencyController.record_completion(namespace, duration, resource_usage)` | 実績フィードバック→将来の`next_limit`調整 | `ResourceUsageSample`をリングバッファへ格納 |
+  | `AdaptiveConcurrencyController.enforce(namespace, scheduler_job)` | Job登録前に`Scheduler`へ上限値を反映 | `Scheduler.update_concurrency(job_id, limit)` |
+- **Data Ingestion適用**: `DataIngestionService`は`yfinance`と`dukascopy`を別namespaceで登録。429/403率上昇時は`AdaptiveConcurrencyController`が`RateLimitGuard`と連携し、同時取得数を自動減少（`stage=Stage0`へロールバック）させる。Catch-up時は`priority=critical`のジョブのみ上限緩和（最大+2）を許可。
+- **Backtest適用**: `BacktestOrchestrator`はWalk-Forward/グリッド探索のジョブを`backtest` namespaceで管理し、CPU70%以内で`max_parallel`を調整。`WalkForwardScheduler.execute`は`AdaptiveConcurrencyController`から提供される並列数を尊重。
+- **テレメトリ**: `metrics/concurrency.jsonl`に`namespace`, `current_limit`, `queued_jobs`, `avg_duration_sec`, `budget_utilization_pct`を記録。閾値逸脱で`HealthMonitor.raise('warning','capacity_pressure')`。
+
+### 43.3 Capacity Diagnostics & Codex Packet
+
+- **CLI**: `tradectl capacity diagnose`（`src/interfaces/cli/capacity.py`）を追加し、1時間範囲の`metrics/resource_budget.jsonl`を解析してボトルネックと推奨設定を表示。オプション: `--profile`, `--forecast <hours>`（p95予測）、`--export <path>`（Markdown）。`--simulate pairs=12`でBacktest+Data Ingestion同時稼働時の予算充足可否を試算（`AdaptiveConcurrencyController.simulate`）。
+- **レポート**: `reports/ops/capacity_review/<YYYYWW>.md`テンプレートに「CPUピーク」「メモリピーク」「並列Backtest数」「SLA影響」を自動記載。Validation Data Playbookに`validation_playbook_id='NFR-19_capacity'`を追加し、四半期で診断レポート＋Opsサインを格納。
+- **テスト**:
+  - `tests/unit/test_resource_budget_planner.py`: 予約/解放/サンプリング誤差検証。
+  - `tests/unit/test_adaptive_concurrency.py`: 並列制御、429ロールバック、ヒステリシス挙動。
+  - `tests/cli/test_capacity_cli.py`: `capacity diagnose`出力、シミュレーション結果、Markdown生成。
+  - `tests/integration/test_capacity_scheduler.py`: Schedulerと連携し、予算超過時にジョブがdeferされるか確認。
+- **Codex Packet案**:
+  | Packet ID | 範囲 | テスト | 備考 |
+  | --- | --- | --- | --- |
+  | `CAP-P1` | `ResourceBudgetPlanner`実装＋メトリクス | `pytest -k resource_budget_planner` | M1.1で導入。 |
+  | `CAP-P2` | `AdaptiveConcurrencyController`＋Data Ingestion統合 | `pytest -k adaptive_concurrency`, `tests/integration/test_capacity_scheduler.py` | Stage制御と429ロールバックを合わせて実装。 |
+  | `CAP-P3` | CLI `tradectl capacity diagnose`＋レポート自動化 | `pytest -k capacity_cli`, `tradectl capacity diagnose --simulate pairs=8 --export tmp.md` | Opsレビュー用テンプレ出力を含む。 |
+- **Ops受入**: `TR-28`（capacity diagnose→設定更新→Backtest/Fetch同時負荷リハーサル）をRunbook `OPS-CAPACITY-01`で実施し、`docs/trader_signoff/CAP-P2.md`へ証跡を格納。
+
+---
+
+## 44. プロファイル差分検証 & 署名ワークフロー設計（NFR-25, AC-27, AC-28）
+
+`dev|paper|prod`プロファイルの差分を可視化し、`prod`適用時は署名済み差分のみを許可する（NFR-25）。`ConfigDiffService`と署名管理、CIガードを整備し、リスク関連パラメータの逸脱を防ぐ。
+
+### 44.1 ConfigDiffService (`src/config/diff.py`)
+
+- **データモデル**:
+  | 要素 | 内容 |
+  | --- | --- |
+  | `ConfigProfile` | `name`, `path`, `hash`, `loaded_at` |
+  | `DiffEntry` | `key_path`, `from_value`, `to_value`, `change_type(add|remove|modify)`, `risk_level(normal|risk|critical)` |
+  | `SignedDiff` | `diff_id(UUIDv7)`, `profile_from`, `profile_to`, `sha256`, `signed_at`, `signer`, `signature` |
+- **挙動**:
+  - `ConfigDiffService.load(profile)`がYAML/JSONを読み込み、`jsonschema`で検証（`docs/schemas/config_profile.schema.json`）。
+  - `diff(profile_from, profile_to, *, include_defaults=False)`で差分を算出。`risk_level`は`config/config_diff_risk.yaml`に定義されたパスパターンで判定（例: `risk.max_r`, `kill_switch.*`, `execution.spread_guard`は`critical`）。
+  - `render(diff, format='table|json|md')`でCLI/CI向け出力を生成し、`critical`項目は赤ハイライト（CLI: Richスタイル）。
+  - `summarize(diff)`は`risk_level`別件数、±%変化（数値のみ）を計算し`ConfigDiffSummary`を返す。
+- **署名準備**: `ConfigDiffService.prepare_signature(diff, private_key_path)`が`sha256`を計算し、`Ed25519`鍵で署名。鍵管理は`SecretsVaultService`と連携し、署名は`config/signatures/<diff_id>.sig`に保存。
+- **イベント/ログ**: `config.diff.generated`, `config.diff.signed`, `config.diff.rejected`。監査ログは`logs/audit/config_diff_<timestamp>.jsonl`。
+- **例外**: `ConfigSchemaError`, `ConfigDiffRiskViolation`（`--allow-risk`なしに`risk_level=critical`変更を検知）、`ConfigSignatureError`。
+
+### 44.2 CLI/CI統合 (`src/interfaces/cli/config.py`, `.github/workflows/config_diff.yml`)
+
+- **CLIコマンド**:
+  | コマンド | 用途 | 主なオプション | 挙動 |
+  | --- | --- | --- | --- |
+  | `tradectl config diff --from dev --to prod` | 差分表示 | `--format table|json|md`, `--include-defaults`, `--risk-threshold <level>` | `risk_level>=threshold`で警告。`--require-signed`指定時は署名済みdiffのみ許可。 |
+  | `tradectl config sign --diff <diff-file>` | Diff署名 | `--key secrets:vault/config_signing`, `--label <release>` | Ed25519署名を生成し、`SignedDiff`メタデータを`reports/governance/config_signatures/<date>.md`へ追記。 |
+  | `tradectl config history` | 過去の署名一覧 | `--profile`, `--since`, `--json` | `config/signatures/index.json`から履歴を表示。 |
+- **CI**: `config_diff.yml`がPull Requestで`tradectl config diff --from prod --to branch --format json`を実行し、`risk_level=critical`変更時は`status=failed`にする。`config_diff_test`は±10%超のリスク関連パラメータを検知し、承認者（2名以上）の署名ファイルがない場合はPRをブロック。
+- **Runbook/Validation**: `docs/runbooks/CFG-DIFF-01.md`を整備し、(1) diff確認 (2) リスク判定 (3) 署名取得 (4) `prod`適用 (5) Validation Data Playbook更新をチェックリスト化。`validation_playbook_id='NFR-25_config_diff'`を登録し、四半期レビューで署名ハッシュと承認者を記録。
+- **ガードレール**: `prod`適用コマンド（`tradectl config apply --profile prod --require-signed`）は署名検証成功時のみ実行。検証失敗→`HealthMonitor.raise('error','config_signature_invalid')`で`BoardMode=guarded`推奨。
+
+### 44.3 テスト & Codex Packet
+
+- **テスト**:
+  - `tests/unit/test_config_diff_service.py`: 差分検出、リスクレベル判定、署名生成/検証。
+  - `tests/cli/test_config_diff_cli.py`: CLIフォーマット、`--require-signed`挙動、Richハイライト。
+  - `tests/ci/test_config_diff_pipeline.py`: GitHub ActionsモックでPRブロック条件検証。
+- **Codex Packet案**:
+  | Packet ID | 範囲 | テスト |
+  | --- | --- | --- |
+  | `CFG-P1` | `ConfigDiffService`実装＋署名連携 | `pytest -k config_diff_service` |
+  | `CFG-P2` | CLI/CI統合＋`--require-signed`ガード | `pytest -k config_diff_cli`, `pytest -k config_diff_pipeline` |
+  | `CFG-P3` | Runbookテンプレ/Validation Data Playbook更新スクリプト | `make config-diff-validate` |
+- **Ops受入**: `TR-29`（diffレビュー→署名取得→`prod`適用シミュレーション）を実施し、`docs/trader_signoff/CFG-P2.md`と`reports/governance/config_signatures/<date>.md`へ証跡を格納。
+
+---
+
+## 45. Ops証跡ガバナンス & スコアリセット制御設計（NFR-28, FR-63, AC-51）
+
+NFR-28ではOpsレディネス指標の根拠となる証跡を90%以上の信頼度で保持し、欠損時はスコアを自動リセットすることが求められる。本節では`OpsEvidenceStore`と`OpsReadinessService`の連携、Validation Data Playbookとの同期を定義する。
+
+### 45.1 OpsEvidenceStore (`src/ops/evidence.py`)
+
+- **責務**: Ops訓練・バックアップ検証・Runbookレビューの証跡メタデータを保持し、ハッシュ・署名で改ざんを防ぐ。
+- **データモデル** (`ops_evidence.db` / SQLite):
+  | テーブル | 主キー | 主なフィールド | 説明 |
+  | --- | --- | --- | --- |
+  | `evidence_records` | `evidence_id (UUIDv7)` | `category`, `runbook_id`, `performed_at`, `performed_by`, `artifact_path`, `sha256`, `validation_playbook_id`, `confidence_pct`, `expires_at` | 証跡1件につき1行。`confidence_pct`はレビュー完了率。 |
+  | `evidence_links` | (`evidence_id`,`related_resource`) | `resource_type(Enum: report, runbook, metric, ticket)`, `note` | Runbookやレポートへのリンク。 |
+  | `evidence_audit` | `event_id` | `action(created|updated|expired)`, `actor`, `reason`, `created_ts` | 監査ログ。 |
+- **API**:
+  | メソッド | 説明 |
+  | --- | --- |
+  | `OpsEvidenceStore.register(category, *, runbook_id, artifact_path, confidence_pct, expires_in_days, validation_playbook_id)` | 新規証跡登録、SHA256算出、`validation_playbook_id`のMDを更新。 |
+  | `OpsEvidenceStore.lookup(category, since=None)` | 最新証跡一覧と残日数を返す。 |
+  | `OpsEvidenceStore.mark_expired(evidence_id, reason)` | 証跡失効→`ops.evidence.expired`イベント発行。 |
+  | `OpsEvidenceStore.attach_signature(evidence_id, signature)` | Optional: 署名ハッシュを保存。 |
+- **保管先**: 実ファイルは`reports/ops/evidence/<category>/<YYYYMMDD>/`へ配置。`artifact_path`には相対パス。外部ストレージへアーカイブ時は`ArchivePlanner`が`validation_playbook_id`を参照して同期。
+- **Runbook**: `docs/runbooks/OPS-EVIDENCE-01.md`を作成し、登録→レビュー→失効処理→Validation Data Playbook更新を定義。
+
+### 45.2 OpsReadinessService連携 (`src/ops/readiness.py` 拡張)
+
+- `OpsReadinessService.calculate()`は`OpsEvidenceStore.lookup`を参照し、各コンポーネントに必要な証跡の`confidence_pct`と`expires_at`を評価する。必須証跡が`confidence_pct<90`または`expires_at<today`の場合、該当コンポーネントのスコアを0に設定し、`reason='evidence_missing'`として`ops.readiness.alert`を発火。
+- `OpsReadinessService.raise_alert()`は`ops_readiness_score`が75未満の際に加え、証跡欠損時に`OpsEvidenceMissing`例外を添付し、`HealthMonitor.raise('warning','ops_evidence_gap')`で`BoardMode=guarded`推奨。
+- `OpsReadinessService.generate_report()`は不足証跡一覧をMarkdownセクション「Evidence Gaps」として`reports/ops/readiness/<YYYYWW>.md`へ追記し、各項目にRunbookリンク＋`validation_playbook_id`を表示。
+- `Scheduler`連携: 週次ジョブ`OpsEvidenceRefreshJob`が`OpsEvidenceStore.lookup`で期限切れ間近（7日以内）を検出し、`ops_worklog`へTODOを追加。`AutomationEffectTracker`は証跡更新による工数削減を記録。
+
+### 45.3 CLI/Validation/テスト
+
+- **CLI** (`tradectl ops evidence …`, `src/interfaces/cli/ops.py`):
+  | コマンド | 用途 | 主なオプション |
+  | --- | --- | --- |
+  | `tradectl ops evidence list --category backup` | 証跡一覧 | `--since`, `--json`, `--include-expired` |
+  | `tradectl ops evidence add --category drill --runbook RUN-DATA-05 --artifact reports/ops/incidents/20250220_data_latency.md` | 証跡登録 | `--confidence 0.95`, `--expires 30d`, `--validation-playbook AC-45` |
+  | `tradectl ops evidence expire --id <uuid>` | 失効処理 | `--reason`, `--force` |
+- **Validation Data Playbook**: 証跡登録時に`validation_playbook_id`へ自動追記する`ops_evidence sync`サブコマンドを提供し、`reports/validation_log/<id>.md`とハッシュを同期。
+- **テスト**:
+  - `tests/unit/test_ops_evidence_store.py`: 登録/失効/ハッシュ検証/署名添付。
+  - `tests/cli/test_ops_evidence_cli.py`: CLI操作シナリオ、Validation Playbook更新。
+  - `tests/integration/test_ops_readiness_evidence.py`: 証跡欠損→スコア0→`HealthMonitor`警告のE2E。
+- **Codex Packet案**:
+  | Packet ID | 範囲 | テスト |
+  | --- | --- | --- |
+  | `OPS-P3` | `OpsEvidenceStore`実装＋CLI | `pytest -k ops_evidence_store`, `tradectl ops evidence add --dry-run` |
+  | `OPS-P4` | `OpsReadinessService`との統合（証跡リセット） | `pytest -k ops_readiness_evidence`, `tests/integration/test_ops_readiness_evidence.py` |
+  | `OPS-P5` | Validation Data Playbook同期スクリプト | `make ops-evidence-sync` |
+- **Ops受入**: `TR-30`（証跡登録→Validation Data Playbook更新→期限切れシミュレーション→Health警告）を実施し、`docs/trader_signoff/OPS-P4.md`と`reports/ops/evidence_audit/<date>.md`へ記録。
+
+---
+
+これらの追補により、スケーリング余力の見積もり・プロファイル差分ガバナンス・Ops証跡の可監査性が整備され、CodexがM1.1〜M2へ向けたリソース最適化と設定統制、Opsレディネス維持タスクを段階的に実装できる。
 
 これらの追補により、ジャーナル・ドリフト監視・ベンチマークリプレイ・運用健全性ダッシュボードに加えて、オフライン配布/サプライチェーン/セキュリティ統制までカバーする詳細設計が整備された。CodexへM1.1〜M2向けの実装パケットを明確に提示するとともに、トレーダー/Ops/研究チームがRunbookとValidation Data Playbookを基に運用・監査を継続改善できる構成とした。
