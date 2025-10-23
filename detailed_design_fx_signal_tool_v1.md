@@ -3753,3 +3753,285 @@ FR-64はPaper/Live約定ログとブローカーステートメントを突合�
 ---
 
 これらの節により、ストレステスト・流動性監視・ステートメント突合といったM1.1〜M1.2で強化すべきリスク管制領域の詳細設計が整備された。Codexへ実装を委任する際は、本書の該当節とRunbook/Validation Data Playbookのリンクを必ず添付し、テスト指示・監査証跡要件を事前に明示することで、後続スプリントの品質とスループットを維持できる。
+## 26. ストラテジーリサーチ & 昇格ワークフロー詳細設計（FR-55/FR-62, M2準備）
+
+FR-55/FR-62では、研究段階のストラテジーを一元管理し、`ideas/`→`research/`→`paper/`→`ready`の各ステージで必須エビデンスとレビ
+ュー手順を定義する。本節では`src/research/pipeline.py`とCLI `tradectl research *`を軸に、Codexが段階的に実装できるモジュール構成・
+データモデル・Runbook連携を明確化する。M1 Coreではテンプレ生成と手動チェックリストを提供し、M2で自動整合チェックと昇格ゲートを
+強制化する。
+
+### 26.1 IdeaRegistry & ResearchManifest (`src/research/registry.py`, `research/ideas/`)
+
+- **目的**: ストラテジー候補のメタデータと検証進捗をトラックし、昇格判定で参照できる状態に保つ。
+- **データモデル**:
+  | モデル | フィールド | 説明 |
+  | --- | --- | --- |
+  | `IdeaRecord` | `idea_id`, `title`, `owner`, `created_at`, `hypothesis`, `data_sources`, `risk_flags`, `stage ∈ {'draft','screening','paper','ready'}`,
+`next_actions`, `reviewers`, `tags`, `manifest_path` | `ideas/<idea_id>/manifest.yaml`のロード結果。 |
+  | `ResearchManifest` | `schema_version='research.manifest.v1'`, `strategy_id`, `idea_id`, `datasets`, `metrics`, `validation_windows`, `risk_controls`, `last_validated_at`, `status` | Paper/Ready昇格に必須の検証根拠。 |
+  | `StageChecklist` | `stage`, `required_evidence`, `completed`, `signoff`, `artifacts[]` | Runbookテンプレと紐付くチェック項目。 |
+- **責務**:
+  1. `IdeaRegistry.load(root='research/ideas')`でManifestを走査し、ステージごとの整合性を検証。
+  2. `advance_stage(idea_id, target_stage)`でStageChecklistの完了とサインオフを必須とし、未達時は`StageIncompleteError`。
+  3. `link_research_manifest(idea_id, manifest_path)`で`ResearchManifest`を参照し、`Validation Data Playbook` IDと一致するか検証。
+  4. `generate_report(idea_id)`で`reports/research/ideas/<idea_id>.md`を生成し、Opsレビュー用サマリを出力。
+- **Runbook**: `docs/runbooks/RES-IDEA-01.md`を整備し、各ステージの承認者・必須指標・再評価サイクル（90営業日）を定義。
+- **イベント**: `research.idea.stage_changed`, `research.idea.checklist_updated`, `research.idea.report_generated`。`AuditRecord`に昇格判定ログを残す。
+
+### 26.2 ResearchPipelineService (`src/research/pipeline.py`)
+
+- **構成**: `ResearchPipelineService`が`IdeaRegistry`, `ValidationSuite`, `BacktestRunner`, `RiskReviewBridge`を協調させる。
+- **主なAPI**:
+  | API | 入力 | 処理 | 出力 | 異常系 |
+  | --- | --- | --- | --- | --- |
+  | `ResearchPipelineService.run_validation(strategy_id, window)` | `strategy_id`, `window_spec`, `ModeContext` | `FeaturePipeline`と同一条件でリプレイ→指標算出→`ValidationSuite`に記録 | `ValidationResult` | データ欠損: `ResearchDataError` |
+  | `ResearchPipelineService.generate_manifest(strategy_id)` | `strategy_id` | 最新指標・ハッシュ・Runbookリンクを集約し`strategy_manifest.yaml`テンプレを出力 | `ManifestDraft` | 生成失敗: `ResearchManifestError` |
+  | `ResearchPipelineService.evaluate_gate(strategy_id, stage)` | `stage`に応じた必須指標/Runbook完了/Reviewerサインを確認 | `GateEvaluationResult`（`pass|fail`, `reasons`) |  |
+  | `ResearchPipelineService.promote(strategy_id, target)` | `target ∈ {'paper','ready'}` | Gate評価→`AuditRecord`作成→`strategy_registry.promote`呼び出し | `PromotionRecord` | `GateFailedError`, `PromotionConflictError` |
+- **ValidationSuite**: `tests/fixtures/research/validation_suite.yaml`に基づき、`PF`, `Sharpe`, `MaxDD`, `HitRate`, `R_eff`を保持。`ValidationResult`が`reports/research/validation/<strategy_id>_<window>.md`を生成。
+- **RiskReviewBridge**: リスク審査項目（`stop_distance`, `max_position`, `news_filter`)を`docs/risk_review/<strategy_id>.md`へ記録し、Opsレビュー用リンクを返す。
+
+### 26.3 CLI `tradectl research *`
+
+- **サブコマンド**:
+  | コマンド | 説明 | オプション | 出力 |
+  | --- | --- | --- | --- |
+  | `tradectl research idea list` | Idea一覧表示 | `--stage`, `--owner`, `--json` | `IdeaRecord`テーブル、Runbookリンク |
+  | `tradectl research idea stage --id <idea>` | ステージ遷移 | `--to`, `--note`, `--force`（監査用途のみ） | Stageチェック結果、未達項目リスト |
+  | `tradectl research validate --strategy <id>` | 指定戦略のValidation Suite実行 | `--window 90d`, `--mode backtest|paper`, `--export-md` | KPI表、Runbook添付指示 |
+  | `tradectl research promote --strategy <id> --to paper|ready` | 昇格処理 | `--dry-run`, `--note`, `--attach-report` | Gate評価、AuditログID |
+  | `tradectl research checklist --id <idea>` | Checklist状況表示 | `--stage`, `--json` | 未完了タスク一覧、Runbookリンク |
+- **UX**: Richで`PF/Sharpe/MaxDD`を色分け表示。Gate失敗時は赤背景で不足項目（`Validation Data Playbook`, `Risk Review`, `Ops Signoff`）を列挙。
+- **Approvalテスト**: `tests/approval/cli/research_promote/`でCLI出力スナップショットを保持。
+
+### 26.4 Codex Packet計画 & テレメトリ
+
+- **Codex Packet**:
+  | Packet ID | 範囲 | 依存節 | 成果物 | テスト |
+  | --- | --- | --- | --- | --- |
+  | `EP06-P1` | IdeaRegistry + CLI `idea list/stage/checklist` | §26.1, §26.3 | `src/research/registry.py`, CLI, Runbookテンプレ整備 | `pytest -k research_registry`, `pytest-approvaltests -k research_idea` |
+  | `EP06-P2` | ResearchPipeline Validation/Gate | §26.2 | `src/research/pipeline.py`, ValidationSuite, Manifest生成 | `pytest -k research_pipeline`, `tradectl research validate --strategy demo --export-md` |
+  | `EP06-P3`（M2） | 昇格自動化+Audit連携 | §26.2, §26.3 | `promotion`処理、`audit`イベント、Runbook更新 | `pytest -k research_promote`, `pytest-approvaltests -k research_promote` |
+- **テレメトリ**: `metrics/research_pipeline.jsonl`で`validation_count`, `gate_failures`, `promotion_pass_rate`, `avg_validation_runtime_sec`を記録。閾値: Gate失敗率>40%でOpsレビューを自動起票。
+- **Ops受入**: `TR-16`: Idea登録→Validation実行→Paper昇格→Runbook記録。`TR-17`: Gate失敗時の改善タスク記録と再挑戦。
+
+---
+
+## 27. ストラテジーガバナンス & Manifest検証強化設計（FR-56, M2準備）
+
+FR-56では`strategy_manifest.yaml`の整合性・有効期限・依存データを管理し、無効化条件を自動判定する。本節は`src/strategies/manifest.py`の拡張とCLI `tradectl strategy manifest`の詳細設計を定義し、Codexが既存`StrategyRegistry`と連携しやすい構造を提示する。
+
+### 27.1 StrategyManifestValidator (`src/strategies/manifest.py`)
+
+- **責務**:
+  1. `load(path)`でpydanticモデル`StrategyManifest`を検証。`schema_version='strategy.manifest.v2'`を採用。
+  2. `validate_expiry(manifest)`で`expires_at < today`または`last_validated_at > 90d`を検知し、`ManifestStatus='deprecated'`を設定。
+  3. `validate_dependencies(manifest)`で`data_manifest`ハッシュ・`research_manifest`リンク・`required_features`の存在を確認。
+  4. `evaluate_risk_profile(manifest)`で`risk_band`（`low|medium|high`）を算出し、`RiskDisclosure`と整合性を確認。
+- **エラー**: `ManifestSchemaError`, `ManifestExpiredError`, `ManifestDependencyError`, `ManifestRiskInconsistentError`。
+- **ステータス管理**: `StrategyRegistry`に`status`フィールドを追加し、`active|deprecated|blocked|draft`を制御。`blocked`は手動Overrideのみ可。
+
+### 27.2 CLI & 自動リマインダ
+
+- **CLIコマンド**:
+  | コマンド | 説明 | 主なオプション |
+  | --- | --- | --- |
+  | `tradectl strategy manifest validate --id <strategy>` | Manifest検証 | `--fix-expiry`, `--force-status`, `--json` |
+  | `tradectl strategy manifest list --status deprecated` | ステータス一覧 | `--sort expires_at`, `--owner` |
+  | `tradectl strategy manifest renew --id <strategy>` | 再検証記録 | `--validation-report <file>`, `--note` |
+- **通知**: `Scheduler`が週次で`ManifestHealthJob`を実行し、`expires_in_days <= 14`の戦略を`ops_worklog`へTODO登録。Signal Boardは`deprecated`戦略を灰色表示し、承認時に`ManifestRenewalRequiredError`を返す。
+- **Runbook**: `docs/runbooks/RES-MANIFEST-01.md`に再検証手順・承認者・証跡格納場所を明記。
+- **テレメトリ**: `metrics/strategy_manifest.jsonl`で`active_count`, `deprecated_count`, `expired_count`, `renewal_pending`を追跡。
+- **Codex Packet**: `EP06-P4`（M2）として`StrategyManifestValidator`・CLI・Schedulerジョブを実装。テスト: `pytest -k strategy_manifest`, `pytest-approvaltests -k strategy_manifest_cli`。
+
+---
+
+## 28. パフォーマンスアトリビューション基盤設計（FR-57, M2準備）
+
+FR-57は戦略カテゴリ別のパフォーマンス指標と貢献度を可視化し、キャピタル配分会議で活用する。本節は`src/reporter/attribution.py`と`tradectl report weekly --with-attribution`の拡張を定義する。
+
+### 28.1 AttributionEngine (`src/reporter/attribution.py`)
+
+- **入力**: `TicketRecord`, `FillRecord`, `StrategyCategory`, `MarketRegime`。`StrategyRegistry`が`category`, `regime_tags`を提供。
+- **算出指標**: `profit_factor`, `sharpe`, `hit_rate`, `avg_r`, `max_dd`, `r_contrib`, `alpha_score_delta`。カテゴリ/戦略/通貨ペア別に集計。
+- **処理フロー**:
+  1. `classify_records()`で各Fillをカテゴリ/レジームへ分類。
+  2. `aggregate_metrics(window=7d|30d)`でローリング統計を算出。
+  3. `compare_benchmark()`で外部ベンチマークとの差分を算出し、`BenchmarkComparison`を生成。
+  4. `generate_highlights()`でTop/Bottom3を抽出し、Runbook向けコメントテンプレを生成。
+- **出力**: `AttributionReport`（JSON/Markdown）。`reports/weekly/templates/m1_core.md`の`Attribution`節を自動埋め。
+- **イベント**: `report.attribution.generated` → `ops_worklog`へレビューTODO追加。
+
+### 28.2 CLI/レポート統合
+
+- `tradectl report weekly --with-attribution`が`AttributionEngine`を起動し、Richテーブルでカテゴリ別指標、Stacked Barチャートを表示。
+- `--compare-benchmark`で外部ベンチマーク差分を表示し、`Validation Data Playbook`の`benchmark`節とリンク。
+- `reports/weekly/<YYYYWW>.md`に以下を出力:
+  1. カテゴリ別指標表。
+  2. 通貨ペアTop3/Bottom3。
+  3. `actions_required`（キャピタル再配分提案）。
+  4. Runbook `CAP-ALLOC-01`リンク。
+- **Approvalテスト**: `tests/approval/reports/weekly_attribution/`を新設。
+
+### 28.3 テスト & Codex Packet
+
+- **ユニットテスト**: `tests/unit/test_attribution_engine.py`で分類/集計/ベンチマーク差分を検証。
+- **統合テスト**: `tests/integration/test_weekly_report_attribution.py`で週次レポート生成を確認。
+- **Codex Packet**: `EP05-P6`（M2）にてEngine+レポート統合を実装。テスト指示: `pytest -k attribution_engine`, `tradectl report weekly --with-attribution --dry-run`。
+- **テレメトリ**: `metrics/reports_attribution.jsonl`に`run_duration_sec`, `highlighted_pairs`, `capital_reallocation_flags`を記録。
+
+---
+
+## 29. マルチアカウント統合基盤設計（FR-58, M2+）
+
+FR-58は複数ブローカー/口座の残高・ポジションを統合し、リスク評価やレポートで横断的に可視化する。本節では`src/accounts/aggregator.py`とCLI `tradectl accounts *`を中心に設計を定義する。M1 Coreでは単一口座前提のまま、M2で拡張を投入できるようフックを用意する。
+
+### 29.1 AccountAggregator (`src/accounts/aggregator.py`)
+
+- **データモデル**:
+  | モデル | 説明 |
+  | --- | --- |
+  | `AccountProfile` | `broker_id`, `account_id`, `mode ∈ {'live','paper','manual'}`, `base_currency`, `leverage`, `status`, `data_source`, `update_interval`, `notes` |
+  | `AccountSnapshot` | `ts`, `balance`, `equity`, `margin_used`, `free_margin`, `open_positions`, `floating_pnl`, `swap`, `status` |
+  | `PositionRecord` | `symbol`, `side`, `lots`, `avg_price`, `unrealized_pnl`, `open_ts`, `tags` |
+  | `AggregatedState` | `total_equity`, `total_margin`, `r_eff_total`, `account_breakdown[]`, `alerts[]` |
+- **責務**:
+  1. `load_profiles(config/accounts/*.yaml)`で口座設定を読み込み、pydantic検証。
+  2. `ingest_snapshot(account_id, source)`で各口座のデータを統合（CSV/API/手動）。
+  3. `calculate_risk()`で口座別/総合の`R_eff`, `margin_ratio`, `exposure_by_symbol`を算出。
+  4. `generate_alerts()`で`free_margin_pct`, `drawdown_pct`, `data_staleness`を評価し、`AccountAlert`を生成。
+- **EventBus**: `accounts.snapshot.updated`, `accounts.alert.raised`, `accounts.aggregate.updated`。
+- **Integration**: `RiskManager`は`AggregatedState`を参照して`FR-36/51`のガードを計算。`TicketBuilder`は口座別制約を提示。
+
+### 29.2 CLI & レポート
+
+- **CLI**:
+  | コマンド | 説明 | オプション |
+  | --- | --- | --- |
+  | `tradectl accounts status` | 口座一覧と最新スナップショット | `--account`, `--json`, `--with-positions` |
+  | `tradectl accounts ingest --profile <id>` | 手動CSV/APIからスナップショット取得 | `--path`, `--format`, `--tz`, `--append` |
+  | `tradectl accounts aggregate` | 総合指標の計算 | `--export-md`, `--since`, `--account-filter` |
+  | `tradectl accounts alerts` | アラート一覧 | `--severity`, `--ack` |
+- **UX**: Richで口座ごとの`free_margin_pct`, `drawdown`をゲージ表示。アラートはRunbook `RUN-ACC-01`へリンク。
+- **レポート**: `reports/weekly/<YYYYWW>.md`に`Accounts`節を追加し、口座別P&Lとアラート要約を出力。
+- **テスト**: `tests/unit/test_account_aggregator.py`, `tests/integration/test_accounts_cli.py`, `tests/approval/cli/accounts_status/`。
+- **Codex Packet**: `EP04-P4`（M2+）でAggregator/CLIを実装。テスト指示: `pytest -k account_aggregator`, `tradectl accounts status --json`。
+- **テレメトリ**: `metrics/accounts_aggregator.jsonl`に`ingest_latency`, `stale_accounts`, `alerts_count`を記録。
+
+---
+
+## 30. 監査パッケージ生成設計（FR-59, M2準備）
+
+FR-59は月次/四半期で監査パックを生成し、外部レビューに提供する。本節では`src/audit/bundle.py`とCLI `tradectl audit bundle`の詳細を定義し、`DataManifest`・`RiskDisclosure`・`Reconciliation`など他モジュールと連携する方法を明確にする。
+
+### 30.1 AuditBundleService (`src/audit/bundle.py`)
+
+- **入力**: `data_manifest`, `audit_logs`, `ticket_history`, `fill_logs`, `risk_consent`, `reconciliation_reports`, `runbook_logs`。
+- **処理フロー**:
+  1. `collect_sources(period)`で指定期間のファイル/ログを収集。
+  2. `normalize_records()`で共通スキーマ`AuditRecord`へ整形。
+  3. `package()`で`audit_pack/<period>/`へMarkdown/CSV/JSON・署名ファイルを格納。
+  4. `generate_manifest()`で`audit_manifest.json`を作成し、`SignatureEnvelope`を付与。
+- **スキーマ**: `AuditBundleManifest`に`schema_version='audit.bundle.v1'`, `period`, `files[]`, `hash`, `signature`, `notes`。
+- **バックアップ**: `scripts/archive_audit_bundle.sh`でWORM保存。
+- **EventBus**: `audit.bundle.generated`（`period`, `files`, `hash`）。
+
+### 30.2 CLI `tradectl audit bundle`
+
+- **サブコマンド**:
+  | コマンド | 用途 |
+  | --- | --- |
+  | `tradectl audit bundle generate --period 2025Q1` | 監査パック生成（Markdown/ZIP） |
+  | `tradectl audit bundle verify --path audit_pack/2025Q1` | ハッシュ・署名検証 |
+  | `tradectl audit bundle list` | 生成済み一覧表示 |
+- **UX**: 生成時に進捗バー、完了後にファイル一覧とハッシュを表示。`--signer`指定で署名者メタデータを付与。
+- **Runbook**: `docs/runbooks/GOV-AUD-01.md`を更新し、生成/配布/保管手順を明記。
+- **テスト**: `tests/unit/test_audit_bundle_service.py`, `tests/integration/test_audit_bundle_cli.py`。
+- **Codex Packet**: `EP05-P7`（M2）でサービス/CLI/署名統合を実装。テスト: `pytest -k audit_bundle`, `tradectl audit bundle generate --period 2025Q1 --dry-run`。
+- **テレメトリ**: `metrics/audit_bundle.jsonl`に`bundle_size_mb`, `files_count`, `generation_time_sec`, `verification_failures`を記録。
+
+---
+
+## 31. リリースゲート & チェックリスト自動化設計（FR-60, M2準備）
+
+FR-60はリリース前の必須チェック（Backtest回帰、データソース切替、リスク承諾文言差分）を自動生成し、未完了時のタグ付けを防ぐ。本節は`src/release/gate.py`とCLI `tradectl release *`を詳細化する。
+
+### 31.1 ReleaseGateService (`src/release/gate.py`)
+
+- **責務**:
+  1. `prepare(version)`で`release_checklist.md`をテンプレから生成し、必須タスク（テスト、Runbook更新、Risk Disclosure確認）を列挙。
+  2. `record_result(task_id, status, evidence_path)`でチェック結果を更新し、`AuditRecord`へ記録。
+  3. `verify_completion(version)`で全タスク完了と証跡確認を行い、未完了なら`ReleaseBlockedError`。
+  4. `tag_release(version)`でGitタグ作成前に再検証し、OKなら`git tag`を実行（Codexには`subprocess`でなく`dulwich`等を利用させる）。
+- **チェック項目例**: Backtest回帰 (`pytest -k backtest_regression`), Dataフェイルオーバー演習記録, Risk Disclosure文言差分レビュー。
+- **EventBus**: `release.gate.prepared`, `release.gate.completed`, `release.gate.blocked`。
+
+### 31.2 CLI & CI連携
+
+- **CLIサブコマンド**:
+  | コマンド | 説明 |
+  | --- | --- |
+  | `tradectl release prepare --version v1.1.0` | チェックリスト生成 |
+  | `tradectl release record --task backtest_regression --status pass --evidence reports/tests/backtest_v110.md` | 結果記録 |
+  | `tradectl release verify --version v1.1.0` | 完了検証 |
+  | `tradectl release tag --version v1.1.0` | タグ作成（要`verify`通過） |
+- **CIフック**: `make release-verify`で`tradectl release verify`を実行し、未完了タスクをCI失敗にする。`docs/templates/release_checklist.md`を参照。
+- **Runbook**: `docs/runbooks/OPS-RELEASE-01.md`に承認フローとトラブルシュートを記載。
+- **テスト**: `tests/unit/test_release_gate_service.py`, `tests/integration/test_release_cli.py`。
+- **Codex Packet**: `EP07-P1`（M2）でGateService/CLI/CIターゲットを実装。テスト: `pytest -k release_gate`, `tradectl release prepare --version v1.1.0 --dry-run`。
+- **テレメトリ**: `metrics/release_gate.jsonl`に`tasks_total`, `tasks_completed`, `blocked_reason`, `time_to_release_minutes`を記録。
+
+---
+
+## 32. アルファスコアボード & デケイスコア算出設計（FR-61, M2+）
+
+FR-61は戦略ごとの`alpha_score`と`decay_score`を算出し、Signal Boardで可視化する。本節は`src/strategies/scoring.py`と`StrategyRegistry`拡張を定義する。
+
+### 32.1 StrategyScoringService (`src/strategies/scoring.py`)
+
+- **指標構成**:
+  - `alpha_score`: `profit_factor`, `sharpe`, `stability_index`（週次PFの標準偏差逆数）、`regime_fit`（トレンド/レンジ適合度）。各項目0〜100でスコアリングし、重み`[0.35, 0.30, 0.20, 0.15]`。
+  - `decay_score`: 過去24週の`alpha_score`トレンドから算出（線形回帰傾きを標準化）。
+- **API**:
+  | 関数 | 説明 |
+  | --- | --- |
+  | `StrategyScoringService.calculate(strategy_id, window=24w)` | ヒストリカル指標を取得し、`alpha_score`/`decay_score`/`rank`を返す |
+  | `StrategyScoringService.update_registry()` | 全戦略のスコアを再計算し、`StrategyRegistry`へ反映 |
+  | `StrategyScoringService.generate_report()` | `reports/research/alpha_score/<YYYYWW>.md`を生成 |
+- **Signal Board表示**: `StrategyRegistry`に`score_summary`を保持し、`tradectl board`で灰色表示（`alpha_score<75`または`decay_score>35`）。`watchlist`タグ付与とRunbook `RES-SCORE-01`を提示。
+- **テレメトリ**: `metrics/strategy_scores.jsonl`で`alpha_score_avg`, `decay_score_avg`, `watchlist_count`を記録。
+- **テスト**: `tests/unit/test_strategy_scoring.py`, `tests/integration/test_board_scores.py`。
+- **Codex Packet**: `EP06-P5`（M2+）でスコア算出・Board統合を実装。テスト指示: `pytest -k strategy_scoring`, `pytest-approvaltests -k board_scores`。
+
+---
+
+## 33. オペレーションレディネス指標設計（FR-63, M2準備）
+
+FR-63はRunbook整備・訓練・バックアップ整合をスコア化し、75未満で`HealthState=soft_stop`へ遷移させる。本節は`src/ops/readiness.py`とCLI `tradectl ops readiness`の詳細を示す。
+
+### 33.1 OpsReadinessService (`src/ops/readiness.py`)
+
+- **指標構成**:
+  | コンポーネント | 重み | 計測方法 |
+  | --- | --- | --- |
+  | `backup_integrity` | 0.25 | `SnapshotManager.verify()`結果、直近30日で成功率 |
+  | `runbook_freshness` | 0.20 | `docs/runbooks/index.json`の`last_reviewed_at`を参照 |
+  | `incident_drills` | 0.20 | `ops_worklog`の`drill_completed`記録件数 |
+  | `automation_coverage` | 0.15 | `AutomationEffectTracker`の削減時間指標 |
+  | `training_completion` | 0.20 | `docs/trader_signoff/*.md`の最新サイン日付 |
+- **API**:
+  | 関数 | 説明 |
+  | --- | --- |
+  | `OpsReadinessService.calculate(window=30d)` | 各コンポーネントをスコアリングし、合計スコアを返す |
+  | `OpsReadinessService.raise_alert(threshold=75)` | スコア不足で`HealthMonitor`へ`soft_stop(ops_readiness)`を通知 |
+  | `OpsReadinessService.generate_report()` | `reports/ops/readiness/<YYYYWW>.md`を生成し、改善アクションを列挙 |
+- **EventBus**: `ops.readiness.calculated`, `ops.readiness.alert`。
+- **UX**: CLI `tradectl ops readiness`がゲージ表示・不足要因を色付きで提示。`--json`でCI向け出力。
+- **Runbook**: `docs/runbooks/OPS-READINESS-01.md`を参照し、不足要因に対応するタスク（例: Runbookレビュー、DR演習）を提示。
+- **テスト**: `tests/unit/test_ops_readiness_service.py`, `tests/integration/test_ops_readiness_cli.py`。
+- **Codex Packet**: `EP07-P2`（M2）でサービス/CLI/Health統合を実装。テスト指示: `pytest -k ops_readiness`, `tradectl ops readiness --json`。
+- **テレメトリ**: `metrics/ops_readiness.jsonl`で`readiness_score`, `component_scores`, `alerts_triggered`を記録。スコアが2週連続75未満の場合はOps会議アジェンダに自動追加。
+
+---
+
+これらの章を追加することで、研究〜運用ガバナンス・監査・リリース管理・OpsレディネスといったM2以降の高度要件に対する詳細設計が揃い、Codexが段階的に実装パケットへ落とし込める。
