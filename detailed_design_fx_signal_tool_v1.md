@@ -2415,6 +2415,7 @@ linked_runbook: docs/runbooks/RUN-XXXX-YY.md
 #### 付録G.4 Model Risk Register Service (`src/governance/model_risk.py`)
 - **公開API**: `scan_register()`, `open_gap(strategy_id, reason)`, `resolve_gap(gap_id, evidence_paths)`。
 - **入力データ**: `model_risk_register.md`, `reports/model_risk/<strategy>.md`, `tickets/model_revalidate/*.md`, Scoreboardの`watchlist`フラグ。
+- **ファイル形式**: `ModelRiskRegisterLoader`がMarkdownのFront Matterと戦略テーブルを解析し、`model_risk_register_v1`スキーマへマッピングする。補助メタファイル`model_risk_register.meta.yaml`は同ローダーのASTを再利用して生成し、生成処理は`logs/audit/model_risk_register_<YYYYMMDD>.jsonl`に記録する。
 - **主要ロジック**: `scan_register`が`model_risk_register.md`をAST解析し、各戦略の最終評価日/担当/エビデンスリンクを抽出。未更新>90日、Explainability添付欠落、`watchlist=true`でタスク未完了の場合は`model_risk_gap`を生成しEventBusへ通知（FR-62, AC-49）。
 - **イベント/連携**: `model_risk.gap_opened`でOps Readiness Evaluatorへ通知しOpsスコアからペナルティ。`resolve_gap`完了時は`model_risk.gap_resolved`を発火し、Scoreboardへ解除を通知。Kill Switch解除条件に`gap_status=closed`が追加される。
 - **異常系**: Registerファイル解析失敗→`ModelRiskRegisterCorrupted`で`HealthMonitor.soft_stop(model_risk)`。証跡リンク無効時は`OpsEvidenceMissing`と同じ扱いでOpsスコアを強制減点。
@@ -4692,7 +4693,8 @@ M1 Coreではスタブに留めているModel Risk Registerを、M1.1〜M2で段
   | `RiskIssue` | `id`, `category∈{'data','drift','explainability','governance'}`, `severity`, `description`, `mitigation`, `evidence_id`, `runbook_ref`, `opened_at`, `resolved_at?` | 既知リスクと是正策。 |
   | `ExplainabilityArtifact` | `strategy_id`, `artifact_type∈{'shap_summary','shap_waterfall','ice','feature_importance','residual_plot'}`, `path`, `hash`, `generated_at`, `tool_version`, `dataset_hash`, `notes`, `linked_ticket?` | Explainability証跡のメタ。 |
   | `ValidationChecklist` | `strategy_id`, `items:list[ChecklistItem]`, `completed_pct`, `last_sync_at`, `linked_manifest_hash` | Runbook `GOV-STRAT-01`と突合するチェックリスト。 |
-- **保管先**: YAML/JSONレジスタは`docs/governance/model_risk_register.yaml`（Git管理）、証跡ファイルは`reports/model_risk/<strategy_id>/<YYYYMMDD>/`配下。大容量画像は`artifacts/model_risk/<strategy_id>/`へ格納し、SHA256を`ExplainabilityArtifact.hash`に記録。Validation Data Playbook項目`AC-52_model_risk`が証跡ディレクトリとRunbook参照を保持。
+- **保管先**: 正本はMarkdownレジスタ`docs/governance/model_risk_register.md`（Git管理）。証跡ファイルは`reports/model_risk/<strategy_id>/<YYYYMMDD>/`配下に保管し、大容量画像は`artifacts/model_risk/<strategy_id>/`へ格納してSHA256を`ExplainabilityArtifact.hash`に記録。Validation Data Playbook項目`AC-52_model_risk`（`reports/validation_log/AC-52_model_risk.md`）が証跡ディレクトリとRunbook参照を保持。
+- **補助メタ**: 自動化が必要とする場合のみ`docs/governance/model_risk_register.meta.yaml`をMarkdownから生成（`tradectl model-risk render-meta`）。生成時は`logs/audit/model_risk_register_<YYYYMMDD>.jsonl`へコマンド・Gitリビジョン・ハッシュを追記し、補助ファイルの整合性を保証する。
 - **状態遷移**:
   1. `pending` → `approved`: `ModelRiskRegisterService.submit_review()`が承認者サインとEvidenceリンクを検証。`approved`時は`next_review_due = submitted_at + review_cycle_days`（既定90日）。
   2. `approved` → `expired`: `next_review_due < today`または`StrategyManifest`更新で`manifest_hash`が変わった場合。`expired`はScoreboardへ`watchlist=true`を通知し、Idea Pipelineは昇格を拒否。
@@ -4703,12 +4705,14 @@ M1 Coreではスタブに留めているModel Risk Registerを、M1.1〜M2で段
 
 | API/関数 | 入力 | 処理 | 出力 | 異常系 |
 | --- | --- | --- | --- | --- |
-| `ModelRiskRegisterService.load(register_path)` | YAML/JSONパス、`SchemaRegistry` | スキーマ検証→データクラス変換→キャッシュ | `ModelRiskRegister` | `ModelRiskSchemaError` |
+| `ModelRiskRegisterService.load(register_path)` | Markdownパス、`SchemaRegistry` | Markdown ASTを解析→`model_risk_register_v1`スキーマ検証→データクラス変換→キャッシュ | `ModelRiskRegister` | `ModelRiskSchemaError` |
 | `ModelRiskRegisterService.submit_review(entry, evidence_refs, reviewers)` | `ModelRiskEntry`更新差分、証跡リスト、レビュア | 必須Evidence存在確認→`ValidationChecklist`突合→承認者二重署名→イベント発火 | `ModelRiskApprovalReceipt` | `ModelRiskEvidenceMissing`, `ModelRiskReviewDenied` |
 | `ModelRiskRegisterService.record_issue(entry, issue)` | 戦略ID、`RiskIssue` | 既存エントリへ課題追記→`watchlist=true`設定→`model_risk.issue_raised`イベント | 更新済み`ModelRiskEntry` | `ModelRiskEntryNotFound` |
 | `ModelRiskRegisterService.attach_artifact(artifact)` | `ExplainabilityArtifact` | ハッシュ検証→メタ保存→`ops_worklog`記録 | `ArtifactReceipt` | `ModelRiskArtifactInvalid`, `ArtifactHashMismatch` |
 | `ModelRiskRegisterService.snapshot()` | なし | 全エントリをJSONにエクスポートし`reports/governance/model_risk_snapshot_<date>.json`保存 | `ModelRiskSnapshot` | `ModelRiskSnapshotError` |
 | `ModelRiskRegisterService.evaluate_strategy(strategy_id)` | `strategy_id`, `manifest_hash`, `scoreboard_metrics`, `idea_stage` | Manifest/Idea/Scoreboard情報と突合し、`status`/`actions_required`を算出 | `ModelRiskAssessment` | `ModelRiskEntryNotFound`, `ManifestMismatchError` |
+
+- **ローダー実装**: `ModelRiskRegisterLoader`が`markdown-it-py`でMarkdownをAST化し、Front Matterのメタデータと戦略セクションのテーブルを抽出する。抽出結果は`SchemaRegistry.register('model_risk_register_v1')`へ照会し、未定義カラムは`ModelRiskSchemaError`として扱う。補助メタファイル（`.meta.yaml`）生成時も同じASTを再利用して整合性を保証する。
 
 ### 46.2 Explainability Evidenceパイプライン
 
@@ -4724,7 +4728,7 @@ M1 Coreではスタブに留めているModel Risk Registerを、M1.1〜M2で段
   | `ice` | `.../ice_feature_<name>.png` | 主要特徴のICE曲線。 |
   | `residual_plot` | `.../residuals.png` | 予測誤差のヒストグラム/QQプロット。 |
   | `drift_report` | `.../drift_report.json` | 最新期間vs最適化期間の分布比較。`ParameterDriftMonitor`と共有。 |
-- **Runbook連携**: `docs/runbooks/GOV-STRAT-01.md`にExplainability生成チェックリストを追加（`tools/generate_explainability.py`実行、Evidence確認、Model Risk Register更新、Validation Data Playbookリンク確認）。承認サインは`model_risk_register.yaml`の`reviewers`フィールドと一致させ、手動操作は`ops_worklog`へ`task='model_risk_review'`として記録。
+- **Runbook連携**: `docs/runbooks/GOV-STRAT-01.md`にExplainability生成チェックリストを追加（`tools/generate_explainability.py`実行、Evidence確認、Model Risk Register更新、Validation Data Playbookリンク確認）。承認サインは`model_risk_register.md`の`reviewers`セクションと一致させ、手動操作は`ops_worklog`へ`task='model_risk_review'`として記録。
 - **Feature Flag**: `governance.model_risk_register_enabled=false`（M1 Core）はEvidence生成を任意化。Flagを`true`へ切替時に`ModelRiskRegisterService.migrate_from_stub()`が既存Stubファイルを`status='pending'`で初期化し、初回レビューを要求する。
 
 ### 46.3 CLI/イベント連携
@@ -4740,7 +4744,7 @@ M1 Coreではスタブに留めているModel Risk Registerを、M1.1〜M2で段
   - `scoreboard.generated`: `ModelRiskRegisterService`が`watchlist`戦略を参照し、`scoreboard`へ`model_risk_status`フィールドを付与。`watchlist=true`かつ`status∈{'expired','blocked'}`の場合、Signal Boardは承認ボタンをロックし`model_risk_pending`バナーを表示。
   - `ideas.stage_changed`: Idea Pipelineが`stage='ready'`へ遷移する際、`ModelRiskAssessment.status`が`approved`以外なら遷移拒否し、`stage.blocked(reason='model_risk')`イベントを返却。
   - `pretrade.compliance.evaluate`: PreTradeComplianceServiceが`ModelRiskAssessment`を参照し、`status in {'blocked','expired'}`の場合は`ViolationDetail`へ`code='MODEL_RISK_UNAPPROVED'`を追加。OverrideにはQuant Lead+Ops Managerダブルサインが必須。
-  - `risk.consent_warning`: リスク開示更新時に`model_risk_register.yaml`の`disclosure_version`を更新し、Explainability証跡が古い場合は`issues`へ`category='governance'`で自動登録。
+  - `risk.consent_warning`: リスク開示更新時に`model_risk_register.md`の`disclosure_version`フロントマターを更新し、Explainability証跡が古い場合は`issues`へ`category='governance'`で自動登録。
 - **監査/証跡**: `audit.model_risk_review`（承認/却下）、`audit.model_risk_artifact`（Evidence登録）、`audit.model_risk_issue`（課題起票）を`logs/audit/model_risk_<YYYYMMDD>.jsonl`へ出力。`ops_worklog`に`task='model_risk_review'`や`task='explainability_generation'`を追記し、省力化効果を`automation_effect.jsonl`で追跡。
 
 ### 46.4 テレメトリ & テスト計画
@@ -4758,7 +4762,7 @@ M1 Coreではスタブに留めているModel Risk Registerを、M1.1〜M2で段
 
 | Packet ID | スコープ | 依存セクション | 成果物 | テスト/証跡 |
 | --- | --- | --- | --- | --- |
-| `EP06-MR-P1` | `ModelRiskRegisterService`本体・データモデル・YAML初期化 | §46.1 | `src/governance/model_risk.py`, `docs/governance/model_risk_register.yaml`テンプレ | `pytest -k model_risk_register` |
+| `EP06-MR-P1` | `ModelRiskRegisterService`本体・データモデル・Markdownローダー | §46.1 | `src/governance/model_risk.py`, `docs/governance/model_risk_register.md`テンプレ | `pytest -k model_risk_register` |
 | `EP06-MR-P2` | Explainability生成ツール・Artifact登録API・ValidationChecklist連携 | §46.2 | `tools/generate_explainability.py`, `reports/model_risk/<strategy>/`テンプレ, Checklist更新 | `pytest -k model_risk_artifacts`, CLIドライラン |
 | `EP06-MR-P3` | CLI/Scoreboard/Idea/PreTrade統合、イベント/監査 | §46.3 | `src/interfaces/cli/model_risk.py`, EventBus/PreTrade連携, Reporter差分 | `pytest -k model_risk_workflow`, `pytest-approvaltests -k model_risk_cli` |
 | `EP06-MR-P4` | メトリクス/レポート/Runbookテンプレ更新 | §46.4 | `metrics/model_risk.jsonl`収集、週次レポート節、Runbook `RUN-STRAT-02`ドラフト | `tradectl report weekly --with-model-risk --dry-run`, `pytest -k model_risk_metrics` |
