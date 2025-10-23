@@ -66,6 +66,7 @@
 - **I/O契約**: 追加関数・クラスのシグネチャ、例外、戻り値を表形式で記載。可能な限り`typing`注釈と`pydantic`モデル定義を明示する。
 - **テスト要件**: `pytest -k <keyword>`単位で実行指示を与え、成功/失敗判定基準と許容する浮動小数誤差を指定する。
 - **運用制約**: Spread・ニュース・Kill Switchといったトレーダー観点の制約は必ず背景に紐づけ、レビュー観点（例: 「Acceptable Degradation時でもSpread Guardの閾値を緩めない」）を明記する。
+- **スタイル/リンタ基準**: 実装者は`docs/development_style_and_linting.md`を参照し、言語/フレームワーク別のスタイル規約と`ruff`/`black`/`mypy`運用方針に従う。逸脱を認める場合はチケット内で承認プロセス（§0.5）を明記する。
 
 #### 0.6.2 Codex向けプロンプトテンプレート
 ```
@@ -90,9 +91,44 @@
   ・リスク観点（スリッページ/レートリミット/ヒューマン手順）
   ・ログ/監査要件
 ```
+- Codexへ送る冒頭メッセージで「スタイル/リンタは`docs/development_style_and_linting.md`に準拠」と明示し、差分レビュー時にも該当節を引用する。
 - プロンプトはGit管理（`docs/prompt_packages/<YYYYMMDD>_<feature>.md`）し、再利用時は差分管理する。
 - Codexへ渡すコード断片は**200行以内**に限定し、関連する`dataclass`/`Enum`の定義を先頭に含める。外部依存がある場合はスタブ/型定義を同梱する。
 - 反復が必要な場合は「差分モード」を明示し、前回出力との差分レビュー観点を列挙する。
+
+##### プロンプト例（EP-02 Strategy Determinism）
+```
+<概要>
+  ・FR-04/AC-09: シグナル決定論の担保、Backtest/Live一致率 > 99.5%
+  ・ヒューマン判断: Guardedモード移行時にヒット率低下を許容するか（Runbook RUN-SIGNAL-02）
+
+<既存設計参照>
+  ・§2.3 Workflow Orchestrator, §3.2.4 StrategyRegistry, §15.2 EP-02 Strategy Determinism
+  ・`src/strategies/registry.py::StrategyRegistry`, `src/features/pipeline.py::FeaturePipeline`
+
+<変更要求>
+  ・`StrategyRegistry.register()`でStrategyManifestの`determinism_key`を検証し、欠落時は`StrategyConfigurationError`
+  ・`FeaturePipeline.replay()`に`*, tolerance: float = 1e-6`引数を追加し、許容誤差をパラメータ化
+  ・CLI `tradectl benchmark replay` に `--tolerance` オプションを追加（Docstring + ヘルプ更新）
+
+<テスト>
+  ・`poetry run pytest tests/unit/test_strategy_registry.py -k determinism`
+  ・`poetry run pytest tests/integration/test_feature_replay.py`
+  ・CLIスナップショット: `poetry run pytest tests/approval -k benchmark`
+
+<レビューメモ>
+  ・Spread Guard閾値を変更しないこと（§5.4）
+  ・データ品質低下時は`health_state=degraded`を返し、ログキー`strategy_replay_mismatch`
+
+<スタイル/リンタ>
+  ・Python/CLIスタイル: `docs/development_style_and_linting.md`
+  ・型未解決時は`mypy.ini`へ一時例外を追加し、Issueに削減予定日を記載
+```
+
+##### プロンプト運用の注意点
+- Codexへの再依頼時は「差分のみ」要求とともに、前回実装差分に対する評価（良かった点/懸念）を箇条書きで共有する。
+- 設計差異を議論する際は、該当セクション番号（例: §3.4.2）と新旧挙動を併記し、判断の根拠となるメトリクスやRunbook手順を明文化する。
+- 将来API変更が見込まれる場合は、プロンプト内で拡張ポイント（例: 新しいデータフィード設定キー）とパラメータ化戦略案を先に提示し、スコープ外の作業を抑止する。
 
 #### 0.6.3 実装優先度マトリクス（M1）
 | トラック | 主担当モジュール | Codex作業エピック | 期待成果物 | 受入基準 |
@@ -474,6 +510,36 @@ tests/
 
 - 代替要員が不在の場合、`runbook/contingency.md`に従って計画休暇・不在時のKill Switch手順を事前申請する。
 - 重大障害時は運用→開発→PO→セキュリティの順で通知し、`logs/ops/incident.log`へ時系列を記録する。
+
+### 1.9 将来拡張ポイントとパラメータ化戦略
+
+M2以降で変更が見込まれる領域について、実装/運用負荷を最小化するための拡張ポイントとパラメータ化指針を以下に整理する。Codexへ作業を依頼する際は該当項目を引用し、拡張性要件を共有する。
+
+#### 1.9.1 データソース/フェッチャ
+- `DataIngestionService`（§2.2, `src/data/service.py`）は`ProviderAdapter`プロトコルをDI経由で受け取る。新規フィードは`providers/<name>.py`に`fetch_bars(symbol, start, end, granularity)`を実装し、`config/data_sources/<name>.yaml`でエンドポイント/レート制限/バックフィル上限を宣言する。
+- プロバイダ選択ロジックは`config/provider_priority.yaml`で優先度テーブル化し、Acceptable Degradation時の自動切替は`fallback.priority_override`キーで制御する。Codexには閾値の可変化方針（例: `spread_guard.max_bps`）を明示する。
+- バッファサイズや並列度は`DataIngestionTuning`構造体でパラメータ化し、環境差異（macOSローカル vs. CI）に応じて`config/profiles/<profile>.yaml`で上書きする。
+
+#### 1.9.2 特徴量/戦略プラグイン
+- `StrategyRegistry`（§3.2, `src/strategies/registry.py`）は`strategy_manifest.yaml`でロード順とFeature Flagを制御する。将来のプラグイン追加では、`manifest`に`compat.min_data_revision`/`requires_feature`を追記し、旧バージョンのフォールバックは`StrategyCompatibilityAdapter`で切り替える。
+- `FeaturePipeline`（`src/features/pipeline.py`）の各ステージは`PipelineStep`インターフェースを実装する。新しい指標は`pipeline_steps/<name>.py`に追加し、`config/pipeline/<mode>.yaml`の`steps`配列で順序とパラメータ（窓長・閾値）を指定する。Codexには「デフォルト値」「許容レンジ」「バックテストで検証すべきシナリオ」を合わせて提示する。
+- 決定論テストを維持するため、追加パラメータは`FeatureReplayConfig`に集約し、CLI `tradectl benchmark replay` から`--config overrides.yaml`形式で読み込めるようにする。
+
+#### 1.9.3 リスク/ガードレール
+- `risk_policy.yaml`で最大許容リスク・ドローダウン・Kill Switch条件を定義し、値は`RiskPolicy`モデル（§5.2, `src/risk/policy.py`）で検証する。パラメータ追加時は`schema_version`を更新し、`upgrade_policy_v<old>_to_<new>()`マイグレーションを用意する。
+- Board ModeやGuarded閾値は`config/board_modes.yaml`に定義し、将来GUI連携を想定して`display.copywriting`や`ops_ack_required`などUI/運用要素をパラメータ化する。Codex依頼では閾値変更とヒューマン手順（Runbook該当行）をセットで共有する。
+- Spread/Kill Switchの拡張は`RiskSignal`イベントで`extra_params`フィールドを許容し、未対応クライアントは無視できるよう後方互換を確保する。
+
+#### 1.9.4 CLI/オペレーション機能
+- `tradectl`コマンドの追加は`src/interfaces/cli/__init__.py`でLazyロードするサブアプリにまとめ、Feature Flag (`config/feature_flags.yaml`) で有効/無効を切り替える。新規サブコマンドは`CLICommandSpec`に`requires_profile`/`dangerous`フラグを設定し、プレフライトで露出制御する。
+- CLI出力の文言は`docs/i18n/cli_messages.yaml`（M2予定）へ切り出す計画のため、現時点から`CLI_TEXT`定数を1か所に集約しておく。Codexには追加文言をこの定数経由で管理するよう依頼する。
+- 将来GUI化を見据え、CLIが返すJSON Linesは`version`, `payload`, `meta`の3要素を固定フォーマットとし、`meta`にCLI固有パラメータ（例: `tolerance`, `limit_reason`）を付加する。新たなキーを導入する場合は`docs/change_requests/`でスキーマ差分をレビューする。
+
+#### 1.9.5 レポート/監査トレース
+- 週次レポートのKPI計算は`Reporter`（§7.6, `src/reporter/generator.py`）に`MetricCalculator`プラグインを追加できるよう`registry`化する。将来メトリクスは`config/reports/kpi.yaml`でON/OFFと閾値を設定する。
+- 監査ログ (`persistence/audit.py`) のフィールド拡張は`AuditRecord.schema_version`と`extras: Dict[str, Any]`に集約し、未既知キーは`extras`に収納する。Codexには新規必須フィールドを追加する場合、旧ログ互換性と再生スクリプト（`tools/replay_audit.py`）への影響評価を求める。
+
+- これら拡張ポイントの更新では、必ず`docs/development_style_and_linting.md`で定義したリンターコマンドをCI実行対象に含め、テスト命令はプロンプト内`<テスト>`セクションへ明示する。
 
 ## 2. アプリケーションサービス層
 
