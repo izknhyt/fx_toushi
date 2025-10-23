@@ -1,4 +1,4 @@
-# FXヒューマン・インザループ投資ツール 詳細設計書 v1.14
+# FXヒューマン・インザループ投資ツール 詳細設計書 v1.15
 
 ## 0. 文書情報
 - 作成日: 2025-02-20
@@ -9,6 +9,7 @@
 ### 0.1 改訂履歴
 | 版 | 日付 | 改訂概要 |
 | --- | --- | --- |
+| v1.15 | 2025-02-22 | §20にデータプロベナンス/Validation Data Playbook実装設計を追加し、FR-52/FR-62のM1.1準備方針を明文化。 |
 | v1.14 | 2025-02-22 | §19にEmergency Orchestrator/Reduce-Only Advisor設計ロードマップを追加し、FR-42/FR-47の下準備を明文化。 |
 | v1.13 | 2025-02-22 | §2.7 Telemetryを拡張しOpsワークログ/自動化指標の詳細を追記。§18にツール/自動化スクリプト集を新設し、Codex向け運用補助を体系化。 |
 | v1.12 | 2025-02-21 | レポート/監査テンプレート類を整備し、§3.18/§3.20/§3.24/§7.3/§13.6/§13.7を更新。 |
@@ -3215,3 +3216,76 @@ CodexがCLI層を安全に実装・改修できるよう、`tradectl`コマン�
 ---
 
 本節の仕様はM1 Coreではスタブ保持を前提とし、Runbook運用の整備とKPI計測が完了した段階でM1.1スプリント計画へ移行する。Codexへ実装を委任する際は、ここで定義したIF/Runbook整合を必ず確認し、必要に応じて付録B・付録Eの更新をセットで依頼すること。
+
+## 20. データプロベナンス & Validation Data Playbook実装設計（FR-52/FR-62, M1.1準備）
+
+M1 Coreでは`Validation Data Playbook`テンプレートとRunbook運用でデータ証跡を残すが、M1.1以降ではFR-52/FR-62を満たすために**再現可能なデータマニフェスト生成・署名・整合チェック**をCodex実装へ委任する。本節は`src/data/manifest.py`およびCLI `tradectl data manifest`を中心に必要なデータモデル/ワークフロー/テレメトリ/テスト計画を定義する。M1 Coreではスタブ（ハッシュ計算のみ）を配置し、M1.1 Packetで完全機能へ移行する。
+
+### 20.1 DataManifestService (`src/data/manifest.py`)
+- **目的**: データセット（市場データ、手動CSV、ベンチマーク、検証フィクスチャ）の完全性と来歴を記録し、Runbook/監査から参照可能な`data_manifest.json`を生成する。`Validation Data Playbook`と相互参照し、データ差分や再計算時のアラートを提供する。
+- **データモデル**:
+  | モデル | フィールド | 説明 |
+  | --- | --- | --- |
+  | `DatasetManifest` | `schema_version`, `generated_at`, `entries: list[ManifestEntry]`, `signatures: list[SignatureEnvelope]` | ルート構造。`schema_version`は`"data.manifest.v1"`固定。 |
+  | `ManifestEntry` | `id`, `kind ∈ {'market','manual_fallback','benchmark','fixture','research','ops_log'}`, `path`, `hash_sha256`, `rows`, `timespan`, `source`, `owner`, `reviewer`, `validation_playbook_id`, `status ∈ {'provisional','confirmed','expired'}`, `tags: set[str]` | 各データセットの来歴。`validation_playbook_id`は§付録FテンプレIDと一致。 |
+  | `SignatureEnvelope` | `fingerprint`, `signed_at`, `signer`, `tool_version`, `signature` | マニフェスト全体またはサブセットの署名を保持。最初は`tool_version='tradectl-manifest/0.1.0'`。 |
+  | `ManifestDiff` | `added`, `removed`, `changed`, `hash_mismatch` | 差分検知用構造体。 |
+- **主な責務**:
+  1. `record(entry)`で`hashlib.sha256`によりハッシュ計算→`entries`へ追加→`ops_worklog`へ`{"task":"data_manifest_record","entry_id":<id>}`を追記。
+  2. `verify(path|entry_id)`で現物のSHA256とマニフェストを比較し、齟齬があれば`DataManifestMismatch`をraiseし`health.reasons['data_provenance']`へ警告追加。
+  3. `attach_signature(envelope)`で`SignatureEnvelope`を追加。WORM保存（§20.2）と`audit.data_manifest_signed`イベント発行。
+  4. `export(playbook_id)`で特定データセットのメタデータ/署名/RunbookリンクをMarkdown出力（`reports/validation_log/<playbook_id>.md`）。
+- **バックアップ/復旧**: `data_manifest.json`は日次バックアップ対象。`SnapshotManager`の`data_hash`算出時は最新マニフェストを参照し、Snapshot外のデータが変更された場合は警告を残す（`snapshot.data_hash_mismatch`イベント）。
+
+#### 20.1.1 公開API
+| API/関数 | 入力 | 処理 | 出力 | 異常系 |
+| --- | --- | --- | --- | --- |
+| `DataManifestService.load(path='data/data_manifest.json')` | パス、`schema_version` | JSON読込→pydantic検証→内部キャッシュ初期化 | `DatasetManifest` | バージョン不一致: `DataManifestVersionError` |
+| `DataManifestService.record(entry)` | `ManifestEntry`, `force=False` | 重複チェック→ハッシュ算出→`status`検証→追記→JSON保存 | `ManifestEntry`（付番後） | 重複ID: `ManifestEntryExists`。ハッシュ取得失敗: `ManifestHashError` |
+| `DataManifestService.verify(target)` | `path`または`entry_id`, `strict=True` | SHA256再計算→マニフェスト比較→差分構築 | `ManifestVerificationResult`（ok|mismatch, diff） | 齟齬: `DataManifestMismatch`（`strict=True`で例外）。ファイル欠損: `ManifestTargetMissing` |
+| `DataManifestService.attach_signature(envelope)` | `SignatureEnvelope`, `scope`(`entries`/`manifest`) | マニフェストハッシュ生成→署名一意性確認→追記→Auditイベント | `SignatureEnvelope` | 検証失敗: `ManifestSignatureInvalid` |
+| `DataManifestService.export(playbook_id, format='md')` | Playbook ID、出力形式、テンプレ | 対象エントリ抽出→テンプレ適用→`reports/validation_log/`出力 | `ExportResult` | テンプレ欠落: `ManifestExportError` |
+| `DataManifestService.diff(other_manifest)` | 旧マニフェスト、比較キー | `added/removed/changed/hash_mismatch`算出→CLI/Runbook向けに整形 | `ManifestDiff` | マージ不能: `ManifestDiffError` |
+
+- **メトリクス**: `metrics/data_provenance.jsonl`で`event='manifest_recorded|verified|mismatch'`, `entries_count`, `pending_signatures`を追跡。
+- **EventBus**: `data.manifest.recorded`, `data.manifest.mismatch`, `data.manifest.signature_added`を発行。`RiskDisclosureService`同様`schema_version`を固定し、変更時は付録E更新を伴う。
+
+### 20.2 署名・WORM保全 (`tools/sign_manifest.py`, `scripts/archive_manifest.sh`)
+- **署名方式**: OpenSSLベース`ed25519`署名（外部依存を避けるため`cryptography`ライブラリ利用）。`tools/sign_manifest.py`が`data_manifest.json`のSHA256を計算し、秘密鍵（`secrets/manifest_signing_key.pem`）で署名→`SignatureEnvelope.signature`へBase64格納。
+- **キー管理**: 秘密鍵はmacOS Keychainに格納し、CIではダミー鍵を使用（`tests/resources/manifest_test_key.pem`）。公開鍵は`docs/secrets/manifest_signing_pub.pem`として共有。
+- **WORM保管**: `scripts/archive_manifest.sh --period daily`が`data_manifest.json`と署名を`archives/data_manifest/<YYYYMMDD>/`へコピーし、`chmod -w`で書込み防止。Runbook `GOV-DATA-01`が月次で署名とハッシュを検証。
+- **Runbook連携**: `RUN-DATA-06`（手動CSV運用）と`RUN-RESEARCH-02`（研究データ昇格）へ「マニフェスト記録」「署名」ステップを追加。承認者は`SignatureEnvelope.signer`に`Ops Manager / Quant Lead`を記入し、承認後24時間以内に`docs/validation_playbook/`へハッシュ証跡を貼付。
+- **監査**: 署名/検証コマンドは`audit.data_manifest_signed`/`audit.data_manifest_verified`イベントを生成し、CLI `tradectl audit export --type data_manifest`で抽出できるようにする。
+
+### 20.3 Validation Data Playbookワークフロー拡張
+1. **データ作成**: 手動CSVや研究データを生成後、`tradectl data manifest record --path <file>`を実行し`status='provisional'`で登録。
+2. **ダブルチェック**: 運用者とレビューアが`tradectl data manifest verify --entry <id> --strict`を実行。成功すると`status='confirmed'`へ昇格し、`Validation Data Playbook`テンプレの`検証ログ`表へCLI出力を貼付。
+3. **署名**: Ops Managerが`tools/sign_manifest.py --entry <id> --signer ops_manager`を実行。署名結果は`SignatureEnvelope`に追加され、`docs/validation_playbook/<id>.md`へ貼付。
+4. **Runbook更新**: `tradectl ops agenda --date <next>`が未署名エントリをTODOに反映。署名遅延>48hで`ops_worklog`へ`{"task":"manifest_overdue","entry_id":<id>}`を記録し、`AutomationEffectTracker`が削減候補を追跡。
+5. **再検証**: データ差し替え時は`DataManifestService.diff`で差分を算出し、`status='expired'`へ更新。Runbook `RUN-DATA-06`が再署名前の手順を案内。
+- **Playbookとの紐付け**: `validation_playbook_id`が必須。CLIが存在チェックを行い、未登録IDは`ValidationPlaybookNotFound`をraise。`docs/validation_playbook/index.md`に自動追記するスクリプト（M1.1 Packet）を用意。
+- **Ops/トレーダーUX**: Signal Board `--info data`で最新マニフェストの未署名件数・期限をバナー表示。`board_mode=guarded`時は未確認データの承認禁止を検討（M1.1+）。
+
+### 20.4 CLI `tradectl data manifest` / `tradectl validation`
+- **サブコマンド設計**:
+  | コマンド | 説明 | 主要オプション | 出力 | エラー |
+  | --- | --- | --- | --- | --- |
+  | `tradectl data manifest record --path <file>` | ファイルのSHA256計算とマニフェスト登録 | `--kind`, `--owner`, `--playbook-id`, `--tags`, `--force` | `ManifestEntry` JSON/表形式 | `ManifestEntryExists`（`--force`で上書き） |
+  | `tradectl data manifest verify (--path|--entry) <target>` | 指定データの整合チェック | `--strict/--warn-only`, `--export-md` | `VerificationReport`（OK/NG, diff表） | `DataManifestMismatch`（strict時Exit 74） |
+  | `tradectl data manifest sign --entry <id>` | 指定エントリ/全体の署名生成 | `--scope entries|manifest`, `--key <path>`, `--signer`, `--note` | `SignatureEnvelope` JSON | `ManifestSignatureInvalid` |
+  | `tradectl data manifest diff --base <file> --target <file>` | 2つのマニフェスト差分表示 | `--format table|json`, `--include-status` | 差分テーブル/JSON | `ManifestDiffError` |
+  | `tradectl validation playbook sync --manifest data/data_manifest.json` | Playbook Markdownへハッシュ/署名を転記 | `--output docs/validation_playbook/<id>.md` | 更新済みMarkdown | `ValidationPlaybookSyncError` |
+- **UX要件**: CLIはRichテーブルで`status`, `hash`, `signatures`件数を表示。`--json`でマシンリーダブル出力を提供。`--auto-open`（macOS `open`コマンド）で生成Markdownを即表示。
+- **監査ログ**: 各コマンド成功時に`audit`へ`action='manifest_record'|'manifest_verify'|'manifest_sign'`を記録。`cfg_hash`と`board_mode`を添付し、誰がどの状態で操作したか追跡する。
+- **Feature Flag**: `feature_flags.data_provenance.enforced`（既定`false`）。ON時は`tradectl board`が未確認データの提案を警告し、`HealthMonitor`が`data_provenance_pending`理由を追加する。
+
+### 20.5 テスト & Codex Packet計画
+- **ユニットテスト**: `tests/unit/test_data_manifest_service.py`でハッシュ計算・重複検知・署名検証・差分算出を網羅。署名検証は偽鍵ケースを含めPropertyテストで100ケースを生成。
+- **統合テスト**: `tests/integration/test_validation_workflow.py`が`record→verify→sign→playbook sync`の一連を実ファイル（`tmp_path`）で検証。`pytest-approvaltests`でCLI出力スナップショットを保護。
+- **Codex Packet**: `EP05-P2 (仮)`としてSprint-Betaに計画。スコープ: DataManifestService本実装＋CLI＋署名ツール＋Runbook更新。依存: `docs/validation_playbook/TEMPLATE.md`アップデート。テスト指示: `pytest -k data_manifest`, `pytest -k validation_workflow`, CLI録画。
+- **Ops受入**: トレーダー/運用は`TR-06`（新設）シナリオで、手動CSV登録→検証→署名→Signal Board警告解除までを確認。`docs/trader_signoff/EP05-P2.md`を新規作成し、署名者ダブルチェックを記録。
+- **テレメトリ**: `metrics/data_provenance.jsonl`の`pending_entries`が3件超で`AlertDispatcher`がWARN送信。週次Opsレビューで`automation_effect`とのギャップを分析し、署名工程の自動化候補を特定する。
+
+---
+
+本節の設計により、CodexはM1.1でデータ完全性の自動証跡化を実装できる。Runbook/Validation Playbook/監査ログが統合されることで、手動CSVや研究データの差し替え時にヒューマンレビューを最小限に抑えつつ、トレーダーとOpsの双方が信頼できるKPI基盤を維持できる。
