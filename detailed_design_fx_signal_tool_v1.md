@@ -180,7 +180,7 @@
 | FR-06 ポジションサイジング | §3 FR-06, §3.2 戦略仕様(OCO推奨) | §2 コンポーネント表 (Position Sizer), §3.2 ユースケース⑰ | `AccountState`, `BrokerSpecs`, ATR派生値, Protect幅設定 | ロットサイズ/OCO値提案, `oco_recommendation`をTicket Builderへ送信 | Fixed Fractional 0.75%リスク、Broker最小ロット/距離順守、Marketable Limit保護幅適用 | `risk_policy.yaml`, `broker_rules.yaml` | なし |
 | FR-07 注文チケット/HITL | §3 FR-07, FR-30, FR-39 | §2 コンポーネント表 (Ticket Builder), §3.2 ユースケース⑱⑲, §3.3 チケット遷移, §3.2 CLI board/ticket | SizedSignal, `BrokerSpecs`, Risk Disclosureステータス, TTL/Spread情報 | チケットJSON Lines出力, ヒューマンエラーチェック/バッジ, `audit`ログ生成 | BoardMode=guarded時はReduce-Onlyのみ表示, TTL監視と未入力警告, リスク承諾状況をヘッダ表示 | ローカルイベントログ, CLI (`tradectl board/ticket`) | チェックリスト項目（ダブルチェック/手入力コメント）の最終レイアウトと必須入力項目が文書間で明文化されていないため要確認。 |
 | FR-08 モード切替 | §3 FR-08, §3.1 M1 Core範囲 | §1 システム概要, §2 コンポーネント表 (Mode Controller, Account Service), §3.2 ユースケース①⑦ | プロファイル設定, ModeContext, モード別データソース（Backtest台帳/Paperレポート/Live CSV） | ModeContext遷移, I/O差分ハンドラ, CLI起動モード決定 | 全モードでHITLフロー共通化、`tradectl start --profile`で選択、Resync後にConsistencyチェック | ローカルファイル/CSV、将来ブローカーAPI | なし |
-| FR-10 週次レポート | §3 FR-10 (M1縮小範囲) | §2 コンポーネント表 (Reporter), §3.2 ユースケース⑭・⑲・ステップ24, §7.6 KPI評価ガイド | `reports/kpi_snapshots/*.json`, `metrics/data_ingestion_sla.jsonl`, `risk_summary`, `reports/weekly/templates/m1_core.md` | 週次Markdown生成, KPI単点値出力, `reports/performance/<mode>/`更新 | Sharpe/最大DD/WinRate/累積Rのみ出力, Paper90日ウォームアップ時はmetric_state=provisional扱い | ローカルテンプレート/レポート, `MarketRatesFetcher` | 週次コメント欄（A/Bテスト結果・次週ToDo）の入力責務と提出締切をドキュメント間で統一する必要あり。 |
+| FR-10 週次レポート | §3 FR-10 (M1縮小範囲) | §2 コンポーネント表 (Reporter), §3.2 ユースケース⑭・⑲・ステップ24, §7.6 KPI評価ガイド | `reports/kpi_snapshots/*.json`, `metrics/data_ingestion_sla.jsonl`, `risk_summary`, `reports/weekly/templates/m1_core.md` | 週次Markdown生成, KPI単点値出力, `reports/performance/<mode>/`更新 | Sharpe/最大DD/WinRate/累積Rのみ出力, Paper90日ウォームアップ時はmetric_state=provisional扱い | ローカルテンプレート/レポート, `MarketRatesFetcher` | コメント欄運用: Quant Leadが日曜18:00 JSTまでにA/Bテスト結果を`docs/review_log.md`(ID:AB-<WW>)へ記録しテンプレへ転記、Ops Managerが月曜08:30 JSTまでにOpsアジェンダと照合した次週ToDoを追記（ID:OPS-<WW>）。Runbook `STRAT-M1-VALIDATION`/`RUN-PERF-01`と同期。 |
 | FR-16/FR-18 Resync & Snapshot | §3 FR-16, FR-18 | §2 コンポーネント表 (Snapshot Manager, Session Manager), §3.2 ユースケース①④⑯, §3.2 処理シーケンス④, §4 データ構造 | `snapshots/latest/*.json`, `resync_queue`, Catch-upメトリクス | Resyncジョブ投入, `catch_up_lag_minutes`記録, Snapshot更新, `ResyncCompleted`イベント | 20分遅延でwarning/30分でdegraded, Runbook承認後に復旧、再起動時はSnapshot整合チェック | ローカルスナップショット/Parquet, metrics JSONL | なし |
 | FR-28 Funding Service | §3 FR-28, §3.1 M1 Core例外 | §2 コンポーネント表 (Funding Service), §3.2 ユースケース⑥⑭, §4 データ構造（swap_rates.csv）, §6 Funding Service | `config/swap_rates.csv`, `broker_rules.yaml`, Calendarイベント, Paper/Liveポジション | `FundingCurve`生成, `swap_penalty`供給, `tradectl funding sync/status` CLI, スワップ計算をAccount/Reporterへ反映 | 日次更新（祝日三倍日補正）, Calendar連携で倍率補正, 取得失敗時はRunbook指示で手動CSV更新 | 手入力/公開CSV, Calendar Service, 将来ブローカーフィード | 手入力CSVの更新頻度・責任者とレビュー手順（Validation Data Playbookへの記録方法含む）が要件側で定量化されていないため、運用プロセスを確定する必要あり。 |
 
@@ -1157,6 +1157,7 @@ Checklist (mandatory items marked with *):
 - **依存**: M1 Coreでは`PerformanceStats`、`reports/performance/paper|live/*.parquet`、`logs/events`（主要コメント抽出のみ）に限定する。Feature Flag有効時にのみ`metrics/pipeline.jsonl`、`kill_switch_events.jsonl`、`config/diff/`を追加読み込みする。
 - **リスク概要/キルスイッチ連携**: `RiskSummaryBuilder`はM1.1で有効化し、Flag無効時は`RiskSummaryStub`が`None`を返す。M1.1では`risk_policy.yaml`の閾値と`kill_switch_events.jsonl`を集計し、逸脱時に`[ALERT]`バッジを付与、閾値変更は`reports/risk/threshold_change_<date>.md`へのリンクを付ける。
 - **同期メタデータ**: `kpi_snapshot_version`のみをM1 Coreで記録し、Feature Flagが有効化された際に`threshold_version`や`extended_block_version`を追加する。`tradectl risk status`はメタデータ齟齬を監視し、Flag無効時は拡張フィールドを`not_applicable`表示とする。
+- **コメント欄入力フロー**: `generate_weekly`は`reports/weekly/templates/m1_core.md`のコメント欄を空で出力する。Quant Leadが日曜18:00 JSTまでに`docs/review_log.md`(AB-<WW>)へA/B結果を記録しMarkdownへ反映、Ops Managerが月曜08:30 JSTまでに`tradectl ops agenda --date <Mon>`の結果とRunbook `RUN-PERF-01`/`RUN-RISK-01`を突合して次週ToDo欄を確定する。締切後の修正はレビュー記録へ`Update:`追記し、Product Ownerが09:00レビューでサインする。
 
 #### APIインターフェース一覧
 | API/関数 | 入力 | 処理 | 出力 | 異常系 |
@@ -2499,9 +2500,13 @@ def test_<case>(...):
 - 訓練結果は`reports/drill/<YYYYMMDD>_<scenario>.md`に記録し、Ops Readiness Evaluatorが参照する。Codexが関連コード（例: `scripts/restore_snapshot.sh`）を更新した場合は本テーブルも同期更新する。
 
 ### 13.5 KPI可視化・レビューカレンダー
-- **週次 (毎週月曜09:00 JST)**: `tradectl report weekly --dry-run`出力をPO/トレーダーがレビュー。Spread/Kill Switchアラート、手動CSV件数を確認し、必要に応じて改善タスクを起票。
-- **月次 (第1営業日夜)**: KPIスナップショットと`ops_worklog`サマリを突合。Codexが関与した変更の効果測定を実施し、`automation_effect.jsonl`に差分を記録。
-- **四半期 (最終営業週)**: Backtest再評価とSLAプロファイル更新。`tools/sla/generate_profile.py`の結果をレビューし、必要なら閾値適用を決定。
+- **週次 (毎週月曜09:00 JST)**:
+  - Ops Managerが月曜07:45 JSTまでに`tradectl report weekly --dry-run`を実行し`reports/weekly/<YYYY-WW>.md`を更新、`docs/review_log.md`へレビューセッションを起票。
+  - Quant Leadが前日（日曜18:00 JSTまで）にA/Bテスト結果を`AB-<WW>`エントリへ記録し、同内容をテンプレートのA/B欄へ反映。Runbook `STRAT-M1-VALIDATION`の差分があればリンクを添付。
+  - Ops Managerが月曜08:30 JSTまでに`tradectl ops agenda --date <Mon>`で生成したOpsアジェンダと`RUN-PERF-01`/`RUN-RISK-01`のチェックを照合し、次週ToDo欄を確定。Ops Worklog更新と未完了タスク起票を実施。
+  - 09:00レビューでPOとトレーダーがSpread/Kill Switchアラート、手動CSV件数を確認し、決定事項とサインを`docs/review_log.md`へ記録、改善タスクを必要に応じて起票。
+- **月次 (第1営業日夜)**: KPIスナップショットと`ops_worklog`サマリを突合し、`docs/review_log.md`の月次エントリに`automation_effect.jsonl`の差分とRunbook更新状況を記録。必要タスクは`docs/change_requests/`に起票する。
+- **四半期 (最終営業週)**: Backtest再評価とSLAプロファイル更新を実施し、`tools/sla/generate_profile.py`結果と`RUN-PERF-01`/`OPS-READINESS-01`のサインを`docs/review_log.md`へ集約。必要な閾値適用は`tradectl sla profile apply`で反映し、Ops Agendaへフォローアップを追加。
 - 各レビュー結果は`docs/review_log.md`へ転記し、未解決課題は`docs/risk_review/<date>.md`でフォローアップ。
 
 ### 13.6 監査・証跡統合
