@@ -175,7 +175,7 @@
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | FR-01/FR-02 データ取得・品質監視 | §3 FR-01, FR-02, §3.1 M1 Core | §1.1 M1 Coreガードレール, §2 コンポーネント表 (Data Ingestion Service, Data Quality Guard), §3.2 ユースケース①②, §0.6.6 | yfinance 5分足, Dukascopy HTTPバースト, manual_fallback双子CSV, `config/sla_thresholds/*.yaml` | 正規化済みバーを`bar_ready_queue`へ供給, `metrics/data_ingestion_sla.jsonl`/`metrics/rate_limit_window.jsonl`出力, `health.changed(reason=...)`推奨アクション, manual CSVハッシュ監査 | 常時4並列フェッチ（Catch-up時6）、30分以内Catch-up達成、Acceptable Degradation時はBoardMode=guardedで運用、Runbook `RUN-DATA-05/06`準拠で手動フェイルオーバー | yfinance, Dukascopy, 将来有償フィード（M1.2+）, Runbookテンプレート | **M1 CoreではRateLimitGuardのステージ昇格/ロールバックを自動化せず、`metrics/rate_limit_window.jsonl`の`stage_eval`記録とRunbook `RUN-DATA-05`承認（Ops＋POダブルサイン）を根拠に手動判断し、`degraded_ack`イベントを必須化。M1.1以降で自動化再評価。** |
 | FR-03 特徴量パイプライン | §3 FR-03, §3.3 戦略ロードマップ | §2 コンポーネント表 (Feature Engine), §3.2 ユースケース⑨, §3.2 処理シーケンス② | 正規化バー、マルチTF指標設定（5m: SMA20/EMA21-55/RSI14/BB20-2, 1h: EMA55傾き/ATR14/MACD12-26-9, 1d: Donchian20/Zスコア20） | `FeatureFrame`更新, 指標キャッシュ, `metrics/pipeline.jsonl`へのCPU/遅延記録 | 5分バー到着毎に差分再計算、ThreadPoolExecutorでCPUタスクをオフロード、Feature FlagでM2以降機能を無効化 | pandas, pandas-ta, Asyncスレッドプール | M1 Coreは上記指標を既定ONで提供し、`config/feature_pipeline.yaml::indicators.<name>.enabled`でMACD/ボリンジャー/ドンチャン/Zスコアを個別無効化可能。`tests/integration/test_feature_pipeline.py`でON/OFFの回帰テストを実施し、SMA/EMA/RSI/ATRは常時有効とする。 |
-| FR-04 シグナルエンジン | §3 FR-04, Feature Flagスタブ方針 | §2 コンポーネント表 (Signal Engine), §3.2 ユースケース⑪, §3.3 チケット状態遷移 | `FeatureFrame`, `GateState`, Strategyプラグイン, `board_mode`/Health情報 | `signal.generated`イベント, ガードモード時のブロック, `badges`やScore反映 | BoardMode=guarded時は新規提案抑止、Feature Flagでガバナンス機構無効化、`strategy_manifest.yaml`と整合 | Strategyプラグイン群, Config Registry | 戦略プラグインの優先順位/重み設定の保存先を`strategy_manifest.yaml`/設定ファイルのどちらで統一するか未記載のため要確認。 |
+| FR-04 シグナルエンジン | §3 FR-04, Feature Flagスタブ方針 | §2 コンポーネント表 (Signal Engine), §3.2 ユースケース⑪, §3.3 チケット状態遷移 | `FeatureFrame`, `GateState`, Strategyプラグイン, `board_mode`/Health情報 | `signal.generated`イベント, ガードモード時のブロック, `badges`やScore反映 | BoardMode=guarded時は新規提案抑止、Feature Flagでガバナンス機構無効化、`strategy_manifest.yaml`と整合 | Strategyプラグイン群, Config Registry | 優先度/重み/有効フラグは`config/strategy_manifest.yaml`で一元管理することでPO/Ops/開発が合意。`config/feature_pipeline.yaml`や`risk_policy.yaml`等は指標やリスク閾値のみを保持し、Manifestと重複定義しない。 |
 | FR-05 リスクマネージャ | §3 FR-05, Kill Switch解除条件 | §2 コンポーネント表 (Risk Manager), §3.2 ユースケース⑮, §3.2 Health Monitor, §3.2 CLI | `AccountState`, `FundingCurve`, Spread/Correlationメトリクス, `risk_policy.yaml` | `risk.decision`イベント, Kill Switch推奨, `health.changed`でdegraded通知, BoardMode切替推奨 | 0.75%/2.5%/5%閾値遵守, Acceptable Degradation期間はReduce-Only限定, 手動Kill Switch操作とRunbookチェック必須 | ローカルポリシーYAML, metrics JSONL | なし |
 | FR-06 ポジションサイジング | §3 FR-06, §3.2 戦略仕様(OCO推奨) | §2 コンポーネント表 (Position Sizer), §3.2 ユースケース⑰ | `AccountState`, `BrokerSpecs`, ATR派生値, Protect幅設定 | ロットサイズ/OCO値提案, `oco_recommendation`をTicket Builderへ送信 | Fixed Fractional 0.75%リスク、Broker最小ロット/距離順守、Marketable Limit保護幅適用 | `risk_policy.yaml`, `broker_rules.yaml` | なし |
 | FR-07 注文チケット/HITL | §3 FR-07, FR-30, FR-39 | §2 コンポーネント表 (Ticket Builder), §3.2 ユースケース⑱⑲, §3.3 チケット遷移, §3.2 CLI board/ticket | SizedSignal, `BrokerSpecs`, Risk Disclosureステータス, TTL/Spread情報 | チケットJSON Lines出力, ヒューマンエラーチェック/バッジ, `audit`ログ生成 | BoardMode=guarded時はReduce-Onlyのみ表示, TTL監視と未入力警告, リスク承諾状況をヘッダ表示 | ローカルイベントログ, CLI (`tradectl board/ticket`) | チェックリスト項目（ダブルチェック/手入力コメント）の最終レイアウトと必須入力項目が文書間で明文化されていないため要確認。 |
@@ -773,6 +773,14 @@ M2以降で変更が見込まれる領域について、実装/運用負荷を�
 - **入出力**: `StrategyContext`（FeatureContext, RegimeState, GateState, AccountState, Config）→`Iterable[RawSignal]`。
 - **プラグイン**: M1で`ma_rsi`, `donchian_breakout`。`metadata.required_features`でFeature不足を検知。`cooldown_bars`で連続エントリーを抑止。
 - **安全性**: 戦略から返却されたシグナルは`SignalSchema`で検証。レジーム不一致やGateStateブロック時は自動Reject。
+- **コンフィグ責務整理（合意事項）**:
+  | ファイル | 一元管理する項目 | 備考 |
+  | --- | --- | --- |
+  | `config/strategy_manifest.yaml` | `strategies.<id>.enabled`/`priority`/`weight`/`feature_flags`、`datasets[]`、`governance.ticket_id` 等、戦略固有の有効性とメタデータ | Backtest/Paper/Live共通の単一情報源。Gitで版管理し、変更はManifest差分レビューを必須とする。 |
+  | `config/feature_pipeline.yaml` | インジケータやFeature計算のON/OFF、窓長などのFeature層パラメータ | 戦略順序や優先度は保持しない。Manifestから参照されるFeature前提条件のみコメントでリンク。 |
+  | `risk_policy.yaml` | リスク閾値・Kill Switch基準・`per_trade_risk_pct` | リスク上限の更新時にManifestへ参照ハッシュを記載し、重複定義を避ける。 |
+  | `config/profiles/<mode>.yaml` | 環境（Backtest/Paper/Live）固有のリソース設定や外部サービス接続情報 | Manifest値を上書きしない。必要な場合はRunbookで手動Override手順を定義。 |
+  | `docs/runbooks/GOV-STRAT-01.md` | Manifest変更の承認手順・記録テンプレート | Configではなくオペレーション手順として利用。PRではRunbook更新要否を明示する。 |
 
 #### APIインターフェース一覧
 | API/関数 | 入力 | 処理 | 出力 | 異常系 |
@@ -801,6 +809,18 @@ strategies:
     priority: 20
     weight: 0.6
 ```
+
+##### Manifest保存先とキー構造
+- 正本は`config/strategy_manifest.yaml`に保存し、`ConfigRegistry`が起動時に読み込む。ファイルヘッダの`version`と`schema_revision`で互換性を表す。
+- 環境固有の暫定切り替えは`config/profiles/<mode>/overrides/strategy_manifest.override.yaml`に`enabled`の一時上書きのみを記録し、マージ後はRunbookに従って正本へ反映する。重複キーが存在した場合はCIで失敗させる。
+- `strategies.<id>`配下には`metadata`（`owner`, `last_validated_at`, `dataset_hash`）、`parameters`、`governance`（`ticket_id`, `decision_log`）を保持し、§9.4.2のパラメータテーブルと相互参照する。
+
+##### Manifest更新フロー（Codex PR/Runbook手順）
+1. **変更要求起票**: `docs/runbooks/GOV-STRAT-01.md`テンプレに沿って背景/KPI/承認者を記入し、IssueにRunbookリンクを添付する。
+2. **PR作成**: Manifest差分を含むPRを作成し、本文に`§3.5`・`§6.7`参照と`strategies.<id>`の更新概要を箇条書きする。`reports/governance/strategy_board/<date>.md`へレビュー記録を追記する場合は同PRで実施する。
+3. **検証**: ローカルまたはCIで `poetry run pytest -k "strategy_manifest"` と `poetry run pytest -k "strategy_registry"` を実行し、Manifest検証・Registryロード手順の自動テストを通過させる。結果ログをPRに貼付する。
+4. **レビュー/承認**: PO・OpsがManifest差分とRunbook記録をダブルチェックし、§6.7のConfig Governanceチェックリスト（マニフェスト整合・テストログ・Runbook更新）にサインする。
+5. **反映と運用通知**: Merge後に`tradectl config sync --target strategy_manifest`（M1 CLI拡張予定）または手動デプロイ手順に従い反映し、週次レビューで結果を共有する。
 
 #### 3.5.1 シグナル判定フロー（シーケンス図）
 
@@ -1748,6 +1768,8 @@ HealthMonitor.ack()
 - 戦略ごとのPerformance記録を`strategies/<id>/performance.json`で管理し、ON/OFF履歴と理由を監査ログへ出力する。
 - Feature Flag切替時は`reports/strategy_review_<id>.md`で評価結果をまとめ、POレビュー後に適用する。
 - 新規戦略追加はBacktest→WalkForward→Paper→Liveのゲートを順次通過し、QA/PO/運用の承認を必要とする。
+- Manifest更新時は`docs/runbooks/GOV-STRAT-01.md`のチェックリストで承認者・実施者を記録し、PRでは`poetry run pytest -k "strategy_manifest"`および`poetry run pytest -k "strategy_registry"`の実行ログを添付する。レビューでは`config/strategy_manifest.yaml`と`config/profiles/<mode>/overrides/strategy_manifest.override.yaml`の差分・重複を照合し、重複があれば差戻す。
+- Config Governanceレビュー結果は`reports/governance/strategy_board/<YYYYWW>.md`に転記し、Manifestハッシュ (`ConfigRegistry.export_hash('strategy_manifest')`) を記録して監査証跡を残す。
 
 ※詳細手順とCLIスクリーンショットはRunbook付録Gと相互参照。
 
