@@ -1617,6 +1617,37 @@ HealthMonitor.ack()
 - **テストデータ**: スタブ検証では軽量モックのみ使用。`tests/fixtures/scoreboard/returns_24w.parquet`等のデータセットはM2+用として保持し、M1ではロードしない。
 - **CIフック**: `pytest -k "governance_stub"`をPR必須テストに追加し、副作用ゼロを担保する。M2+テスト用コマンドは`pytest -k "(scoreboard or ideas or ops_readiness or model_risk or reconciliation)"`としてコメントアウト状態で`ci/config.yml`にプレースホルダ記載。
 - **回帰ライン**: M1期間中はFeature Flagを`False`で維持することを`docs/governance/feature_flag_register.md`で監査。承認後にFlagを切り替える際はAppendix G記載の統合テストを再実施する。
+#### 7.4 運用監視メトリクスとアラート条件
+| メトリクス | 定義/収集方法 | WARN閾値 | CRITICAL閾値 | アラート経路 | 主担当/Runbook |
+| --- | --- | --- | --- | --- | --- |
+| データ取得成功率 (`data_ingestion_success_rate`) | 5分ごとに`fetch_success / total_attempts`を算出し`metrics/data_ingestion_sla.jsonl`へ記録。Mode別・シンボル別にラベル付け。 | 連続2ウィンドウで95%未満 | 90%未満 or 15分連続で0% | CLI WARN + メール | Data担当 / `RUN-DATA-05` |
+| APIレイテンシ (`provider_latency_ms`) | `DataIngestionService`の`request_ts`〜レスポンス受信差分をヒストグラム化し`metrics/provider_latency.jsonl`へ記録。 | p95 > 1800msが3回連続 | p99 > 2500msが2回連続 | CLI WARN + メール (高優先度) | Data担当 / `RUN-DATA-06` |
+| パイプライン処理遅延 (`pipeline_elapsed_ms`) | `WorkflowOrchestrator`で`bar_to_board`区間を計測し`metrics/pipeline.jsonl`へ書き出し。 | p95 > 1500ms | p99 > 2500ms または連続5回timeout | CLI WARN + メール | 開発 / `RUN-PERF-01` |
+| 成功率（シグナル採用率）(`ticket_accept_rate`) | `Signal Board`でHITL承認済みチケット数/提案数を日次で集計し`metrics/board.jsonl`へ記録。 | ローリング7日で40%未満 | ローリング7日で25%未満 or 1日10件連続拒否 | 週次レポート + CLI WARN | トレーダー + PO / `RUN-BOARD-02` |
+| ドローダウン (`max_drawdown_pct`) | `PerformanceStats`を日次再計算し、累積リターンの最大下落率を監視。`metrics/performance.jsonl`へ出力。 | 累積DDが10%超過 | 累積DDが15%超過 or 日次DD>5% | CLI WARN + メール + Kill Switch推奨 | リスク担当 / `RUN-RISK-03` |
+| APIエラー率 (`provider_error_rate`) | プロバイダ別に429/5xxの件数を集計し`metrics/provider_health.jsonl`へ記録。 | 10分間で5%超 | 10分間で15%超 or 3分連続リトライ枯渇 | CLI WARN + メール + 将来Slack | Data担当 / `RUN-DATA-07` |
+| アラート未対応滞留 (`alert_ack_latency_sec`) | `health_state_transitions.jsonl`で`ack_ts - emitted_ts`を計測。 | WARN/MAJORで15分超過 | CRITICALで5分超過 | CLI WARN + メール (エスカレーション) | 運用統括 / `RUN-OPS-01` |
+| Kill Switch状態 (`kill_switch_state`) | `risk_manager`が出力する状態を`metrics/risk.jsonl`へ書込。 | `soft_stop`継続>30分 | `hard_stop`発火 | CLI INFO（WARN継続時メール） | リスク担当 / `RUN-RISK-01` |
+
+- すべての閾値は`config/sla_thresholds/active.yaml`で上書き可能とし、変更時は`AlertDispatcher`が`AlertEvent(reason="threshold_update")`を発火する。
+- メール通知は`ops@domain`グループへ送付。M2でPrometheus/Slack連携予定。閾値超過イベントはRunbookに沿って対応ログ（開始/完了時刻・担当者）を`logs/ops/alerts.log`へ追記する。
+
+#### 7.5 インシデント対応フローとエスカレーション
+1. **検知**: 監視メトリクス閾値超過、CLIアラート、ユーザー報告をトリガーとして`IncidentChannel`（メール件名`[tradectl][INCIDENT]`）を自動生成し、`logs/ops/incident_<timestamp>.md`をテンプレから作成する。
+2. **初動評価 (T+5分以内)**: 值番運用担当が影響範囲（モード/シンボル/時間）、重大度（§7.1）を判定。Kill Switch必要時は即時STOP→Runbook記載の確認コマンド（`tradectl status`, `tradectl metrics report --window 15m`）を実行。
+3. **封じ込め・復旧**: 根本原因に応じて該当Runbookを起動（データ遅延=`RUN-DATA-05/06`, リスク逸脱=`RUN-RISK-03`, Config異常=`RUN-CFG-02`等）。対応進捗は10分単位でインシデントノートに記録し、必要に応じて代替運用（Paperモード移行、手動チケット停止）を実施。
+4. **報告・エスカレーション**: 復旧目標を超過しそうな場合、下表に従い上位者へエスカレート。CRITICALは即時PO/リスク責任者へ電話連絡。外部影響（ブローカー障害等）が疑われる場合はブローカー窓口へ連絡し、連絡記録を添付。
+5. **ポストモーテム (24h以内)**: 発生概要、タイムライン、再発防止策、Runbook改訂点を`docs/postmortems/<YYYYMMDD>_<summary>.md`へ記載。改善タスクを`backlog/incidents.md`に登録し、次回運用レビューで承認。
+
+| 重大度 | 1次対応 | エスカレーション先 | 連絡手段 | 応答SLA | 備考 |
+| --- | --- | --- | --- | --- | --- |
+| WARN | 運用担当 (当番) | - | Slack/メール（M1ではメール） | 30分以内確認 | Runbookで自力対応可能範囲。 |
+| MAJOR | 運用担当 → リードエンジニア | リードエンジニア（技術責任者） | 電話 + メール | 15分以内応答 | `RUN-PERF-01`/`RUN-DATA-06`確認、必要に応じて開発支援要請。 |
+| CRITICAL | 運用担当 → リードエンジニア → PO/リスク責任者 | プロダクトオーナー、リスク責任者 | 電話（ダイヤル） + インシデントメール | 5分以内応答 | Kill Switch操作・ステークホルダー通知判断。 |
+| 長期化 (>2h) | インシデントコマンダー（POまたは指名者） | 経営/法務連絡窓口 | 電話 + レポート共有 | 30分ごとに状況共有 | 顧客・規制報告の要否を判断。 |
+
+- 運用当番表は`docs/ops/rota.xlsx`で管理し、週次レビューで更新。連絡手段のテストは月次`RUN-OPS-02`で検証する。
+- エスカレーション記録は`logs/ops/incident_<timestamp>.md`に自動テンプレとして含まれ、Runbook改訂時には当該節番号を更新する。
 ## 8. 非機能要件への対応
 
 ### 8.1 性能 (NFR-07, NFR-08)
@@ -1740,6 +1771,21 @@ Flag切替時は`ConfigChanged`イベントに`flag_delta`が記録され、Repo
 | FUT-SPRT-01 | FR-22(M2) | SPRTしきい値で提案停止 | 拡張 |
 | FUT-SCORE-01 | AC-07/AC-08 (M2+) | `scoring.hybrid_enabled`時にPF_recent/PF_all/レジーム別PFが閾値を満たすか検証 | 拡張 |
 | FUT-SCORE-02 | AC-09/AC-16 (M2+) | Stabilityスコアと±5〜10%摂動時ランク反転率をリグレッションテスト | 拡張 |
+
+### 9.0 機能別テストケースマトリクス
+| 機能領域 | 単体テスト (例) | 結合テスト (例) | バックテスト検証 | シミュレーション/リプレイ |
+| --- | --- | --- | --- | --- |
+| データ取得・品質監視 (FR-01/02) | `UT-ING-01`, `pytest -k data_latency_guard` | `IT-PIPE-01`, `IT-RESYNC-01` | `tradectl backtest --mode ingestion --since 14d`で遅延差分を確認 | `tests/simulation/test_data_failover.py`（擬似429/timeoutを再生） |
+| 特徴量パイプライン (FR-03) | `UT-FEAT-01`, `pytest -k feature_joiner` | `IT-PIPE-01` | `tradectl backtest --strategy m1_baseline_ma_rsi --since 90d --metrics feature` | `tools/replay/features.py --window 1d`でオンデマンド再計算 |
+| シグナルエンジン/スコアリング (FR-04/FR-33) | `UT-STR-01`, `pytest -k signal_ranker` | `IT-PIPE-01`, `IT-COR-01` | `tradectl backtest --strategy m1_baseline_ma_rsi --since 180d --export signals`で再現性確認 | `tests/simulation/test_signal_replay.py`（ヒストリカルTick→Boardレンダリング） |
+| リスクマネージャ/ガードレール (FR-05/FR-22) | `UT-RISK-01`, `pytest -k health_state_transitions` | `IT-KILL-01`, `IT-RISK-02` | `tradectl backtest --strategy m1_baseline_ma_rsi --risk-eval --since 365d` | `tests/simulation/test_drawdown_guard.py`（資産カーブをリプレイ） |
+| ポジションサイジング (FR-06) | `UT-SIZE-01`, `pytest -k sizing_fractional` | `IT-PIPE-01` | バックテスト出力の`position_size`統計を`reports/backtest/size_validation.md`で確認 | `tests/simulation/test_position_walk.py`（ATR変動シナリオ） |
+| チケット/HITL UX (FR-07/FR-38) | `UT-TKT-01`, `pytest -k ticket_builder` | `IT-PIPE-01`, `PT-CLI-01` | `tradectl backtest --strategy m1_baseline_ma_rsi --export tickets`で差分照合 | `tests/simulation/test_board_cli_flow.py`（Approvalテストを含む） |
+| モード切替・Resync (FR-08/FR-16/FR-18) | `pytest -k mode_context`, `pytest -k snapshot_manager` | `IT-RESYNC-01`, `IT-PIPE-01` | `tradectl backtest --mode paper --resume-from snapshots/latest`で整合性確認 | `tests/simulation/test_mode_failover.py` |
+| Funding/レポート (FR-10/FR-28) | `pytest -k funding_curve`, `pytest -k reporter_weekly` | `IT-FUND-01`, `IT-RISK-02` | `tradectl backtest --strategy m1_baseline_ma_rsi --funding --since 90d` | `tests/simulation/test_weekly_report_pipeline.py` |
+
+- Backtest/シミュレーション列のコマンドは`poetry run`を前置して実行する。結果は`reports/validation_log/`配下に保存し、CIでは主要シナリオのみスモーク実行（`--since 14d`）とする。
+- 追加機能を実装する際は本マトリクスに行を追記し、Runbookおよび`docs/implementation_packets/`のテスト節で参照する。
 
 ### 9.1 テストデータ戦略
 - `tests/fixtures/market/`に代表的OHLCVサンプル（高ボラ/低ボラ/欠損）を配置。
