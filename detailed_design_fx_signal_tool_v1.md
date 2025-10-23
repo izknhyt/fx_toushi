@@ -472,6 +472,21 @@ tests/
 - **最適化**: pandas rolling共有、Numba optional。GPUサポートはM3候補。
 - **エラーハンドリング**: 指標計算失敗で`IndicatorError`発生→リトライ後も失敗なら`HealthMonitor.hard_stop(indicator)`。
 
+#### 3.3.1 マルチタイムフレーム指標計算式
+
+| タイムフレーム | 指標 | 計算式 | 備考 |
+| --- | --- | --- | --- |
+| 5分足 (`tf=5m`) | 単純移動平均 (SMA) | SMA_n(t) = (1/n) * Σ_{i=0}^{n-1} Close(t-i) | 既定窓は n=20。差分更新により最新バーの差し替えのみ実施。 |
+| 5分足 (`tf=5m`) | 指数移動平均 (EMA) | EMA_n(t) = α * Close(t) + (1-α) * EMA_n(t-1), α = 2/(n+1) | 戦略プラグインへは `ema_fast`, `ema_slow` として供給。 |
+| 5分足 (`tf=5m`) | RSI | RSI_n(t) = 100 - 100 / (1 + AvgGain_n(t) / AvgLoss_n(t)) | Welles Wilder 平滑。欠損はQuality Guardで隔離済み前提。 |
+| 1時間足 (`tf=1h`) | ATR | ATR_n(t) = (1/n) * Σ_{i=0}^{n-1} TR(t-i) , TR(t) = max{H_t-L_t, |H_t-C_{t-1}|, |L_t-C_{t-1}|} | 5分足を集約後に算出。サイジングで `stop_level_pips` の上限に利用。 |
+| 1時間足 (`tf=1h`) | MACD | MACD(t) = EMA_12(t) - EMA_26(t), Signal(t) = EMA_9(MACD(t)) | レジーム判定および Donchian ブレイクアウトのフィルタに使用。 |
+| 日足 (`tf=1d`) | Donchian Channel | Upper_n(t) = max_{0<=i<n} High(t-i), Lower_n(t) = min_{0<=i<n} Low(t-i) | ブレイクアウト閾値。日足更新時のみ再計算。 |
+| 日足 (`tf=1d`) | Zスコア | Z(t) = (Close(t) - μ_n) / σ_n, μ_n = (1/n)*Σ_{i=0}^{n-1} Close(t-i), σ_n = sqrt{(1/n)*Σ_{i=0}^{n-1}(Close(t-i)-μ_n)^2} | レバレッジ調整とスコアリング補正に使用。 |
+
+- タイムフレーム間の参照は`FeatureContext.lookup(symbol, feature_name, timeframe)`で明示し、Strategy側は依存タイムフレームを`metadata.required_features`に列挙する。
+- 欠損バーが混入した場合は`DataQualityGuard`が隔離済みである前提だが、再サンプリング後の窓不足 (k < n) では`nan_policy='propagate'`を採用し、StrategyEngineが例外ケースでフォールバック動作を選択できるようにする。
+
 ### 3.4 RegimeDetector (`src/features/regime.py`)
 - **公開API**: `update(feature_frame)`, `current_state()`。
 - **アルゴリズム**: ADX, TrueRange, 標準偏差, 自己相関, 平均リターンを0-1正規化→重み付き合算→Softmax。ヒステリシスにより急峻な切替を抑制。
@@ -482,6 +497,97 @@ tests/
 - **入出力**: `StrategyContext`（FeatureContext, RegimeState, GateState, AccountState, Config）→`Iterable[RawSignal]`。
 - **プラグイン**: M1で`ma_rsi`, `donchian_breakout`。`metadata.required_features`でFeature不足を検知。`cooldown_bars`で連続エントリーを抑止。
 - **安全性**: 戦略から返却されたシグナルは`SignalSchema`で検証。レジーム不一致やGateStateブロック時は自動Reject。
+
+#### 3.5.1 シグナル判定フロー（シーケンス図）
+
+```mermaid
+sequenceDiagram
+    participant WF as Workflow Orchestrator
+    participant FP as FeaturePipeline
+    participant RE as RegimeDetector
+    participant SE as StrategyEngine
+    participant RM as RiskManager
+    participant PS as PositionSizer
+    participant TB as TicketBuilder
+
+    WF->>FP: update(market_frame@5m)
+    FP-->>WF: FeatureContext (5m/1h/1d)
+    WF->>RE: update(feature_frame)
+    RE-->>WF: RegimeState
+    WF->>SE: run_all(StrategyContext)
+    SE->>SE: plugin.evaluate(feature, regime, gate)
+    SE-->>WF: RawSignal[]
+    WF->>RM: evaluate(RawSignal[])
+    RM-->>WF: RiskVettedSignal[]
+    WF->>PS: size(RiskVettedSignal, AccountState)
+    PS-->>WF: SizedSignal[]
+    WF->>TB: build(SizedSignal, ExecutionAdjustments)
+    TB-->>WF: TicketProposal
+```
+
+#### 3.5.2 シグナル判定疑似コード
+
+```python
+def run_signal_cycle(bar: MarketBar, ctx: ModeContext) -> list[TicketProposal]:
+    feature_frame = FeaturePipeline.update(bar)
+    regime_state = RegimeDetector.update(feature_frame)
+    gate_state = GateAggregator.snapshot()
+    strategy_ctx = StrategyContext(
+        features=feature_frame.lookup_ctx(),
+        regime=regime_state,
+        gate=gate_state,
+        account=AccountService.refresh_state(ctx),
+        config=ConfigRegistry.snapshot(),
+    )
+
+    performance_stats = PerformanceRepository.load(symbols=strategy_ctx.watchlist)
+    penalties = PenaltyRegistry.snapshot(now=bar.ts)
+
+    raw_signals = []
+    for plugin in StrategyRegistry.active_plugins():
+        if not plugin.metadata.is_applicable(strategy_ctx):
+            continue
+        raw_signals.extend(plugin.evaluate(strategy_ctx))
+
+    ranked = ScoringService.rank(raw_signals, performance_stats, penalties)
+    risk_vetted = RiskManager.evaluate(ranked, strategy_ctx)
+    sized = [
+        PositionSizer.size(sig, strategy_ctx.account, BrokerSpecs.load())
+        for sig in risk_vetted
+    ]
+    tickets = [TicketBuilder.build(sig, ExecutionModel.apply(sig)) for sig in sized]
+    return [t for t in tickets if t.is_actionable()]
+```
+
+#### 3.5.3 運用制約と計算式
+
+- **取引コスト（トータルスプレッド換算）**
+  - cost_pips = spread_pips(t) + 2 * commission_per_lot_pips。
+  - cost_R = (cost_pips * pip_value) / stop_distance_quote、ここで stop_distance_quote = |entry - stop|。
+  - `ScoringService`は`spread_penalty = cost_R`、`RiskManager`は`cost_pips`を`RiskMetrics`へ記録する。
+- **スリッページ補正**
+  - slippage_pips(t) = mu_slip(symbol, regime) + k * sigma_slip （M1は k=0 で平均値固定）。
+  - 実効約定価格: P_eff = P_close(t) + direction * (0.5 * spread_pips + slippage_pips) * pip_size。
+  - `ExecutionModel`は`expected_slippage`として返却し、`TicketBuilder`がTTL・指値幅を設定。
+- **最大ポジションサイズ**
+  - lot_risk = (equity * r_per_trade) / (ATR_pips * pip_value)。
+  - lot_bucket = bucket_limit_currency / stop_distance_pips。
+  - lot_margin = available_margin / (contract_size * margin_rate)。
+  - lot_max = min(lot_risk, lot_bucket, lot_margin, broker_max_lot)。`PositionSizer`はこの値を`lot_step`で丸める。
+- **同時ポジション上限**
+  - `RiskPolicy.concurrent_positions_max`を超える提案は`RiskManager`が`risk_flags=['max_positions']`でReject。
+  - エクスポージャ比率: exposure_ratio = sum(|position_notional|) / equity が `config.risk.max_exposure_ratio` を上回る場合、新規提案を抑止。
+
+#### 3.5.4 例外処理ケース一覧
+
+| ケース | トリガー条件 | フェイルセーフ動作 | Runbook/ログ |
+| --- | --- | --- | --- |
+| データ欠損 | `FeaturePipeline`で`nan_policy`が発動し窓サイズ不足 | 該当シグナルを`plugin.skip(reason='feature_gap')`で棄却、`data.feature_gap`イベントを発火 | `logs/ops/data_gaps.log`、Runbook `RUN-DATA-06` |
+| 急変動（スプレッド拡大） | `SpreadMonitor`が`spread_state`を`halt`または`p95`超過に設定 | `GateState.spread_block=True`で全戦略抑止、`tradectl board --guarded`を推奨 | `health_state_transitions.jsonl`、Runbook `RUN-RISK-02` |
+| 急変動（価格ギャップ） | `RegimeDetector.volatility`が閾値超過、または`|bar.return|>config.execution.max_gap` | `ExecutionModel`が`expected_slippage`へギャップ分を上乗せし、許容超過でシグナル除外 | `logs/execution/gap_reject.log`、Runbook `RUN-RISK-03` |
+| 外部イベント遮断 | `CalendarService.is_blocked(symbol)`が真 | `StrategyEngine`が`gate_state.calendar_block`を検出して即時Reject | `calendar/block_events.jsonl`、Runbook `RUN-OPS-04` |
+| 指標計算異常 | `IndicatorError`が発生しリトライ失敗 | `HealthMonitor.hard_stop('indicator')`→Kill Switchレビュー、`tradectl resync --since`で再計算 | `logs/errors/indicator.log`、Runbook `RUN-DATA-08` |
+| アカウント情報遅延 | `AccountService.refresh_state`が`stale_ts`を返却 | `RiskManager`が`account_stale`でReject、`health.raise('degraded','account_state_stale')` | `logs/account/stale.log`、Runbook `RUN-OPS-06` |
 
 ### 3.6 ExecutionModel & SpreadMonitor (`src/execution/model.py`, `src/execution/spread.py`)
 - **公開API**: `ExecutionModel.apply(raw_signal, market_snapshot, spread_state)`, `SpreadMonitor.update(spread_frame)`。
