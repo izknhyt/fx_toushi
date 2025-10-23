@@ -256,6 +256,8 @@
 7. Account Serviceがモード別データソース（Backtest: シミュレーション台帳 / Paper: `reports/performance/paper/<run_id>.parquet` / Live: ユーザー入力CSV/API）と最新レートを用いて単一口座の残高・証拠金・含み損益を集計。口座単位のR計算と証拠金余力を`AccountState`へ反映し、欠損データや算出不能時はSignal Boardへ警告を送る。スワップは`FundingCurve`を日次で織り込んだキャッシュフローとして反映し、バックテストでも同一ロジックを適用する。〔M1〕[^ms-core]
 8. Calendar Serviceが経済指標CSV/休日CSVをUTC基準でロードし、設定された`trading_timezone`（既定:JST）に変換した上で現在時刻に対するブロック/解除ウィンドウを判定して`GateState`を更新。イベント強度に応じた±15/30分の動的拡張ルールもここで適用する。〔M1〕[^ms-core]
 9. Feature Engineが差分計算で新規バー分の指標を更新し、必要な区間のみ再計算。M1ベース戦略では5分足のインジケータ更新後に`multi_tf_joiner`が1時間足EMA(55)と日足Zスコアを参照し、`FeatureFrame`へ`ema55_slope`/`htf_bias_zscore`を追加する。〔M1〕[^ms-core]
+    - **M1コア指標セット**: 5分足SMA(20)/EMA(21,55)/RSI(14)/ボリンジャーバンド(20,k=2)、1時間足EMA55傾き・ATR(14)・MACD(12/26/9)、日足ドンチャンチャネル(20)・終値Zスコア(20)を必須とし、いずれも`FeaturePipeline`でマルチTFに束ねる。
+    - **Feature Flag**: SMA/EMA/RSI/ATRは常時ON。MACD/ボリンジャー/ドンチャン/Zスコアは`config/feature_pipeline.yaml`の`indicators.<name>.enabled`キーで個別制御し、`tests/integration/test_feature_pipeline.py`でON/OFF双方の再計算とキャッシュ整合を検証する。M1 Coreのデフォルトは全指標ONだが、Paper検証での簡略化や回帰テスト用に個別停止を許容する。
 10. Regime Detectorが最新特徴量からレジームスコアを更新し、ヒステリシスを適用。トレンド/レンジ/高ボラ分類は`ATR_Z`と`ema55_slope`を入力にしてSignal Engineのフィルタ条件へ渡す。〔M2+〕[^ms-m2]
 11. Signal Engineが戦略プラグインを順に評価し、候補シグナルを生成。`m1_baseline_ma_rsi`プラグインは5分足EMA(21/55)クロス＋RSIゾーンの条件に加えて、1時間足EMA(55)の傾きがエントリー方向と一致した場合のみ`RawSignal`を返却し、日足Zスコアは`badges`に反映される。〔M1〕[^ms-core]
     - OpsがRunbookに沿って`tradectl board --guarded`を実行した結果`board_mode=guarded`になっている間は、Workflow Orchestratorからの`SignalAction=block`指示に従ってSignal Engineが候補シグナルをキューへ投入せず、Reduce-Only提案フラグが付与された既存候補だけをMaintainする。Risk Managerも同モード中はReduce-Only属性を持たない要求を`risk.decision=reject(board_guard)`で即時却下する。〔M1〕
