@@ -3455,3 +3455,104 @@ M1.1ではヒューマン承認前の**規制順守チェック（FR-50）**と�
 ---
 
 本節の仕様により、CodexはM1.1でプレトレードコンプライアンスと資本配分制御を実装し、ヒューマン承認のリスクを低減できる。Runbook・CLI・テレメトリが連携することで、トレーダーとOpsは違反理由と代替手段を即座に把握し、Override行為を可視化しながら運用改善の効果測定を継続できる。
+
+## 22. リスク開示・同意ゲート強制化設計（FR-53/FR-54, M1.1 Hardening）
+
+M1.1ではリスク開示ダイアログの表示と同意取得を**必須ゲート**として扱い、Signal Board/チケット承認/緊急操作などの高リスク機能を同意完了までロックする。本節では`RiskDisclosureService`（§3.30）の拡張点、CLIレンダリング、監査証跡、Runbook連携、テスト戦略をCodex向けPacket化する。
+
+### 22.1 状態機械と同意ゲート動作
+
+- **状態遷移（再掲＋強制化）**:
+  | 現在ステータス | イベント | 遷移後ステータス | 自動アクション | Block対象 | Runbook | 備考 |
+  | --- | --- | --- | --- | --- | --- | --- |
+  | `pending` | `record_consent('accept')` | `accepted` | `consent_reference_id`生成、`audit.risk_consent`追記 | 解除 | `COMPLIANCE-01#accept` | 初回起動時の標準経路 |
+  | `pending`/`warning` | `record_consent('reject')` | `pending` | `alert`送信、`health.raise('risk_disclosure_reject')` | `board`, `ticket`, `killswitch`, `emergency` | `COMPLIANCE-01#reject` | 拒否中は閲覧も制限 |
+  | `accepted` | `refresh_from_profile`で`version`/`document_hash`変更 | `expired` | `alert`送信、`ops_worklog`へ`task='risk_disclosure_expired'`記録 | `board`, `ticket`, `killswitch`, `emergency` | `COMPLIANCE-01#renew` | 文言更新・四半期レビュー時 |
+  | `accepted` | `expires_at < now` | `expired` | `alert`送信、`BoardRenderer.render_locked()` | 同上 | `COMPLIANCE-01#renew` | 猶予期間終了 |
+  | `expired` | `record_consent('accept')` | `accepted` | `audit`記録、`health.clear('risk_disclosure')` | 解除 | `COMPLIANCE-01#accept` | 再承諾で復帰 |
+  | 任意 | `record_consent('ack_warn')` | `warning` | `alert(level='info')`、`ops_worklog`へ暫定承認ログ | `ticket`, `killswitch`, `emergency`（閲覧のみ許可） | `COMPLIANCE-01#ack-warn` | Runbook付き暫定運用、48h以内に本承諾必須 |
+- **グレース処理**: `warning`は`grace_window_hours`内のみ許容し、それを超えると自動的に`expired`へ遷移。`Scheduler`が1時間毎に`RiskDisclosureService.refresh_from_profile(auto_expire=True)`を実行し、期限切れを検出する。
+- **Board Modeとの関係**: `status in {'pending','warning','expired'}`の間は`BoardMode`が`guarded`以上であることを強制。`SessionManager.start`時に状態チェックし、必要なら`BoardMode`を`guarded`へ切り替えた上で理由を付与する。Kill Switchが`STOP`の場合でも承諾は必須（緊急停止操作を伴うため）。
+- **例外ポリシー**: `mode='backtest'`では承諾が未完でも`tradectl backtest`系コマンドは許可。ただし`tradectl board`/`ticket`を閲覧する際はバナー表示のみ許容する。
+
+### 22.2 CLI / Renderer 統合
+
+- **`tradectl start`/`tradectl board`初期化フロー**:
+  1. `SessionManager.start`が`RiskDisclosureService.fetch_state()`を呼び出し、`state.status`を`SessionContext`へ注入。
+  2. `BoardRenderer.render()`は`state.status`を評価し、`required=True`の場合は`render_locked(state)`を実行。ロック画面には承諾の手順、Runbookリンク、最終承諾者/日時/バージョンを表示する。
+  3. ユーザーが`tradectl compliance risk-disclosure accept`を完了するまで、`board`/`ticket`/`killswitch`/`emergency`コマンドは`ConsentRequiredError`をraise。CLIはRichで赤バナー＋Runbook参照を表示し、`Exit code 73`を返す。
+  4. 承諾完了後、`BoardRenderer`は通常表示へ戻し、再描画時に`consent_reference_id`をヘッダーへ一時表示（24時間限定）。
+- **CLIコマンド追加/拡張**:
+  | コマンド | 用途 | 主なオプション | 出力/副作用 |
+  | --- | --- | --- | --- |
+  | `tradectl compliance risk-disclosure status` | 現在の承諾状況表示 | `--json`, `--show-history` | 状態テーブル＋直近3件の`RiskDisclosureAudit`抜粋 |
+  | `tradectl compliance risk-disclosure accept` | 承諾フロー | `--note`, `--evidence <path>`, `--force`（再承諾時のみ） | ダイアログ表示→承諾→`consent_reference_id`表示。`audit`へ記録 |
+  | `tradectl compliance risk-disclosure reject` | 拒否記録 | `--note`, `--open-runbook` | 拒否理由を記録し、`board`等がロック状態に維持 |
+  | `tradectl compliance risk-disclosure renew` | 文面更新確認→承諾誘導 | `--profile <id>` | プロファイルYAML差分を表示し、必要なら`accept`を案内 |
+  | `tradectl compliance risk-disclosure history --from --to` | 承諾/拒否履歴エクスポート | `--format table|json`, `--audit-path` | `RiskDisclosureAudit`イベントをフィルタリング |
+- **Renderer 実装要求**:
+  - `BoardRenderer.render_locked(state)`はRich Panelを使用し、上部に赤背景の警告、中央に承諾手順、下部にRunbookショートカット (`open docs/runbooks/COMPLIANCE-01.md`) を表示する。
+  - `TicketRenderer`は`ConsentRequiredError`受信時に承諾コマンドを案内し、`--force`オプションを無効化する。
+  - `status.py` CLIは`RiskDisclosure`セクションを追加し、`status`, `version`, `expires_at`, `consent_reference_id`, `required_action`を表示。`--json`時は`schema_version='risk_disclosure.v1'`で出力。
+- **Approvalテスト**: `tests/approval/cli/compliance_risk_disclosure/`にロック画面・承諾後画面のスナップショットを配置。`pytest -k "risk_disclosure and approval"`で再生成。
+
+### 22.3 永続化・監査・セキュリティ
+
+- **状態ファイル**: `data/compliance/risk_disclosure_state.json`。`RiskDisclosureState`を`pydantic`で検証し、`device_fingerprint`を`hashlib.sha256(<machine-id> + salt)`で更新。ファイルは`0600`パーミッション、`SnapshotManager`の対象に含める。
+- **監査ログ**: `logs/audit/risk_consent_<YYYYMMDD>.jsonl`。レコード構造:
+  ```json
+  {
+    "ts": "2025-02-21T09:12:34.567Z",
+    "record_type": "RiskDisclosureAccepted",
+    "consent_reference_id": "rcid_20250221_01",
+    "document_version": "2025Q1",
+    "document_hash": "sha256:...",
+    "decision": "accept",
+    "user": "trader01",
+    "device_fingerprint": "...",
+    "board_mode": "guarded",
+    "mode": "paper",
+    "runbook_ref": "COMPLIANCE-01#accept",
+    "note": "Reviewed new clause",
+    "evidence_path": "reports/governance/risk_disclosure_2025Q1.pdf"
+  }
+  ```
+- **署名**: `tools/sign_manifest.py`と同様に`tools/sign_consent.py`を追加（M1.1 Packet）。監査ファイルのSHA256と署名を`audit_manifest.json`へ格納し、`tradectl audit bundle --period`がWORM保存に利用できるようにする。
+- **EventBus**: `risk.disclosure.state_changed`イベントをpublishし、`payload={'status','version','expires_at','required_action','consent_reference_id'}`。CLI/Reporter/Telemetryが購読。
+- **セキュリティ**: `device_fingerprint`計算時に`macOS`の`IOPlatformUUID`など端末固有値を利用し、Runbook `COMPLIANCE-01`に手動再承諾手順を記載。ファイルアクセスは`ConfigRegistry`と同様に`FileLock`で排他。
+- **バックアップ**: `scripts/backup.sh`へ`data/compliance/`と`logs/audit/risk_consent_*.jsonl`を追加し、DR復旧時に承諾履歴が失われないようにする。
+
+### 22.4 Runbook・Ops連携
+
+- `docs/runbooks/COMPLIANCE-01.md`を更新し、以下を必須手順に追加:
+  1. 文面更新の検知→`tradectl compliance risk-disclosure renew`実行→差分確認。
+  2. 承諾取得のダブルサイン（トレーダー＋Ops Manager）。CLIで`accept`実行後、`consent_reference_id`をRunbookログへ貼付。
+  3. 拒否時の手順（市場停止・Kill Switch設定・リスクレビュー招集）。`health.raise('risk_disclosure_reject')`で`soft_stop(compliance)`へ移行し、`BoardMode=halted`を維持。
+  4. 再承諾期限（`warning`発生から48h）をOps会議アジェンダへ自動反映。`tradectl ops agenda`に未承諾タスクを表示。
+- `reports/weekly/templates/m1_core.md`に`Risk Disclosure`セクションを拡張し、`status`, `expires_at`, `last_accepted_by`, `consent_reference_id`を表示。紙のレビュー用にRunbookリンクを記載。
+- `ops_worklog`記録: `RiskDisclosureService.record_consent`が`automation_effect`と連動し、承諾フローにかかった時間を`ops_worklog`へ`{"task":"risk_disclosure","duration_minutes":<value>}`で追記。
+- `Validation Data Playbook`連携: `risk_consent`イベントの`document_hash`と`consent_reference_id`を`docs/validation_playbook/risk_disclosure.md`へ転記するスクリプト（M1.1 Packet）を設計。手動で行う場合のチェックリストもRunbookに追加。
+
+### 22.5 テスト & Codex Packet計画
+
+- **ユニットテスト**:
+  - `tests/unit/test_risk_disclosure_service.py`: 状態遷移、`grace_window`経過、`record_consent`の監査出力、`device_fingerprint`更新を検証。
+  - `tests/unit/test_cli_risk_disclosure.py`: `tradectl compliance risk-disclosure`系コマンドのパラメータ、ロック状態でのエラーコード、`--json`出力を検証。
+- **統合テスト**:
+  - `tests/integration/test_risk_disclosure_gate.py`: `tradectl board`→ロック→`accept`→解除の一連。`pytest-approvaltests`でロック画面と解放画面を比較。
+  - `tests/integration/test_consent_linkage.py`: Ticket承認イベントに`consent_reference_id`が付与されるか、拒否時に`ConsentRequiredError`を返すかを確認。
+- **Codex Packet提案**:
+  | Packet ID | スコープ | 依存セクション | 主な成果物 | テスト指示 |
+  | --- | --- | --- | --- | --- |
+  | `EP03-P4` | `RiskDisclosureService`強制化、状態ファイル/監査拡張 | §3.30, §22.1, §22.3 | Service実装、監査ログ、イベント配線 | `pytest -k risk_disclosure_service` |
+  | `EP03-P5`（連動） | CLI/Rendererロック表示、`tradectl compliance risk-disclosure *`コマンド | §22.2 | CLI実装、Approvalテスト更新 | `pytest -k cli_risk_disclosure`, `pytest-approvaltests` |
+  | `EP05-P2`（週次レポート更新） | Reporter/Runbook連携 | §9.3, §22.4 | レポートテンプレ更新、Validation Playbook同期スクリプト | `tradectl report weekly --dry-run` |
+- **Ops受入シナリオ**:
+  - `TR-08`（新設）: 文面更新→`board`ロック→Runbook承諾→解除→週次レポート確認。証跡は`docs/trader_signoff/EP03-P4.md`に保存。
+  - `TR-09`: 拒否ケース→`soft_stop(compliance)`→Kill Switch確認→Override禁止確認。
+- **テレメトリ**: `metrics/compliance_risk_disclosure.jsonl`を新設し、`pending_duration_minutes`, `warning_count`, `expired_count`, `consent_actions`を記録。SLO: `pending_duration_minutes`が48h以内に収束すること。アラート閾値は`warning_count>=1`でメール通知。
+- **データマイグレーション**: 既存`data/compliance/risk_disclosure_state.json`が存在する場合は`schema_version`不足の可能性があるため、Packet実行時に`tools/migrate_risk_disclosure_state.py`を提供し、自動で`schema_version='risk_disclosure_state.v2'`・`device_fingerprint`・`grace_window_hours`を追加。
+
+---
+
+本節により、FR-53/FR-54で要求されるリスク開示ゲートが実装可能となり、CodexはM1.1で承諾強制モードを安全に導入できる。承諾証跡・監査・Runbookが統合されることで、ヒューマン・トレーダーとOpsが同意状態を即座に把握し、規制順守のリスクを最小化できる。
