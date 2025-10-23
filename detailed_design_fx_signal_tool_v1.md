@@ -1,4 +1,4 @@
-# FXヒューマン・インザループ投資ツール 詳細設計書 v1.16
+# FXヒューマン・インザループ投資ツール 詳細設計書 v1.17
 
 ## 0. 文書情報
 - 作成日: 2025-02-20
@@ -9,6 +9,7 @@
 ### 0.1 改訂履歴
 | 版 | 日付 | 改訂概要 |
 | --- | --- | --- |
+| v1.17 | 2025-02-26 | §41〜§42にオフラインバンドル/サプライチェーン保証設計を追加し、NFR-06/12/18/24およびAC-27/28の実装指針をCodex Packet化。 |
 | v1.16 | 2025-02-22 | §23〜§25にストレステスト/流動性監視/ステートメント突合の詳細設計を追加し、FR-43/FR-49/FR-64対応ロードマップをCodex Packet化。 |
 | v1.15 | 2025-02-22 | §20にデータプロベナンス/Validation Data Playbook実装設計を追加し、FR-52/FR-62のM1.1準備方針を明文化。 |
 | v1.14 | 2025-02-22 | §19にEmergency Orchestrator/Reduce-Only Advisor設計ロードマップを追加し、FR-42/FR-47の下準備を明文化。 |
@@ -4416,4 +4417,111 @@ NFR-18/24に従い、市場データ・監査・スナップショットを90日
 
 ---
 
-これらの追補により、ジャーナル・ドリフト監視・ベンチマークリプレイ・運用健全性ダッシュボードに加えて、セキュリティ強化・アーカイブ運用・研究ガバナンスといったNFR-04/17/18/21/26/27/23の要求にも応える詳細設計が整備された。CodexへM1.1〜M2向けの実装パケットを明確に提示するとともに、トレーダー/Ops/研究チームがRunbookとValidation Data Playbookを基に運用・監査を継続改善できる構成とした。
+## 41. オフラインバンドル & リリースパッケージ設計（NFR-06, NFR-12, NFR-18, AC-27, AC-28）
+
+要件定義§2「配備形態」で求められる`dist/offline_bundle/<version>.tar.gz`生成と、SBOM/ハッシュ/復旧手順の自動化をCodexが実装しやすいよう定義する。オンライン`poetry install --sync`と同一依存を束ね、DR（Runbook `DR-LOCAL-01`）やOpsレビューでの再現性を担保する。
+
+### 41.1 OfflineBundleBuilder (`src/release/offline_bundle.py`)
+
+- **責務**: バンドル対象アーティファクトの収集・整形・署名を一元管理。
+- **入力**: `pyproject.toml`, `poetry.lock`, `requirements.lock`, `docs/SBOM/*.json`（任意）, `CHANGELOG.md`, `dist/*.whl`。
+- **出力構造**:
+  ```
+  dist/offline_bundle/<version>/
+    manifest.json
+    hashes.sha256
+    wheels/
+    requirements.lock
+    pyproject.toml
+    INSTALL.md
+    sbom/cyclonedx.json
+    scripts/post_install.sh
+  ```
+- **フロー**:
+  1. `collect()`で`poetry build`生成物と`requirements.lock`をコピー。`Feature Flag`で研究用依存を除外する選択肢を保持。
+  2. `generate_sbom()`が`cyclonedx-bom`または`pip-licenses`を呼び出し、`sbom/cyclonedx.json`と`licenses.csv`を生成。`sbom`は`schema_version='sbom.cdx.v1'`を付与。
+  3. `write_manifest()`が`OfflineBundleManifest`（`schema_version`, `version`, `build_ts`, `python`, `wheels[]`, `hashes{}`）を生成。`hashes`は`SHA256`でファイル単位に格納し、`hashes.sha256`へも書き出す。
+  4. `render_install_doc()`が`INSTALL.md`をテンプレ（`docs/templates/offline_install.md`）から生成。手順: (a) 仮想環境作成 (b) `pip install wheels/*.whl --no-index --find-links wheels` (c) `poetry lock --no-update`検証 (d) `post_install.sh`実行。
+  5. `finalize()`で`tar.gz`へ圧縮し、`dist/offline_bundle/<version>.tar.gz`を生成。`ArchivePlanner`と連携しWORMコピー対象にマーキング。
+- **監査ログ**: `logs/audit/release/offline_bundle_<timestamp>.jsonl`へ`version`, `builder`, `hash`, `sbom_digest`, `status`を追記。
+- **例外**: Wheel欠落→`OfflineBundleError('missing_wheel', package)`で`exit_code=121`。SBOM生成失敗→`OfflineBundleWarning`として続行可。Manifest書き込み失敗は`critical`扱い。
+- **メトリクス**: `metrics/release_bundle.jsonl`に`build_duration_sec`, `bundle_size_mb`, `wheels_count`, `sbom_vuln_count`。
+
+### 41.2 CLI/Make統合 (`src/interfaces/cli/release.py`, `Makefile`)
+
+- **CLIコマンド**:
+  | コマンド | 用途 | 主オプション | 出力/副作用 |
+  | --- | --- | --- | --- |
+  | `tradectl release bundle --version <semver>` | OfflineBundleBuilder起動 | `--with-sbom`, `--skip-tests`, `--output <dir>` | tar.gz生成、監査ログ、メトリクス更新 |
+  | `tradectl release bundle-verify --bundle dist/offline_bundle/<v>.tar.gz` | ハッシュ/SBOM検証 | `--check-poetry`, `--check-wheel-integrity`, `--extract <tmp>` | `verification_report.json`, Exit code 0/120 |
+  | `tradectl release bundle-list` | 既存バンドル参照 | `--json`, `--detailed` | Manifest一覧、`ArchivePlanner`連携 |
+- **Makeターゲット**:
+  - `make offline-bundle VERSION=X.Y.Z`: `pytest -m "not slow"`→`poetry build`→`tradectl release bundle --version`。
+  - `make offline-verify BUNDLE=...`: tar展開→`tradectl release bundle-verify --check-poetry`。
+  - `make release-package`: `offline-bundle` + `audit bundle generate` + `archive run --window monthly --dry-run`。
+- **Validation Data Playbook**: `validation_playbook_id='AC-27_offline_bundle'`を追加。初回リリースと四半期レビューでManifest/SBOM/verifyログ/Runbookサインを添付。
+- **Runbook**: `docs/runbooks/RUN-RELEASE-01.md`に(1) テスト完了確認 (2) Offline Bundle生成 (3) Verify結果レビュー (4) `dist/offline_bundle`のWORMコピー (5) バージョン刻印 を追記。
+- **Opsレビュー**: 月次リリース会議で`bundle_size`, `vuln_count`, `hash_mismatch`の推移を監視。閾値逸脱時は`health.raise('warning','offline_bundle_integrity')`。
+
+### 41.3 検証・テスト & Codex Packet
+
+- **テスト**:
+  - `tests/unit/test_offline_bundle_builder.py`: Manifest生成、SBOM連携、エラーハンドリング。
+  - `tests/integration/test_release_bundle_cli.py`: `bundle`/`bundle-verify` CLIのE2E（TempDirに展開）。
+  - `tests/approval/cli/offline_bundle/`: `INSTALL.md`テンプレのApproval。
+- **CI**: GitHub Actions `release-offline-bundle.yml`で`make offline-bundle VERSION=${GIT_TAG}`＋`make offline-verify`をdry-run。生成物は`actions/upload-artifact`で保存。
+- **Codex Packet案**:
+  | Packet ID | 範囲 | テスト |
+  | --- | --- | --- |
+  | `REL-P1` | OfflineBundleBuilder実装＋SBOM生成 | `pytest -k offline_bundle_builder` |
+  | `REL-P2` | CLI/Make統合＋verify | `pytest -k release_bundle_cli`, `make offline-verify BUNDLE=dist/offline_bundle/test.tar.gz` |
+- **Ops受入**: `TR-26`（テスト完了→offline-bundle生成→verify→WORMコピー）をRunbook`RUN-RELEASE-01`で実行し、`docs/trader_signoff/REL-P2.md`へ証跡保管。
+
+---
+
+## 42. 依存性監査 & サプライチェーン保証設計（NFR-06, NFR-12, NFR-21, AC-27）
+
+Offline Bundleと連動し、依存性の脆弱性・ライセンス・署名情報を継続監視する。Codexが`pip-audit`/`cargo-audit`等のツールを組み込む際の拡張ポイントを定義し、CI/Runbook/Validation Data Playbookへ統合する。
+
+### 42.1 DependencyAuditService (`src/release/dependency_audit.py`)
+
+- **責務**: Python依存のCVE/ライセンス違反検出、SBOM増分比較、アクション推奨。
+- **API**:
+  | メソッド | 説明 |
+  | --- | --- |
+  | `scan(*, sources: Literal['poetry','requirements']) -> DependencyAuditReport` | `pip-audit --format json`/`safety`を実行し、重大度別に集計。|
+  | `compare_sbom(current, previous)` | CycloneDX差分から新規/削除依存、ライセンス変更を検出。|
+  | `export(report, *, format='json|md')` | `reports/release/dependency_audit_<version>.{json,md}`へ出力。|
+- **データモデル**: `DependencyAuditReport`に`schema_version`, `version`, `critical_vulns[]`, `high_vulns[]`, `license_issues[]`, `recommended_actions[]`, `generated_at`, `sbom_digest`。
+- **イベント/アラート**: `audit.dependency.failed`で`HealthMonitor`へ伝播。`critical_vulns`>0は`health.raise('warning','dependency_cve')`。Runbook`SEC-DEPS-01`でエスカレーション。
+- **メトリクス**: `metrics/dependency_audit.jsonl`に`critical_count`, `high_count`, `license_violations`, `scan_duration_sec`。
+- **Integration Hooks**: `OfflineBundleBuilder.finalize()`前に`DependencyAuditService.scan()`を呼び、結果をManifestへ埋め込む（`manifest.security_summary`）。
+
+### 42.2 CLI/CI統合 (`src/interfaces/cli/dependency.py`, `.github/workflows/security.yml`)
+
+- **CLI**:
+  | コマンド | 用途 | 主オプション | 出力 |
+  | --- | --- | --- | --- |
+  | `tradectl deps audit --sources poetry` | `pip-audit`実行 | `--severity >=medium`, `--fail-on critical`, `--report reports/release/dependency_audit_latest.json` | JSON/Markdownレポート、Exit code（criticalで非0） |
+  | `tradectl deps diff --previous <file>` | SBOM差分 | `--format table|json`, `--ignore-dev` | 依存追加/削除/ライセンス変更一覧 |
+  | `tradectl deps licenses` | ライセンス集計 | `--csv` | `reports/release/licenses_<date>.csv` |
+- **CI**: `security.yml`が`pip-audit`, `bandit`, `codespell`を並列実行。`critical`検出時はPRブロック。結果を`reports/security/ci/<build>.json`に保存し、PRコメントへ要約を投稿。
+- **Validation Data Playbook**: `validation_playbook_id='NFR-12_dependency_audit'`を登録し、四半期レビューで最新レポート/対応チケット/Runbookサインを添付。
+- **Runbook**: `docs/runbooks/SEC-DEPS-01.md`を作成し、(1) 監査実行 (2) 重大度基準 (3) 対応期限（Critical=48h, High=7d） (4) Offline Bundle再生成 判断を明文化。
+
+### 42.3 テスト & Codex Packet
+
+- **テスト**:
+  - `tests/unit/test_dependency_audit_service.py`: `pip-audit`モック、重大度フィルタ、SBOM差分。
+  - `tests/cli/test_dependency_cli.py`: `deps audit/diff/licenses`の出力・Exit code。
+  - `tests/integration/test_release_security_gate.py`: Offline Bundle→Dependency Audit→HealthMonitor連携のE2E。
+- **Codex Packet案**:
+  | Packet ID | 範囲 | テスト |
+  | --- | --- | --- |
+  | `SEC-P3` | `DependencyAuditService`実装＋メトリクス | `pytest -k dependency_audit_service` |
+  | `SEC-P4` | CLI/CI統合＋Health連携 | `pytest -k dependency_cli`, `tradectl deps audit --sources poetry --fail-on critical` |
+- **Ops/Release受入**: `TR-27`（deps audit→Runbook判断→Offline Bundle再生成）を実施し、`docs/trader_signoff/SEC-P4.md`と`reports/release/dependency_audit_<version>.md`へ記録。
+
+---
+
+これらの追補により、ジャーナル・ドリフト監視・ベンチマークリプレイ・運用健全性ダッシュボードに加えて、オフライン配布/サプライチェーン/セキュリティ統制までカバーする詳細設計が整備された。CodexへM1.1〜M2向けの実装パケットを明確に提示するとともに、トレーダー/Ops/研究チームがRunbookとValidation Data Playbookを基に運用・監査を継続改善できる構成とした。
