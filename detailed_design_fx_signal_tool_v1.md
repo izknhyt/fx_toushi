@@ -1,4 +1,4 @@
-# FXヒューマン・インザループ投資ツール 詳細設計書 v1.18
+# FXヒューマン・インザループ投資ツール 詳細設計書 v1.19
 
 ## 0. 文書情報
 - 作成日: 2025-02-20
@@ -9,6 +9,7 @@
 ### 0.1 改訂履歴
 | 版 | 日付 | 改訂概要 |
 | --- | --- | --- |
+| v1.19 | 2025-02-28 | §46にモデルリスクレジスタ/Explainability監査（NFR-26, AC-52, FR-55/56連携）を追記し、Scoreboard/Idea Pipeline/Complianceゲートとの連携、証跡テンプレ/CLI/テレメトリ/Packetを整備。 |
 | v1.18 | 2025-02-27 | §43〜§45にスケーリング/リソースガバナンス、プロファイル差分署名、Ops証跡管理（NFR-19/25/28）を追加し、Capacity診断/Config署名/証跡リセット制御のCodex Packetを整備。 |
 | v1.17 | 2025-02-26 | §41〜§42にオフラインバンドル/サプライチェーン保証設計を追加し、NFR-06/12/18/24およびAC-27/28の実装指針をCodex Packet化。 |
 | v1.16 | 2025-02-22 | §23〜§25にストレステスト/流動性監視/ステートメント突合の詳細設計を追加し、FR-43/FR-49/FR-64対応ロードマップをCodex Packet化。 |
@@ -4677,8 +4678,96 @@ NFR-28ではOpsレディネス指標の根拠となる証跡を90%以上の信�
   | `OPS-P5` | Validation Data Playbook同期スクリプト | `make ops-evidence-sync` |
 - **Ops受入**: `TR-30`（証跡登録→Validation Data Playbook更新→期限切れシミュレーション→Health警告）を実施し、`docs/trader_signoff/OPS-P4.md`と`reports/ops/evidence_audit/<date>.md`へ記録。
 
+## 46. モデルリスクレジスタ & Explainability監査設計（NFR-26, AC-52, FR-55/FR-56連携）
+
+M1 Coreではスタブに留めているModel Risk Registerを、M1.1〜M2で段階導入するための詳細設計を定義する。`strategy_manifest.yaml`/`data_manifest.json`と連携し、Explainability証跡（SHAP/ICE/感度解析）とリスクメモを一元管理してAC-52を満たす。Feature Flag `governance.model_risk_register_enabled`を既定`false`とし、M1 CoreではCLIに警告のみ表示。M1.1でEvidence記録・レポート生成、M2でリスクスコアを用いた昇格ゲート制御を有効化する。
+
+### 46.1 ModelRiskRegisterService (`src/governance/model_risk.py`)
+
+- **責務**: 戦略ごとのモデルリスク評価項目・エビデンス・承認者・期限を管理し、Scoreboard/Idea Pipeline/Complianceゲートへ状態を配信する。
+- **データモデル**:
+  | モデル | フィールド | 説明 |
+  | --- | --- | --- |
+  | `ModelRiskEntry` | `strategy_id`, `version`, `risk_level∈{'low','medium','high'}`, `issues:list[RiskIssue]`, `next_review_due`, `status∈{'pending','approved','expired','blocked'}`, `last_reviewed_by`, `evidence_refs:list[str]`, `watchlist`, `schema_version` | 戦略単位の評価結果。 |
+  | `RiskIssue` | `id`, `category∈{'data','drift','explainability','governance'}`, `severity`, `description`, `mitigation`, `evidence_id`, `runbook_ref`, `opened_at`, `resolved_at?` | 既知リスクと是正策。 |
+  | `ExplainabilityArtifact` | `strategy_id`, `artifact_type∈{'shap_summary','shap_waterfall','ice','feature_importance','residual_plot'}`, `path`, `hash`, `generated_at`, `tool_version`, `dataset_hash`, `notes`, `linked_ticket?` | Explainability証跡のメタ。 |
+  | `ValidationChecklist` | `strategy_id`, `items:list[ChecklistItem]`, `completed_pct`, `last_sync_at`, `linked_manifest_hash` | Runbook `GOV-STRAT-01`と突合するチェックリスト。 |
+- **保管先**: YAML/JSONレジスタは`docs/governance/model_risk_register.yaml`（Git管理）、証跡ファイルは`reports/model_risk/<strategy_id>/<YYYYMMDD>/`配下。大容量画像は`artifacts/model_risk/<strategy_id>/`へ格納し、SHA256を`ExplainabilityArtifact.hash`に記録。Validation Data Playbook項目`AC-52_model_risk`が証跡ディレクトリとRunbook参照を保持。
+- **状態遷移**:
+  1. `pending` → `approved`: `ModelRiskRegisterService.submit_review()`が承認者サインとEvidenceリンクを検証。`approved`時は`next_review_due = submitted_at + review_cycle_days`（既定90日）。
+  2. `approved` → `expired`: `next_review_due < today`または`StrategyManifest`更新で`manifest_hash`が変わった場合。`expired`はScoreboardへ`watchlist=true`を通知し、Idea Pipelineは昇格を拒否。
+  3. `approved` → `blocked`: `RiskIssue.severity='high'`で未解消、またはExplainability欠損（`ExplainabilityArtifact`が必須タイプを満たさない）時。PreTradeComplianceで承認不可に設定。
+  4. `blocked/expired` → `approved`: 是正策完了後にEvidence更新、`ValidationChecklist.completed_pct=100`、承認者ダブルサイン（Quant Lead+Ops Manager）で復帰。
+
+#### 46.1.1 公開API
+
+| API/関数 | 入力 | 処理 | 出力 | 異常系 |
+| --- | --- | --- | --- | --- |
+| `ModelRiskRegisterService.load(register_path)` | YAML/JSONパス、`SchemaRegistry` | スキーマ検証→データクラス変換→キャッシュ | `ModelRiskRegister` | `ModelRiskSchemaError` |
+| `ModelRiskRegisterService.submit_review(entry, evidence_refs, reviewers)` | `ModelRiskEntry`更新差分、証跡リスト、レビュア | 必須Evidence存在確認→`ValidationChecklist`突合→承認者二重署名→イベント発火 | `ModelRiskApprovalReceipt` | `ModelRiskEvidenceMissing`, `ModelRiskReviewDenied` |
+| `ModelRiskRegisterService.record_issue(entry, issue)` | 戦略ID、`RiskIssue` | 既存エントリへ課題追記→`watchlist=true`設定→`model_risk.issue_raised`イベント | 更新済み`ModelRiskEntry` | `ModelRiskEntryNotFound` |
+| `ModelRiskRegisterService.attach_artifact(artifact)` | `ExplainabilityArtifact` | ハッシュ検証→メタ保存→`ops_worklog`記録 | `ArtifactReceipt` | `ModelRiskArtifactInvalid`, `ArtifactHashMismatch` |
+| `ModelRiskRegisterService.snapshot()` | なし | 全エントリをJSONにエクスポートし`reports/governance/model_risk_snapshot_<date>.json`保存 | `ModelRiskSnapshot` | `ModelRiskSnapshotError` |
+| `ModelRiskRegisterService.evaluate_strategy(strategy_id)` | `strategy_id`, `manifest_hash`, `scoreboard_metrics`, `idea_stage` | Manifest/Idea/Scoreboard情報と突合し、`status`/`actions_required`を算出 | `ModelRiskAssessment` | `ModelRiskEntryNotFound`, `ManifestMismatchError` |
+
+### 46.2 Explainability Evidenceパイプライン
+
+- **生成フロー**:
+  1. `tools/generate_explainability.py`がBacktest/Paperログから特徴量とラベルを抽出し、`shap.TreeExplainer`または`KernelExplainer`でSHAP値を算出。`--strategy <id> --since --until --dataset-hash`を必須引数とし、再現性ハッシュを付与。
+  2. `ExplainabilityArtifact`を`ModelRiskRegisterService.attach_artifact`へ登録し、`ValidationChecklist`の該当項目（`shap_summary`, `ice`, `residual`）を更新。
+  3. `tradectl model-risk sync --strategy <id>`が`reports/model_risk/<strategy>/manifest.yaml`を生成し、Evidenceファイル・ハッシュ・生成ツールバージョンを一覧化。Validation Data Playbookの`AC-52_model_risk`テンプレへリンクを追記。
+- **必須Evidence**（M1.1 Hardening時点）:
+  | 種別 | ファイル名例 | 最低要件 |
+  | --- | --- | --- |
+  | `shap_summary` | `reports/model_risk/<id>/<date>/shap_summary.png` | 上位10特徴の寄与を表示。PNG＋`summary.csv`を同梱。 |
+  | `shap_waterfall` | `.../shap_waterfall_<ticket>.png` | 代表3トレードの個別説明。Ticket IDリンク。 |
+  | `ice` | `.../ice_feature_<name>.png` | 主要特徴のICE曲線。 |
+  | `residual_plot` | `.../residuals.png` | 予測誤差のヒストグラム/QQプロット。 |
+  | `drift_report` | `.../drift_report.json` | 最新期間vs最適化期間の分布比較。`ParameterDriftMonitor`と共有。 |
+- **Runbook連携**: `docs/runbooks/GOV-STRAT-01.md`にExplainability生成チェックリストを追加（`tools/generate_explainability.py`実行、Evidence確認、Model Risk Register更新、Validation Data Playbookリンク確認）。承認サインは`model_risk_register.yaml`の`reviewers`フィールドと一致させ、手動操作は`ops_worklog`へ`task='model_risk_review'`として記録。
+- **Feature Flag**: `governance.model_risk_register_enabled=false`（M1 Core）はEvidence生成を任意化。Flagを`true`へ切替時に`ModelRiskRegisterService.migrate_from_stub()`が既存Stubファイルを`status='pending'`で初期化し、初回レビューを要求する。
+
+### 46.3 CLI/イベント連携
+
+- **CLIコマンド** (`src/interfaces/cli/model_risk.py` 予定):
+  | コマンド | 用途 | 主なオプション | 出力/副作用 |
+  | --- | --- | --- | --- |
+  | `tradectl model-risk status --strategy <id>` | 戦略のモデルリスク状態確認 | `--json`, `--include-issues`, `--evidence` | 現在の`status`, `risk_level`, `issues`, `next_review_due`, Evidence一覧。`model_risk.status_viewed`イベント。 |
+  | `tradectl model-risk review --strategy <id> --runbook GOV-STRAT-01 --notes <str>` | レビュー承認/差戻し | `--approve/--reject`, `--issues <path>`, `--evidence <paths...>` | `ModelRiskApprovalReceipt`、`audit.model_risk_review`イベント、`ops_worklog`更新。 |
+  | `tradectl model-risk artifact add --strategy <id> --type shap_summary --path <file>` | Evidence登録 | `--dataset-hash`, `--ticket` | `ArtifactReceipt`、SHA256計算。 |
+  | `tradectl model-risk escalate --strategy <id> --issue <code>` | 緊急課題登録 | `--severity high`, `--notify` | `model_risk.issue_raised`イベント、Scoreboard `watchlist`強制。 |
+- **イベント連携**:
+  - `scoreboard.generated`: `ModelRiskRegisterService`が`watchlist`戦略を参照し、`scoreboard`へ`model_risk_status`フィールドを付与。`watchlist=true`かつ`status∈{'expired','blocked'}`の場合、Signal Boardは承認ボタンをロックし`model_risk_pending`バナーを表示。
+  - `ideas.stage_changed`: Idea Pipelineが`stage='ready'`へ遷移する際、`ModelRiskAssessment.status`が`approved`以外なら遷移拒否し、`stage.blocked(reason='model_risk')`イベントを返却。
+  - `pretrade.compliance.evaluate`: PreTradeComplianceServiceが`ModelRiskAssessment`を参照し、`status in {'blocked','expired'}`の場合は`ViolationDetail`へ`code='MODEL_RISK_UNAPPROVED'`を追加。OverrideにはQuant Lead+Ops Managerダブルサインが必須。
+  - `risk.consent_warning`: リスク開示更新時に`model_risk_register.yaml`の`disclosure_version`を更新し、Explainability証跡が古い場合は`issues`へ`category='governance'`で自動登録。
+- **監査/証跡**: `audit.model_risk_review`（承認/却下）、`audit.model_risk_artifact`（Evidence登録）、`audit.model_risk_issue`（課題起票）を`logs/audit/model_risk_<YYYYMMDD>.jsonl`へ出力。`ops_worklog`に`task='model_risk_review'`や`task='explainability_generation'`を追記し、省力化効果を`automation_effect.jsonl`で追跡。
+
+### 46.4 テレメトリ & テスト計画
+
+- **メトリクス** (`metrics/model_risk.jsonl`): `status_counts{status}`, `issues_open_total`, `issues_high_severity`, `evidence_missing_total`, `avg_review_latency_hours`, `next_review_overdue`。閾値: `evidence_missing_total>0`で`health.raise('warning','model_risk_evidence_gap')`。
+- **Reporter統合**: 週次レポートに`Model Risk`節を追加し、`pending/expired/blocked`戦略一覧と`actions_required`をMarkdown表で表示。`reports/weekly/templates/m1_core.md`に`model_risk_summary`プレースホルダを追加（Flagで制御）。
+- **テスト**:
+  - `tests/unit/test_model_risk_register.py`: ロード/承認/失効/ブロック/復帰、Evidence必須チェック、イベント発火。
+  - `tests/unit/test_model_risk_artifacts.py`: ハッシュ検証、必須Artifact欠損検出、`ValidationChecklist`更新。
+  - `tests/integration/test_model_risk_workflow.py`: Strategy Manifest更新→Evidence再生成→レビュー→Scoreboard/PreTrade連携のE2E。
+  - `tests/cli/test_model_risk_cli.py`: CLI承認・差戻し・アラート表示。
+- **Runbook演習**: 四半期ごとに`RUN-STRAT-02`（新設）でExplainability再生成→Model Riskレビュー→PreTrade Override確認をドリルし、`reports/drill/model_risk_<YYYYMM>.md`へ結果を残す。
+
+### 46.5 Codex Packet計画（Model Risk Track）
+
+| Packet ID | スコープ | 依存セクション | 成果物 | テスト/証跡 |
+| --- | --- | --- | --- | --- |
+| `EP06-MR-P1` | `ModelRiskRegisterService`本体・データモデル・YAML初期化 | §46.1 | `src/governance/model_risk.py`, `docs/governance/model_risk_register.yaml`テンプレ | `pytest -k model_risk_register` |
+| `EP06-MR-P2` | Explainability生成ツール・Artifact登録API・ValidationChecklist連携 | §46.2 | `tools/generate_explainability.py`, `reports/model_risk/<strategy>/`テンプレ, Checklist更新 | `pytest -k model_risk_artifacts`, CLIドライラン |
+| `EP06-MR-P3` | CLI/Scoreboard/Idea/PreTrade統合、イベント/監査 | §46.3 | `src/interfaces/cli/model_risk.py`, EventBus/PreTrade連携, Reporter差分 | `pytest -k model_risk_workflow`, `pytest-approvaltests -k model_risk_cli` |
+| `EP06-MR-P4` | メトリクス/レポート/Runbookテンプレ更新 | §46.4 | `metrics/model_risk.jsonl`収集、週次レポート節、Runbook `RUN-STRAT-02`ドラフト | `tradectl report weekly --with-model-risk --dry-run`, `pytest -k model_risk_metrics` |
+
+- **WIP制限**: `EP06-MR-P1`完了後に`P2`を着手。`P3`はScoreboard/PreTrade両チームと合同レビューを行い、Override/ロックのUXを確認してからマージする。`P4`はReporterチームとRunbook担当（Ops Manager）が共同で受入。M1.1では`P1`+`P2`を対象にEvidence蓄積を先行し、M2で`P3`以降を有効化予定。
+
 ---
 
-これらの追補により、スケーリング余力の見積もり・プロファイル差分ガバナンス・Ops証跡の可監査性が整備され、CodexがM1.1〜M2へ向けたリソース最適化と設定統制、Opsレディネス維持タスクを段階的に実装できる。
+これらの追補により、スケーリング余力の見積もり・プロファイル差分ガバナンス・Ops証跡の可監査性に加え、モデルリスク評価とExplainability証跡を統合したガバナンス基盤が整備され、CodexがM1.1〜M2へ向けたリソース最適化・設定統制・モデルリスク対応を段階的に実装できる。
 
-これらの追補により、ジャーナル・ドリフト監視・ベンチマークリプレイ・運用健全性ダッシュボードに加えて、オフライン配布/サプライチェーン/セキュリティ統制までカバーする詳細設計が整備された。CodexへM1.1〜M2向けの実装パケットを明確に提示するとともに、トレーダー/Ops/研究チームがRunbookとValidation Data Playbookを基に運用・監査を継続改善できる構成とした。
+これらの追補により、ジャーナル・ドリフト監視・ベンチマークリプレイ・運用健全性ダッシュボード・モデルリスクガバナンスに加えて、オフライン配布/サプライチェーン/セキュリティ統制までカバーする詳細設計が整備された。CodexへM1.1〜M2向けの実装パケットを明確に提示するとともに、トレーダー/Ops/研究チームがRunbookとValidation Data Playbookを基に運用・監査を継続改善できる構成とした。
+
