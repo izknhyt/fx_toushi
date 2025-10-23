@@ -182,7 +182,7 @@
 | FR-08 モード切替 | §3 FR-08, §3.1 M1 Core範囲 | §1 システム概要, §2 コンポーネント表 (Mode Controller, Account Service), §3.2 ユースケース①⑦ | プロファイル設定, ModeContext, モード別データソース（Backtest台帳/Paperレポート/Live CSV） | ModeContext遷移, I/O差分ハンドラ, CLI起動モード決定 | 全モードでHITLフロー共通化、`tradectl start --profile`で選択、Resync後にConsistencyチェック | ローカルファイル/CSV、将来ブローカーAPI | なし |
 | FR-10 週次レポート | §3 FR-10 (M1縮小範囲) | §2 コンポーネント表 (Reporter), §3.2 ユースケース⑭・⑲・ステップ24, §7.6 KPI評価ガイド | `reports/kpi_snapshots/*.json`, `metrics/data_ingestion_sla.jsonl`, `risk_summary`, `reports/weekly/templates/m1_core.md` | 週次Markdown生成, KPI単点値出力, `reports/performance/<mode>/`更新 | Sharpe/最大DD/WinRate/累積Rのみ出力, Paper90日ウォームアップ時はmetric_state=provisional扱い | ローカルテンプレート/レポート, `MarketRatesFetcher` | 週次コメント欄（A/Bテスト結果・次週ToDo）の入力責務と提出締切をドキュメント間で統一する必要あり。 |
 | FR-16/FR-18 Resync & Snapshot | §3 FR-16, FR-18 | §2 コンポーネント表 (Snapshot Manager, Session Manager), §3.2 ユースケース①④⑯, §3.2 処理シーケンス④, §4 データ構造 | `snapshots/latest/*.json`, `resync_queue`, Catch-upメトリクス | Resyncジョブ投入, `catch_up_lag_minutes`記録, Snapshot更新, `ResyncCompleted`イベント | 20分遅延でwarning/30分でdegraded, Runbook承認後に復旧、再起動時はSnapshot整合チェック | ローカルスナップショット/Parquet, metrics JSONL | なし |
-| FR-28 Funding Service | §3 FR-28, §3.1 M1 Core例外 | §2 コンポーネント表 (Funding Service), §3.2 ユースケース⑥⑭, §4 データ構造（swap_rates.csv）, §6 Funding Service | `config/swap_rates.csv`, `broker_rules.yaml`, Calendarイベント, Paper/Liveポジション | `FundingCurve`生成, `swap_penalty`供給, `tradectl funding sync/status` CLI, スワップ計算をAccount/Reporterへ反映 | 日次更新（祝日三倍日補正）, Calendar連携で倍率補正, 取得失敗時はRunbook指示で手動CSV更新 | 手入力/公開CSV, Calendar Service, 将来ブローカーフィード | 手入力CSVの更新頻度・責任者とレビュー手順（Validation Data Playbookへの記録方法含む）が要件側で定量化されていないため、運用プロセスを確定する必要あり。 |
+| FR-28 Funding Service | §3 FR-28, §3.1 M1 Core例外 | §2 コンポーネント表 (Funding Service), §3.2 ユースケース⑥⑭, §4 データ構造（swap_rates.csv）, §6 Funding Service | `config/swap_rates.csv`, `broker_rules.yaml`, Calendarイベント, Paper/Liveポジション | `FundingCurve`生成, `swap_penalty`供給, `tradectl funding sync/status` CLI, スワップ計算をAccount/Reporterへ反映 | 日次更新（祝日三倍日補正）, Calendar連携で倍率補正, 取得失敗時はRunbook指示で手動CSV更新 | 手入力/公開CSV, Calendar Service, 将来ブローカーフィード | OpsがRunbook `RUN-FUND-01`に従い平日15:00 JSTまでに`config/swap_rates.csv`を更新し、Riskがshadow CSVでダブルチェック→POが`tradectl funding sync`/`status`証跡を承認。証跡は`reports/validation_log/templates/funding_daily.md`に基づき`reports/validation_log/AC-09_funding_<date>.md`へ記録し、Validation Data Playbook台帳へ転記する。 |
 
 ## 1. アーキテクチャ概要
 
@@ -993,14 +993,16 @@ def run_signal_cycle(bar: MarketBar, ctx: ModeContext) -> list[TicketProposal]:
 - **依存モジュール**: `ConfigRegistry`（`config/swap_rates.csv`, `funding.triple_day_shift`）、`CalendarService`（祝日・三倍日補正）、`AccountService`（`AccountState.swap_realized`反映）、`ScoringService`（`swap_penalty`入力）。
 - **データ源**: `config/swap_rates.csv`（ユーザー管理）、`CalendarService`。M2以降で`broker_api`アダプタを追加。
 - **アルゴリズム**: 保持期間推定×スワップで`swap_penalty`を算出しScoringへ提供。ロールオーバー時刻に`swap_realized`をAccountStateへ反映。祝日シフトは`triple_day`とカレンダーで補正。
-- **運用要件**: `tradectl funding sync`でCSVを読み込み、更新結果を`funding_state.json`へ記録。M1ではCSVのハッシュと更新者を`reports/validation_log/AC-09_funding_<date>.md`に残し、IT-FUND-01統合テストで祝日前後の三倍日処理を検証する。
+- **運用要件**: Ops当番が平日15:00 JSTまでに`RUN-FUND-01`に従って`tradectl funding sync --shadow reports/funding/swap_rates_shadow.csv`を実行し、`funding_state.json`へ`last_synced_at`/`csv_sha256`/担当者情報を反映する。祝日前営業日は12:00 JSTへ前倒し。`tradectl funding status --json`の出力とともにCLIログを`docs/implementation_packets/<packet>/evidence/funding/`に保存し、`reports/validation_log/templates/funding_daily.md`を用いて`reports/validation_log/AC-09_funding_<date>.md`へハッシュ・署名・Runbookリンクを追記する。記録後にValidation Data Playbook台帳へ転記し、IT-FUND-01統合テストで祝日前後の三倍日処理を継続検証する。
 - **エラーハンドリング**: データ欠損で`FundingDegraded`イベント→`HealthMonitor.degraded`。Fallbackで前回値保持。3営業日連続で更新が無い場合は`health.raise('degraded','funding_data_gap')`を発火し、Acceptable Degradation手順で手動CSV確認を要求。
 
 #### 3.12.1 手動CSV運用体制
 - **責任分掌**: オペレーション担当（Ops）が`config/swap_rates.csv`のドラフトを作成し、リスクレビュー担当（Risk）が独立入力した`reports/funding/swap_rates_shadow.csv`と突合する。Risk承認後にプロダクトオーナー（PO）が`tradectl funding sync`の完了メッセージへ電子サイン（イニシャル入力）し、同日の`reports/validation_log/AC-09_funding_<date>.md`へOps/Risk/POの署名とハッシュ値を残す。
 - **更新頻度**: 原則、ロールオーバー前営業日（JST 17:00）までに翌営業日分を更新する。祝日前後やブローカーの三倍日判定は`CalendarService`の`triple_day`情報を参照し、祝前営業日には追加でレビュー（Ops→Risk→PO）を走らせる。`funding_state.json.last_synced_at`が48時間を超過した場合は自動で`FundingDegraded`を発火する。
 - **双子ファイル突合**: Opsが`config/swap_rates.csv`を編集後、Riskは`reports/funding/swap_rates_shadow.csv`に同じ日付行を手入力し、`tradectl funding sync --shadow reports/funding/swap_rates_shadow.csv`で差分チェックを実行する。CLIは双方のCSVを正規化し、通貨ペアごとにレート一致を検証。ミスマッチ時は同期処理を中断し、`reports/validation_log/AC-09_funding_<date>.md`へ「shadow mismatch」項目を追記して再レビューを要求する。
+- **証跡ハブ**: `tradectl funding sync`/`status --json`の生ログと`funding_state.json`スナップショットは`docs/implementation_packets/<packet>/evidence/funding/`または`reports/validation_log/evidence/<YYYYMMDD>/`に保管し、Runbook `RUN-FUND-01`ステップ4から参照できるようにする。保存ファイルには`sha256sum`結果を併記する。
 - **監査ファイル**: `tradectl funding sync`成功時は`funding_state.json`に`{"last_synced_at","csv_sha256","shadow_sha256","prepared_by","reviewed_by"}`を上書きし、同値を`reports/validation_log/AC-09_funding_<date>.md`へMarkdownテーブルで転記する。署名済みログは週次で`docs/runbooks/RUN-FUND-01.md`に添付指定された場所へ保管する。
+- **Validation Data Playbook転記**: `reports/validation_log/templates/funding_daily.md`を複製し、CLI証跡・ファイルハッシュ・Ops/Risk/PO署名を埋めたうえで`reports/validation_log/AC-09_funding_<date>.md`として保存する。同エントリをValidation Data Playbook台帳（付録Fテンプレート、`reports/validation_log/templates/playbook_entry.md`）へリンクし、`linked_runbook`フィールドに`RUN-FUND-01`/`RUN-FUND-02`を指定する。
 
 ```console
 $ tradectl funding sync --shadow reports/funding/swap_rates_shadow.csv
@@ -2307,6 +2309,7 @@ linked_runbook: docs/runbooks/RUN-XXXX-YY.md
 
 ```
 - テンプレートは`reports/validation_log/templates/playbook_entry.md`として保管し、`tradectl validation new`が本雛形をもとにエントリを生成する。`due_date`超過で`status∈{pending,provisional}`の場合は`tradectl validation audit`が`severity=warn`イベントを発行する。
+- FundingServiceの日次スワップ更新では、本テンプレートに加えて`reports/validation_log/templates/funding_daily.md`をサブフォームとして使用し、`tradectl funding sync/status`のCLI証跡・各ファイルのSHA256・Ops/Risk/POサイン欄を必須化する。Runbook `RUN-FUND-01`/`RUN-FUND-02`からも同テンプレートへのリンクを参照し、Validation Data Playbook台帳との整合を保つ。
 | `ticket.*` | `logs/audit` | HITL操作 | `ticket.approve`, `ticket.edit.sl` |
 | `cfg.*` | `logs/events` | 設定変更/検証 | `cfg.change.safe`, `cfg.reject.schema` |
 | `spread.*` | `metrics/network.jsonl` | スプレッド監視 | `spread.cooldown.start`, `spread.cooldown.clear` |
