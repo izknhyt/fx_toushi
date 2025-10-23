@@ -1058,8 +1058,48 @@ def run_signal_cycle(bar: MarketBar, ctx: ModeContext) -> list[TicketProposal]:
 
 ### 3.16 TicketBuilder (`src/ticket/builder.py`, `src/ticket/validator.py`, `src/ticket/checklist.py`)
 - **公開API**: `build(sized_signal, execution_adjustments, gate_state)`。
-- **処理**: 価格丸め→距離検証→TTL計算→Checklist生成（lot_round_ok, price_decimals_ok, spread_ok, news_ok, oco_set）。
-- **監査**: `TicketIssued`イベントと`logs/audit/*.jsonl`へ書き込み。`cfg_hash`, `data_hash`, `hybrid_components`を添付。
+- **処理**: 価格丸め→距離検証→TTL計算→Checklist生成（必須項目は下表参照）→`TicketProposal`組立。
+- **チェックリスト定義**: `ChecklistBuilder.generate()`は`HumanErrorChecklist`に以下の必須項目を付与し、順序・必須性・検証ロジックを固定する。
+
+| フィールド名 (`checklist[].field`) | CLI表示ラベル | 必須 | 検証ルール | Runbook/検証スクリプト連携 |
+| --- | --- | --- | --- | --- |
+| `double_entry_confirmed` | `Double-entry confirmed` | ✅ | 2名目承認者（`secondary_operator_id`）が`TicketBuilder.build()`に渡された`gate_state.human.double_entry_required=True`時にACKを記録。CLI `tradectl ticket approve --double-entry <user_id>`が`RUN-HITL-01`手順3-1/3-2で実行される。 | `RUN-HITL-01` §3 人的エラーチェックリスト、AC-10 `tradectl ticket checklist --id <ticket_id>` |
+| `sl_tp_verified` | `SL/TP distances verified` | ✅ | `ticket.payload.tp_price`と`sl_price`が`SizedSignal`推奨値±`broker_rules.slop_pips`内。`tradectl ticket inspect`出力と突合する。 | `RUN-HITL-01` §2-2、AC-02/AC-10 `tradectl ticket inspect --id <ticket_id>` |
+| `oco_ack_received` | `OCO acknowledged` | ✅ | `EventBus`に`ticket.oco_ack`イベントが届き`latency_ms<=120000`。CLI `tradectl ticket monitor --watch 120`が結果を検証。 | `RUN-HITL-01` §2-3、AC-02スクリプト |
+| `manual_comment_logged` | `Manual comment recorded` | ✅ | `ticket.payload.manual_comment`が非空で、`tradectl ticket approve --comment`により`len(comment)>=12`を満たす。 | `RUN-HITL-01` §3-3、AC-10 `reports/validation_log/AC-10_<date>.md` 更新手順 |
+| `lot_round_ok` | `Lot & quantity rounding OK` | ✅ | `TicketValidator.validate()`が`broker_rules.min_lot`/`lot_step`を満たす。`tradectl ticket check-size`によるバッチ検証を同期。 | `RUN-HITL-01` §4-1/§4-3、AC-10/AC-11スクリプト |
+| `price_decimals_ok` | `Price precision OK` | ✅ | `ticket.payload.entry_price`/`sl_price`/`tp_price`が`broker_rules.precision`桁と一致。 | `RUN-HITL-01` §4-2、AC-11 `tradectl ticket check-batch --csv` |
+| `spread_window_clear` | `Spread & news window clear` | ✅ | `SpreadMonitor.latest()`が`gates.spread_max_pips`以下かつ`news_blackout.active=False`。Signal Board上のSpreadバッジと同期。 | `RUN-HITL-01` §1-2（Board確認）、`RUN-SPREAD-03`参照、AC-02補助 |
+
+- **レンダリング例**:
+
+```json
+{
+  "ticket_id": "TCK-20250308-001",
+  "checklist": [
+    {"field": "double_entry_confirmed", "label": "Double-entry confirmed", "mandatory": true, "status": "pending", "validation": "requires secondary_operator_id"},
+    {"field": "sl_tp_verified", "label": "SL/TP distances verified", "mandatory": true, "status": "pending", "validation": "tp/sl within tolerance"},
+    {"field": "oco_ack_received", "label": "OCO acknowledged", "mandatory": true, "status": "pending", "validation": "oco_ack latency <= 120s"},
+    {"field": "manual_comment_logged", "label": "Manual comment recorded", "mandatory": true, "status": "pending", "validation": "comment length >= 12"},
+    {"field": "lot_round_ok", "label": "Lot & quantity rounding OK", "mandatory": true, "status": "ok", "validation": "min_lot/step satisfied"},
+    {"field": "price_decimals_ok", "label": "Price precision OK", "mandatory": true, "status": "ok", "validation": "precision matches broker"},
+    {"field": "spread_window_clear", "label": "Spread & news window clear", "mandatory": true, "status": "warn", "validation": "spread <= 1.5 pips"}
+  ]
+}
+```
+
+```text
+Checklist (mandatory items marked with *):
+  1. * Double-entry confirmed ............ [PENDING] – requires secondary_operator_id (RUN-HITL-01 §3)
+  2. * SL/TP distances verified .......... [PENDING] – tp/sl within tolerance (AC-02/AC-10)
+  3. * OCO acknowledged .................. [PENDING] – oco_ack latency <= 120s (RUN-HITL-01 §2)
+  4. * Manual comment recorded ........... [PENDING] – comment length >= 12 chars (AC-10)
+  5. * Lot & quantity rounding OK ........ [OK]
+  6. * Price precision OK ................ [OK]
+  7. * Spread & news window clear ........ [WARN] – monitor RUN-SPREAD-03 escalations
+```
+
+- **監査**: `TicketIssued`イベントと`logs/audit/*.jsonl`へ書き込み。`cfg_hash`, `data_hash`, `hybrid_components`を添付し、各チェックリストACKで`ticket.checklist.ack`イベント（`event_key='ticket.checklist.<field>'`）を発行。ACKは`audit_id`（`AUD-<timestamp>-<ticket_id>`）で`audit_writer.append()`へ格納し、`ack_actor`, `ack_ts`, `cli_command`, `runbook_ref`を`extras.checklist`配下に保存する。
 - **エラーハンドリング**: バリデーションNGで`TicketValidationError`→SignalをReject。ユーザー編集時も同じバリデーションを実施。
 
 #### APIインターフェース一覧
