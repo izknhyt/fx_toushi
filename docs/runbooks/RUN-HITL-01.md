@@ -52,10 +52,17 @@
 3. 未解決の課題は`tickets/model_revalidate/`または`reports/audit/hitl_incident/`配下にIssueとして起票し、進捗を追跡する。
 
 ## チェックリスト
-- [ ] `tradectl status --mode paper --detail` で`HealthState=operational`を確認
+- [ ] `tradectl status --mode paper --detail`で`HealthState=operational`かつ`Spread & news window clear`バッジが緑である
+- [ ] `HumanErrorChecklist`で以下の順序が全て`ok`/`ack`になる（CLIと監査ログのラベルは同一）
+  1. `Spread & news window clear`
+  2. `Double-entry confirmed`
+  3. `SL/TP distances verified`
+  4. `Lot & quantity rounding OK`
+  5. `Price precision OK`
+  6. `OCO acknowledged`
+  7. `Manual comment recorded`
 - [ ] `tradectl metrics latency --mode paper --from -24h`で中央値とp90が閾値内
 - [ ] 検証チケットで`oco_status=armed`を確認し、ログを保存
-- [ ] `HumanErrorChecklist`の未充足0を確認し、記録
 - [ ] 主要4ペアの丸め/最小ロット検証が成功
 - [ ] `reports/validation_log/AC-02_<date>.md`と`AC-11_<date>.md`を更新
 
