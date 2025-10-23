@@ -1,4 +1,4 @@
-# FXヒューマン・インザループ投資ツール 詳細設計書 v1.11
+# FXヒューマン・インザループ投資ツール 詳細設計書 v1.12
 
 ## 0. 文書情報
 - 作成日: 2025-02-20
@@ -9,6 +9,7 @@
 ### 0.1 改訂履歴
 | 版 | 日付 | 改訂概要 |
 | --- | --- | --- |
+| v1.12 | 2025-02-21 | Packetテンプレ資産整備、Codexフィードバック運用手順のテンプレ参照追記。 |
 | v1.11 | 2025-02-21 | §3.30 RiskDisclosureService仕様の統合整理、関連参照を最新化。 |
 | v1.10 | 2025-02-21 | Codexスプリントパッケージ、RiskDisclosure詳細、Acceptable Degradation実務フロー、トレーダー受入チェックリストを追加。 |
 | v1.9 | 2025-02-21 | Codex向けエピック別実装指示セット、レビュー観点テンプレ、トレーダー受入チェックの粒度を拡充。 |
@@ -158,6 +159,7 @@
 1. Codex出力をレビュー後、`docs/prompt_packages/<date>_<feature>.md`に「良かった点」「改善要望」「想定外差分」を追記し、次回プロンプトの改善に反映する。
 2. リリース後7日間は該当機能のメトリクスを重点監視し、異常時は`feedback_loop.md`に記録。Codexへの再依頼時はこのログを添付する。
 3. KPIが改善した場合は`reports/weekly/<YYYYWW>.md`に成果を記載し、反対に悪化した場合はリスクレビュー（`docs/risk_review/<YYYYMMDD>.md`）で原因と暫定対応をまとめる。
+- **初期テンプレート位置と保守責任**: プロンプト記録は`docs/prompt_packages/TEMPLATE.md`（保守: Codex Liaison）、実装Packetは`docs/implementation_packets/TEMPLATE.md`（保守: Ops Manager＋Codex Liaison）、トレーダー受入記録は`docs/trader_signoff/TEMPLATE.md`（保守: Trader Lead）がそれぞれ起点となる。テンプレ改訂は§0.5の変更管理フローに従う。
 
 #### 0.6.7 Codexスプリント計画とレビューゲート
 - **スプリント粒度**: 1スプリント=5営業日。エピック単位（§0.6.3）を`Implementation Packet`に分解し、1 PacketでCodex作業→ヒューマンレビュー→Ops影響確認まで完了させる。
@@ -2206,6 +2208,7 @@ Flag切替時は`ConfigChanged`イベントに`flag_delta`が記録され、Repo
 - **監査ログ検証**: `pytest -k audit_snapshot`など監査ログをファイル比較するテストを定義し、Codexには出力例を提供する。`git diff logs/audit`があれば差戻し。
 - **UX確認**: トレーダーはCLIスクリーンショットと`tradectl status`出力をレビュー。`docs/trader_signoff/<packet>.md`テンプレに沿って(1) 画面キャプチャ、(2) 操作所要時間、(3) コメントを記入する。
 - **Rollback手順**: 各Packetで変更した設定/Flag/データを明記。例: `cfg change: config/profile_live.yaml (feature_flags.risk_disclosure_enforce)` → `git checkout -- config/profile_live.yaml`で戻す。データ生成の場合は削除コマンドも記載。
+- **初期テンプレート位置と保守責任**: Implementation Packetの詳細は`docs/implementation_packets/TEMPLATE.md`をベースに作成し、Ops Managerが構造保守、Codex Liaisonが各Packetの更新履歴を追記する。関連するプロンプト差分は`docs/prompt_packages/TEMPLATE.md`を参照し、同担当者が同期する。
 
 ### 12.3 トレーダー受入試験テンプレ
 | チェック項目 | 詳細 | 実施者 | 証跡 |
@@ -2218,6 +2221,7 @@ Flag切替時は`ConfigChanged`イベントに`flag_delta`が記録され、Repo
 
 - 受入完了後に`tradectl ops agenda --date <翌営業日>`を実行し、当日のTODOへ新手順が反映されているか確認する。反映されない場合は`docs/prompt_packages/`の改善事項へ記録。
 - Packetごとに`ops_worklog`へ`{"task":"packet_review","packet_id":"EP04-P1","duration_min":15}`を追記し、WIP制限の効果を分析する。
+- **初期テンプレート位置と保守責任**: トレーダー受入記録は`docs/trader_signoff/TEMPLATE.md`をコピーして作成し、Trader Leadが雛形維持とエビデンス格納先の整備を担当する。Ops Managerは`docs/trader_signoff/<EPxx-Py>/`配下の資産を監査し、完了後に`docs/governance/feature_flag_register.md`と整合させる。
 
 ### 12.4 Codexレビューフィードバックフォーマット
 ```
