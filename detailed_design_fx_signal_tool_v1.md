@@ -5442,3 +5442,159 @@ FR-62/AC-50では研究段階の戦略候補をアイデア単位で可視化し
   - Paper→Ready遷移で`min_weeks_at_stage=4`と必須エビデンス完了を自動検証し、未達時は`StageEvaluationResult.allowed=False`で理由列挙。
   - `reports/research/idea_pipeline_<YYYYWW>.md`にチェックリスト達成率・滞留アイデア一覧・フォローアップタスクが自動生成され、Ops Manager/Quant LeadがRunbookにサインバックできること。
   - `SecureShareService.prepare_package(profile='research_board', period='2025W15')`がIdea証跡のみを含む暗号化バンドルを生成し、`audit.evidence_shared`イベントにIdea IDが記録されること。
+
+## 55. リサーチワークスペース & ノートブックガバナンス設計（FR-55, NFR-21, AC-07/AC-08）
+
+FR-55およびNFR-21では、研究環境（Jupyter/MkDocsラボ）が本番パイプラインと同一ロジックで検証を再現し、データ/依存関係の差分を可視化することを要求している。AC-07/08の受入ではベース戦略`m1_baseline_ma_rsi`の検証証跡がノートブック/CLI双方で一致する必要がある。本節では`ResearchWorkspaceManager`・`NotebookRunner`・`ResearchArtifactRegistry`を中心に、`research/`配下の構造、依存ロック、データ同期、Runbook/Validation Data Playbook連携を定義し、CodexがJupyter周辺の自動化を安全に実装できるようにする。
+
+### 55.1 ResearchWorkspaceManager (`tools/research_workspace.py`)
+
+- **責務**: 研究環境のセットアップ・依存ロック検証・データ同期・ノートブック品質ゲートを自動化する。`requirements-research.lock`と`pyproject.toml`を比較し、差分が±0.1以上のバージョンギャップを検知した場合はエラーを返し、Quant LeadにRunbook `STRAT-M1-VALIDATION`の「環境整合チェック」節を参照させる。
+- **主な構成**:
+  - `ResearchWorkspaceManager.sync_environment(*, update_lock: bool=False)`
+    | 入力 | `update_lock`（Lock再生成許可）、`env_dir`、`pip_flags` |
+    | 処理 | `pip --require-hashes`で仮想環境を構築→`poetry export --with research`結果との差分を比較→`requirements-research.lock`検証→成功時は`research/.venv`へハッシュを書き込む |
+    | 出力 | `EnvironmentSyncReport`（`hash`, `packages_changed`, `warnings`） |
+    | 異常系 | Lock欠落: `ResearchLockMissing`。`pip`失敗: `ResearchEnvProvisionError`。差分>閾値: `ResearchDependencyDrift` |
+  - `ResearchWorkspaceManager.sync_data(profile: str, *, strict: bool=True)`
+    | 入力 | `profile`（`paper-m1-baseline`等）、`strict` |
+    | 処理 | `data/research/curated/`と`data/runtime/`のハッシュ比較（§20 Data Manifest）→差分検知時は`DataDriftReport`を生成→`strict=True`で`exit 73` |
+    | 出力 | `DataSyncResult`（差分一覧、`manifest_hash_before/after`、`ops_follow_up`） |
+    | 異常系 | Manifest未登録: `ResearchManifestMissing`。`strict`違反: `ResearchDataOutOfSync` |
+  - `ResearchWorkspaceManager.verify_runbooks()`
+    | 入力 | `runbook_refs`（`STRAT-M1-VALIDATION`, `GOV-STRAT-01`） |
+    | 処理 | Runbookチェックリストの最新サイン（`docs/runbooks/*`）を確認し、90日超の未更新項目を列挙 |
+    | 出力 | `RunbookVerificationReport` |
+    | 異常系 | サイン欠落: `RunbookSignatureMissing` |
+- **ディレクトリ整備**:
+  - `research/strategies/<id>/notebooks/`: 検証ノートブック（`.ipynb`）。`metadata.require_lock_hash`に`requirements-research.lock`のSHA256を埋め込む。
+  - `research/strategies/<id>/reports/`: `metrics.json`, `validation_<date>.md`, `figures/*.png`。
+  - `research/env/`: 仮想環境および`env_report.json`（Pythonバージョン、依存ハッシュ、作成日時）。
+  - `research/templates/`: ノートブックテンプレ、検証レポートMarkdownテンプレ。
+- **イベント連携**: `workspace.sync.completed`、`workspace.sync.failed`イベントをEventBusへ出力し、Ops Agenda（§52.3）が研究環境整合タスクを追加できるようにする。
+
+### 55.2 NotebookRunner & CLI統合 (`tools/run_notebook.py`, `tradectl research notebook`)
+
+- **NotebookRunner**: Papermillベースでノートブックを非対話実行し、`parameters.yaml`と`dataset_manifest.json`を読み込み、実行後に`execution_report.json`を生成。`execution_report.json`には`dataset_hash`, `env_hash`, `duration_sec`, `status`, `warnings`, `output_artifacts`を含める。
+- **CLIコマンド**:
+  | コマンド | 目的 | 主なオプション | 出力/副作用 |
+  | --- | --- | --- | --- |
+  | `tradectl research notebook run <path.ipynb>` | ノートブックのバッチ実行 | `--profile`, `--from`, `--to`, `--strict`, `--out-dir` | `execution_report.json`、`reports/research/<strategy>/<date>/`への成果物保存、`research.notebook.executed`イベント |
+  | `tradectl research notebook validate <path.ipynb>` | メタデータ検証（Lockハッシュ、データ依存） | `--json` | `NotebookValidationReport`表示、違反時Exit≠0 |
+  | `tradectl research notebook diff <strategy> --against <date>` | 過去レポートと比較 | `--metrics PF,Sharpe`, `--threshold` | 差分Markdown生成、`reports/research/<strategy>/diff_<date>.md` |
+- **UX**: 実行時にRichの進捗バーを表示し、`warnings`には`data_out_of_sync`, `env_hash_mismatch`, `validation_pending`を列挙。`--strict`指定で警告が検出された場合はExit≠0にする。
+- **権限**: `config/roles.yaml::research_notebook_runner`を参照。CIは`--dry-run`で`validate`のみ実施し、ローカル承認後に`run`を許可する。
+
+### 55.3 ResearchArtifactRegistry & Data Manifest統合 (`src/research/artifacts.py`)
+
+- **目的**: ノートブック生成物（`metrics.json`, `plots`, `validation.md`）とデータハッシュ、Runbookサインを紐づける。FR-52/FR-55/AC-07の証跡要件を満たし、`SecureShareService`（§48）やIdea Pipeline（§54）へ再利用可能なメタデータを提供する。
+- **データモデル**:
+  | モデル | 主フィールド | 説明 |
+  | --- | --- | --- |
+  | `ResearchArtifact` | `id`, `strategy_id`, `artifact_type∈{'metrics','plot','report','notebook'}`, `path`, `hash`, `produced_at`, `env_hash`, `dataset_hash`, `governance_ticket_id` | 研究成果物の正本。`env_hash`は`requirements-research.lock`と`python --version`の組合せ。 |
+  | `ArtifactBundle` | `strategy_id`, `period`, `artifacts:list[ResearchArtifact]`, `validation_state∈{'draft','under_review','approved'}` | Runbookサインと連動した成果物セット。 |
+- **API**:
+  | 関数 | 入力 | 処理 | 出力 | 異常系 |
+  | --- | --- | --- | --- | --- |
+  | `ResearchArtifactRegistry.register(artifact, *, evidence_refs=None)` | `ResearchArtifact`, 証跡参照 | ハッシュ検証→`data_manifest`参照→`artifacts.jsonl`へ追記→`research.artifact.registered`イベント | `ArtifactReceipt` | ハッシュ不一致: `ArtifactHashMismatch`。Manifest未登録: `ArtifactManifestError` |
+  | `ResearchArtifactRegistry.bundle(strategy_id, period)` | Strategy, 期間 | 期間内成果物を集約→`ArtifactBundle`生成→`reports/research/<strategy>/<period>_bundle.md`出力 | `ArtifactBundle` | 成果物不足: `ArtifactMissingError` |
+  | `ResearchArtifactRegistry.promote(bundle_id, target_stage)` | `bundle_id`, ステージ | Idea Pipeline/Strategy Registryと整合確認→`strategy_promotion`イベント→`audit.strategy_promotion`記録 | `PromotionReceipt` | ステージ未許可: `PromotionDenied` |
+- **Data Manifest統合**: `register()`時に`DataManifestService.lookup(dataset_hash)`を呼び、欠落時は`status='pending'`で追記させる。欠落が72時間以内に解消しない場合は`health.raise('warn','research_dataset_missing_manifest')`。
+- **Runbook連携**: `STRAT-M1-VALIDATION`に「Notebook実行→Artifact登録→Runbookサイン→Idea Pipeline通知」の手順を追加。サインオフ済み`ArtifactBundle`のみが`IdeaPipelineManager.transition_stage(..., to='paper')`の`required_artifacts`を満たす。
+
+### 55.4 メトリクス・監査・テスト
+
+- **メトリクス** (`metrics/research_workspace.jsonl`): `env_sync_duration_sec`, `packages_changed`, `data_drift_detected`, `notebook_runs`, `notebook_failures`, `artifact_registered`. `notebook_failures>0`で`AlertDispatcher`がQuantチャネルへ通知。
+- **監査**: `audit.research_env_sync`, `audit.research_notebook_run`, `audit.research_artifact`. 各イベントに`env_hash`, `dataset_hash`, `runbook_refs`, `consent_reference_id`（リスク開示確認）を含める。
+- **Validation Data Playbook**: `validation_playbook/research_workspace.yaml`を新設し、AC-07/08の検証結果（`reports/research/m1_baseline/validation_<date>.md`）とノートブックハッシュを記録。期限切れ時は`tradectl validation audit --category research`がExit≠0。
+- **テスト計画**:
+  - `tests/unit/test_research_workspace_manager.py`: Lock整合、データ差分検知、Runbookサイン確認。
+  - `tests/unit/test_research_artifact_registry.py`: ハッシュ検証、Manifest連携、Promotionガード。
+  - `tests/integration/test_research_notebook_cli.py`: `run/validate/diff`コマンドのApprovalテスト、`--strict`挙動。
+  - `tests/integration/test_research_data_sync.py`: `data/research/curated` vs `data/runtime`差分での`ResearchDataOutOfSync`例外。
+  - `pytest -k research_workspace`でまとめて実行。CIでは`RESEARCH_ENV=ci`を設定し、ノートブック実行は`--dry-run`に固定。
+
+### 55.5 Codex Packet計画（Research Workspace Track）
+
+| Packet ID | スコープ | 依存セクション | 成果物 | テスト/証跡 |
+| --- | --- | --- | --- | --- |
+| `EP07-RSCH-P1` | ResearchWorkspaceManager環境同期・データ整合チェック | §55.1 | `tools/research_workspace.py`, `tests/unit/test_research_workspace_manager.py`, `requirements-research.lock`サンプル | `pytest -k research_workspace_manager` |
+| `EP07-RSCH-P2` | NotebookRunnerとCLI `tradectl research notebook`, Execution Report生成 | §55.2, §55.4 | `tools/run_notebook.py`, `src/interfaces/cli/research.py`拡張, `tests/integration/test_research_notebook_cli.py`, テンプレ更新 | `pytest -k research_notebook`, `pytest-approvaltests -k research_notebook` |
+| `EP07-RSCH-P3` | ResearchArtifactRegistry＋Data Manifest/Idea Pipeline連携 | §55.3, §55.4 | `src/research/artifacts.py`, `tests/unit/test_research_artifact_registry.py`, `tests/integration/test_research_data_sync.py` | `pytest -k research_artifacts`, `make check-validation` |
+
+- **受入条件**:
+  - `tradectl research notebook run research/strategies/m1_baseline/notebooks/performance.ipynb --profile paper-m1-baseline --strict`がAC-07のPF/Sharpe/MaxDD閾値と一致した`metrics.json`を生成し、`ResearchArtifactRegistry.register`で`validation_state='approved'`となること。
+  - `make research-sync`実行後に`ResearchWorkspaceManager.sync_environment`と`sync_data`が`warnings=[]`で完了し、`reports/research/m1_baseline/validation_<date>.md`へ`env_hash`/`dataset_hash`が自動追記されること。
+  - `tradectl research notebook diff m1_baseline --against 2025-02-20`でPF差分>0.05が検出された場合、Exit≠0と`ops.agenda`へのTODOが生成されること。
+
+## 56. ストラテジーボードガバナンス & レビュー自動化設計（FR-55, FR-61, AC-49, NFR-26）
+
+要件定義では週次の戦略レビューボードが`strategy_manifest.yaml`の更新・研究成果の承認・Ops/Risk観点のフォローアップを実施し、`reports/governance/strategy_board/`へ議事を残すことが求められている。FR-61のスコアボード、FR-55の研究昇格フロー、NFR-26のモデルリスク監査を統合し、Codexが会議運営の自動化・証跡管理・フォローアップ生成を実装できるよう詳細化する。
+
+### 56.1 StrategyBoardService (`src/governance/strategy_board.py`)
+
+- **責務**: レビューボードのアジェンダ生成、投票・コメント収集、決議ログ保存、フォローアップチケット発行。
+- **データモデル**:
+  | モデル | 主フィールド | 説明 |
+  | --- | --- | --- |
+  | `BoardAgenda` | `meeting_id`, `scheduled_at`, `strategies:list[StrategyReviewItem]`, `ideas:list[IdeaReviewItem]`, `risk_items`, `ops_items`, `prepared_by` | 会議アジェンダ。`StrategyReviewItem`には`alpha_score`, `decay_score`, `model_risk_status`, `idea_stage`を含む。 |
+  | `BoardDecision` | `meeting_id`, `item_id`, `decision∈{'approve','hold','reject','revalidate'}`, `rationale`, `required_actions:list[str]`, `due_date`, `sign_offs:list[SignOff]` | 決議結果。`sign_offs`はPO＋Quant Lead＋Ops Managerのダブル/トリプルサイン。 |
+  | `FollowUpTicket` | `ticket_id`, `meeting_id`, `owner_role`, `description`, `due_date`, `linked_artifacts`, `status` | 会議後のフォローアップ。
+- **主なAPI**:
+  | 関数 | 入力 | 処理 | 出力 | 異常系 |
+  | --- | --- | --- | --- | --- |
+  | `StrategyBoardService.generate_agenda(week: str, *, include_watchlist=True)` | ISO Week, オプション | `StrategyScoreboardService`（§32）と`IdeaPipelineManager`（§54）から対象抽出→`BoardAgenda`構築→`reports/governance/strategy_board/agenda_<week>.md`出力 | `BoardAgenda` | KPI欠落: `AgendaDataMissing`。サマリ生成失敗: `AgendaRenderError` |
+  | `StrategyBoardService.record_decision(meeting_id, item_id, decision, actions, sign_offs)` | 決議入力 | Schema検証→`reports/governance/strategy_board/<meeting_id>.md`へ追記→`FollowUpTicket`生成 | `BoardDecision`, `FollowUpTicket` | サイン不足: `DecisionSignOffMissing`。矛盾: `DecisionConflictError` |
+  | `StrategyBoardService.sync_with_manifest(strategy_id)` | Strategy ID | `strategy_manifest.yaml`と決議ログを突合し、`governance_ticket_id`・`alpha_score`を更新。Idea/Model Riskとのリンクを検証 | `StrategyBoardSyncReport` | Manifest差分: `ManifestDriftDetected` |
+  | `StrategyBoardService.publish_summary(meeting_id)` | 会議ID | サマリMarkdown/JSONを生成→`SecureShareService`（§48）で共有→EventBusへ`strategy_board.summary_published` | `SummaryPublicationReceipt` | 共有失敗: `BoardSummaryDeliveryError` |
+- **イベント**: `strategy_board.agenda_generated`, `strategy_board.decision_recorded`, `strategy_board.follow_up_created`, `strategy_board.summary_published`。Ops Agenda（§52.3）とOps Evidence Store（§45.1）が購読。
+- **ガードレール**: `generate_agenda`は`ModelRiskRegisterService`（§46）で`status='overdue'`の戦略を必ず含める。`alpha_score`や`ops_readiness_score`が閾値未達の場合、自動的に`decision='revalidate'`を推奨し、`FollowUpTicket`の`due_date`を4週以内に設定する。
+
+### 56.2 CLI/Workflow統合 (`tradectl governance board`)
+
+- **コマンド構成**:
+  | コマンド | 概要 | 主なオプション | 出力/副作用 |
+  | --- | --- | --- | --- |
+  | `tradectl governance board agenda --week 2025-W15` | 会議アジェンダ生成/表示 | `--include-watchlist/--no-ideas`, `--json`, `--open` | `BoardAgenda`をMarkdown/JSONで表示。生成時は`strategy_board.agenda_generated`イベント。 |
+  | `tradectl governance board record --meeting <id> --item <strategy_id> --decision approve` | 決議登録 | `--actions`, `--due`, `--note`, `--sign-off <role>:<user>` | `BoardDecision`追記、`FollowUpTicket`作成、`audit.strategy_board_decision`記録。 |
+  | `tradectl governance board follow-up list --status open` | 未完了フォローアップ一覧 | `--owner`, `--due-before`, `--json` | Ops Agendaと同期し、遅延時にExit≠0。 |
+  | `tradectl governance board publish --meeting <id> --profile research_board` | 会議サマリ配布 | `--channel`, `--dry-run`, `--include-artifacts` | SecureShareService呼び出し、配布結果ログ |
+- **UX**: CLIはRichテーブルで`alpha_score`, `decay_score`, `model_risk_status`, `idea_stage`, `ops_readiness_score`を可視化。決議入力時には`--sign-off`がPO＋Quant Lead＋Ops Managerを満たさないとプロンプトで警告し、`--force`には`config/roles.yaml::strategy_board_force`権限が必要。
+- **インタラクション**: CLIは`ResearchArtifactRegistry`と連携し、`--include-artifacts`指定で最新の`metrics.json`/`validation.md`を添付。Idea Pipelineの`StageEvaluationResult`が`allowed=False`の場合は決議登録時に自動で`decision='hold'`を推奨する。
+
+### 56.3 Ops/Research/Risk連携とRunbook整備
+
+- **Ops Agenda**: `strategy_board.follow_up_created`を購読し、`OpsAgendaService`が翌週までにTODOを挿入。`due_date`超過時は`ops.agenda.follow_up_overdue`イベントを出し、Kill Switch `soft_stop`の検討を促す（FR-63連動）。
+- **Idea Pipeline**: `BoardDecision`で`decision='approve'`かつ`target_stage='paper'`の場合、`IdeaPipelineManager.transition_stage(..., force=True)`をトリガし、チェックリスト完了を検証。`revalidate`では`StageChecklistItem`に`board_revalidation`を追加。
+- **Model Risk Register**: `decision='approve'`でも`model_risk_status='overdue'`の場合は`FollowUpTicket`に`model_risk.update`を追加し、`due_date≤14d`を強制（NFR-26）。
+- **Runbook**: `GOV-STRAT-01`を更新し、アジェンダ作成→決議→フォローアップ→サマリ配布のステップを詳細化。`Sign-off`欄はDocuSign/Markdown両対応とし、`StrategyBoardService.publish_summary`後に自動挿入されるようにする。
+- **Evidence**: `OpsEvidenceStore.register(category='strategy_board', validation_playbook_id='AC-49')`で議事録・決議ログ・フォローアップ証跡を保存。`SecureShareService`と連携して外部監査共有が可能。
+
+### 56.4 メトリクス・監査・テスト
+
+- **メトリクス** (`metrics/strategy_board.jsonl`): `agenda_generated`, `decisions_recorded`, `follow_ups_open`, `follow_ups_overdue`, `avg_time_to_close_days`, `revalidate_count`, `score_watchlist_count`. `follow_ups_overdue>0`でWARN、`revalidate_count`が連続3週>2の場合`health.raise('info','strategy_board_revalidate_spike')`。
+- **監査**: `audit.strategy_board_agenda`, `audit.strategy_board_decision`, `audit.strategy_board_follow_up`, `audit.strategy_board_summary_shared`。`consent_reference_id`（リスク開示）と`governance_ticket_id`を付与し、Runbook参照を含める。
+- **Validation Data Playbook**: `validation_playbook/strategy_board.yaml`を追加し、議事録・決議・フォローアップ状況・サインを追跡。欠落時は`tradectl validation audit --category governance`でExit≠0。
+- **テスト**:
+  - `tests/unit/test_strategy_board_service.py`: アジェンダ生成、決議登録、Manifest同期、フォローアップ生成、異常系。
+  - `tests/integration/test_strategy_board_cli.py`: CLI操作フロー、Sign-off検証、SecureShare連携（`--dry-run`）。
+  - `tests/integration/test_strategy_board_integrations.py`: Scoreboard/Idea Pipeline/Model Risk/Ops Agenda連携の統合テスト。
+  - Approvalテスト: `tests/approval/cli/strategy_board/`でアジェンダ/決議/フォローアップ表示スナップショットを保持。
+  - `pytest -k strategy_board`をCIジョブに追加し、`--with-governance`マーカーでM2+機能を条件付き実行。
+
+### 56.5 Codex Packet計画（Strategy Board Track）
+
+| Packet ID | スコープ | 依存セクション | 成果物 | テスト/証跡 |
+| --- | --- | --- | --- | --- |
+| `EP09-BRD-P1` | StrategyBoardService基盤（アジェンダ/決議モデル、Markdown出力、イベント発火） | §56.1, §56.4 | `src/governance/strategy_board.py`, `reports/governance/strategy_board/templates/agenda.md`, ユニットテスト | `pytest -k strategy_board_service` |
+| `EP09-BRD-P2` | CLI `tradectl governance board *`, Sign-off検証、SecureShare連携 | §56.2, §56.4 | `src/interfaces/cli/governance.py`拡張, CLI Approvalテスト, `tests/integration/test_strategy_board_cli.py` | `pytest -k strategy_board_cli`, `pytest-approvaltests -k strategy_board` |
+| `EP09-BRD-P3` | Scoreboard/Idea Pipeline/Model Risk/Ops Agenda統合、Validation Playbook/Runbook更新 | §56.3, §56.4 | `src/strategies/scoreboard.py`拡張, `src/ideas/manager.py`/`src/ops/agenda.py`フック, `validation_playbook/strategy_board.yaml`, Runbook更新 | `pytest -k strategy_board_integrations`, `make check-validation`, `tradectl governance board publish --dry-run` |
+
+- **受入条件**:
+  - `tradectl governance board agenda --week <current>`が`alpha_score`閾値割れ戦略を`watchlist`として自動ハイライトし、決議登録後に`FollowUpTicket`がOps Agendaへ反映されること。
+  - `strategy_manifest.yaml`更新後に`StrategyBoardService.sync_with_manifest`が実行され、`reports/governance/strategy_board/<meeting>.md`の決議とManifest差分が一致すること。
+  - 週次サマリ配布（`tradectl governance board publish --meeting <id> --profile research_board --dry-run`）が`SecureShareService`を呼び出し、`audit.strategy_board_summary_shared`に暗号化ハッシュと受領者を記録すること。
+
+---
+
+本章を追補したことで、研究ワークスペースと戦略ボード運営の詳細が明確となり、CodexはJupyter/CLI統合から議事録管理・フォローアップ生成まで一貫した自動化を実装できる。トレーダーとOpsはノートブック検証結果を即座に監査証跡へ反映し、戦略レビューボードの決議とRunbook運用をシームレスに連携させることで、M1.1以降の戦略昇格とリスク管理を高い透明性で進められる。
