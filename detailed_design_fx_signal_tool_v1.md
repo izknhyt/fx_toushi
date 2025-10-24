@@ -5280,3 +5280,68 @@ Paper90日運用とM1.1 Hardeningで求められる運用可視化（要件定�
 | `EP11-OPS-P3` | OpsAgendaService生成ロジック、CLI `ops agenda`, Acceptable Degradation統合、Validation/Runbookリンク | §52.3, §52.4, §52.5 | `src/ops/agenda.py`, `docs/templates/daily_agenda.md`, `tests/integration/test_ops_agenda.py` | `pytest -k ops_agenda`, `tradectl ops agenda --date 2025-03-03 --no-persist` |
 
 - **Ops受入条件**: Packet完了時に`reports/ops/workload_<YYYYMM>.md`, `docs/runbooks/daily_agenda/<date>.md`, `reports/validation_log/AC-51_ops_<date>.md`を生成し、Ops Manager＋POダブルサインを取得。削減効果が閾値未達の場合でも、理由（タスク特性/Runbook未整備）を`automation_effect.jsonl`へ記録する。CodexはPacket単位でCLIキャプチャとメトリクス抜粋をPRコメントへ添付すること。
+
+### 53. Ops Drill Orchestrator & Runbook演習自動化設計（`src/ops/drills.py`, `src/interfaces/cli/ops.py`, M1.1準備）
+
+M1.1 Hardeningでは、Acceptable DegradationやBCP演習を計画的に実施し、Runbook更新と証跡収集を自動化する必要がある（要件定義 §0「Acceptable Degradation復帰基準」、§10.1「Runbookインベントリ」、AC-40/AC-43/AC-45、ドリル結果保存要件）。`reports/drill/<YYYYMMDD>_<scenario>.md`に演習ログを残す既存方針を強化し、Codexが再現しやすいAPI/CLI/テンプレ構造を定義する。
+
+#### 53.1 OpsDrillService (`src/ops/drills.py`)
+
+- **責務**: ドリルシナリオの定義・スケジュール・実行・証跡集約。Runbook ID、Validation Data Playbook ID、関連メトリクスの紐付けを行い、Ops Readinessスコア（§33.1）やEvidence Store（§45.1）へ自動反映する。
+- **データモデル**:
+  | モデル | 主フィールド | 説明 |
+  | --- | --- | --- |
+  | `DrillScenario` | `scenario_id`, `title`, `runbook_refs:list[str]`, `validation_playbook_ids:list[str]`, `trigger ∈ {'scheduled','incident','regression'}`, `expected_duration_min`, `impact_tags:set[str]` | ドリル種類（例: `data_latency_failover`, `model_risk_review`, `tax_reconciliation`）。要件定義で列挙された演習カテゴリとRunbook付録をマッピングする。 |
+  | `DrillPlan` | `plan_id`, `scenario_id`, `scheduled_for:datetime`, `owner`, `participants:list[str]`, `board_mode_on_start`, `acceptance_conditions:list[str]` | 実行予定。Acceptable Degradation解除条件（SLA復帰、Catch-up<30分等）を`acceptance_conditions`に保持し、Runbook手順参照を必須化。 |
+  | `DrillExecution` | `execution_id`, `plan_id`, `started_at`, `ended_at`, `status ∈ {'pending','running','completed','failed','aborted'}`, `kill_switch_state`, `board_mode`, `notes` | 実行中の状態。`kill_switch_state`と`board_mode`を記録してヒューマン判断のトレーサビリティを確保。 |
+  | `DrillOutcome` | `execution_id`, `success:bool`, `metrics:dict[str,Any]`, `follow_up_tickets:list[str]`, `evidence_paths:list[str]`, `sign_offs:list[SignOff]` | 結果と証跡。`metrics`には所要時間、SLA回復秒数、`ops_worklog`削減見込みなどを格納。`sign_offs`はOps Manager/PO/Complianceなどステークホルダーを保持。 |
+- **主要メソッド**:
+  | メソッド | 入力 | 処理 | 出力/副作用 | 異常系 |
+  | --- | --- | --- | --- | --- |
+  | `register_scenario(scenario: DrillScenario)` | シナリオ定義 | スキーマ検証（Runbook/Validation ID存在チェック）→`drill_scenarios.yaml`へ永続化 | `DrillScenario`登録、`audit.ops_drill`イベント | 重複ID: `DrillScenarioExists`。Runbook未定義: `RunbookReferenceError` |
+  | `schedule(plan: DrillPlan)` | シナリオID、日程、参加者 | `PlanSchedulePolicy`でWIP上限・Ops負荷と衝突しないか検証（§52 Ops Agendaと連携）→`drill_plan.jsonl`へ追記 | `PlanReceipt`、`ops.agenda.drill_added`イベント | WIP超過: `DrillCapacityExceeded` |
+  | `start(plan_id, actor)` | プランID、開始実行者 | `OpsWorklogService.record(task='drill_start')`→`DrillExecution`を`running`に更新→`ops.drill.started`イベント | `DrillExecution` | プラン未承認: `DrillPlanNotReady`。BoardMode≠guarded要求違反: `DrillPreconditionError` |
+  | `record_step(execution_id, step: DrillStep)` | ステップ記録 | Runbook手順IDと所要時間を保持→`ops_worklog`へ追加→`metrics/drill.jsonl`へ`step_duration_sec`記録 | `StepReceipt` | Runbook手順欠落: `DrillStepValidationError` |
+  | `complete(execution_id, outcome: DrillOutcome)` | 結果 | `OpsEvidenceStore.register(category='drill', ...)`→`reports/drill/<date>_<scenario>.md`生成→`ops.agenda`からTODOを削除 | `CompletionReceipt`、`ops.drill.completed` | 署名不足: `DrillSignOffMissing`。Evidence書込失敗: `DrillEvidenceError` |
+  | `abort(execution_id, reason, actor)` | 中断 | ステータス`aborted`→`ops.drill.aborted`イベント→`Runbook`へ改善タスク登録 | `AbortReceipt` | なし |
+- **永続化**: JSONL＋Markdownテンプレ（`docs/templates/drill_report.md`）を採用。`DrillScenario`はYAMLで管理しGitレビュー対象にする。Execution/Outcomeは`logs/ops/drill/`配下JSONL＋`reports/drill/`Markdownの二重保存で監査性を確保。
+- **Runbook連携**: `DrillScenario`に含まれる`runbook_refs`を元に、CLI実行時に対象Runbookのチェックリストを読み込み、未完項目がある場合は開始をブロック。要件定義のAcceptable Degradation復帰条件に沿って`acceptance_conditions`を満たさない場合、`complete()`は`success=False`で強制終了し、Ops Agendaへフォローアップタスクを追加する。
+- **Integration Hooks**: `OpsAgendaService`が翌営業日のアジェンダに演習TODOを挿入、`AutomationEffectTracker`が`DrillOutcome.metrics['minutes_saved_estimate']`を参照して効果を記録。`HealthMonitor`はドリル失敗時に`health.raise('info','drill_failed')`でRunbookレビューを促す。
+
+#### 53.2 CLI `tradectl ops drill *` (`src/interfaces/cli/ops.py`)
+
+- **サブコマンド**:
+  | コマンド | 概要 | 主要オプション | 出力/副作用 |
+  | --- | --- | --- | --- |
+  | `tradectl ops drill catalog [--json]` | 登録済シナリオ一覧 | `--tag`, `--runbook`, `--next` | `DrillScenario`表、Runbookリンク、Validation Data Playbook ID。`--json`でマシン可読出力。 |
+  | `tradectl ops drill schedule --scenario data_latency_failover --date 2025-03-05T09:00+09:00` | ドリル日程登録 | `--participants`, `--board-mode guarded`, `--acceptance-from-template` | `PlanReceipt`表示、`ops.agenda.drill_added`イベント。Ops AgendaにTODO追加。 |
+  | `tradectl ops drill start --plan <id>` | 実行開始 | `--force`（Guarded未設定時のみOps Manager承認必須）、`--notes` | `DrillExecution`開始ログ、`ops_worklog`へ`task='drill_start'`追記。 |
+  | `tradectl ops drill step --execution <id> --runbook-step RUN-DATA-05#4 --duration 12 --comment "Manual CSV hash check"` | 手順記録 | `--attach <path>`で証跡添付、`--metric key=value`で任意メトリクス追加 | `StepReceipt`、`ops_worklog`更新、`metrics/drill.jsonl`に追記。 |
+  | `tradectl ops drill complete --execution <id> --result success --minutes-saved 25 --follow-up TKT-123` | 完了処理 | `--evidence <path>`複数指定、`--sign-off ops_manager:OK` | ドリルレポートMarkdown生成、`OpsEvidenceStore.register(category='drill')`呼出、`ops.drill.completed`イベント。 |
+  | `tradectl ops drill abort --execution <id> --reason "provider outage"` | 中断 | `--follow-up`, `--notify` | `AbortReceipt`、`ops.drill.aborted`イベント、Ops Agendaへ再計画タスク追加。 |
+- **UX**: RichテーブルでRunbook手順と進捗を視覚化し、`--with-checklist`で対象Runbookのチェックリストを表示。`--dry-run`でPlan/Executionを生成せず検証のみ行い、CIでテンプレ整合を確認できるようにする。
+- **権限**: `config/roles.yaml::ops_drill_organizers`を参照。Guarded未設定で開始する場合はOps Manager（`ops_managers`ロール）がCLI確認ダイアログで承認しない限り`DrillPreconditionError`を返す。
+
+#### 53.3 連携サービスとメトリクス
+
+- **OpsWorklog/AutomationEffect**: `DrillStep`記録時に`OpsWorklogService.record(task='drill_step', duration_min=step.duration_min, metadata={...})`を呼び出し、削減効果は`AutomationEffectTracker.apply(task='drill', before_min, after_min)`で評価。削減未達時は`health.raise('info','drill_no_improvement')`。
+- **OpsAgenda**: `OpsAgendaService.generate()`が`drill_pending`セクションを含め、未完計画を日次アジェンダへ挿入。Acceptable Degradation状態では`critical`タグのドリルのみ許可し、他計画は自動で延期し`ops.agenda.deferred`をログ。延期理由と新日程は`PlanSchedulePolicy`が決定。
+- **EvidenceStore/Validation Data Playbook**: `complete()`時に`OpsEvidenceStore.register(category='drill', validation_playbook_id=<AC>)`を必須化し、証跡ハッシュを`validation_playbook/<AC>_drill.yaml`へ追記。要件定義AC-45（SLAドリル）、AC-40/43（緊急演習）に合わせてカテゴリ別デフォルトテンプレを用意。`metrics/ops_evidence.jsonl`に`drill`エントリを追加し、失効7日前に`ops.evidence.expiring`を通知。
+- **メトリクス/ログ**:
+  - `metrics/drill.jsonl`: `{execution_id, scenario_id, step, duration_sec, success, board_mode, kill_switch_state, minutes_saved_estimate}`。
+  - `logs/events/`: `ops.drill.*`イベントをEventBusへpublish。`incident_drills`スコア（§33.1 Ops Readiness指標）を算出するため、イベントに`runbook_refs`と`validation_playbook_ids`を付与。
+  - `reports/drill/<YYYYMMDD>_<scenario>.md`: CLI完了でテンプレ展開し、タイムライン、Runbook差分、フォローアップ項目を記録。`docs/templates/drill_report.md`を新設し、受入チェックリスト（SLA復帰、双子CSV突合、Kill Switchリセット条件など）を標準化。
+
+#### 53.4 テスト・Codex Packet
+
+- **テストケース**:
+  - `tests/unit/test_ops_drill_service.py`: シナリオ登録・スケジュール・開始・ステップ追加・完了/中断の正常/異常系。Runbook参照/Validation ID検証、WIP制限、OpsAgendaフックをモックで確認。
+  - `tests/integration/test_ops_drill_cli.py`: CLIワークフロー一式（catalog→schedule→start→step→complete）、Markdown出力のApprovalテスト、`ops_worklog`/`metrics/drill.jsonl`の整合チェック。
+  - `tests/approval/cli/ops_drill/`: CLI表示スナップショットを保持。Acceptable Degradation中のガードチェック（Guarded必須）を含む。
+- **Codex Packet案**:
+  | Packet ID | スコープ | 依存セクション | 成果物 | テスト |
+  | --- | --- | --- | --- | --- |
+  | `EP11-DRILL-P1` | `OpsDrillService`基盤（シナリオ/プラン/実行モデル、JSONL永続化、EventBus発火） | §52, §53.1 | `src/ops/drills.py`, `tests/unit/test_ops_drill_service.py`, `docs/templates/drill_report.md`ドラフト | `pytest -k ops_drill_service` |
+  | `EP11-DRILL-P2` | CLI `tradectl ops drill`フロー、OpsWorklog/Evidence統合、Runbook参照検証 | §53.2, §53.3 | `src/interfaces/cli/ops.py`, CLIテスト, Markdownテンプレ更新, `metrics/drill.jsonl`スキーマ | `pytest -k ops_drill_cli`, `pytest-approvaltests -k ops_drill` |
+  | `EP11-DRILL-P3` | OpsAgenda/EvidenceStore/AutomationEffect連携、Acceptable Degradation制約検証、Ops Readiness指標更新 | §52.3, §53.3 | `src/ops/agenda.py`拡張, `src/ops/evidence.py`統合, `tests/integration/test_ops_agenda.py::test_drill_integration` | `pytest -k ops_agenda`, `pytest -k ops_evidence_store` |
+- **受入条件**: ドリル完了後に`reports/drill/<date>_<scenario>.md`が生成され、`OpsEvidenceStore.lookup('drill')`で`confidence_pct≥0.9`かつ`expires_at≥30d`が確認できること。Acceptable Degradation解除条件（SLA回復/双子CSV一致）が未達の場合はCLIが`exit code 121`で失敗し、Ops Agendaへ再演習タスクが追加される挙動をテストで担保する。
