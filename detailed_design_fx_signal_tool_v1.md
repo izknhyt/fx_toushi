@@ -5685,3 +5685,114 @@ FR-55およびNFR-21では、研究環境（Jupyter/MkDocsラボ）が本番パ�
   4. M2.2でGUI/Tauri（将来）対応のREST APIを公開し、`/api/v1/governance/lifecycle`で同一スキーマを提供。CLI/GUI双方でValidation Data Playbookとの双方向リンクを維持。
 
 この追加節により、研究→運用→監査のライフサイクル管理が一元化され、Scoreboard/Idea Pipeline/Strategy Board/Ops Readiness/License/Costの判断軸が矛盾なく連携する。Codexは`LifecycleOrchestrator`を基盤にPacket単位で段階実装でき、トレーダー/PO/OpsはGate結果・証跡・Runbookを単一ビューで確認しながらPaper/Live昇格判断や停止判断を迅速に下せる。
+
+### 58. DocOps & Knowledge Retention Orchestrator（NFR-16, NFR-13, AC-43/AC-45, 基本設計§14）
+
+NFR-16/AC-43が要求するRunbookレビューと緊急プロトコル整備、AC-45のSLAドキュメント運用、NFR-13のドキュメント自動生成を一元的に管理するため、DocOps層を明文化する。`DocsRegistry`・`RunbookInventoryService`・`DecisionJournalManager`・`OnboardingChecklistService`を束ね、Ops Agenda（§52）、Ops Evidence Store（§45.1）、Validation Data Playbook（§20）と連携して「知識の更新→証跡化→レビュー→外部共有」のループを自動化する。
+
+#### 58.1 DocsRegistry (`src/docops/registry.py`)
+
+- **データモデル**:
+  - `DocumentRecord`: `id`, `category ∈ {'runbook','incident','decision','playbook','onboarding','template'}`, `path`, `hash`, `owners`, `review_cycle_days`, `next_review_due`, `linked_requirements:list[str]`, `validation_playbook_ids:list[str]`, `last_review_log`, `status ∈ {'ready','grace','overdue'}`。
+  - `ReviewLog`: `document_id`, `performed_at`, `performed_by`, `notes`, `evidence_path`, `confidence_pct`, `related_incident_id`。
+- **ソーススキャン**: 起動時および`tradectl docops sync`実行時に`docs/runbooks/**/*.md`, `reports/governance/**/*.md`, `reports/audit/**/*.md`, `docs/templates/**/*.md`, `docs/onboarding.md`を走査。`yaml.safe_load_all`でフロントマター（`owners`, `review_cycle_days`, `linked_ac`, `validation_id`）を取得。
+- **ハッシュ管理**: `DocumentRecord.hash`には`sha256(file_bytes)`、`DocumentRecord.last_review_log`には直近`ReviewLog`のハッシュを格納。`DocsRegistry.verify_integrity()`はRunbook/Audit/WORM保管（§39.2）と整合しない場合に`DocIntegrityError`をraiseし、`health.raise('warning','doc_integrity')`を発火。
+- **イベント**: `doc.review_due`（7日前通知）、`doc.review_overdue`, `doc.hash_mismatch`, `doc.review_logged`。`OpsAgendaService`（§52.3）が購読し、TODOを生成する。
+
+#### 58.2 RunbookInventoryService (`src/docops/runbook_inventory.py`)
+
+- **責務**: `DocsRegistry`のRunbookカテゴリを集約し、`reports/governance/runbook_inventory_status.json`を生成（基本設計§9参照）。`status`は`ready`/`grace`（猶予<7日）/`overdue`、`evidence_path`は`OpsEvidenceStore`（§45.1）のIDを参照する。
+- **CLI**:
+  | コマンド | 用途 | 主なオプション | 出力 |
+  | --- | --- | --- | --- |
+  | `tradectl docs runbook status [--category ops|risk|governance] [--json]` | Runbook期限と証跡表示 | `--overdue-only`, `--include-evidence` | Richテーブル/JSON。猶予<7日は黄色、期限切れは赤表示。 |
+  | `tradectl docs runbook review --id RUN-DATA-05 --notes <text> --evidence <path>` | レビュー記録 | `--confidence-pct`, `--validation AC-45` | `ReviewLog`追記、`OpsEvidenceStore.register(category='runbook')`、`doc.review_logged`イベント発火。 |
+  | `tradectl docs runbook sync` | `DocsRegistry.sync()`と`RunbookInventoryService.refresh()`を一括実行 | `--no-write`（Dry-run） | 差分サマリ、未署名テンプレート警告。 |
+- **Ops Agenda連携**: `doc.review_due`受信時は`OpsAgendaService.create_item(task='runbook_review', due=<date>, runbook_id=<id>, severity)`を実行。Acceptable Degradation中は`severity='critical'`扱いで優先度を引き上げる。
+- **Validation Data Playbook**: `--validation`指定時に`validation_playbook/<AC>_runbook.yaml`へサインオフ追記。欠損時は`DocValidationError`でCLI終了コード120。
+
+#### 58.3 DecisionJournalManager & OnboardingChecklist (`src/docops/journal.py`, `src/docops/onboarding.py`)
+
+- **DecisionJournalManager**:
+  - `decision_records/`ディレクトリを監視し、`DecisionRecord`: `decision_id`, `topic`, `context`, `participants`, `related_docs`, `follow_up_due`, `consent_reference_id`を管理。`follow_up_due<today`で`doc.decision_followup_overdue`イベントを発火し、Strategy Board（§56）やLifecycle（§57）へ通知。
+  - CLI `tradectl docs decision add`/`tradectl docs decision close`でRunbookリンク・Validation IDを必須入力。`OpsEvidenceStore.register(category='decision')`で証跡化。
+- **OnboardingChecklistService**:
+  - `docs/onboarding.md`内のチェックリスト（基本設計§14）をパースし、`onboarding_tasks.json`を生成。`status`は`not_started`/`in_progress`/`complete`、`mentor`/`trainee`記録欄あり。
+  - CLI `tradectl onboarding assign --user <id> --mentor <id>`、`tradectl onboarding complete --user <id> --task <slug>`を提供。完了時は`OpsEvidenceStore.register(category='onboarding', validation_playbook_id='AC-16_onboarding')`を呼び出し、NFR-16の知識継承証跡を残す。
+  - `metrics/onboarding.jsonl`へ進捗率、平均完了日数を追記。90日以内に完了しない場合は`health.raise('info','onboarding_lag')`。
+- **IncidentLinker**: 重大インシデント`reports/audit/data/*.md`をDocsRegistryへ取り込み、`incident.review_due`が来た際にDecision Journalへフォローアップを作成しRunbook更新を促す。
+
+#### 58.4 メトリクス・自動化
+
+- `metrics/docops.jsonl`スキーマ:
+  - `{"ts":"...","metric":"doc_review_due","document_id":"RUN-DATA-05","days_to_due":6}`
+  - `{"metric":"runbook_status","status_counts":{"ready":12,"grace":2,"overdue":1}}`
+  - `{"metric":"onboarding_completion","cohort":"2025Q1","completion_pct":0.66}`
+- `Scheduler`ジョブ:
+  - `DocReviewSweepJob`（日次06:30 JST）: `RunbookInventoryService.refresh()`→`doc.review_due`発火→`OpsAgenda`更新。
+  - `DecisionFollowUpJob`（週次月曜07:00）: 未完フォローアップを`OpsAgenda`先頭へ挿入し、`LifecycleOrchestrator`（§57）へ`lifecycle.action_required`を送信。
+- `SecureShareService`（§48）連携: `tradectl docs export --bundle governance --to secure_share://audit/<YYYYWW>`がRunbook/Decision/Validation/Onboarding証跡をZip化し、暗号化して外部レビューへ送信。ハッシュは`DocsRegistry`へ逆登録。
+- **UX/テンプレ統制**: `DocLint`（`tools/doclint.py`）でMkDocs互換のFrontMatter/目次/警告ボックス（NFR-15カラー規約）を検査。`make check-runbooks`は`DocLint`と`RunbookInventoryService`を呼び、CI失敗時に`policy_violation`を返す。
+
+#### 58.5 テスト・Codex Packet・受入条件
+
+- **テスト**:
+  - `tests/unit/test_docs_registry.py`: 走査・ハッシュ・イベント生成。
+  - `tests/unit/test_runbook_inventory.py`: status算出、Validationリンク、OpsAgendaスタブ呼び出し。
+  - `tests/unit/test_decision_journal.py`: フォローアップ検出、Evidence登録、Lifecycle通知。
+  - `tests/integration/test_docops_cli.py`: CLI一式、SecureShare連携、`DocLint`エラー分岐。
+  - Approval: `tests/approval/cli/docops/`に`runbook_status`, `decision_add`, `onboarding_assign`スナップショットを追加。
+- **Codex Packet**:
+  | Packet ID | スコープ | 依存セクション | 成果物 | テスト |
+  | --- | --- | --- | --- | --- |
+  | `EP12-DOC-P1` | DocsRegistry/RunbookInventory実装、CLI `docs runbook *`, DocLint | §58.1, §58.2 | `src/docops/registry.py`, `src/docops/runbook_inventory.py`, `tools/doclint.py` | `pytest -k docops`, `make check-runbooks` |
+  | `EP12-DOC-P2` | DecisionJournal/Onboardingサービス、OpsAgenda/Validation連携 | §58.3, §58.4 | `src/docops/journal.py`, `src/docops/onboarding.py`, CLI拡張 | `pytest -k decision_journal`, `pytest -k onboarding`, `tradectl onboarding assign --dry-run` |
+  | `EP12-DOC-P3` | SecureShareエクスポート、Metrics/Health統合 | §58.4 | `src/docops/exporter.py`（新規）, `tests/integration/test_docops_cli.py` | `pytest -k docops_cli`, `make docops-report` |
+- **受入条件**:
+  1. `make check-runbooks`実行で`reports/governance/runbook_inventory_status.json`が更新され、`RUN-DATA-05`が`ready`・`next_review_due`7日以内の際に`OpsAgenda`へTODOが追加される。
+  2. `tradectl docs decision add --topic kill_switch_review ...`でDecision Journalが作成され、`LifecycleOrchestrator`が24時間以内に該当戦略へ`lifecycle.action_required`を通知する。
+  3. 新規メンバーへ`tradectl onboarding assign`実行後、`metrics/onboarding.jsonl`に進捗が記録され、30日以内に未完タスクが残る場合は`health.changed(reason=onboarding_lag)`がトリガされる。
+
+### 59. Documentation Build & Distribution Pipeline（NFR-13, NFR-15, AC-27/AC-28）
+
+MkDocsベースのドキュメント生成と、CLI/UXスタイルガイド適用を自動化する。`DocBuildPipeline`は`make docs`/`make docs-serve`コマンドの裏側を支え、依存固定（AC-27/AC-28）、スタイルガイド遵守（NFR-15）、CIレポート生成を統制する。
+
+#### 59.1 DocBuildPipeline (`tools/docbuild.py`)
+
+- **パイプライン構成**:
+  1. `collect_sources()`で`docs/`, `reports/templates/`, `docs/prompt_packages/`のMarkdown/画像を収集。`DocsRegistry`（§58.1）とハッシュ整合を確認。
+  2. `inject_metadata()`でMkDocs用`mkdocs.yml`に`site_name`, `nav`, `plugins`を動的生成。Runbook/Decision Journal/Validation Playbookをカテゴリ別に自動ソート。
+  3. `build_site()`で`mkdocs build --site-dir site/`を実行し、ビルドログを`reports/build/docbuild_<timestamp>.log`へ保存。`MkDocsBuildError`発生時はCIを失敗させ、`DocBuildPipeline`が`docs.build.failed`イベントを送出。
+  4. `publish_bundle()`（オプション）で`site/`を`dist/docs_<version>.tar.gz`へアーカイブ。`SecureShareService`経由で配布可能。
+- **依存固定**: `pyproject.toml`の`[tool.poetry.group.docs]`でMkDocs・プラグインのバージョンをロックし、`poetry lock --group docs`でハッシュを記録。AC-27/AC-28準拠のため`requirements.docs.txt`も生成して`dist/offline_bundle`へ同梱。
+- **CLI**:
+  | コマンド | 用途 | 主なオプション | 副作用 |
+  | --- | --- | --- | --- |
+  | `tradectl docs build [--watch] [--serve]` | MkDocsビルド/プレビュー | `--clean`, `--strict` | `site/`生成、`docs.build.completed`イベント、`metrics/docbuild.jsonl`追記 |
+  | `tradectl docs diff --against main` | MkDocs出力差分確認 | `--html` | 差分サマリ生成、`DocDiffReport`を`reports/governance/doc_diff_<date>.md`へ保存 |
+  | `tradectl docs lint` | `DocLint`実行 | `--category runbook|ux` | Lint結果を`reports/governance/doc_lint_<date>.md`に出力 |
+- **UXガイドライン**: `DocLint`はNFR-15準拠の配色（警告=赤`#FF5F57`, 情報=青`#0A84FF`, 成功=緑`#30D158`）とCLIスクリーンショット（`docs/ux_feedback.md`）のキャプション有無を検査。違反時は`DocStyleViolation`で失敗。
+
+#### 59.2 CI/Telemetry連携
+
+- **CIジョブ**: `.github/workflows/docs.yml`を追加し、`poetry install --with docs`→`tradectl docs lint`→`tradectl docs build --strict`を実行。ビルド成果物をCIアーティファクトとして保存し、`DocBuildPipeline`が成功時に`docs.build.completed`イベントで`hash`, `duration_ms`, `warnings_count`を発火。
+- **メトリクス**: `metrics/docbuild.jsonl`に`{"metric":"doc_build_duration","ms":18340}`, `{"metric":"doc_lint_warnings","count":0}`等を記録。30日ローリングで`warnings_count>0`が3回続いた場合は`health.raise('info','doc_quality_regress')`。
+- **Runbook連携**: `RUN-DOCS-01`（新規）にビルド・配布手順を記載。`RunbookInventoryService`が監視し、未レビュー>30日で`doc.review_due`を発火。
+- **Offline Bundle**: `DocBuildPipeline.publish_bundle()`で生成した`dist/docs_<version>.tar.gz`を`OfflineBundleBuilder`（§41）へ引き渡し、`manifest.json`へ`docs_hash`・`mkdocs_version`を記録。復旧演習時は`make bundle-verify`でドキュメント展開も検証する。
+
+#### 59.3 テスト・Codex Packet・受入条件
+
+- **テスト**:
+  - `tests/unit/test_docbuild_pipeline.py`: `collect_sources`/`inject_metadata`/`build_site`正常系・異常系。
+  - `tests/unit/test_doclint.py`: スタイル違反検出、配色チェック、FrontMatter必須項目検証。
+  - `tests/integration/test_docs_cli.py`: `tradectl docs build/diff/lint`、`--watch`モードのgraceful shutdown、`SecureShare`連携。
+- **Codex Packet**:
+  | Packet ID | スコープ | 依存セクション | 成果物 | テスト |
+  | --- | --- | --- | --- | --- |
+  | `EP12-DOC-P4` | DocBuildPipeline + CLI + CI設定 | §59.1, §59.2 | `tools/docbuild.py`, `.github/workflows/docs.yml`, CLI拡張 | `pytest -k docbuild`, `tradectl docs build --strict`, `make docs` |
+  | `EP12-DOC-P5` | DocLint強化 + UXスタイル検証 | §59.1 | `tools/doclint.py`拡張, `tests/unit/test_doclint.py` | `pytest -k doclint`, `tradectl docs lint` |
+- **受入条件**:
+  1. `tradectl docs build --strict`が成功し、`reports/governance/doc_diff_<date>.md`に前回ビルドとの差分が要約される。
+  2. `make check-runbooks`→`DocLint`→`RunbookInventoryService`の連携で、Runbookテンプレ差分がCI上で検知され、`reports/governance/runbook_inventory_status.json`に最新状態が反映される。
+  3. `dist/docs_<version>.tar.gz`が`OfflineBundleBuilder`の`manifest.json`へ登録され、`make bundle-verify`でドキュメント展開チェックが通過する。
+
