@@ -5598,3 +5598,90 @@ FR-55およびNFR-21では、研究環境（Jupyter/MkDocsラボ）が本番パ�
 ---
 
 本章を追補したことで、研究ワークスペースと戦略ボード運営の詳細が明確となり、CodexはJupyter/CLI統合から議事録管理・フォローアップ生成まで一貫した自動化を実装できる。トレーダーとOpsはノートブック検証結果を即座に監査証跡へ反映し、戦略レビューボードの決議とRunbook運用をシームレスに連携させることで、M1.1以降の戦略昇格とリスク管理を高い透明性で進められる。
+
+### 57. Strategy Lifecycle Orchestrator & Gate Governance（FR-55/FR-56/FR-61/FR-62/FR-63連携, M2準備）
+
+戦略のアイデア創出からPaper/Live昇格、運用停止/サンセットまでを一貫管理し、Scoreboard・Idea Pipeline・Strategy Board・Model Risk・Ops Readiness・ライセンス/コスト統制を横断したゲート制御を実現する。FR-55/FR-56が要求するManifest整合と研究⇔運用同期、FR-61/FR-62のスコアリング/ステージチェックリスト、FR-63のOpsレディネス、AC-49/AC-52/AC-55（要件定義§8）を満たすため、`StrategyLifecycleOrchestrator`を新設し、既存サービスを束ねた「戦略ライフサイクル網（Lifecycle Mesh）」を構築する。
+
+#### 57.1 StrategyLifecycleOrchestrator (`src/governance/lifecycle.py`)
+
+- **構成要素**:
+  - `LifecycleState`: `strategy_id`, `idea_id`, `current_stage ∈ {'draft','screening','paper','ready','live','suspended','sunset'}`, `gate_status ∈ {'clear','pending','blocked'}`, `blocked_reasons:list[str]`, `last_gate_check`, `board_decision_ref`, `score_snapshot`, `ops_readiness_score`, `model_risk_status`, `license_status`, `capital_guard_status`, `kpi_snapshot_id`, `validation_playbook_ids:list[str]`。
+  - `GateDefinition`: `id`, `description`, `required_signals:list[str]`, `thresholds`, `auto_actions`, `runbook_refs`, `validation_playbook_refs`。例: `gate.paper_promotion`は`required_signals=['idea.stage=screening->paper','strategy_board.decision=approve','alpha_score>=75','decay_score<=35','ops_readiness_score>=80','model_risk.status in {'green','amber'}`]。
+  - `GateResult`: `gate_id`, `status ∈ {'pass','fail','manual_review'}`, `reasons`, `evidence_refs`, `next_actions`。
+  - `LifecycleOrchestrator`: EventBus購読・Gate評価・状態永続化・通知。
+  - `LifecycleRepository`: `data/governance/lifecycle_state.jsonl`（履歴）と`reports/governance/lifecycle/<strategy>.json`（現行状態）へWORM保存。`SnapshotManager`対象に含め、Paper/Live切替時の再起動でも再計算不要。
+- **イベント連携**:
+  - 購読: `idea.pipeline.stage_changed`, `strategy.watchlist`, `strategy_board.decision.recorded`, `model_risk.updated`, `ops_readiness.evaluated`, `license_registry.updated`, `capital_guard.decision`, `validation.playbook.status_changed`。
+  - 発火: `lifecycle.gate_evaluated`, `lifecycle.gate_blocked`, `lifecycle.stage_promoted`, `lifecycle.stage_regressed`, `lifecycle.kpi_breach`, `lifecycle.action_required`。
+- **Gate評価フロー**:
+  1. イベント受信→`LifecycleState`ロード→該当Gateを判定（`GateDefinition.match(event)`）。
+  2. Gate要件を`GateEvaluator`が評価。閾値不足や証跡欠落時は`status='fail'`で`blocked_reasons`に追記。
+  3. `auto_actions`に`{'type':'create_follow_up','target':'ops_agenda','due_days':7}`などが設定されていれば即時発火。
+  4. `status='pass'`の場合は`LifecycleState.current_stage`を更新し、Idea PipelineとStrategy BoardへACKイベント（`lifecycle.stage_promoted`）を送信。
+  5. `status='manual_review'`（例: `ops_readiness_score`が75〜80）なら`Runbook`参照とともに`lifecycle.action_required`を出力。`BoardMode`が`guarded`の場合は自動昇格を保留し、Strategy Board CLIで承認時に`--override`を要求。
+- **Model Risk & Manifest連携（FR-56）**:
+  - `model_risk.status='overdue'`または`strategy_manifest.yaml::valid_until < today`の場合、`gate.live_continuation`が`fail`となり`blocked_reasons`へ`['model_risk_overdue','manifest_expired']`を記録。`StrategyBoardService.generate_agenda`（§56.1）にリストアップさせる。
+- **Licensing/コスト（§50）**:
+  - `license_status`が`{'expired','pending_renewal'}`の場合、`gate.real_time_feed_enable`を`fail`に設定し、M1.2 Real-time Feed準備（§49）との整合を確保。`cost_projection`が予算超過の場合は`auto_actions`でBackOffice Ledger（§47）へ`lifecycle.cost_follow_up`を登録。
+- **Snapshot/Replay**:
+  - `LifecycleState`は`SnapshotManager`（§2.4）に登録し、再起動時にGate再評価をスキップ。`--replay` CLIで過去`n`週間の状態を再生し、`reports/governance/lifecycle/history_<strategy>.md`へMarkdown出力。`DataManifestService`（§20）に`kind='governance_state'`でハッシュ登録。
+
+#### 57.2 Gateカタログ & CLI (`src/interfaces/cli/governance.py::lifecycle`)
+
+- **コマンド**:
+  | コマンド | 説明 | 主なオプション | 出力/副作用 |
+  | --- | --- | --- | --- |
+  | `tradectl governance lifecycle status [--strategy <id>] [--stage <stage>]` | ライフサイクル状態一覧 | `--json`, `--show-blocked`, `--include-history` | Richテーブル/JSON。`blocked_reasons`とRunbookリンク、Validation Data Playbook IDを表示。 |
+  | `tradectl governance lifecycle gates [--detailed]` | Gate定義表示 | `--filter <gate_id>`, `--json` | GateDefinition表、閾値、関連テスト、Runbook参照。 |
+  | `tradectl governance lifecycle evaluate --strategy <id> --gate <gate_id> [--dry-run]` | 手動Gate評価 | `--force`（手動通過）、`--attach-evidence <path>` | `GateResult`。`--force`は`config/roles.yaml::lifecycle_override`権限必須。 |
+  | `tradectl governance lifecycle history --strategy <id>` | 過去イベント/決定履歴表示 | `--from`, `--to`, `--export-md`, `--include-metrics` | Markdown/JSON出力。`reports/governance/lifecycle/history_<strategy>.md`を更新。 |
+  | `tradectl governance lifecycle simulate --strategy <id> --scenario {paper_promotion, live_promotion, suspension}` | Gateシミュレーション | `--override`, `--what-if metrics/strategy_scores.jsonl` | シナリオ結果、ブロック要因、推奨アクション。`ops_worklog`へ`task='lifecycle_simulation'`記録。 |
+- **UX**: `status`は`alpha_score`, `decay_score`, `ops_readiness_score`, `model_risk_status`, `license_status`, `kpi_delta`, `capital_guard_status`, `funding_state`を1行に圧縮。`blocked_reasons`が存在する場合は赤字バッジを表示し、Runbook ID（例: `GOV-LIFECYCLE-01`）とValidation Data Playbook IDをツールチップで提示。`--json`時は`schema_version='lifecycle_state.v1'`を付与し、CIやCodexテストで利用可能にする。
+- **Runbook連携**: `docs/runbooks/GOV-LIFECYCLE-01.md`を新設し、(1) Gate失敗の調査（Scoreboard/Idea Pipeline/Model Risk/License/Capital Guard/Validation Data Playbookリンク）、(2) Override手順、(3) 再評価コマンド、(4) Strategy Board通知を記載。`status`コマンドはRunbookへのショートリンクを表示する。
+- **Validation Data Playbook**: `validation_playbook/strategy_lifecycle.yaml`を追加し、各Gate評価ログ・Evidence・Override理由を記録。CLI `evaluate`実行時に`--attach-evidence`が必須で、添付ファイルは`reports/validation_log/AC-55_lifecycle_<strategy>_<date>.md`へコピーされる。
+
+#### 57.3 メトリクス・通知・Ops統合
+
+- **メトリクス** (`metrics/strategy_lifecycle.jsonl`):
+  - `strategy_id`, `current_stage`, `gate_id`, `gate_status`, `blocked_reasons`, `alpha_score`, `decay_score`, `ops_readiness_score`, `model_risk_status`, `license_status`, `capital_guard_status`, `watchlist`, `runbook_links`, `validation_ids`。
+  - `lifecycle_gate_failures`（ローリング7日）、`promotion_lead_time_days`、`override_count`、`manual_review_count`、`pending_followups`を集計。`override_count>0`でWARN、`pending_followups>3`で`health.raise('warn','lifecycle_followup_backlog')`。
+- **Audit/証跡**:
+  - `audit.lifecycle_gate`イベントに`gate_id`, `strategy_id`, `decision`, `actor`, `evidence_hash`, `runbook_ref`, `consent_reference_id`（Risk Disclosureリンク）、`license_contract_id`を記録。`SecureShareService`（§48）と連携して外部レビューへ提供可能。
+  - `OpsEvidenceStore.register(category='strategy_lifecycle', validation_playbook_id='AC-55_lifecycle_<strategy>')`を必須化し、証跡ハッシュとRunbookサインを保持。期限7日前に`ops.evidence.expiring`通知。
+- **Ops Agenda/Worklog**:
+  - `lifecycle.action_required`受信時に`OpsAgendaService.create_item`（§52.3）でTODOを生成し、`due_date`はGate定義の`auto_actions`から計算。完了時は`LifecycleOrchestrator.ack_follow_up(item_id)`で`blocked_reasons`から該当項目を除去。
+  - `OpsWorklogService.record(task='lifecycle_gate', duration_minutes, gate_id, strategy_id, outcome)`で作業時間を可視化し、Opsレディネススコア（§33.1）へ連携。
+- **Board/Scoreboard連携**:
+  - `StrategyBoardService`（§56.1）は議題生成時に`LifecycleOrchestrator.fetch_blocked('paper')`を呼び出し、Gate待ち戦略を強制的に議題へ追加。
+  - `StrategyScoreboardService`（§5.11, §38）から`watchlist`通知を受けると`gate.live_continuation`が再評価され、`status='fail'`なら`StrategyBoard`へ`decision='revalidate'`推奨を送信。
+- **Capital Guard/Portfolio Exposure**:
+  - `CapitalAllocationGuard`（§21.2）が`status in {'throttle','halt'}`のとき、`gate.live_continuation`を`manual_review`扱いにし、`FollowUpTicket`に`capital_guard_throttle`を追加。`PortfolioExposureAnalyzer`（§51.2）と整合を取る。
+- **Alert通知**:
+  - `NotificationDispatcher`（メール/Slack将来拡張）は`lifecycle.gate_blocked`をサブスクライブし、`severity`が`critical`の場合にPO/Quant Lead/Ops Managerへ即時通知。`summary`は`alpha_score`, `ops_readiness`, `model_risk`, `license`, `validation_status`の中で不足している項目を列挙。
+
+#### 57.4 テスト・Codex Packet・移行方針
+
+- **テスト**:
+  - `tests/unit/test_strategy_lifecycle_orchestrator.py`: Gate定義評価、イベントハンドリング、`blocked_reasons`管理、Override権限検証。
+  - `tests/integration/test_strategy_lifecycle_flow.py`: Idea Pipeline→Scoreboard→Strategy Board→Lifecycle→Ops Agendaの一連フロー、Validation Data Playbook連携、SecureShare/Model Risk/License同期。
+  - `tests/integration/test_lifecycle_cli.py`: CLIステータス表示、Gate再評価、シミュレーション、`--json`スキーマ検証。
+  - Approvalテスト: `tests/approval/cli/governance/lifecycle/`に`status`, `gates`, `history`, `simulate`出力を保存。
+  - `make check-validation`にLifecycle Playbookエントリを追加し、証跡欠落時はCI失敗。
+- **Codex Packet計画**:
+  | Packet ID | スコープ | 依存セクション | 成果物 | テスト/証跡 |
+  | --- | --- | --- | --- | --- |
+  | `EP09-LIFE-P1` | LifecycleState/GateDefinitionモデル、EventBus購読、基本Gate評価 | §57.1 | `src/governance/lifecycle.py`, `tests/unit/test_strategy_lifecycle_orchestrator.py` | `pytest -k strategy_lifecycle_orchestrator` |
+  | `EP09-LIFE-P2` | CLI `tradectl governance lifecycle *`, Metrics/Audit出力、Ops Agenda連携 | §57.2, §57.3 | `src/interfaces/cli/governance.py`, `metrics/strategy_lifecycle.jsonl`スキーマ, `audit`連携 | `pytest -k lifecycle_cli`, `pytest-approvaltests -k lifecycle`, `make check-telemetry` |
+  | `EP09-LIFE-P3` | Scoreboard/StrategyBoard/ModelRisk/Ops Readiness/License連携、Validation Data Playbook統合 | §57.1〜§57.3 | `src/strategies/scoreboard.py`, `src/governance/strategy_board.py`, `src/ops/agenda.py`, `src/governance/license_registry.py`フック, `validation_playbook/strategy_lifecycle.yaml` | `pytest -k strategy_lifecycle_flow`, `make check-validation`, `tradectl governance lifecycle simulate --strategy <id>` |
+- **受入条件**:
+  1. `tradectl governance lifecycle status --strategy m1_baseline_ma_rsi`が`alpha_score`, `decay_score`, `ops_readiness_score`, `model_risk_status`, `license_status`, `capital_guard_status`を表示し、Paper→Live Gateが通過済みであることを示す。
+  2. `StrategyScoreboard`が`watchlist`を発行した場合、`LifecycleOrchestrator`が24時間以内に`gate.live_continuation`を`fail`へ更新し、Ops Agendaへ再検証タスクを作成すること。
+  3. Gate Overrideを実行すると`audit.lifecycle_gate`に理由・証跡パスが記録され、Validation Data Playbook `strategy_lifecycle.yaml`に自動追記されること。
+- **移行ステップ**:
+  1. M1.1では`LifecycleOrchestrator`を`read_only`モードで導入し、`status`/`gates`コマンドのみを有効化。Gate結果は参考情報とし、Strategy Board/Idea Pipelineとイベント整合を確認。
+  2. M2スプリントでGate評価を正式に有効化し、Paper/Live昇格は`LifecycleOrchestrator`が`status='pass'`を返すまでStrategy Boardが`decision='approve'`を確定できないようフックする。
+  3. M2.1でOps Readiness/License/Cost連携を追加し、`CapitalAllocationGuard`と`PortfolioExposureAnalyzer`からの戻り値をGate条件へ取り込む。
+  4. M2.2でGUI/Tauri（将来）対応のREST APIを公開し、`/api/v1/governance/lifecycle`で同一スキーマを提供。CLI/GUI双方でValidation Data Playbookとの双方向リンクを維持。
+
+この追加節により、研究→運用→監査のライフサイクル管理が一元化され、Scoreboard/Idea Pipeline/Strategy Board/Ops Readiness/License/Costの判断軸が矛盾なく連携する。Codexは`LifecycleOrchestrator`を基盤にPacket単位で段階実装でき、トレーダー/PO/OpsはGate結果・証跡・Runbookを単一ビューで確認しながらPaper/Live昇格判断や停止判断を迅速に下せる。
