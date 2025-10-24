@@ -5157,3 +5157,126 @@ M2で必須となるFR-58「複数口座統合」とFR-51「キャピタル配�
 ---
 
 本章により、複数口座運用へ拡張する際の計測・監査・リスク連携の土台が整い、Capital Guard/Correlation Guard/BackOfficeとの整合を保ちながらCodexが段階的にM2実装へ移行できる。トレーダー視点では、ポートフォリオ全体の証拠金とリスク余力が一目で把握でき、Variance検知からRebalance実行までの導線がRunbookとCLIで一本化される。
+
+### 52. Ops Worklog & Agenda Services（`src/ops/worklog.py`, `src/ops/agenda.py`, `src/ops/automation.py`）
+
+Paper90日運用とM1.1 Hardeningで求められる運用可視化（要件定義 §9.1, NFR-28, AC-45/AC-51）を支えるため、Ops作業ログ・自動化効果・日次アジェンダの3サービスを整理する。`OpsWorklogService`がヒューマン作業記録を一元化し、`AutomationEffectTracker`が削減効果を定量化、`OpsAgendaService`が翌営業日のTODOとRunbook参照を生成する。Acceptable Degradation発生時にはデータ/スプレッド/リスクの復旧タスクを先頭に並べ替え、Kill SwitchやBoardModeの承認ログとリンクさせる。
+
+#### 52.1 OpsWorklogService (`src/ops/worklog.py`)
+
+- **目的**: ヒューマン作業（データ検品、SLAレビュー、Kill Switch確認、Runbook更新など）を`ops_worklog.jsonl`へ正規化記録し、Ops Workload集計（§2.7, §18.3）とValidation Data Playbookの証跡に活用する。
+- **スキーマ** (`ops_worklog.jsonl`):
+  ```json
+  {
+    "schema_version": "ops.worklog.v1",
+    "ts": "2025-02-26T09:12:45Z",
+    "task": "sla_review",
+    "duration_min": 55,
+    "owner": "ops_manager",
+    "mode": "paper",
+    "source": "cli",
+    "related_artifacts": ["reports/validation_log/AC-45_sla_20250225.md"],
+    "health_state": "guarded",
+    "board_mode": "guarded",
+    "notes": "Stage1 rollback after 429 spike"
+  }
+  ```
+- **API**:
+  | 関数 | 入力 | 処理 | 出力 | 異常系 |
+  | --- | --- | --- | --- | --- |
+  | `OpsWorklogService.record(entry: OpsWorklogEntry)` | `OpsWorklogEntry` dataclass | Schema検証→JSONL追記→`ops_worklog.recorded`イベント発行 | `RecordResult`（`path`, `hash`） | 検証エラー: `WorklogValidationError`。書込失敗: `WorklogWriteError` |
+  | `OpsWorklogService.flush_pending()` | なし | バッファリングしたエントリを即時書き出し、`fsync`を強制 | `FlushResult` | I/O失敗時に`WorklogFlushError` |
+  | `OpsWorklogService.query(window: timedelta, task: str | None)` | 窓とタスク指定 | JSONLストリームをフィルタし、集計器へイテレータ提供 | `Iterable[OpsWorklogEntry]` | なし |
+- **イベント**: `ops_worklog.recorded`（要件定義 §9.1表）、`ops_worklog.flush_failed`。Payloadは`task`, `duration_min`, `owner`, `health_state`, `notes`を含め、`AutomationEffectTracker`と`OpsAgendaService`が購読する。
+- **Integration**:
+  - `SessionManager`はAcceptable Degradation宣言時に`OpsWorklogService.record(task='degraded_entry', ...)`を呼び出し、Runbook `RUN-DATA-05`ステップIDを`notes`へ残す。
+  - `Reporter`（§3.18）が週次レポートに`ops_workload_summary`セクションを差し込む際、本サービスの集計結果を再利用する。
+  - `OpsReadinessService`（§33.1）と`OpsEvidenceStore`（§45.1）が監査サンプル抽出の基礎データとして利用する。
+- **Runbook連携**: `RUN-OPS-LOG-01`を新設し、`tradectl ops log` CLIでの入力手順、記録後の署名確認、`ops_worklog.jsonl`改ざん検出方法（SHA256ハッシュ）を定義。
+
+#### 52.2 AutomationEffectTracker (`src/ops/automation.py`)
+
+- **目的**: `automation_effect.jsonl`を管理し、各自動化施策が削減した工数（minutes）をOps Workloadと突合。削減閾値達成時に`automation.effect_achieved`イベントを発火し、週次レビュー（要件定義 §9.1「アクションアイテム化」）での優先度決定に利用する。
+- **スキーマ** (`automation_effect.jsonl`):
+  ```json
+  {
+    "schema_version": "ops.automation_effect.v1",
+    "ts": "2025-02-26T10:02:00Z",
+    "task": "sla_review",
+    "before_min": 60,
+    "after_min": 30,
+    "gain_min": 30,
+    "effective_date": "2025-02-20",
+    "runbook_ref": "RUN-DATA-05#sla_review",
+    "status": "achieved",
+    "evidence": ["reports/ops/workload_202502.md#sla_review"]
+  }
+  ```
+- **ロジック**:
+  1. `apply(delta)`が呼ばれると、`task`ごとに最新エントリを読み出し`gain_min`を再計算。マイナス値は拒否し`AutomationEffectValidationError`。
+  2. `gain_min≥config.ops.automation_threshold_min`（既定30分/週）で`automation.effect_achieved`をEventBusへ発行し、`Reporter`が週次レポートへハイライトを追加。
+  3. `OpsWorkloadAggregator`（§2.7, §18.3）が`automation.effect_achieved`を購読し、`metrics/ops_workload.json`内に`automation_gain_min`を追記。
+- **Config** (`config/ops.yaml`): `automation_threshold_min`, `allowed_tasks`, `review_window_weeks`, `notify_channels`。`allowed_tasks`外は`policy_violation`ログを残し保存せずに警告。
+- **監査**: `audit.ops_automation`カテゴリで`task`, `gain_min`, `approver`, `evidence_hash`を記録し、`SecureShareService`（§48）で共有可能にする。
+- **テスト**: `tests/unit/test_automation_effect_tracker.py`で閾値境界、エビデンス必須チェック、JSONL追記の整合性を検証。`pytest -k automation_effect_report`が生成物のMarkdown整形を確認（§18.4）。
+
+#### 52.3 OpsAgendaService (`src/ops/agenda.py`)
+
+- **目的**: `tradectl ops agenda --date <YYYY-MM-DD>`で日次TODOを生成し、`docs/runbooks/daily_agenda/<date>.md`へ保存。Ops Worklog/Automation Effect/HealthState/Runbook整備状況を統合し、未完タスクを可視化する。Acceptable Degradation時はデータ代替ソースチェックやKill Switchレビューを先頭へ昇格させる（要件定義 §9.1）。
+- **入力データ**:
+  - `ops_worklog.jsonl`: 最新実績（`duration_min`, `notes`）。
+  - `automation_effect.jsonl`: 達成済み削減タスク（完了済みタグ表示）。
+  - `reports/governance/runbook_inventory_status.json`: `status∈{ready,grace,overdue}`、`review_due_in_days`。
+  - `HealthState`（`src/core/health.py`）と`BoardMode`（`SessionManager`）：Acceptable DegradationやKill Switch状態。
+  - `Validation Data Playbook`未サイン項目、`ops_evidence`期限（§45.1）。
+- **出力テンプレ** (`docs/templates/daily_agenda.md`):
+  1. `Summary`: 前日実績（合計時間、削減効果）、健康状態、Kill Switch/BoardMode。
+  2. `Critical First`: Acceptable Degradationや`health.reasons`から生成した必須タスク（手動CSV検証、Failoverレビューなど）。
+  3. `Operational Tasks`: `ops_worklog`上位カテゴリごとにToDo化。
+  4. `Runbook Reviews`: `status=grace/overdue`のRunbookを自動列挙。
+  5. `Validation Pending`: Validation Data Playbookの期限切れ/未サイン。
+- **アルゴリズム**:
+  1. `OpsAgendaService.generate(date)`が前営業日分の`ops_worklog`を集計し、カテゴリ別`avg_duration`, `variance`を算出。
+  2. `HealthState.status ∈ {guarded, hard_stop}`の場合、`Critical First`に`board_mode`, `kill_switch`関連タスクを追加し`due=immediate`を付与。
+  3. `runbook_inventory_status.json`で`review_due_in_days < 0`の項目を`Runbook Reviews`に配置し、`OpsWorklogService.record(task='runbook_review_overdue', …)`を促す。
+  4. 生成結果はMarkdown＋`agenda_<date>.json`（機械読取用）で保存し、`ops.agenda.generated`イベントをEventBusへ送信。`AutomationEffectTracker`は生成後に削減候補が無いカテゴリへ`status='monitor'`タグを付与。
+- **ガードレール**: `--no-persist`オプションでDry-run。生成ファイルが既に存在する場合は`AgendaAlreadyExistsError`をraiseし、`--force`で上書き可。Acceptable Degradation解除前に`Critical First`タスクが未完（`ops_worklog`に記録なし）の場合、翌営業日のアジェンダ先頭へ再掲。
+- **Runbook連携**: `RUN-OPS-AGENDA-01`を策定し、生成・レビュー・承認・サインバック（Ops Manager/PO）の流れを明文化。生成後は`ops_worklog.recorded`で所要時間を残し、承認者が`docs/runbooks/daily_agenda/<date>.md`に署名欄を追記。
+
+#### 52.4 CLI & Workflow統合 (`src/interfaces/cli/ops.py`)
+
+- **コマンド構成**:
+  | コマンド | 概要 | 主要オプション | 出力/副作用 |
+  | --- | --- | --- | --- |
+  | `tradectl ops log add --task <name> --duration 30 --notes ...` | Worklog追記 | `--mode`, `--health-state`, `--board-mode`, `--artifact` | `OpsWorklogService.record`呼び出し、`ops_worklog.recorded`イベント |
+  | `tradectl ops log list --window 7d [--task <name>]` | 直近ログ表示 | `--json`, `--summary` | フィルタ済みJSON/Markdown、`ops_worklog.summary`イベント |
+  | `tradectl ops automation add --task <name> --before 60 --after 25 --evidence ...` | 自動化効果登録 | `--runbook-ref`, `--status` | `AutomationEffectTracker.apply`、閾値超で`automation.effect_achieved`発火 |
+  | `tradectl ops agenda --date <YYYY-MM-DD> [--export-md <path>]` | アジェンダ生成 | `--no-persist`, `--force`, `--include-validation`, `--include-runbooks` | Markdown/JSON生成、`ops.agenda.generated`イベント、`AuditTrail`へ`agenda_generated`記録 |
+  | `tradectl ops workload report --period <YYYYMM>` | Ops Workload集計テンプレ反映 | `--from-json`, `--out` | `tools/ops_workload_report.py`呼び出し（§18.3） |
+- **権限**: `tradectl ops automation add`は`config/roles.yaml::ops_automation_writers`に限定。CLIは操作ログを`audit.ops_cli`へ記録し、`user`, `task`, `duration`を添付。
+- **Health Monitor連携**: `health.changed(status='degraded')`発生時、CLIは次回`tradectl ops agenda`実行時に警告（非0 exit code 90 + TODO挿入）を表示し、手動承認を促す。
+- **テスト**: `tests/integration/test_ops_cli.py`で各コマンドのApprovalテストを実装し、`pytest -k ops_cli`で実行。`tests/unit/test_ops_worklog_service.py`と`test_ops_agenda_service.py`でバリデーションとテンプレ生成を検証。
+
+#### 52.5 テレメトリ・監査・受入基準
+
+- **メトリクス** (`metrics/ops_workload.json`, `metrics/ops_agenda.jsonl`):
+  - `metrics/ops_workload.json`: `totals.minutes`, `totals.automation_gain_min`, `tasks[task].median_min`, `tasks[task].p90_min`, `tasks[task].count`。
+  - `metrics/ops_agenda.jsonl`: `date`, `critical_tasks`, `pending_validation`, `pending_runbooks`, `health_state`, `board_mode`。
+  - `automation.effect_achieved`時に`metrics/ops_automation.jsonl`へ`task`, `gain_min`, `status`を追記。
+- **Health連携**: `OpsReadinessService`が`ops_workload.minutes`>許容値（要件定義 §9.1「キャパシティ算出」）を検知した場合、`health.raise('warn','ops_capacity_overrun')`を発火し、Ops Agenda先頭へ省力化TODOを追加。`AutomationEffectTracker`は削減未達（`gain_min < threshold`が4週連続）で`health.raise('info','automation_stalled')`を通知。
+- **監査ログ**: `audit.ops_worklog`, `audit.ops_agenda_generated`, `audit.ops_automation`. それぞれ`entry_hash`, `approver`, `evidence`を保持し、`AuditBundleService`（§30.1）に月次で取り込む。
+- **Validation Data Playbook**: `validation_playbook/Ops_Workload.yaml`を追加し、`metrics/ops_workload.json`と`reports/ops/workload_<YYYYMM>.md`のハッシュを記録。Ops Agenda生成結果は`reports/ops/daily_agenda/<date>.md`として`AC-51`の証跡に紐付け。
+- **受入テスト**:
+  - `TR-41`: Acceptable Degradation発生→`tradectl ops log add`でRunbook作業を記録→`tradectl ops agenda --date <next>`がCriticalタスク先頭化を確認→`ops_workload`に所要時間が反映される。
+  - `TR-42`: 自動化効果登録→閾値超→週次レポートへ`[Automation Effect]`バナーが追加される→Ops Readiness Score（§33.1）が改善。
+  - `TR-43`: Runbook期限切れ→アジェンダに警告→`OpsWorklogService.record(task='runbook_review')`で完了→翌日アジェンダから除外。
+
+#### 52.6 Codex Packet計画（Ops Automation Track）
+
+| Packet ID | スコープ | 依存セクション | 成果物 | テスト/証跡 |
+| --- | --- | --- | --- | --- |
+| `EP11-OPS-P1` | OpsWorklogService基盤（record/query/flush、JSONLスキーマ、CLI `ops log add/list`） | §52.1, §52.4 | `src/ops/worklog.py`, `tests/unit/test_ops_worklog_service.py`, `tests/integration/test_ops_cli.py::test_log_add_list`, `ops_worklog.jsonl`雛形 | `pytest -k ops_cli`, JSONスキーマ検証 |
+| `EP11-OPS-P2` | AutomationEffectTrackerとOps Workload集計連携、CLI `ops automation add`, イベント/監査出力 | §52.2, §18.4, §52.4 | `src/ops/automation.py`, `tests/unit/test_automation_effect_tracker.py`, `tools/automation_effect_report.py`統合 | `pytest -k automation_effect`, `make automation-report` |
+| `EP11-OPS-P3` | OpsAgendaService生成ロジック、CLI `ops agenda`, Acceptable Degradation統合、Validation/Runbookリンク | §52.3, §52.4, §52.5 | `src/ops/agenda.py`, `docs/templates/daily_agenda.md`, `tests/integration/test_ops_agenda.py` | `pytest -k ops_agenda`, `tradectl ops agenda --date 2025-03-03 --no-persist` |
+
+- **Ops受入条件**: Packet完了時に`reports/ops/workload_<YYYYMM>.md`, `docs/runbooks/daily_agenda/<date>.md`, `reports/validation_log/AC-51_ops_<date>.md`を生成し、Ops Manager＋POダブルサインを取得。削減効果が閾値未達の場合でも、理由（タスク特性/Runbook未整備）を`automation_effect.jsonl`へ記録する。CodexはPacket単位でCLIキャプチャとメトリクス抜粋をPRコメントへ添付すること。
