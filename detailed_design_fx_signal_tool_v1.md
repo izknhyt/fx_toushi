@@ -5345,3 +5345,100 @@ M1.1 Hardeningでは、Acceptable DegradationやBCP演習を計画的に実施�
   | `EP11-DRILL-P2` | CLI `tradectl ops drill`フロー、OpsWorklog/Evidence統合、Runbook参照検証 | §53.2, §53.3 | `src/interfaces/cli/ops.py`, CLIテスト, Markdownテンプレ更新, `metrics/drill.jsonl`スキーマ | `pytest -k ops_drill_cli`, `pytest-approvaltests -k ops_drill` |
   | `EP11-DRILL-P3` | OpsAgenda/EvidenceStore/AutomationEffect連携、Acceptable Degradation制約検証、Ops Readiness指標更新 | §52.3, §53.3 | `src/ops/agenda.py`拡張, `src/ops/evidence.py`統合, `tests/integration/test_ops_agenda.py::test_drill_integration` | `pytest -k ops_agenda`, `pytest -k ops_evidence_store` |
 - **受入条件**: ドリル完了後に`reports/drill/<date>_<scenario>.md`が生成され、`OpsEvidenceStore.lookup('drill')`で`confidence_pct≥0.9`かつ`expires_at≥30d`が確認できること。Acceptable Degradation解除条件（SLA回復/双子CSV一致）が未達の場合はCLIが`exit code 121`で失敗し、Ops Agendaへ再演習タスクが追加される挙動をテストで担保する。
+### 54. Opportunity Pipeline自動化とステージガバナンス設計（`src/ideas/manager.py`, `src/research/pipeline.py`, M2, FR-62/AC-50）
+
+FR-62/AC-50では研究段階の戦略候補をアイデア単位で可視化し、ステージ遷移ごとに必要なエビデンスとレビューを強制する。M1ではスタブ化されているIdea Pipelineを、M2でCodex実装へ引き継げる粒度に分解する。戦略昇格の責務分担（Research Guild/Quant Lead/Ops Manager）とOps Readiness/Model Riskとの連携を明確化し、Paper/Live導入前に**4週分の整合ログ**と**Runbookチェックリストの完了**をゲート条件として固定する。
+
+#### 54.1 IdeaPipelineManager本実装（`src/ideas/manager.py`）
+
+- **責務**: `ideas/<idea_id>/`配下のManifest/チェックリスト/エビデンスを読み込み、`stage ∈ {draft, screening, paper, ready, archived}`を遷移管理する。ResearchPipeline（§26）、StrategyRegistry（§3.2.4）、ModelRiskRegister（§46）と連携し、昇格不可条件を即時フィードバックする。
+- **データモデル**:
+  | モデル | 主フィールド | 説明 |
+  | --- | --- | --- |
+  | `IdeaRecord` | `idea_id`, `title`, `owner`, `strategy_refs:list[str]`, `current_stage`, `created_at`, `tags:set[str]` | `ideas/index.yaml`からロード。StrategyManifest/ResearchManifestとの参照関係を保持。 |
+  | `StageDefinition` | `stage`, `checklist_template`, `required_evidence:list[EvidenceSpec]`, `minimum_metrics:dict[str,Bound]`, `min_weeks_at_stage:int`, `feature_flags:list[str]` | `config/idea_pipeline.yaml`で宣言するステージ制約。`min_weeks_at_stage`はPaper→Ready移行で既定4週。 |
+  | `StageChecklistItem` | `item_id`, `description`, `owner_role`, `status∈{'todo','done','waived'}`, `evidence_path`, `last_update_at` | `ideas/<id>/checklists/<stage>.yaml`として保存。RunbookとValidation Data Playbookへリンク。 |
+  | `EvidenceSpec` | `id`, `path`, `hash_required:bool`, `validation_playbook_id`, `expires_in_days` | 必須エビデンスの宣言。欠損時は遷移を拒否し、Validation Data Playbook（§20）へ不足登録。 |
+  | `StageEvaluationResult` | `idea_id`, `from_stage`, `to_stage`, `allowed:bool`, `reasons:list[str]`, `actions_required:list[str]` | 遷移判定結果。CLI/Reporterへ返却し、Ops Agenda（§52.3）へTODOを送る。 |
+- **主要メソッド**:
+  | メソッド | 入力 | 処理 | 出力/副作用 |
+  | --- | --- | --- | --- |
+  | `load_registry()` | - | `ideas/index.yaml`→`IdeaRecord`キャッシュを構築。 | メモリキャッシュ、`ideas.registry.loaded`イベント |
+  | `transition_stage(idea_id, target_stage, *, actor)` | Idea ID, 目標ステージ | `StageDefinition`取得→`evaluate_stage_transition`実行→許可なら`current_stage`更新＋チェックリスト生成/コピー→`audit.idea_stage_transition`出力。Paper/Ready移行時はResearchPipelineへ検証ジョブを発行。 | `StageEvaluationResult`、EventBusへ`ideas.stage_changed` |
+  | `evaluate_stage_transition(idea_id, target_stage)` | Idea ID, ステージ | チェックリスト完了率、エビデンス有無、`min_weeks_at_stage`、必要メトリクス（PF/Sharpe/MaxDD/データ欠損率）を検証。Ops Readiness<75やModel Risk未承認、Validation欠損は拒否理由に追加。 | `StageEvaluationResult`（`allowed`/`reasons`） |
+  | `record_checklist_progress(idea_id, stage, item_id, status, evidence_path=None)` | チェック項目更新 | YAML更新＋`audit.idea_checklist_updated`。Evidence添付時はハッシュ計算→Validation Data Playbookへ転記。 | `ChecklistUpdateReceipt` |
+  | `sync_with_research_manifest(idea_id)` | Idea ID | `ResearchManifest`（§26.1）と`strategy_manifest.yaml`を突合。差分がある場合は`IdeaManifestMismatch`イベントでOps Agendaへフォローアップを送る。 | `ManifestSyncReport` |
+  | `archive(idea_id, reason)` | Idea ID | `stage='archived'`へ遷移し、関連Strategyを`StrategyRegistry.deprecate`。Evidenceは保持、Ops AgendaからTODO削除。 | `ArchiveReceipt` |
+- **異常系**:
+  - `StageDefinitionMissing`: `config/idea_pipeline.yaml`未定義ステージ。→`ideas.stage_error`イベントを出してRunbook`GOV-IDEA-01`参照。
+  - `ChecklistIncompleteError`: 必須`status!='done'`項目が残る。→CLIで`--force`禁止、理由を提示。
+  - `EvidenceMissingError`: `EvidenceSpec.hash_required=True`かつファイル欠損。`OpsEvidenceStore`（§45）へ不足登録。
+  - `MetricsGapError`: `minimum_metrics`を満たさない。ResearchPipelineへ再検証ジョブを発行し、`ideas.actions.md`へTODO追記。
+
+#### 54.2 ステージチェックリスト生成とエビデンス連携
+
+- **テンプレ構造**:
+  - `docs/templates/idea_checklists/<stage>.yaml`: 各ステージのデフォルト項目（例: `data_source_verified`, `backtest_windows`, `risk_controls_reviewed`）。`owner_role`でQuant/Ops/Complianceを割当。
+  - `ideas/<id>/checklists/<stage>.yaml`: テンプレをコピーし、Idea固有の追加項目を追記。`status`更新はCLIまたは`IdeaPipelineManager` API経由。
+  - `ideas/<id>/actions.md`: ブロッカーやフォローアップをMarkdownで列挙。Ops Agendaに連携。
+- **エビデンス集約**:
+  - `EvidenceSpec.validation_playbook_id`により、Validation Data Playbook（§20）と双方向リンク。添付時に`OpsEvidenceStore.register(category='idea', ...)`でハッシュ保存。
+  - `ResearchPipelineService.run_validation`完了時に`evidence_path`を自動追記し、欠損時は`ideas.evidence_missing`をイベント発火。
+  - `ModelRiskRegisterService`は`stage='ready'`遷移時に`model_risk.entry`を生成し、証跡ハッシュを共有。
+- **Runbook連携**:
+  - `docs/runbooks/GOV-IDEA-01.md`を新設し、チェックリストレビュー/承認フロー/差戻し手順を定義。`OPS-READINESS-01`と同期し、演習時はダミーIdeaでチェックリスト更新を必須化。
+  - Screening→Paper遷移ではRunbook `STRAT-M1-VALIDATION`のチェックリストを流用し、PF/Sharpe要件の再計算方法を記載。
+- **ガードレール**:
+  - `min_weeks_at_stage`未達の場合は`StageEvaluationResult.allowed=False`＋`reasons=['insufficient_history']`。`--force`は`config/idea_pipeline.yaml::allow_force`で明示承認されたロールのみ（既定OFF）。
+  - `feature_flags`により`news_guard`等の未実装機能に依存するIdeaを事前に拒否。`governance.feature_disabled`イベントを記録し、Runbookへフォローアップ。
+
+#### 54.3 CLI/Workflow統合 (`src/interfaces/cli/research.py`)
+
+- **サブコマンド設計**:
+  | コマンド | 概要 | 主オプション | 出力/副作用 |
+  | --- | --- | --- | --- |
+  | `tradectl research idea list [--stage <stage>] [--json]` | Idea一覧表示 | `--owner`, `--tag`, `--with-scoreboard` | テーブル/JSON出力。`IdeaRecord`と最新メトリクスを表示。 |
+  | `tradectl research idea show <idea_id>` | Idea詳細 | `--stage-history`, `--checklists`, `--evidence` | チェックリスト進捗、必須エビデンス、ResearchManifest差分をRich表示。 |
+  | `tradectl research stage <idea_id> --to <stage>` | ステージ遷移 | `--note`, `--dry-run`, `--force`, `--attach <file>` | `IdeaPipelineManager.transition_stage`呼び出し。`--dry-run`で`StageEvaluationResult`のみ表示。 |
+  | `tradectl research checklist update <idea_id> --stage <stage> --item <item_id> --status done` | チェックリスト更新 | `--evidence <path>`, `--comment` | Evidence添付時はハッシュ計算、Validation Playbookへ登録。 |
+  | `tradectl research evidence bundle <idea_id> --stage <stage>` | 必須証跡一括生成 | `--out`, `--include-playbook` | `SecureShareService`（§48）向けにIdea単位の証跡バンドルを生成。 |
+- **UX**:
+  - `transition_stage`失敗時は理由をRich Panelで提示し、欠損項目へジャンプする`tradectl research checklist`提案を表示。
+  - Paper→Ready遷移時は`ResearchPipeline.run_validation(..., windows=['trend','range','high_vol'])`をバックグラウンド実行し、完了までCLIが進捗バーを表示。
+  - `--with-scoreboard`指定でStrategy Scoreboard（§G.1）の`alpha_score`/`decay_score`を表示し、閾値割れ時は`stage.blocked(reason='alpha_score_low')`を返却。
+- **権限**:
+  - `config/roles.yaml::research_stage_approvers`/`research_checklist_editors`を参照。`--force`は`research_stage_approvers`＋`ops_manager`ロールのダブルサインが必要。
+  - CLI操作は`audit.research_cli`カテゴリに記録（`actor`, `idea_id`, `command`, `result`, `evidence_hashes`）。
+
+#### 54.4 テレメトリ・監査・周辺サービス連携
+
+- **メトリクス** (`metrics/idea_pipeline.jsonl`): `idea_id`, `stage`, `checklist_completion_pct`, `evidence_missing:int`, `weeks_in_stage`, `alpha_score`, `ops_readiness_score`, `model_risk_status`。Paper滞留>6週で`idea_pipeline.stalled`イベント。
+- **イベント連鎖**:
+  - `ideas.stage_changed` → ResearchPipelineへ再検証依頼、ModelRiskRegister評価、Ops Agenda（§52.3）へフォローアップTODO。
+  - `ideas.evidence_missing` → HealthMonitor `degraded(reason='governance_evidence')`を発火し、Scoreboardで`watchlist`タグ付け。
+  - `ops.readiness.updated(score<75)` → `IdeaPipelineManager`がPaper/Ready遷移を拒否し、`stage.blocked(reason='ops_readiness_low')`を返却。
+  - `model_risk.gap_opened` → 対象Idea/Strategyへ`StageChecklistItem`を自動追加し、再評価完了まで`ready`遷移不可。
+- **監査/証跡**:
+  - `audit.idea_stage_transition`, `audit.idea_checklist_updated`, `audit.idea_evidence_registered`を`audit_events.db`へ保存。`SecureShareService`（§48）がIdea単位の証跡を外部共有できるよう分類タグ`category='idea_pipeline'`を付与。
+  - 週次レポートでは`reports/research/idea_pipeline_<YYYYWW>.md`を生成し、進捗サマリ・滞留リスク・必要Runbook更新を記録。`Reporter`（§28）にテンプレ追加。
+- **Ops Readiness連携**:
+  - `OpsReadinessEvaluator`（§33.1）が`idea_pipeline.checklist_completion`、`idea_pipeline.stalled_count`をサブスコアとして取り込み、未達時にOps Agendaへ改善タスクを追加。
+  - Ops Drill（§53）完了時にIdea関連演習が成功すると`metrics/idea_pipeline.jsonl`へ`drill_credit`を加点し、Ready遷移のペナルティを緩和。
+
+#### 54.5 テスト戦略とCodex Packet
+
+- **テスト**:
+  - `tests/unit/test_idea_pipeline_manager.py`: ステージ定義ロード、チェックリスト生成、エビデンス添付、異常系（未完了・メトリクス不足・Ops Readiness低下）。
+  - `tests/integration/test_research_stage_flow.py`: `tradectl research stage` CLIを通じたDraft→Screening→Paper→Ready遷移、ResearchPipelineとの連携、Validation Data Playbook更新、Model Risk評価のモック検証。
+  - `tests/approval/cli/research_stage/`: CLI出力のスナップショット（成功/失敗ケース、`--dry-run`、`--force`承認フロー）。
+  - `pytest -k idea_pipeline`でユニット、`pytest -k research_stage_flow`で統合、`pytest-approvaltests -k research_stage`でCLIスナップショット。
+- **Codex Packet案**:
+  | Packet ID | スコープ | 依存セクション | 成果物 | テスト/証跡 |
+  | --- | --- | --- | --- | --- |
+  | `EP06-IDEA-P1` | IdeaPipelineManagerコア（StageDefinition/チェックリスト生成/監査イベント） | §54.1, §54.2 | `src/ideas/manager.py`, `config/idea_pipeline.yaml`, `docs/templates/idea_checklists/*.yaml`, ユニットテスト | `pytest -k idea_pipeline_manager` |
+  | `EP06-IDEA-P2` | CLI統合・Validation Data Playbook/Model Risk連携・メトリクス出力 | §54.3, §54.4 | `src/interfaces/cli/research.py`, `metrics/idea_pipeline.jsonl`スキーマ, Reporterテンプレ更新 | `pytest -k research_stage_flow`, `pytest-approvaltests -k research_stage` |
+  | `EP06-IDEA-P3` | Ops Agenda/Ops Readiness/Scoreboard連携・SecureShareバンドル | §54.4 | `src/ops/agenda.py`拡張, `src/ops_readiness/evaluator.py`更新, `src/governance/secure_share.py`連携 | `pytest -k ops_agenda`, `pytest -k ops_readiness`, `pytest -k secure_share` |
+- **受入条件**:
+  - Paper→Ready遷移で`min_weeks_at_stage=4`と必須エビデンス完了を自動検証し、未達時は`StageEvaluationResult.allowed=False`で理由列挙。
+  - `reports/research/idea_pipeline_<YYYYWW>.md`にチェックリスト達成率・滞留アイデア一覧・フォローアップタスクが自動生成され、Ops Manager/Quant LeadがRunbookにサインバックできること。
+  - `SecureShareService.prepare_package(profile='research_board', period='2025W15')`がIdea証跡のみを含む暗号化バンドルを生成し、`audit.evidence_shared`イベントにIdea IDが記録されること。
