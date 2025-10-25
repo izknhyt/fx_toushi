@@ -5966,5 +5966,147 @@ AC-31は4ペア×50件チケットの最小距離/丸め検証を自動化し、
 - **受入条件**:
   1. `tradectl compliance regression generate --per-pair 50`で生成したシナリオを`tradectl compliance regression run --profile paper`へ投入した際、`min_distance_violations=0`かつ`freeze_level_violations=0`となること（AC-31）。
   2. `--capitalsim stress`オプションでVaR/ESを閾値超過に設定した場合、`proposal_drop_pct≥0.5`かつ`throttle_triggered=True`となり、`cooldown_recovered_minutes`が`CapitalGuardPolicy.cooldown_minutes±5`以内に収束すること（AC-41）。
-  3. 実行結果が`reports/compliance/regression/<date>.md`に保存され、`validation_playbook/AC31_stop_freeze.yaml`・`AC41_capital_guard.yaml`へハッシュが追記される。`SecureShareService.prepare_package(profile='compliance_regression')`で外部レビュー向け証跡バンドルを生成できること。
+ 3. 実行結果が`reports/compliance/regression/<date>.md`に保存され、`validation_playbook/AC31_stop_freeze.yaml`・`AC41_capital_guard.yaml`へハッシュが追記される。`SecureShareService.prepare_package(profile='compliance_regression')`で外部レビュー向け証跡バンドルを生成できること。
+
+### 62. 研究実験トラッカー & パラメータスイープ証跡ハブ設計（FR-09/FR-55/FR-62, NFR-21, AC-07, M2準備）
+
+FR-09（最適化）、FR-55/FR-62（研究⇔運用ガバナンス）、NFR-21（研究ワークスペース一貫性）は、研究環境で実施した最適化/実験結果を追跡し、Paper/Pipelineへ昇格させる際に再現可能な証跡を残すことを要求する。M1 Coreでは`reports/research/`以下に手動保存しているが、M2へ向けてCodex実装を円滑にするため、`ExperimentTrackerService`とCLI/Runbook/Validation Data Playbookを定義し、ベースライン検証（AC-07）やStrategy Lifecycle（§57）と連携する基盤を整備する。
+
+#### 62.1 ExperimentTrackerService (`src/research/experiment.py`)
+
+- **責務**: 研究実験（Backtest/WalkForward/最適化/外部データ検証）のメタデータ・成果物・証跡リンクを一元管理し、DataManifestやStrategyManifestと整合させる。`ExperimentRun`単位でバージョン管理し、Paper昇格時に必要な結果（PF/Sharpe/MaxDD/再現ハッシュ）を自動抽出する。
+- **データモデル**:
+  | モデル | 主フィールド | 説明 |
+  | --- | --- | --- |
+  | `ExperimentRun` | `run_id (UUIDv7)`, `experiment_id`, `strategy_id`, `run_type∈{'backtest','walkforward','optimization','data_validation'}`, `parameters`（JSON Schema準拠）, `dataset_manifest_hash`, `code_revision`, `metrics`, `artifacts[]`, `status∈{'draft','running','completed','failed'}`, `started_at`, `completed_at` | 実験1件のメタデータ。`artifacts`は`ExperimentArtifact`（`path`, `hash`, `type`, `size`）を保持。 |
+  | `ExperimentManifest` | `experiment_id`, `title`, `owner`, `objective`, `linked_strategy`, `tags`, `governance_refs`（Strategy Board/Idea Pipeline/Runbook ID） | 実験定義。`research/experiments/<experiment_id>/manifest.yaml`に保存。 |
+  | `ExperimentMetric` | `metric_id`, `name`, `value`, `window`, `is_primary`, `thresholds` | PF/Sharpe/DDなど指標。`ExperimentRun.metrics`に埋め込み。 |
+  | `ExperimentNotebookSnapshot` | `run_id`, `notebook_path`, `html_export_path`, `hash`, `executed_at`, `env_fingerprint` | `make research-sync`後のノートブックエクスポート。 |
+- **主要API**:
+  | 関数 | 入力 | 処理 | 出力/副作用 |
+  | --- | --- | --- | --- |
+  | `ExperimentTrackerService.register_manifest(manifest: ExperimentManifest)` | Manifest YAML/JSON | Schema検証→`manifest.yaml`保存→EventBus通知 | `ExperimentManifest`。`manifest_registered`イベント |
+  | `ExperimentTrackerService.start_run(manifest, parameters, *, dataset_hash, code_revision)` | Manifest, パラメータ, データ/コードハッシュ | `ExperimentRun`生成→`status='running'`→SnapshotManagerに初期状態保存 | `ExperimentRun`。`experiment.run_started` |
+  | `ExperimentTrackerService.complete_run(run_id, metrics, artifacts, notebook_snapshot)` | Run ID, 指標, 成果物リスト, Notebookスナップショット | メトリクス検証（PF/Sharpe等の必須項目）、成果物ハッシュ記録、Status更新→`reports/research/experiments/<experiment_id>/<run_id>/`へ成果物配置 | 更新済み`ExperimentRun`。`experiment.run_completed` |
+  | `ExperimentTrackerService.promote(run_id, *, target_stage)` | Run ID, 昇格先（`paper_candidate`, `baseline_update`, `validation_dataset`等） | Runが`completed`か確認→`Validation Data Playbook`へ記録→Strategy Manifest/Idea Pipelineへリンク更新 | `PromotionReceipt`。`experiment.promoted` |
+  | `ExperimentTrackerService.sync_with_data_manifest(run_id)` | Run ID | `data_manifest.json`と`dataset_manifest_hash`整合チェック | `DataManifestSyncResult`。不一致時は`ExperimentDataMismatchError` |
+- **ガードレール**:
+  - `status!='completed'`のRunを`promote`した場合は`ExperimentPromotionError`でブロックし、Idea Pipelineゲートを通さない。
+  - `metrics`に必須指標（PF, Sharpe, MaxDD, Trades）が欠ける場合は`ExperimentMetricValidationError`を発火し、`experiment.run_failed`へ転送。
+  - `code_revision`は`git rev-parse HEAD`値で固定し、`research/requirements-research.lock`のハッシュとセットで保存。`env_fingerprint`（Python/Poetry版、ライブラリSHA256）を`ExperimentNotebookSnapshot`に含め、再実行時の差異検知を可能にする。
+- **イベント**: `experiment.manifest_registered`, `experiment.run_started`, `experiment.run_completed`, `experiment.run_failed`, `experiment.promoted`, `experiment.data_mismatch_detected`。Strategy Lifecycle（§57）とOps Agenda（§52.3）が購読。
+
+#### 62.2 ParameterSweepScheduler & Notebook Bridge (`src/research/scheduler.py`, `tools/run_experiment.py`)
+
+- **目的**: 最適化やウォークフォワードをバッチ化し、研究環境と本番パイプラインの差分を抑制する。`ParameterSweepScheduler`が`ExperimentManifest`を読み込み、`grid`/`random`/`latin_hypercube`等の手法を選択。`ExperimentRunner`がCLI経由で`tradectl research experiment run`を起動し、結果を`ExperimentTrackerService`へ登録する。
+- **構成**:
+  1. `ParameterSweepScheduler.schedule(manifest_id, sweep_config)`が`ExperimentRun`の予約を生成し、`scheduler_queue`（SQLite/JSONL）へ格納。
+  2. `tools/run_experiment.py --manifest <id> --run <run_id>`が予約を消費し、Backtest/WalkForward/最適化を実行。完了後に`ExperimentTrackerService.complete_run`を呼ぶ。
+  3. ノートブック連携: `make research-export --manifest <id> --run <run_id>`でPapermill/nbconvertを利用してHTMLエクスポートを生成。`ExperimentNotebookSnapshot`として登録。
+- **CLI (`src/interfaces/cli/research_experiment.py`)**:
+  | コマンド | 用途 | 主なオプション | 出力 |
+  | --- | --- | --- | --- |
+  | `tradectl research experiment init --manifest <id>` | Manifest雛形生成 | `--strategy`, `--owner`, `--objective`, `--tags`, `--template baseline|new-alpha` | `research/experiments/<id>/manifest.yaml` | 
+  | `tradectl research experiment run --manifest <id> [--sweep-config <path>] [--params key=val ...]` | 実験実行 | `--mode backtest|walkforward|optimization|data-validation`, `--profile`, `--dataset-hash`, `--code-revision`, `--notebook` | 実行ログ、`experiment.run_started/completed`イベント | 
+  | `tradectl research experiment list [--status running|completed|failed] [--strategy <id>]` | Run一覧表示 | `--json`, `--since`, `--owner` | `ExperimentRun`テーブル/JSON。`status`/指標の要約 |
+  | `tradectl research experiment promote --run <run_id> --target paper_candidate` | Paper昇格申請 | `--attach <path>`（レビュー議事）、`--note`, `--dry-run` | `PromotionReceipt`（Validation Data Playbook ID、Strategy Manifest差分） |
+  | `tradectl research experiment export --run <run_id> --format bundle|report` | 成果物出力 | `--dest`, `--with-notebook`, `--with-data-manifest` | ZIP/Markdown。`SecureShareService`向け`experiment_bundle`生成 |
+- **Notebook整合性**: `tradectl research experiment run --notebook notebooks/ma_rsi_experiment.ipynb`指定時は、実行完了後に`ExperimentNotebookSnapshot`を生成し、`env_fingerprint`（pipロックハッシュ＋Poetryバージョン）を埋め込む。`research/README.md`にノートブック再実行手順を自動追記。
+- **Runbook**: `STRAT-EXP-01`（新設）に実験実行→結果レビュー→昇格判定→Validation Data Playbook更新→Strategy Board報告のステップを記載。`ExperimentTrackerService.promote`はRunbookIDを参照し、未完チェック項目がある場合は`PromotionReceipt.status='blocked'`を返す。
+
+#### 62.3 テレメトリ・証跡・Validation連携
+
+- **メトリクス**: `metrics/experiment_tracker.jsonl`に`{"metric":"experiment_run","experiment_id":"exp_ma_rsi_optim","status":"completed","duration_sec":1834,"pf":1.26,"sharpe":0.92}`等を記録。`running`が24h超のRunは`experiment.run_stalled`イベントで警告。`Optimization`タイプは`evaluations_per_sec`, `best_score`, `constraints_violated`も出力。
+- **Validation Data Playbook**: `validation_playbook/FR09_experiment_tracker.yaml`を追加し、実験Runごとのハッシュ・承認者・Strategy Board議事リンクを管理。`ExperimentTrackerService.promote`が自動でPlaybookエントリを生成し、`make check-validation`で必須添付（ノートブックHTML、`metrics.json`, `data_manifest`）を検証。
+- **Strategy Lifecycle連携**: `StrategyLifecycleOrchestrator`（§57）が`experiment.promoted`を購読し、`gate.paper_entry`評価に`ExperimentRun.metrics`を使用。`consistency_score`算出時に`ExperimentRun.dataset_manifest_hash`と`StrategyManifest.dataset.hash`一致を確認。不一致は`gate.blocked(reason='experiment_dataset_mismatch')`。
+- **Ops Agenda**: `OpsAgendaService`（§52.3）が`experiment.run_failed`を受信すると翌営業日のTODOに「再現失敗調査」「データ差分確認」を追加し、Runbook `STRAT-EXP-01`該当ステップを参照。Acceptable Degradation中は`priority='critical'`でハイライト。
+- **SecureShare**: `SecureShareService.prepare_package(profile='research_board')`が`ExperimentRun`バンドルを添付可能にする。`classification='restricted'`で内部成果物と外部共有物を分離。
+
+#### 62.4 テスト戦略・Codex Packet
+
+- **自動テスト**:
+  - `tests/unit/test_experiment_tracker.py`: Manifest登録、Run開始/完了、メトリクス検証、Promotionブロック条件。
+  - `tests/integration/test_research_experiment_cli.py`: `init`→`run`→`list`→`promote`フロー、Notebookスナップショット生成、Validation Data Playbook更新。
+  - `tests/approval/cli/research_experiment/`: CLI表示・レポート出力スナップショット。
+  - `pytest -k experiment_tracker --m2plus`タグでM2ジョブに追加。`@pytest.mark.research_env`で隔離環境を指定。
+- **Codex Packet案**:
+  | Packet ID | スコープ | 依存セクション | 成果物 | テスト |
+  | --- | --- | --- | --- | --- |
+  | `EP08-EXP-P1` | ExperimentTrackerServiceコア（モデル/永続化/イベント） | §62.1 | `src/research/experiment.py`, `tests/unit/test_experiment_tracker.py` | `pytest -k experiment_tracker` |
+  | `EP08-EXP-P2` | ParameterSweepScheduler + CLI `tradectl research experiment` | §62.2 | `src/research/scheduler.py`, `src/interfaces/cli/research_experiment.py`, CLIテンプレ | `pytest -k research_experiment_cli`, `pytest-approvaltests -k research_experiment` |
+  | `EP08-EXP-P3` | Validation Data Playbook/Strategy Lifecycle/Runbook統合 | §62.3 | `validation_playbook/FR09_experiment_tracker.yaml`, `docs/runbooks/STRAT-EXP-01.md`, Lifecycle/Agenda連携 | `pytest -k experiment_tracker_integration`, `make check-validation` |
+- **受入条件**:
+  1. `tradectl research experiment run --manifest exp_ma_rsi --mode backtest --profile paper`実行後、`ExperimentRun.metrics`にPF/Sharpe/MaxDDが記録され、`ExperimentTrackerService.promote --run <id> --target paper_candidate`でValidation Data Playbookへ自動登録される。
+  2. `data_manifest.json`と`ExperimentRun.dataset_manifest_hash`が一致しない場合、`experiment.promoted`が`status='blocked'`となり、Ops Agendaに「データ差分調査」タスクが生成される。
+  3. Notebook付きRunを`tradectl research experiment export --run <id> --format bundle --with-notebook`でエクスポートすると、`SecureShareService`が`experiment_bundle`を暗号化し、Strategy BoardレビューでRunbook `STRAT-EXP-01`のチェックリストが完了済みであること。
+
+### 63. インシデントポストモーテム & トレードフォレンジクス自動化設計（NFR-28, FR-44/FR-63, AC-33/AC-43, M1.1 Hardening準備）
+
+NFR-28（Ops証跡管理）、FR-44（ジャーナル）、FR-63（Opsレディネス）は、Acceptable Degradationや重大損失時に迅速な原因分析と再発防止策の策定を要求する。AC-33/AC-43ではインシデントレビュー記録と是正措置追跡が必須。M1 Coreでは手動Markdown運用で対応しているが、M1.1 Hardeningで自動化を進めるため、`IncidentPostmortemService`と`TradeForensicsAnalyzer`を設計し、Ops Agenda/Shadow Bridge/Reporterと連携させる。
+
+#### 63.1 IncidentPostmortemService (`src/ops/postmortem.py`)
+
+- **責務**: インシデント（データ障害、Kill Switch発動、Acceptable Degradation長期化、損失閾値超過）に対し、タイムライン・影響・根本原因・是正策をテンプレート化し、Ops Readinessスコアと連動させる。
+- **データモデル**:
+  | モデル | フィールド | 説明 |
+  | --- | --- | --- |
+  | `IncidentRecord` | `incident_id (UUIDv7)`, `category∈{'data','risk','ops','execution','compliance'}`, `severity∈{'minor','major','critical'}`, `opened_at`, `closed_at`, `status∈{'open','under_review','closed'}`, `detected_by`, `related_events`（Event IDs）, `board_mode_snapshot`, `health_state_snapshot`, `impact_metrics`（`pnl_r`, `duration_min`, `tickets_blocked`, `customers_impacted`） | インシデント概要。 |
+  | `TimelineEntry` | `incident_id`, `ts`, `actor`, `action`, `details`, `evidence_path`, `runbook_step_id` | 重要イベント時系列。 |
+  | `RootCauseAnalysis` | `incident_id`, `primary_cause`, `contributing_factors`, `detection_gap_min`, `containment_actions`, `long_term_actions`, `verification_plan`, `target_date` | RCA結果。 |
+  | `FollowUpTask` | `task_id`, `incident_id`, `description`, `owner`, `due_date`, `status`, `ops_agenda_item_id`, `validation_playbook_id` | 是正措置追跡。 |
+- **API**:
+  | 関数 | 入力 | 処理 | 出力/副作用 |
+  | --- | --- | --- | --- |
+  | `IncidentPostmortemService.open(category, severity, detected_by, *, related_events, board_mode_snapshot)` | インシデント情報 | `IncidentRecord`生成→`status='open'`→`reports/ops/incidents/<incident_id>/timeline.md`初期化 | `IncidentRecord`。`incident.opened`イベント |
+  | `IncidentPostmortemService.add_timeline_entry(incident_id, entry)` | `TimelineEntry` | Runbookステップ検証→Markdown追記→`ops_worklog`へ所要時間追加 | 更新済み`IncidentRecord`。`incident.timeline_updated` |
+  | `IncidentPostmortemService.attach_rca(incident_id, rca)` | RCAデータ | `RootCauseAnalysis`保存→`reports/ops/incidents/<id>/rca.md`生成→Ops Readinessへリンク | `RCAReceipt`。`incident.rca_submitted` |
+  | `IncidentPostmortemService.register_follow_up(task)` | 是正タスク | `FollowUpTask`保存→Ops Agenda生成→Validation Data Playbook更新 | `FollowUpReceipt`。`incident.follow_up_registered` |
+  | `IncidentPostmortemService.close(incident_id, *, verification_note, verified_by)` | インシデントID | 全タスク完了/検証結果確認→`status='closed'`→`closed_at`更新→Reporter/Healthへ通知 | `IncidentClosureReceipt`。`incident.closed` |
+- **テンプレート**: `docs/templates/postmortem.md`（Summary, Timeline, Impact, Root Cause, Corrective Actions, Validation Links, Runbook Updates）。`tradectl ops incident generate --incident <id>`がテンプレをMarkdownに埋め込み。
+- **監査**: `audit.incident_opened/updated/closed`を`logs/audit/ops_incidents_<YYYYMMDD>.jsonl`へ記録。`consent_reference_id`（Risk Disclosure）と`board_mode`を紐付けてヒューマン判断経緯を残す。
+
+#### 63.2 TradeForensicsAnalyzer (`src/ops/trade_forensics.py`)
+
+- **目的**: インシデントに関連するトレード/チケット/シグナルを抽出し、スリッページ・レイテンシ・チェックリスト遵守状況を解析して原因特定を支援する。`JournalService`（§34）と`TicketBuilder`、`ComplianceRegressionRunner`（§61）と連携し、`postmortem`フォルダへ視覚化を出力する。
+- **機能**:
+  1. `TradeForensicsAnalyzer.extract_context(incident_id, window)`が`IncidentRecord.related_events`と`journal_entries`を参照し、該当期間の`TicketRecord`, `RiskMetricsSnapshot`, `ShadowState`をロード。
+  2. `analyze_slippage()`が提案価格とFill価格の差分、Spread、BoardModeを比較し、`slippage_outlier`を特定。`reports/ops/incidents/<id>/forensics_slippage.md`を生成。
+  3. `analyze_latency()`が`signal_ts→ticket_display→approval→fill`の経過時間を算出し、Runbook許容値（`RUN-HITL-01`）を超えたケースをハイライト。
+  4. `analyze_compliance()`が`PreTradeComplianceService`結果と`ComplianceRegressionRunner`（§61）結果を突合し、Stop/Freeze違反やキャピタルガード制約を再評価。逸脱があれば`incident.follow_up_registered`で自動タスク化。
+  5. `render_dashboard()`がRich CLI/Markdownで要約グラフ（Spread vs Slippage、Latencyヒストグラム、CheckList完了率）を出力。
+- **CLI (`src/interfaces/cli/ops_incident.py`)**:
+  | コマンド | 用途 | 主なオプション | 出力 |
+  | --- | --- | --- | --- |
+  | `tradectl ops incident open --category data --severity critical --related-event health.data_latency_degraded` | インシデント開始 | `--detected-by`, `--board-mode`, `--health-state`, `--impact-r`, `--tickets-blocked` | Incident ID、テンプレートパス |
+  | `tradectl ops incident timeline add --incident <id> --runbook RUN-DATA-05#step4 --note "Manual CSV loaded"` | タイムライン追記 | `--evidence <path>`, `--duration-min` | Markdown更新、`ops_worklog`追記 |
+  | `tradectl ops incident forensics --incident <id> --window 6h --report` | トレードフォレンジクス分析 | `--slippage-threshold`, `--latency-threshold`, `--export-html` | Markdown/HTMLレポート、CLIサマリ |
+  | `tradectl ops incident close --incident <id> --verification-note <file>` | クローズ | `--verified-by`, `--attach`, `--sync-runbook` | Closure Receipt、Ops Readiness更新 |
+- **Shadow/Slack連携**: `IncidentPostmortemService.open`で`ShadowSessionOrchestrator`（§60.2）へ`shadow.incident_opened`を発火。Slack Shadowでは専用Threadを作成し、Opsコメントを収集。`close`時にThreadへサマリを投稿。
+
+#### 63.3 テレメトリ・Ops Readiness・Runbook統合
+
+- **メトリクス**: `metrics/incident_postmortem.jsonl`に`{"incident_id":"INC-20250302-01","severity":"critical","time_to_detect_min":12,"time_to_contain_min":38,"time_to_close_hr":27,"follow_ups_open":2}`等を記録。`time_to_close_hr>72`または`follow_ups_open>0`で7日継続時は`health.raise('warn','postmortem_overdue')`。`TradeForensicsAnalyzer`は`slippage_outliers`, `latency_outliers`, `checklist_violation_rate`を追記。
+- **Ops Readiness**: `OpsReadinessEvaluator`（§33）が`incident.closed`と`follow_up`完了状況を参照し、`ops_readiness_score`へ反映。未完了タスクが期限超過のまま`close`しようとすると`IncidentClosureError`。`LifecycleOrchestrator`（§57）にも通知し、戦略`watchlist`解除条件にPostmortem完了を追加。
+- **Runbook**: `RUN-INC-01`（新設）で開示→初動→フォレンジクス→RCA→是正→検証→クローズのチェックリストを定義。`IncidentPostmortemService`はRunbookIDを参照し、未チェック項目がある場合`close`をブロック。`RUN-HITL-01`/`RUN-DATA-05`等のステップ参照をタイムラインへ自動挿入。`AutomationEffectTracker`（§52.2）がインシデント処理に要した手作業時間を記録し、改善施策のROIを算出。
+- **Reporter/Weekly**: `Reporter.generate_weekly`（§9.3）が`IncidentSummary`セクションを追加し、直近インシデントの概要/原因/フォローアップ進捗をMarkdownへ挿入。`reports/weekly/<YYYYWW>.md`に`postmortem_summary`を差し込む。`SecureShareService`は外部監査向けに`incident_package`を生成。
+- **Validation Data Playbook**: `validation_playbook/AC43_postmortem.yaml`でインシデントごとの証跡（Timeline, RCA, Follow-up, Verification）を保持。`make check-validation`が必須ファイルを検証し、不足時はCI失敗。
+
+#### 63.4 テスト・Codex Packet・受入条件
+
+- **自動テスト**:
+  - `tests/unit/test_incident_postmortem_service.py`: Incident開閉、タイムライン追記、RCA検証、フォローアップ登録、ブロック条件。
+  - `tests/unit/test_trade_forensics_analyzer.py`: スリッページ/レイテンシ計算、閾値検知、レポート生成。
+  - `tests/integration/test_ops_incident_cli.py`: `open`→`timeline add`→`forensics`→`close`フロー、Ops Agenda生成、Runbook参照、Slack Shadowモック通知。
+  - `tests/approval/cli/ops_incident/`: CLI出力とMarkdownテンプレのスナップショット。
+  - `pytest -k incident_postmortem`をM1.1 Hardening CIへ追加し、`@pytest.mark.ops`タグでOpsツール群に分類。
+- **Codex Packet案**:
+  | Packet ID | スコープ | 依存セクション | 成果物 | テスト |
+  | --- | --- | --- | --- | --- |
+  | `EP11-INC-P1` | IncidentPostmortemService基盤、テンプレ生成、監査ログ | §63.1 | `src/ops/postmortem.py`, `docs/templates/postmortem.md`, `tests/unit/test_incident_postmortem_service.py` | `pytest -k incident_postmortem_service` |
+  | `EP11-INC-P2` | TradeForensicsAnalyzer + CLI `tradectl ops incident` | §63.2 | `src/ops/trade_forensics.py`, `src/interfaces/cli/ops_incident.py`, CLIテンプレ | `pytest -k ops_incident_cli`, `pytest-approvaltests -k ops_incident` |
+  | `EP11-INC-P3` | Ops Readiness/Runbook/Shadow/Reporter統合、Validation Playbook | §63.3 | `src/ops/readiness.py`拡張, `src/interfaces/gui/shadow_api.py`フック, `validation_playbook/AC43_postmortem.yaml`, Runbook更新 | `pytest -k incident_integration`, `make check-validation`, `tradectl ops incident close --dry-run` |
+- **受入条件**:
+  1. `tradectl ops incident open --category risk --severity critical`→`tradectl ops incident timeline add`→`tradectl ops incident forensics --report`→`tradectl ops incident close`フローが成功し、`reports/ops/incidents/<id>/`に`timeline.md`/`rca.md`/`forensics_*.md`が生成される。Ops Agendaへ自動でフォローアップタスクが登録され、Ops Readinessスコアに反映される。
+  2. `TradeForensicsAnalyzer`が`slippage_outlier`を検出すると`IncidentPostmortemService.register_follow_up`が呼ばれ、`ComplianceRegressionRunner`の結果と突合した再発防止タスクが生成される。未完了のまま`close`しようとすると`IncidentClosureError`でブロックされる。
+  3. Slack Shadow連携（Feature Flag `shadow.slack_enabled=True`）時にインシデント開始で専用Threadが作成され、`close`時に要約とフォローアップ状況が投稿される。`SecureShareService.prepare_package(profile='external_audit')`でインシデント証跡を暗号化バンドルとして出力できる。
 
