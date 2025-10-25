@@ -6432,3 +6432,157 @@ FR-55/FR-62は研究ノートと戦略Manifestを統合し、Paper昇格前に�
   2. `ExperimentRun`が`status!='completed'`の場合、`PromotionChecklistService.evaluate`が`fail`を返し、`auto_fix_hint`に`tradectl research experiment run`が提示される。CLIは`OpsAgenda`へTODOを作成。
   3. 手動承認したChecklist項目は`audit.promotion_manual_review`・`validation_playbook/AC46_promotion_gate.yaml`へ証跡が残り、`SecureShareService.prepare_package(profile='research_promotion')`で外部共有可能なバンドルが生成される。
 
+### 69. ストラテジーサンセット & 資本再配分オーケストレーション設計（FR-56/FR-51/FR-63, AC-55, M2準備）
+
+FR-56のManifest有効期限管理とFR-51のキャピタルガード、FR-63のOpsレディネス指標は、稼働戦略を停止する際に残余ポジションの処理・再配分計画・証跡を一貫させることを要求する。§57のLifecycle OrchestratorはGate判定を司るが、サンセット後の処理（オープンポジション整理、キャピタル再配分、Runbook反映、外部共有）は未整備である。本節では`StrategySunsetService`と`PortfolioReallocator`を設計し、サンセット指示→実行→証跡→再評価のループをCodexが段階的に実装できるよう具体化する。
+
+#### 69.1 StrategySunsetService (`src/governance/sunset.py`)
+
+- **責務**: サンセット対象戦略の状態遷移管理、残存ポジションの検出と閉鎖計画生成、Runbook/Validation Playbook同期、Ops/BackOffice/Research各チームへの通知。
+- **データモデル**:
+  | モデル | 主フィールド | 説明 |
+  | --- | --- | --- |
+  | `SunsetDirective` | `strategy_id`, `issued_by`, `issued_at`, `reason ∈ {'performance','risk','license','cost','manual'}`, `effective_at`, `gate_ref`, `consent_reference_id` | サンセット指示の原本。`gate_ref`は§57の`GateResult`への参照。 |
+  | `SunsetPlan` | `strategy_id`, `open_positions:list[OpenPositionSnapshot]`, `unrealized_r:list[float]`, `recommended_actions:list[ActionItem]`, `capital_release_r`, `expected_completion_at`, `runbook_refs`, `validation_ids` | 具体的な手順。`OpenPositionSnapshot`は`instrument`, `direction`, `size`, `entry_price`, `sl`, `tp`, `unrealized_r`, `broker_ticket_id`を保持。 |
+  | `SunsetExecutionLog` | `plan_id`, `step_id`, `executed_by`, `executed_at`, `action`, `result`, `evidence_hash` | 実行ログ。`evidence_hash`は`OpsEvidenceStore`（§45.1）へ登録。 |
+  | `CapitalReallocationDecision` | `decision_id`, `released_r`, `allocation_targets:list[AllocationTarget]`, `approved_by`, `approved_at`, `ops_readiness_snapshot`, `risk_state_snapshot` | 再配分判断。`AllocationTarget`は`strategy_id`, `allocation_r`, `justification`, `board_ref`。 |
+- **主なAPI**:
+  | 関数 | 入力 | 処理 | 出力 | 異常系 |
+  | --- | --- | --- | --- | --- |
+  | `issue_directive(strategy_id, reason, *, effective_at, gate_ref, consent_reference_id)` | 戦略ID, 理由, 発効日時, Gate参照, リスク承諾ID | Manifest/Scoreboard/Ops Readinessを検証→`SunsetDirective`生成→EventBusへ`strategy.sunset_issued` | `SunsetDirective` | Manifest不整合: `SunsetDirectiveError` |
+  | `build_plan(directive, *, fetch_positions=True)` | 指示 | Account Serviceからオープンポジション照会→`SunsetPlan`生成→`RiskManager`/`CorrelationGuard`（§5.3）へ評価依頼 | `SunsetPlan` | ポジション取得失敗: `OpenPositionUnavailable` |
+  | `execute_step(plan_id, step)` | `ActionItem` | Runbook参照と権限検証→Broker操作/Reduce-Only提案/手動タスクを実行→`SunsetExecutionLog`更新→EventBus `strategy.sunset_step_completed` | `ExecutionResult` | 権限不足: `SunsetActionUnauthorized` |
+  | `complete(plan_id)` | Plan ID | 実行状況確認→`LifecycleOrchestrator`に`stage='sunset'`完了を通知→`PortfolioReallocator`呼び出し | `SunsetCompletionReceipt` | 未完了ステップ: `SunsetIncompleteError` |
+  | `abort(plan_id, reason)` | Plan ID, 理由 | 途中中断→`LifecycleOrchestrator`へ`stage_regressed='suspended'`通知→Ops AgendaへTODO生成 | `AbortReceipt` | |
+- **イベント連携**:
+  - 購読: `lifecycle.gate_evaluated(status='fail')`, `strategy_board.decision_recorded(decision='sunset')`, `risk.decision`（`force_exit`）
+  - 発火: `strategy.sunset_issued`, `strategy.sunset_plan_ready`, `strategy.sunset_step_completed`, `strategy.sunset_completed`, `strategy.sunset_aborted`
+- **Runbook**: `docs/runbooks/STRAT-SUNSET-01.md`を新設。セクション: (1) 指示確認と承認、(2) 残存ポジション評価、(3) Reduce-Only/Market Exit判断、(4) キャピタル再配分会議準備、(5) Evidence提出。CLIは各ステップでRunbook該当IDを表示し、実行ログに追記する。
+- **Validation Data Playbook**: `validation_playbook/AC55_sunset.yaml`を追加。Directive/Plan/Execution/Evidence/Capital再配分決定を追跡し、`make check-validation --category sunset`で欠落時Exit≠0。
+
+#### 69.2 PortfolioReallocator (`src/portfolio/reallocation.py`)
+
+- **責務**: サンセットで解放されたRを各戦略へ再配分するシナリオを生成し、FR-51の`R_cap`、FR-37の相関拘束、FR-36のマージン要件と整合するよう推奨案を提示。
+- **データモデル**:
+  | モデル | 主フィールド | 説明 |
+  | --- | --- | --- |
+  | `ReallocationScenario` | `scenario_id`, `released_r`, `current_allocations`, `candidate_allocations`, `constraints`, `score`, `notes`, `alpha_snapshot_id`, `correlation_matrix_id` | 候補案。`score`は期待PF/Drawdown改善を0〜100で評価。 |
+  | `Constraint` | `type ∈ {'capital_guard','margin','correlation','ops_readiness','license'}`, `limit`, `status`, `violations` | 制約と違反情報。 |
+- **アルゴリズム**:
+  1. `StrategyScoreboardService.fetch_scores()`と`RiskManager.current_limits()`を取得。
+  2. `released_r`を`candidate_allocations`へ割付。`alpha_score`加重・`ops_readiness_score`<80の戦略は自動除外。
+  3. `correlation_matrix`（§64.1）を利用して`R_eff`計算。違反案は`status='violation'`で理由記録。
+  4. `ScenarioScorer`がPF/Sharpe改善量・運用負荷増加を評価し`score`算出。`score≥70`かつ全Constraint満足を推奨案として`CapitalReallocationDecision`に添付。
+- **API**:
+  | 関数 | 説明 |
+  | --- | --- |
+  | `generate_scenarios(sunset_plan, *, max_candidates=5)` | SunsetPlanから候補案を作成。
+  | `evaluate_constraints(scenario)` | キャピタル/相関/マージン/ライセンス/ Opsレディネス制約を検証。違反時は`scenario.status='violation'`。 |
+  | `recommend()` | 最良シナリオを返却。サインオフ前は`status='draft'`、Strategy Board承認後`status='approved'`。
+- **連携**:
+  - `StrategyBoardService`が週次会議で再配分案を議題化。決議は`CapitalReallocationDecision`として`StrategySunsetService.complete`経由で保存。
+  - `BackOfficeLedger`（§47）に再配分記録を送り、税務分類を更新。
+  - `RiskManager`へ`capital_guard.update_allocation`を発行し、`metrics/capital_guard.jsonl`へ反映。
+
+#### 69.3 CLI/Workflow統合 (`tradectl governance sunset`, `tradectl portfolio reallocate`)
+
+- **CLI**:
+  | コマンド | 概要 | 主なオプション | 出力/副作用 |
+  | --- | --- | --- | --- |
+  | `tradectl governance sunset issue --strategy <id> --reason performance --effective-at <ts>` | サンセット指示発行 | `--note`, `--gate-ref`, `--consent-id`, `--dry-run` | `SunsetDirective`。`--dry-run`時は`DirectivePreview`を表示。 |
+  | `tradectl governance sunset plan --strategy <id> [--export-md]` | 計画作成/表示 | `--include-open-tickets`, `--include-runbook` | `SunsetPlan`。Markdown出力時は`reports/governance/sunset/<strategy>/<YYYYMMDD>.md`へ保存。 |
+  | `tradectl governance sunset execute --plan <id> --step <step_id>` | 実行記録 | `--attach-evidence`, `--note`, `--override` | `SunsetExecutionLog`更新、`audit.strategy_sunset_step`記録。 |
+  | `tradectl governance sunset complete --plan <id>` | 完了処理 | `--generate-reallocation`, `--skip-validation`（権限必要） | `SunsetCompletionReceipt`。`--generate-reallocation`指定で`PortfolioReallocator`起動。 |
+  | `tradectl portfolio reallocate suggest --from <strategy_id>` | 再配分案生成 | `--max-candidates`, `--json`, `--what-if metrics/strategy_scores.jsonl` | ReallocationScenario一覧。`status='violation'`は赤字表示。 |
+  | `tradectl portfolio reallocate approve --scenario <id> --meeting <board_id>` | 案承認 | `--sign-off`, `--due`, `--note` | `CapitalReallocationDecision`。Strategy Board決議と同期。 |
+- **UX**: CLIは`OpenPositionSnapshot`をRich表で表示し、`Reduce-Only推奨`/`Market Exit`/`Manual review`をバッジ表示。実行ステップにはRunbookID・Validation ID・Evidenceハッシュをツールチップで提示。`--json`出力は`schema_version='strategy.sunset.plan.v1'`。
+- **Ops連携**: `SunsetExecutionLog`は`OpsWorklogService`で稼働時間を自動集計し、Ops Readinessスコア（§33.1）へ加点/減点する。未完了ステップが`effective_at`を超えると`ops.agenda.sunset_overdue`イベントでKill Switch `soft_stop`検討を促す。
+- **Trader UX**: Signal Board（§56.2）ではサンセット対象戦略に`[SUNSET]`バナーを表示し、承認チケットが残る場合は`board_mode='guarded'`強制。`RiskDisclosureService`（§67）と連携し、サンセット操作時に最新同意が必要であることを確認する。
+
+#### 69.4 テレメトリ・監査・Codex Packet
+
+- **メトリクス** (`metrics/strategy_sunset.jsonl`): `strategy_id`, `directive_id`, `plan_id`, `open_positions_count`, `total_unrealized_r`, `steps_total`, `steps_completed`, `elapsed_minutes`, `capital_release_r`, `reallocation_status`, `ops_runbook_completed`, `evidence_missing`. `steps_completed/steps_total<1`でWARN、`evidence_missing>0`で`health.raise('warn','sunset_evidence_missing')`。
+- **監査**: `audit.strategy_sunset_directive`, `audit.strategy_sunset_plan`, `audit.strategy_sunset_step`, `audit.strategy_sunset_complete`, `audit.portfolio_reallocation_decision`。各イベントに`consent_reference_id`, `runbook_ref`, `validation_playbook_id`, `evidence_hash`を付与。
+- **Validation**: `make check-validation --category sunset`がDirective/Plan/Execution/Decisionの添付ファイルを検証。`tradectl validation audit --category governance --include sunset`でレポート化。
+- **Codex Packet案**:
+  | Packet ID | スコープ | 依存セクション | 成果物 | テスト |
+  | --- | --- | --- | --- | --- |
+  | `EP14-SUNSET-P1` | `StrategySunsetService`コア（Directive/Planモデル、イベント、CLI `issue`/`plan`） | §69.1, §69.3 | `src/governance/sunset.py`, `src/interfaces/cli/governance_sunset.py`, ユニットテスト | `pytest -k strategy_sunset_service`, `pytest-approvaltests -k governance_sunset_plan` |
+  | `EP14-SUNSET-P2` | 実行ログ/Runbook/Evidence連携、Ops Agenda/Worklog統合 | §69.1, §69.3 | `src/governance/sunset.py`拡張, `src/ops/worklog.py`, `docs/runbooks/STRAT-SUNSET-01.md`, Validationテンプレ | `pytest -k strategy_sunset_execution`, `make check-validation --category sunset` |
+  | `EP14-SUNSET-P3` | `PortfolioReallocator`とStrategy Board/Capital Guard統合 | §69.2, §69.3 | `src/portfolio/reallocation.py`, `tests/unit/test_portfolio_reallocator.py`, `tests/integration/test_sunset_reallocation_flow.py` | `pytest -k portfolio_reallocation`, `pytest -k strategy_board_integrations`, `tradectl portfolio reallocate suggest --json` |
+- **受入条件**:
+  1. `tradectl governance sunset issue --strategy m1_baseline_ma_rsi --reason performance --effective-at <ts>`後に`SunsetPlan`が生成され、未処理ステップが存在する間は`LifecycleOrchestrator`が`current_stage='suspended'`→`'sunset'`へ遷移しない。全ステップ完了後に`strategy.sunset_completed`イベントが出力される（AC-55連携）。
+  2. `PortfolioReallocator.generate_scenarios`が`R_eff`制約（FR-37）違反案を除外し、推奨案では`capital_guard`閾値内かつ`ops_readiness_score>=80`の戦略のみが候補になる。`tradectl portfolio reallocate approve`時に`CapitalReallocationDecision`が`BackOfficeLedger`へ記録される。
+  3. `make check-validation --category sunset`がEvidence欠落を検出した場合、`StrategySunsetService.complete`がExit≠0で終了し、Ops Agendaへ`sunset.evidence_missing`TODOが作成される。
+
+---
+
+### 70. アクセスガバナンス & デバイスインベントリ自動化設計（NFR-17/NFR-24, AC-44/AC-45, M1.1準備）
+
+リスク開示強制（§67）やリアルタイムフィード契約（§49-§50）を安全に運用するには、端末・ユーザー・権限の可視化と定期棚卸しが不可欠である。要件定義のNFR-17（Keychain/暗号化/四半期脆弱性スキャン）およびNFR-24（アクセス監査）、AC-44/AC-45（承諾未取得時のブロックとSLA監査）は、デバイス単位の同意履歴と権限棚卸しを統合したアクセスガバナンスを求める。本節では`AccessGovernanceService`と`DeviceRegistry`、CLI、DocOps連携を設計し、CodexがM1.1 Hardeningで実装を進められるようにする。
+
+#### 70.1 AccessGovernanceService (`src/security/access.py`)
+
+- **責務**: ユーザー/ロール/端末の登録・棚卸し・承認フロー、Keychain暗号化状態の監査、リスク同意/ライセンス/Runbook署名との突合。
+- **データモデル**:
+  | モデル | 主フィールド | 説明 |
+  | --- | --- | --- |
+  | `AccessPrincipal` | `principal_id`, `type ∈ {'user','service'}`, `display_name`, `roles:list[str]`, `status ∈ {'active','suspended','revoked'}`, `last_reviewed_at`, `mfa_enrolled`, `notes` | ユーザー・サービスアカウント。`roles`は`config/roles.yaml`と整合。 |
+  | `DeviceRecord` | `device_id`, `principal_id`, `platform`, `fingerprint`, `registered_at`, `last_seen_at`, `risk_consent_version`, `filevault_enabled`, `keychain_integrity`, `security_scan:last_scan_at/status`, `quarantine_reason` | 端末情報。`fingerprint`はTPM/HW UUID＋MACハッシュ。 |
+  | `AccessReview` | `review_id`, `scope ∈ {'quarterly','ad_hoc'}`, `initiated_by`, `initiated_at`, `due_at`, `status`, `findings:list[Finding]`, `actions:list[ActionItem]` | アクセス棚卸しサイクル。 |
+  | `AccessAuditEvent` | `event_id`, `principal_id`, `device_id`, `action`, `timestamp`, `source`, `details`, `consent_reference_id`, `runbook_ref` | 監査ログ。
+- **API**:
+  | 関数 | 入力 | 処理 | 出力 | 異常系 |
+  | --- | --- | --- | --- | --- |
+  | `register_principal(principal)` | `AccessPrincipal` | Schema検証→`config/roles.yaml`整合チェック→`principal_registry.jsonl`へ保存 | `AccessPrincipal` | 役割不正: `RoleValidationError` |
+  | `register_device(principal_id, device_info)` | Principal ID, 端末情報 | Device fingerprint生成→Keychain/FileVaultチェック→`DeviceRecord`保存→`risk_disclosure.link_device`呼び出し | `DeviceRecord` | Keychain未保護: `DeviceSecurityError` |
+  | `enforce_policy(principal_id)` | Principal ID | 端末/承諾/ロール/Runbook棚卸しを評価→違反時は`AccessEnforcementResult(status='blocked', reasons=...)`返却、必要に応じ`RiskDisclosureEnforcer`へ委譲 | `AccessEnforcementResult` | |
+  | `start_review(scope, *, due_at)` | 棚卸しスコープ, 期限 | `AccessReview`生成→対象Principal/Device列挙→Ops AgendaへTODO→EventBus `access.review_started` | `AccessReview` | |
+  | `complete_review(review_id, findings, actions)` | Review ID | Findings/是正措置保存→`OpsEvidenceStore`へEvidence登録→`access.review_completed`イベント | `ReviewCompletion` | 未完了アクション: `AccessReviewIncomplete` |
+  | `generate_report(profile)` | レポート種別 | 現在のロール割当/端末/承諾状況を集計→`reports/governance/access/<YYYYQ>.md`出力 | `ReportGenerationResult` | |
+- **統合ポイント**:
+  - `RiskDisclosureEnforcer`（§67）と双方向連携。Device登録時に最新同意が存在しない場合は`status='pending_consent'`としてSignal Board操作をロック。
+  - `LicenseRegistryService`（§50）と連携し、特定ロール（例: `feed_operator`）にのみAPIキー閲覧を許可。アクセス棚卸しで期限切れAPIキーを検出。
+  - `DocOps Orchestrator`（§58）へReview結果を送信し、Runbook更新の必要性を自動TODO化。
+
+#### 70.2 CLI (`tradectl access *`)
+
+- **コマンド**:
+  | コマンド | 概要 | 主なオプション | 出力/副作用 |
+  | --- | --- | --- | --- |
+  | `tradectl access principals list` | ユーザー一覧 | `--role`, `--status`, `--json` | `AccessPrincipal`一覧。`--json`時は`schema_version='access.principal.v1'`。 |
+  | `tradectl access principal add --principal <id> --role trader` | ユーザー登録 | `--display-name`, `--mfa`, `--note` | 登録結果。監査`audit.access_principal_created`。 |
+  | `tradectl access devices list` | 端末一覧 | `--principal`, `--stale-only`, `--json` | Device一覧。`stale_only`は`last_seen_at`>30日でフィルタ。 |
+  | `tradectl access device register --principal <id> --fingerprint <hash> --platform macos` | 端末登録 | `--filevault`, `--keychain-ok`, `--security-scan-report <path>` | DeviceRecord保存、`risk_disclosure`連携。 |
+  | `tradectl access review start --scope quarterly --due <date>` | 棚卸し開始 | `--note`, `--auto-assign` | `AccessReview`作成、Ops Agenda TODO。 |
+  | `tradectl access review complete --review <id>` | 棚卸し完了 | `--finding <code>`, `--action <action_id>`, `--attach-evidence` | Review完了、Evidence登録。 |
+  | `tradectl access report --profile compliance` | レポート出力 | `--format md|json`, `--include-consent`, `--include-roles` | `reports/governance/access/<YYYYQ>.md/json`生成。 |
+- **UX**: CLIはRichで`status`バッジ（`active`=緑, `pending_consent`=黄, `revoked`=赤）を表示し、`mfa_enrolled`未設定時に警告アイコンを表示。Device登録ではKeychain/FileVaultチェック結果を表形式で出力し、NG項目はRunbook `SEC-ACCESS-01`リンクを提示。
+- **権限**: `config/roles.yaml::access_admins`のみ`register`/`review`コマンド実行可。`--force`でロール変更する場合は`security_officer`ロールを追加で要求し、ダブルサインをCLIが促す。
+
+#### 70.3 テレメトリ・監査・Runbook
+
+- **メトリクス** (`metrics/access_governance.jsonl`): `principal_count`, `active_principals`, `pending_consent_principals`, `stale_devices`, `mfa_coverage_pct`, `reviews_open`, `reviews_overdue`, `keychain_failures`, `filevault_disabled`, `security_scan_outdated`. `mfa_coverage_pct<100`でWARN、`reviews_overdue>0`で`health.raise('warn','access_review_overdue')`。
+- **監査**: `audit.access_principal_created`, `audit.access_principal_updated`, `audit.access_device_registered`, `audit.access_device_revoked`, `audit.access_review_started`, `audit.access_review_completed`, `audit.access_policy_enforced`。各イベントは`consent_reference_id`, `runbook_ref`, `evidence_hash`を付与し、`SecureShareService`でエクスポート可能。
+- **Runbook**: `docs/runbooks/SEC-ACCESS-01.md`を新設。項目: (1) 新規ユーザー/端末登録、(2) Keychain/FileVault設定確認手順、(3) リスク承諾リンク再発行、(4) アクセス棚卸しレビュー手順、(5) 緊急時のアクセス停止。`DocOps Orchestrator`が90日サイクルでレビューを強制し、未実施時は`ops.agenda.access_review_overdue`通知。
+- **Validation Data Playbook**: `validation_playbook/AC44_access.yaml`を追加。棚卸しレポート、端末証跡、リスク同意リンク、Keychain監査ログを格納。`make check-validation --category access`で欠落検出。
+
+#### 70.4 Codex Packet・テスト・受入条件
+
+- **テスト**:
+  - `tests/unit/test_access_governance.py`: Principal/Device登録、ポリシー評価、エラーケース（Keychain未設定等）。
+  - `tests/integration/test_access_cli.py`: CLI操作、権限ガード、RiskDisclosure連携、Validation Playbook書き込み。
+  - `tests/integration/test_access_review_flow.py`: Review開始→Ops Agenda→Evidence添付→完了までのE2E。
+  - `pytest -k access_governance`をCIに追加し、`--with-security`マーカーでM1.1以降に実行。
+- **Codex Packet案**:
+  | Packet ID | スコープ | 成果物 | テスト |
+  | --- | --- | --- | --- |
+  | `EP15-ACCESS-P1` | AccessGovernanceService基盤（モデル/登録/ポリシー評価） | `src/security/access.py`, `tests/unit/test_access_governance.py` | `pytest -k access_governance` |
+  | `EP15-ACCESS-P2` | CLI `tradectl access *`、監査ログ、RiskDisclosure連携 | `src/interfaces/cli/access.py`, `tests/integration/test_access_cli.py`, `docs/runbooks/SEC-ACCESS-01.md` | `pytest -k access_cli`, `pytest-approvaltests -k access_cli` |
+  | `EP15-ACCESS-P3` | Review/Validation/DocOps統合、Ops Agenda/Worklog連携 | `src/security/access.py`拡張, `src/ops/agenda.py`, `validation_playbook/AC44_access.yaml`, Metrics | `pytest -k access_review_flow`, `make check-validation --category access`, `tradectl ops agenda list --pending` |
+- **受入条件**:
+  1. `tradectl access device register --principal trader01 --fingerprint <hash> --platform macos --filevault yes --keychain-ok yes`実行時、`RiskDisclosureEnforcer`が未同意なら`status='pending_consent'`で登録し、`tradectl board`が`ConsentRequiredError`でブロックされる（AC-44連携）。
+  2. `tradectl access review start --scope quarterly`後、Ops Agendaに`access.review`TODOが生成され、`due_at`を超過すると`health.raise('warn','access_review_overdue')`が出力される。完了後は`validation_playbook/AC44_access.yaml`にEvidenceが追記され、`make check-validation --category access`がPASSとなる（NFR-24）。
+  3. `tradectl access report --profile compliance --format md --include-consent`が`reports/governance/access/<YYYYQ>.md`を生成し、Principal/Device/同意/Keychain状態を一覧化。DocOps Orchestratorがレポート未更新時に`ops.agenda.docops_overdue`を発火する。
+
+---
