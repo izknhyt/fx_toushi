@@ -1,4 +1,4 @@
-# FXヒューマン・インザループ投資ツール 詳細設計書 v1.21
+# FXヒューマン・インザループ投資ツール 詳細設計書 v1.22
 
 ## 0. 文書情報
 - 作成日: 2025-02-20
@@ -9,6 +9,7 @@
 ### 0.1 改訂履歴
 | 版 | 日付 | 改訂概要 |
 | --- | --- | --- |
+| v1.22 | 2025-03-04 | §64でマージン・相関ストレスラボとリスクエンベロープ調整（FR-36/FR-37/FR-51, AC-32）を追記。§65でトレーダーワークフローテレメトリ/コーチング基盤（FR-44/FR-48, NFR-11/28）を設計。§66でAcceptable Degradationプレイブック自動化（FR-47, NFR-14/28, AC-34/AC-43）を追加し、Codex Packetとテスト計画を整備。 |
 | v1.21 | 2025-03-03 | §60でSignal Board Shadow/SlackブリッジとGUI準備（FR-12/FR-47, M2準備）を追加。§61でStop/Freeze検証・キャピタルガード回帰ハーネス（AC-31/AC-41, FR-50/FR-51連携）を整理し、Codex向けテスト/Packetを提示。 |
 | v1.20 | 2025-03-02 | §49〜§50にリアルタイムフィード評価/ライセンスガバナンス（M1.2準備, NFR-05/17, AC-45拡張）を追加し、Data Ingestion/HealthMonitor/BackOfficeとの連携、契約証跡/コスト評価/Runbook整備をCodex Packet化。 |
 | v1.19 | 2025-02-28 | §46にモデルリスクレジスタ/Explainability監査（NFR-26, AC-52, FR-55/56連携）を追記し、Scoreboard/Idea Pipeline/Complianceゲートとの連携、証跡テンプレ/CLI/テレメトリ/Packetを整備。 |
@@ -6108,5 +6109,181 @@ NFR-28（Ops証跡管理）、FR-44（ジャーナル）、FR-63（Opsレディ�
 - **受入条件**:
   1. `tradectl ops incident open --category risk --severity critical`→`tradectl ops incident timeline add`→`tradectl ops incident forensics --report`→`tradectl ops incident close`フローが成功し、`reports/ops/incidents/<id>/`に`timeline.md`/`rca.md`/`forensics_*.md`が生成される。Ops Agendaへ自動でフォローアップタスクが登録され、Ops Readinessスコアに反映される。
   2. `TradeForensicsAnalyzer`が`slippage_outlier`を検出すると`IncidentPostmortemService.register_follow_up`が呼ばれ、`ComplianceRegressionRunner`の結果と突合した再発防止タスクが生成される。未完了のまま`close`しようとすると`IncidentClosureError`でブロックされる。
-  3. Slack Shadow連携（Feature Flag `shadow.slack_enabled=True`）時にインシデント開始で専用Threadが作成され、`close`時に要約とフォローアップ状況が投稿される。`SecureShareService.prepare_package(profile='external_audit')`でインシデント証跡を暗号化バンドルとして出力できる。
+ 3. Slack Shadow連携（Feature Flag `shadow.slack_enabled=True`）時にインシデント開始で専用Threadが作成され、`close`時に要約とフォローアップ状況が投稿される。`SecureShareService.prepare_package(profile='external_audit')`でインシデント証跡を暗号化バンドルとして出力できる。
+
+### 64. マージンストレスラボ & リスクエンベロープ調整設計（FR-36/FR-37/FR-51, AC-32, M2準備）
+
+FR-36（マージン/レバ制御）、FR-37（相関合算R）、FR-51（キャピタルガード）は、複合ストレス下でもヒューマン判断が安全側に留まることを要求する。M1 Coreでは固定閾値の手動調整に依存しているため、M1.1以降は**定期ストレステスト→閾値再提案→承認サイン**のサイクルを自動化する必要がある。本節では`MarginStressLab`と`RiskEnvelope`更新フローを定義し、CodexがM2で実装できるよう詳細設計を提示する。
+
+#### 64.1 MarginStressLab (`tools/margin_stress_lab.py`, `src/risk/stress_lab.py`)
+
+- **責務**: プロファイル別ポリシーを読み込み、ヒストリカルショック/パラメトリックショック/相関増幅/証拠金倍率変化シナリオを生成。`CapitalAllocationGuard`、`CorrelationGuard`、`RiskManager`へ一括投入して結果を集約し、`RiskEnvelope`を生成する。
+- **データモデル**:
+  | モデル | 主フィールド | 説明 |
+  | --- | --- | --- |
+  | `StressScenario` | `scenario_id`, `kind∈{'historical','parametric','correlation','margin'}`, `shock_profile`（PFドローダウン、ボラ倍率、証拠金倍率、連続敗北数）、`duration`, `confidence_level`, `ref_events` | 実行するストレス定義。 |
+  | `StressInputBundle` | `account_state_snapshot`, `position_book`, `signal_history`, `vol_surface`, `correlation_matrix`, `margin_schedule` | ストレス実行の入力セット。`AccountAggregatorService`/`JournalService`から取得。 |
+  | `StressResult` | `scenario_id`, `max_drawdown_r`, `net_equity_pct`, `margin_utilization_peak`, `r_eff_peak`, `capital_guard_transition`, `kill_switch_recommendation`, `board_mode_path`, `notes` | 各シナリオの結果。 |
+  | `RiskEnvelope` | `profile`, `generated_at`, `primary_metrics`, `recommended_thresholds`（`daily_loss`, `weekly_loss`, `margin_warn`, `margin_throttle`, `corr_hotness`）, `evidence_refs` | 次期運用に適用する推奨閾値セット。 |
+- **API**:
+  | 関数 | 入力 | 処理 | 出力 |
+  | --- | --- | --- | --- |
+  | `MarginStressLab.load_policy(profile)` | プロファイルID | `risk_policy.yaml`ほか関連設定を検証付きで読み込み | `StressPolicy` |
+  | `MarginStressLab.generate_scenarios(policy, *, presets=None)` | `StressPolicy`, オプションプリセット | 既定プリセット＋ユーザー定義を展開 | `list[StressScenario]` |
+  | `MarginStressLab.run(bundle, scenarios)` | `StressInputBundle`, シナリオ群 | ガード各種の`simulate*` APIを呼び出し結果を集約 | `StressCampaignResult`（`scenario_results`, `envelope`） |
+  | `MarginStressLab.publish(envelope)` | `RiskEnvelope`, `actor` | `metrics/margin_stress.jsonl`と`reports/risk/envelopes/<date>.md`を書き出し、`audit.margin_stress_run`を発火 | `PublishReceipt` |
+- **シミュレーションフック**:
+  - `CapitalAllocationGuard.simulate(decision_state, scenario)`を追加し、`VaR`/`ES`閾値や`throttle_decay_minutes`をストレス条件下で再計算。
+  - `CorrelationGuard.simulate`は相関行列へショック倍率を掛け、`R_eff`ピーク値を提供。
+  - `RiskManager.simulate_losses`は`JournalService`履歴から連続損失ケースを再生し、`KillSwitchRecommendation`を返す。
+- **プリセットYAML**（`config/risk/margin_stress_presets.yaml`）例:
+  | ID | 内容 | 実行頻度 |
+  | --- | --- | --- |
+  | `brexit_20160624` | GBPクロス±10%ギャップ＋証拠金倍率×1.5 | 月次 |
+  | `covid_202003` | 全通貨±8%ギャップ＋相関+0.25＋連続損失5本 | 四半期 |
+  | `flash_crash_jpy` | USDJPY −7%ワンバー＋Spread×4 | 半期 |
+
+#### 64.2 CLI/Runbook/UX統合 (`src/interfaces/cli/risk.py::stress`, `docs/runbooks/RUN-RISK-02.md`)
+
+- **CLIコマンド**:
+  | コマンド | 説明 | 主なオプション | 出力 |
+  | --- | --- | --- | --- |
+  | `tradectl risk stress run --profile live --presets brexit_20160624 --presets custom_2024q3` | ストレスキャンペーン実行 | `--input-bundle <path>`, `--dry-run`, `--out <dir>` | Markdown/JSONサマリ、`RiskEnvelope` |
+  | `tradectl risk stress compare --against <YYYYMMDD>` | 過去結果差分 | `--json`, `--threshold 0.1` | 閾値差分、警告フラグ |
+  | `tradectl risk envelope apply --profile live --source reports/risk/envelopes/<date>.yaml` | 推奨閾値適用 | `--dry-run`, `--require-signoff` | Config差分、署名ハッシュ |
+  | `tradectl risk envelope simulate --profile live --what-if config/risk_policy_candidate.yaml` | 候補閾値検証 | `--json`, `--metrics` | シナリオ再計算結果 |
+- **UX**: CLIはシナリオ×指標のヒートマップとスパークラインを表示し、閾値超過は赤バッジ。`--json`出力は`schema_version='risk_stress.v1'`。
+- **Runbook連携**: `RUN-RISK-02`にストレス実行→レビュー→閾値決定→承認サイン→Config反映のチェックリストを定義。`MarginStressLab.publish`はRunbookIDと承認者入力を必須化。
+- **Ops Agenda**: 推奨閾値と現行値の乖離が±5%以上であれば`OpsAgendaService`が`task='risk_threshold_adjust'`を自動生成（期限=7営業日）。
+- **Validation Data Playbook**: `validation_playbook/AC32_margin_stress.yaml`を追加し、結果ハッシュ・Runbook参照・承認サインを保存。`make check-validation`対象に追加。
+
+#### 64.3 テレメトリ・監査・Codex Packet
+
+- **メトリクス** (`metrics/margin_stress.jsonl`): `scenario_id`, `max_drawdown_r`, `margin_peak`, `r_eff_peak`, `capital_guard_transition`, `kill_switch_recommendation`, `recommended_thresholds`, `actor`, `run_id`。
+- **監査**: `audit.margin_stress_run`（シナリオ一覧、入力バンドルハッシュ、Runbook参照）、`audit.risk_envelope_applied`（Config差分と署名者）。
+- **Reporter**: 週次レポートへ`Risk Envelope Delta`セクションを追加し、更新内容と承認者を表示。閾値変更時は`[RISK ENVELOPE UPDATED]`バナーを挿入。
+- **Codex Packet案**:
+  | Packet ID | スコープ | 依存節 | 成果物 | テスト |
+  | --- | --- | --- | --- | --- |
+  | `EP12-STRESS-P1` | MarginStressLab基盤 | §64.1 | `src/risk/stress_lab.py`, `tests/unit/test_margin_stress_lab.py` | `pytest -k margin_stress_lab` |
+  | `EP12-STRESS-P2` | Guardシミュレーションフック | §64.1 | `src/risk/capital_guard.py`, `src/risk/correlation_guard.py`, `src/risk/manager.py`拡張 | `pytest -k stress_simulation` |
+  | `EP12-STRESS-P3` | CLI/Runbook/Reporter/Validation統合 | §64.2, §64.3 | `src/interfaces/cli/risk.py`, `docs/runbooks/RUN-RISK-02.md`, `validation_playbook/AC32_margin_stress.yaml` | `pytest -k risk_stress_cli`, `make check-validation` |
+- **受入条件**:
+  1. `tradectl risk stress run --profile live --presets brexit_20160624`実行後、`RiskEnvelope`が`margin_warn`閾値の引き下げ提案を含み、Runbook承認を経て`config/risk_policy.yaml`に反映できる。
+  2. `tradectl risk stress compare --against <prev>`で`margin_utilization_peak`差分が±5%を超えるとExit Code≠0となりCIで検出可能。
+  3. `RiskManager.simulate_losses`が`KillSwitchRecommendation='soft_stop'`を返したシナリオでは、週次レポートと`OpsAgenda`にフォローアップが自動生成される。
+
+### 65. トレーダーワークフローテレメトリ & コーチングループ設計（FR-44/FR-48, NFR-11/NFR-28, AC-10, M1.1準備）
+
+FR-44（ジャーナル）とFR-48（運用健全性ダッシュボード）はヒューマン操作のタイムライン・滞留ポイントを可視化し、Runbook改善へフィードバックすることを求める。NFR-11/28ではUX応答性とOpsレディネスの追跡を要求。M1 Coreでは操作ログを手動レビューしているが、M1.1以降では**操作イベントを定量化してコーチングループへ還元するテレメトリ基盤**が必要となる。本節では`TraderWorkflowTelemetryService`と`CoachingPlaybook`を設計し、CodexがM1.1 Hardeningで実装するための詳細を定義する。
+
+#### 65.1 TraderWorkflowTelemetryService (`src/telemetry/trader_workflow.py`)
+
+- **イベント対象**: `tradectl board/ticket/status/events/journal/ops`操作、CLI遷移時間、入力ミス（再入力回数）、承認/拒否決定までの経過時間、Runbook参照回数。
+- **データモデル**:
+  | モデル | フィールド | 説明 |
+  | --- | --- | --- |
+  | `WorkflowEvent` | `event_id`, `actor`, `command`, `args`, `started_at`, `ended_at`, `latency_ms`, `result`, `error_code`, `context`（`board_mode`, `health_state`） | CLI実行1件。 |
+  | `InteractionSession` | `session_id`, `actor`, `started_at`, `ended_at`, `commands:list[str]`, `latency_stats`, `mistake_counts`, `checklist_completion`, `ticket_ids` | 連続操作セッション。`session_timeout=5min`。 |
+  | `CoachingInsight` | `insight_id`, `actor`, `period`, `bottleneck_metric`, `value`, `threshold`, `recommendation`, `runbook_refs`, `evidence_paths` | コーチング提案。 |
+- **主要API**:
+  | 関数 | 入力 | 処理 | 出力 |
+  | --- | --- | --- | --- |
+  | `TraderWorkflowTelemetryService.record_event(event)` | `WorkflowEvent` | `metrics/trader_workflow.jsonl`追記→`InteractionSession`へ集約 | `EventReceipt` | 
+  | `TraderWorkflowTelemetryService.close_session(session_id)` | セッションID | 集約結果を`reports/ops/workflow_sessions/<date>.json`へ出力 | `SessionReport` |
+  | `TraderWorkflowTelemetryService.generate_insights(window)` | ローリング期間 | KPI（平均承認時間、チェックリスト漏れ率、再入力回数、`board_mode=guarded`滞留時間）を算出 | `list[CoachingInsight]` | 
+  | `TraderWorkflowTelemetryService.publish(insights)` | `CoachingInsight`群 | `reports/ops/coaching/<YYYYWW>.md`生成、`OpsAgenda`へTODO | `PublishReceipt` |
+- **Latency測定**: `latency_ms`はCLI内部の`CommandTimer`で計測し、NFR-11の100ms閾値を超えた場合に`ux_latency`タグで記録。
+- **Mistake検知**: Ticket承認時のチェックリスト未完了/再承認/価格再入力は`mistake_counts`に分類（`price_reentry`, `checklist_backtrack`, `approval_timeout`）。
+- **セッション相関**: `InteractionSession`は`JournalService`（§34）と連携し、該当チケットにセッションIDを付与。
+
+#### 65.2 CoachingPlaybook (`docs/runbooks/COACHING-01.md`, `src/ops/coaching.py`)
+
+- **目的**: Telemetryから抽出したボトルネックをRunbook改善、トレーダートレーニング、UX改修へ繋げる。
+- **機能**:
+  1. `CoachingPlaybook.analyze(insights)`が指標ごとの閾値（例: `avg_approval_latency>45s`, `checklist_completion_rate<0.95`）を評価し、優先度を算出。
+  2. `CoachingPlaybook.schedule_sessions()`が`OpsAgenda`へトレーニングセッションTODOを登録（`due_date`=翌週水曜）。
+  3. `CoachingPlaybook.update_runbook()`が`docs/runbooks/RUN-HITL-01.md`等へテンプレート差分（チェックリスト順序改善案など）を提案。
+  4. `CoachingPlaybook.feedback_loop()`が改善後の指標変化を`metrics/trader_workflow.jsonl`から取得し、`AutomationEffectTracker`（§52.2）へ効果を記録。
+- **CLI (`src/interfaces/cli/ops.py::coaching`)**:
+  | コマンド | 説明 | 主なオプション | 出力 |
+  | --- | --- | --- | --- |
+  | `tradectl ops coaching summary --window 14d` | KPI要約 | `--actor`, `--json`, `--export-md` | メトリクス表、推奨アクション |
+  | `tradectl ops coaching insight create --window 7d --threshold-config config/coaching_thresholds.yaml` | インサイト生成 | `--dry-run`, `--tag <id>` | `CoachingInsight`一覧、Ops Agenda登録 |
+  | `tradectl ops coaching review --week 2025-W10` | 過去インサイトの効果測定 | `--json`, `--diff` | 効果比較、AutomationEffect更新 |
+  | `tradectl ops coaching simulate --scenario high_latency_guarded` | 仮想改善案の効果予測 | `--what-if insights/custom.yaml` | KPI差分予測 |
+- **UX**: CLIは`Rich`のスパークラインで`approval_latency`、`guarded_time_ratio`を表示。`--json`は`schema_version='coaching.insight.v1'`。
+- **Runbook**: `COACHING-01`に定例レビュー（週次）、改善策の優先度マトリクス、フォローアップ確認手順を記載。承認サインを`reports/ops/coaching/<YYYYWW>.md`へ残す。
+
+#### 65.3 テレメトリ・ダッシュボード統合・Codex Packet
+
+- **メトリクス** (`metrics/trader_workflow.jsonl`): `event_id`, `actor`, `command`, `latency_ms`, `result`, `mistake_type`, `board_mode`, `health_state`, `session_id`。`metrics/coaching_insights.jsonl`で`insight_id`, `metric`, `value`, `recommendation`, `status`を追記。
+- **運用ダッシュボード**: `tradectl dashboard ops`（§37）に`Trader Workflow`タイル追加。`avg_approval_latency`, `guarded_time_ratio`, `checklist_completion_rate`, `mistake_rate`を表示し、`>threshold`で赤バッジ。
+- **Audit**: `audit.trader_workflow_event`（CLI操作詳細）、`audit.coaching_insight_published`（推奨事項、Runbookリンク、サイン）。個人情報はローカルのみ保持、外部共有時は`actor`をハッシュ化。
+- **Validation Data Playbook**: `validation_playbook/AC10_human_performance.yaml`を追加し、チェックリスト遵守率・承認時間の証跡を保存。週次レビューで更新がない場合は`OpsReadinessEvaluator`がスコア減点。
+- **Codex Packet案**:
+  | Packet ID | スコープ | 成果物 | テスト |
+  | --- | --- | --- | --- |
+  | `EP13-COACH-P1` | Telemetryイベント収集・セッション集約 | `src/telemetry/trader_workflow.py`, `tests/unit/test_trader_workflow_telemetry.py` | `pytest -k trader_workflow_telemetry` |
+  | `EP13-COACH-P2` | CoachingPlaybook + CLI + Runbook統合 | `src/ops/coaching.py`, `src/interfaces/cli/ops.py`, `docs/runbooks/COACHING-01.md` | `pytest -k coaching_cli`, `pytest-approvaltests -k coaching_summary` |
+  | `EP13-COACH-P3` | Dashboard/Reporter/Validation連携 | `src/interfaces/cli/dashboard.py`, `reports/weekly/templates/m1_plus.md`, `validation_playbook/AC10_human_performance.yaml` | `pytest -k dashboard_ops`, `make check-validation` |
+- **受入条件**:
+  1. `tradectl ops coaching insight create --window 7d`が`avg_approval_latency`と`mistake_rate`の指標を含むインサイトを生成し、Ops AgendaにTODOを登録する。
+  2. Coaching施策後に`AutomationEffectTracker`が改善値（例: 平均承認時間-15%）を記録し、週次レポートへ差分が表示される。
+  3. `validation_playbook/AC10_human_performance.yaml`が未更新のまま14日経過すると`OpsReadinessEvaluator`がスコアを減点し、`tradectl dashboard ops`で警告が表示される。
+
+### 66. Acceptable Degradationプレイブック自動化 & Emergency Orchestrator連携設計（FR-47, NFR-14/NFR-28, AC-34/AC-43, M1.1 Hardening準備）
+
+Acceptable Degradation（データ遅延・スプレッド拡大・レート制限等）時の手動手順はRunbook依存で属人化しやすい。FR-47（エマージェンシープロトコル）とAC-34/AC-43は、緊急モードへ即時切替し、復旧後に証跡を残す自動化を要求する。M1 CoreではRunbook手動操作と`HealthMonitor`推奨に留めているため、M1.1では**プレイブック自動化レイヤ**と`EmergencyOrchestrator`（§19）を連結し、Codexが段階導入できるよう詳細設計を定義する。
+
+#### 66.1 DegradationPlaybookOrchestrator (`src/ops/degradation.py`)
+
+- **役割**: `HealthMonitor`と`MarginStressLab`/`TraderWorkflowTelemetry`からの信号を統合し、事象タイプ別にアクションセットを自動展開。Runbook手順をGraph化し、進捗を追跡する。
+- **プレイブックモデル**:
+  | モデル | フィールド | 説明 |
+  | --- | --- | --- |
+  | `DegradationScenario` | `scenario_id`, `trigger`（`data_latency`, `spread_spike`, `rate_limit`, `capital_throttle`, `manual_override`）, `severity`, `feature_flags`, `runbook_refs`, `auto_actions` | 事象定義。 |
+  | `ActionNode` | `node_id`, `description`, `command`（CLI/Script/Manual）、`owner_role`, `depends_on`, `timeout_min`, `evidence_required`, `shadow_notify` | アクションノード。 |
+  | `PlaybookInstance` | `instance_id`, `scenario_id`, `started_at`, `status ∈ {'running','paused','completed','aborted'}`, `progress`, `current_nodes`, `evidence_paths`, `shadow_thread_id` | 実行状態。 |
+- **ワークフロー**:
+  1. `HealthMonitor.raise('degraded', reason='data_latency_fetch')` → `DegradationPlaybookOrchestrator.start('data_latency')`。
+  2. `start`は`ActionGraph`を展開し、`EmergencyOrchestrator`（§19.2）の`dispatch(action)`を呼び出してCLIコマンドやSlack Shadow通知を起動。
+  3. 各`ActionNode`の完了は`tradectl ops degrade ack --node <id>`で記録。CLIは証跡ファイル添付を要求し、`Validation Data Playbook`へハッシュ登録。
+  4. `PlaybookInstance`完了後、`OpsAgenda`のTODOを自動クローズし、`IncidentPostmortemService`（§63）へ結果リンクを通知。
+- **自動アクション例**:
+  - `tradectl data failover --to dukascopy_cache`（Owner: Ops）
+  - `tradectl board mode set --guarded --reason data_latency`（Owner: Trader）
+  - `tradectl emergency broadcast --template templates/degradation/data_latency.md`（Owner: EmergencyOrchestrator）
+  - `tradectl risk stress run --profile paper --presets flash_crash_jpy --dry-run`（Owner: Quant, optional）
+- **復旧判定**: `DegradationPlaybookOrchestrator.evaluate_recovery()`が`MarginStressLab`/`TraderWorkflowTelemetry`/`HealthMonitor`から`recovery_metrics`を取得し、Runbook条件（`catch_up_lag_minutes<30`, `board_mode normal`, `ops_readiness_score>=80`）を満たしたら終了。
+
+#### 66.2 CLI/Shadow統合 (`src/interfaces/cli/degradation.py`, `src/interfaces/gui/shadow_api.py`)
+
+- **CLI**:
+  | コマンド | 説明 | 主なオプション | 出力 |
+  | --- | --- | --- | --- |
+  | `tradectl ops degrade status [--instance <id>]` | 実行中プレイブック一覧 | `--json`, `--verbose` | アクション進捗、担当者、期限 |
+  | `tradectl ops degrade ack --instance <id> --node <node_id> --evidence <path>` | アクション完了記録 | `--note`, `--handoff <actor>` | 更新済みPlaybookInstance、Audit記録 |
+  | `tradectl ops degrade trigger --scenario rate_limit --severity high` | 手動トリガ | `--reason`, `--dry-run` | PlaybookInstance ID |
+  | `tradectl ops degrade recover --instance <id>` | 復旧判定実行 | `--attach-report <path>` | 終了レポート、Ops Readiness更新 |
+- **Shadow/Slack**: `ShadowBridge`（§60）へ`degradation.playbook_started/updated/completed`イベントを送信し、専用スレッドで担当者に通知。Slackでは`/ack <node_id>`ショートカットを提供（M2+）。
+- **Runbook**: `docs/runbooks/RUN-DEGRADE-01.md`を新設。プレイブック構成、証跡添付手順、影響評価の記入欄を定義。CLIはRunbookIDを表示し、必須フィールド未記入時は`ack`を拒否。
+
+#### 66.3 テレメトリ・監査・Codex Packet
+
+- **メトリクス** (`metrics/degradation_playbook.jsonl`): `instance_id`, `scenario_id`, `severity`, `status`, `node_completed`, `elapsed_minutes`, `recovery_metrics`, `shadow_thread_id`, `ops_work_minutes`。
+- **監査**: `audit.degradation_playbook_started`, `audit.degradation_action_ack`, `audit.degradation_recovered`。各イベントに`runbook_ref`, `evidence_hash`, `actor`, `consent_reference_id`（リスク承諾リンク）を記録。
+- **Validation Data Playbook**: `validation_playbook/AC34_degradation.yaml`追加。各インスタンスの証跡（アクションログ、復旧レポート、承認サイン）を格納。
+- **Ops Readiness連携**: `OpsReadinessEvaluator`（§33.1）が`degradation.playbook_completed`を参照し、復旧所要時間とRunbook遵守率をスコア化。`>120min`で減点。
+- **Reporter統合**: 週次レポートに`Degradation Events`セクションを追加し、件数・平均復旧時間・主要原因を一覧化。
+- **Codex Packet案**:
+  | Packet ID | スコープ | 成果物 | テスト |
+  | --- | --- | --- | --- |
+  | `EP14-DEGRADE-P1` | DegradationPlaybookOrchestrator基盤・ActionGraph実行 | `src/ops/degradation.py`, `tests/unit/test_degradation_playbook.py` | `pytest -k degradation_playbook` |
+  | `EP14-DEGRADE-P2` | CLI/Shadow統合・Runbookテンプレ | `src/interfaces/cli/degradation.py`, `docs/runbooks/RUN-DEGRADE-01.md`, `src/interfaces/gui/shadow_api.py`拡張 | `pytest -k degradation_cli`, `pytest-approvaltests -k degradation_status` |
+  | `EP14-DEGRADE-P3` | Telemetry/Validation/Reporter連携 | `metrics/degradation_playbook.jsonl`スキーマ, `reports/weekly/templates/m1_plus.md`更新, `validation_playbook/AC34_degradation.yaml` | `pytest -k reporter_degradation`, `make check-validation` |
+- **受入条件**:
+  1. `HealthMonitor.raise('degraded', reason='data_latency_fetch')`後に`tradectl ops degrade status`でアクション進捗が表示され、各ノード完了時にAuditログとValidation Playbookが更新される。
+  2. プレイブック完了後に`OpsReadinessEvaluator`がスコアを更新し、`tradectl dashboard ops`で復旧時間とRunbook遵守率が確認できる。
+  3. `SecureShareService.prepare_package(profile='degradation_events')`でプレイブック証跡が暗号化バンドル化され、外部レビューに提供できる。
 
