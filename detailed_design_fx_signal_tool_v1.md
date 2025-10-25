@@ -1,4 +1,4 @@
-# FXヒューマン・インザループ投資ツール 詳細設計書 v1.23
+# FXヒューマン・インザループ投資ツール 詳細設計書 v1.24
 
 ## 0. 文書情報
 - 作成日: 2025-02-20
@@ -9,6 +9,7 @@
 ### 0.1 改訂履歴
 | 版 | 日付 | 改訂概要 |
 | --- | --- | --- |
+| v1.24 | 2025-03-06 | §71でHardening検証ハーネス/診断ラボ群（AC-12/AC-14/AC-15/AC-17/AC-18/AC-19/AC-20/AC-21/AC-23/AC-24/AC-25/AC-29/AC-30, NFR-02/NFR-03/NFR-09/NFR-10）を新設し、§72〜§77でPaper-Liveパリティ、流動性ストレス、Pre-Trade強化、Fault Injection、時刻整合、署名管理を追加。Codex Packet/CLI/テレメトリ/テスト計画を更新。 |
 | v1.23 | 2025-03-05 | §67でリスク開示ハードエンフォースメント/デバイスバインディング設計（FR-53/FR-54, AC-44, NFR-17）を追加。§68で研究昇格ゲート/チェックリスト自動化（FR-55/FR-62, AC-46, NFR-21）を詳細化し、Codex PacketとValidation連携を定義。 |
 | v1.22 | 2025-03-04 | §64でマージン・相関ストレスラボとリスクエンベロープ調整（FR-36/FR-37/FR-51, AC-32）を追記。§65でトレーダーワークフローテレメトリ/コーチング基盤（FR-44/FR-48, NFR-11/28）を設計。§66でAcceptable Degradationプレイブック自動化（FR-47, NFR-14/28, AC-34/AC-43）を追加し、Codex Packetとテスト計画を整備。 |
 | v1.21 | 2025-03-03 | §60でSignal Board Shadow/SlackブリッジとGUI準備（FR-12/FR-47, M2準備）を追加。§61でStop/Freeze検証・キャピタルガード回帰ハーネス（AC-31/AC-41, FR-50/FR-51連携）を整理し、Codex向けテスト/Packetを提示。 |
@@ -6586,3 +6587,119 @@ FR-56のManifest有効期限管理とFR-51のキャピタルガード、FR-63の
   3. `tradectl access report --profile compliance --format md --include-consent`が`reports/governance/access/<YYYYQ>.md`を生成し、Principal/Device/同意/Keychain状態を一覧化。DocOps Orchestratorがレポート未更新時に`ops.agenda.docops_overdue`を発火する。
 
 ---
+
+### 71. M1.1 Hardeningバリデーションハーネス設計（AC-12/AC-14/AC-15/AC-17/AC-18/AC-19/AC-20/AC-21/AC-23/AC-24/AC-25/AC-29/AC-30, NFR-02/NFR-03/NFR-09/NFR-10）
+
+M1.1 Hardeningでは戦略ガード・HITL運用・再現性に関する受入基準が一括して有効化される。既存の`tests/`および`tools/`だけでは各AC/NFRの測定が散在しているため、`src/diagnostics/hardening/`配下にシナリオベースのハーネスを新設し、CLI/CI/Runbookから同じインターフェースで検証できるようにする。
+
+- **コンポーネント構成**
+  - `CalendarBlockLab`（§71.1）: カレンダー/ニュースイベントに対するBlock/解除検証（AC-12, AC-24）。
+  - `SprtScenarioLab`（§71.2）: SPRT停止と再開までの冷却時間検証（AC-14, AC-29）。
+  - `BoardPerformanceBench`（§71.3）: CLI Signal Boardのレイテンシ/安定性測定（AC-15, NFR-11拡張）。
+  - `CostAndGapStressLab`（§71.4）: コストテーブル変動と週末ギャップモンテカルロ注入（AC-17, AC-18）。
+  - `DeterminismLab`（§71.5）: 先見排除・High/Low順序入替時のPF/シグナル一致検証（AC-19, AC-25, NFR-09）。
+  - `ManualGuardSimulator`（§71.6）: HITL手入力/未設定OCOのエラー抑止（AC-20, AC-30, NFR-02）。
+  - `RiskConsistencyMonitor`（§71.7）: 実績R分布と設定値の乖離チェック（AC-21, NFR-03）。
+  - `OverfitGuard`（§71.8）: ローリング6ヶ月のPF低下率監視（AC-23, NFR-20拡張）。
+  - 共通基盤として`HardeningRun` dataclass（`scenario_id`, `inputs`, `metrics`, `result`, `evidence_path`）を提供し、`ops_worklog`とValidation Data Playbookに直接リンクする。
+
+#### 71.1 CalendarBlockLab (`src/diagnostics/hardening/calendar_lab.py`)
+- **責務**: `CalendarService`（§3.13）と`GateAggregator`（§3.5）に対し、FOMC/雇用統計/月末Fixのテストケースを注入して`tradectl board`が新規提案を抑止→解除するかを自動検証。
+- **API**: `run(event: CalendarEventScenario, *, auto_release: bool) -> HardeningRun`。`auto_release=False`の場合はRunbookによる手動解除を想定。
+- **データ**: `tests/fixtures/calendar/hardening_events.yaml`にUTC時刻・重要度・予想/結果などのメタデータを保持。`CalendarBlockLab`は±30分の自動拡張（AC-12）と`news_block_override`操作ログを照合し、`metrics/calendar_lab.jsonl`へ書き出す。
+- **CLI**: `tradectl diagnostics calendar simulate --scenario fomc --auto-release`。`--evidence`指定で`reports/validation_log/AC-12_<date>.md`へMarkdownを生成。
+- **テスト**: `pytest -k calendar_lab`。`HealthMonitor`に`alert_id='calendar_block'`が2回発火すること、解除後に`TicketProposal`が復帰することをアサート。
+
+#### 71.2 SprtScenarioLab (`src/diagnostics/hardening/sprt_lab.py`)
+- **責務**: `risk/sprt.py`をテスト用データセット（勝率急落シリーズ）で駆動し、α=0.05/β=0.10の既定値で停止→24hクールダウン→復帰を検証（AC-14, AC-29）。
+- **処理**:
+  1. `SprtScenario`をロードし、`SprtEvaluator.evaluate(series)`を連続実行。
+  2. `sprt_state='stopped'`になったタイムスタンプを記録し、`cooldown_hours`経過後に`SprtStateMachine.try_resume()`で復帰確認。
+  3. 結果を`metrics/sprt_lab.jsonl`に `{"scenario","stop_ts","resume_ts","elapsed_hours"}` 形式で追記、`HealthMonitor`に`sprt.auto_stop`イベントを発火。
+- **CLI**: `tradectl diagnostics sprt run --scenario drift_down --cooldown 24h`。`--plot`で検定曲線PNGを`reports/diagnostics/sprt/<scenario>.png`へ保存。
+- **テスト**: `pytest -k sprt_lab`がシナリオの停止回数=1、復帰後の新規提案が再開することを検証。
+
+#### 71.3 BoardPerformanceBench (`tools/bench_board.py`)
+- **目的**: 1営業日（100提案）相当のイベントをリプレイし、`tradectl board`レンダリング時間、例外発生数、TTL表示誤差を測定（AC-15, NFR-02）。
+- **処理**:
+  - `board_bench.py --events tests/fixtures/events/hardening_board.jsonl --iterations 100`。
+  - `metrics/board_perf.jsonl`へ`render_ms`, `update_ms`, `ttl_error_ms`, `exceptions`を記録。p95/p99が閾値を超えるとExit≠0。
+- **CI統合**: `make bench-board`をHardening Packetの必須タスクとし、結果を`reports/performance/board_bench/<timestamp>.md`へ出力。
+- **テスト**: `pytest -k board_bench_smoke`で5提案版を高速確認。
+
+#### 71.4 CostAndGapStressLab (`src/backtest/sensitivity.py`)
+- **責務**: `BacktestEngine`にコスト倍率・滑り・週末ギャップシナリオを注入（AC-17, AC-18）。
+- **API**: `run_cost_sweep(run_id, *, spread_multiplier: list[float], commission_multiplier: list[float])` と `run_gap_monte_carlo(run_id, *, samples=500)`。
+- **出力**: `reports/diagnostics/cost_gap/<run_id>.json`に各シナリオのPF/Sharpe/MaxDDを保持。PF中央値≥1.0、MaxDD増分≤5%を自動判定。
+- **Runbook連携**: `RUN-RISK-03`へCost/GAP検証ステップを追加し、失敗時は`health.raise('warn','cost_gap_regression')`。
+- **テスト**: `pytest -k cost_gap_lab`で感度シナリオの境界値を検証。
+
+#### 71.5 DeterminismLab (`src/diagnostics/hardening/determinism_lab.py`)
+- **目的**: `PipelineRunner`を同一`data_hash/config_hash/seed`で2回実行し、PF差≤0.1%、シグナル一致率≥99.5%（High/Low順序入替時のPF差±5%以内を含む）（AC-19, AC-25, NFR-09）。
+- **処理**:
+  - `replay_once(mode='paper', seed=42)`と`replay_with_mutation(mutate='hl_swap')`を比較。
+  - 差分を`reports/diagnostics/determinism/<run_id>.md`へMarkdown出力し、差異>閾値の場合は`health.raise('warn','determinism_drift')`。
+- **テスト**: `pytest -k determinism_lab`。`StrategyRegistry`の`determinism_key`と連携し、欠落時に自動失敗。
+
+#### 71.6 ManualGuardSimulator (`tests/hitl/test_manual_guard.py`)
+- **責務**: 100件の承認/編集/却下シナリオをモックブローカーと連携して実行し、OCO未設定・手入力ミスが`TicketValidator`で捕捉されること、承認から120秒以内に`ticket.oco_ack`が無い場合はBoard停止（AC-20, AC-30, NFR-02）。
+- **実装**:
+  - `ManualActionScenario`（`payload_mutations`, `expected_error`）を列挙。
+  - `TicketActionRunner.run_scenarios()`が各シナリオを実行し、`audit.ticket_action`と`ops_worklog`に記録。
+- **CLI**: `tradectl diagnostics hitl simulate --scenarios default --max-latency 120`。
+- **Runbook**: `RUN-HITL-01`に「Hardeningシミュレーション結果添付」チェックを追加。
+
+#### 71.7 RiskConsistencyMonitor (`src/risk/telemetry.py`)
+- **目的**: 4ペア×0.75%リスク指定時に実績R分布のブレが±5%以内であるか監視（AC-21, NFR-03）。
+- **処理**:
+  - `RiskConsistencyMonitor.collect(fill_events)`が`expected_R`と`realized_R`のローリング分布を算出。
+  - 乖離が閾値を超えると`risk.consistency_warn`イベントと`metrics/risk_consistency.jsonl`を更新。
+  - 週次で`tradectl risk consistency report`が`reports/risk/consistency/<YYYYWW>.md`を生成。
+- **テスト**: `pytest -k risk_consistency_monitor`。
+
+#### 71.8 OverfitGuard (`src/research/overfit_guard.py`)
+- **責務**: ローリング6ヶ月ウィンドウで更新週の次月PF低下率を測定し、20%超過時に`strategy.watchlist`と`lifecycle.blocked(reason='overfit')`を発火（AC-23, NFR-20）。
+- **統合**: Research Pipeline（§26）とStrategy Lifecycle（§57）が`OverfitGuard.evaluate(strategy_id)`結果をGate判定に利用。`metrics/overfit_guard.jsonl`で監視し、`tradectl research overfit report`でRunbookへ添付。
+- **テスト**: `pytest -k overfit_guard`。
+
+### 72. Paper-Liveパリティ検証ラボ設計（AC-26）
+- **モジュール**: `src/diagnostics/parity_lab.py`。
+- **処理**:
+  1. Paperログ（`logs/events/paper/*.jsonl`）とLive実績CSVを同期し、`ParityDataset`を作成。
+  2. `ParityEngine.compare()`がシグナル一致率、KS検定、PF差を計算。
+  3. 結果を`reports/diagnostics/parity/<YYYYMMDD>.md`と`metrics/parity_lab.jsonl`へ出力。閾値未達は`health.raise('warn','parity_drift')`。
+- **CLI**: `tradectl diagnostics parity run --mode paper --live-csv data/account/live_sample.csv`。
+- **テスト**: `pytest -k parity_lab`。CIで週次自動実行し、失敗時はOps AgendaにTODOを追加。
+
+### 73. 流動性・Reduce-Only・ストレス応答設計（AC-35/AC-36/AC-38, NFR-02/NFR-03）
+- **LiquidityStressLab (`src/diagnostics/liquidity_lab.py`)**: デュアルプロバイダ（Dukascopy vs yfinance）の価格乖離>1.5σを検知し`board_mode='hold'`に切替、解除時に`reports/diagnostics/liquidity/<date>.md`へ乖離グラフを自動添付（AC-38）。
+- **ReduceOnlyScenarioRunner (`src/execution/reduce_only_lab.py`)**: `free_margin`が閾値未満のシナリオをリプレイし、`ReduceOnlyAdvisor.generate()`が100%提案し、新規エントリーが0件であることを検証（AC-35）。`metrics/reduce_only_lab.jsonl`で結果を記録。
+- **StressScenarioSuite (`src/stress/engine.py`拡張)**: Brexit/COVIDシナリオ（§23）に提案遅延測定と`MaxDD`比較を追加し、基準値との差分≤5%/120秒以内を判定（AC-36）。
+- **CLI**: `tradectl diagnostics liquidity run --scenario brexit`、`tradectl diagnostics reduce-only simulate --margin 0.2`。
+- **テスト**: `pytest -k liquidity_lab`, `pytest -k reduce_only_lab`, `pytest -k stress_lab_hardening`。
+- **Resilience Metrics**: 上記ラボはNFR-02/03のエビデンスとして`metrics/resilience.jsonl`へ統合し、`tradectl metrics report --kind resilience`が稼働率と自動停止ログを集計する。
+
+### 74. Pre-Tradeコンプライアンス強化（AC-39, AC-30再確認）
+- **PreTradeComplianceService拡張**（§21.1）: `rule.kind`に`fifo`, `hedge`, `position_limit`のシナリオを追加し、違反チケットのブロックと代替案（Reduce-Only/サイズ縮小）を提示。
+- **ハーネス**: `tests/integration/test_pretrade_compliance_hardening.py`がFIFO禁止口座/ポジション上限違反を再現し、100%ブロック+監査記録を検証。
+- **CLI**: `tradectl compliance pretrade dry-run --ticket fixtures/compliance/fifo_violation.json`。
+- **監査**: `audit.pretrade_violation`イベントに`rule_id`, `suggested_action`, `runbook_ref`を追加。`SecureShareService`（§48）と連携して証跡化。
+
+### 75. 信頼性・可用性ファルトインジェクション（NFR-02, NFR-03）
+- **FaultInjectionRunner (`tools/fault_injection.py`)**: ネットワーク断・API遅延・ディスクフルを模擬し、`HealthMonitor`が`soft_stop`/`hard_stop`へ遷移するか、復旧後に自動再開するかを検証。`metrics/fault_injection.jsonl`に結果を記録。
+- **ResilienceCI**: `make fault-injection`を週次CIジョブとして追加し、結果を`reports/diagnostics/fault_injection/<date>.md`へ出力。Runbook `DR-LOCAL-01`とリンク。
+- **Telemetry**: `uptime_monitor.py`が1分毎に稼働状態を記録し、稼働率≥99%（NFR-03）を`metrics/uptime.jsonl`で確認。逸脱時は`health.raise('warn','uptime_drop')`。
+
+### 76. 時刻整合・NTPガード設計（NFR-09, NFR-10）
+- **TimeSyncGuard (`src/core/time_sync.py`)**: `ntplib`を用いて起動時と毎時のNTP差分を測定し、`drift_ms`が閾値（±250ms）を超えた場合に`health.raise('warn','clock_drift')`と`board_mode='guarded'`推奨を発火。`metrics/time_sync.jsonl`で記録。
+- **TimestampValidator**: `DataIngestionService`が受信バーのUTC境界（00/05/10…）を検証し、`timestamp_mismatch`イベントを生成。`DeterminismLab`と連携し、再現テストでタイムゾーン差異がないことを証跡化。
+- **CLI**: `tradectl diagnostics time-sync check --source pool.ntp.org`、`tradectl diagnostics timestamp audit --mode paper --window 1d`。
+- **テスト**: `pytest -k time_sync_guard`。
+
+### 77. モデル/データ署名・アトリビューション再現性強化（NFR-20, NFR-22, AC-42, AC-47）
+- **ManifestSignatureService (`src/data/manifest_signer.py`)**: `DataManifestService.attach_signature()`（§20.1）を拡張し、`manifest.sig`（Ed25519署名）を生成。`tradectl data manifest sign --scope manifest`が成功→偽造ファイルで失敗する自動テスト `pytest -k manifest_signature` を追加（AC-42）。
+- **AttributionSnapshotLock (`src/reporter/attribution_lock.py`)**: `Reporter.generate_attribution()`（§28）と連携し、計算結果を`metrics/attribution_snapshots.json`へハッシュ付きで格納し、再生成時は差分を警告（NFR-22）。
+- **ManifestExpiryScheduler (`src/strategies/manifest_expiry.py`)**: `StrategyManifestValidator`（§27.1）に`expires_at`監視を追加し、90日超過で`status='deprecated'`と`ops.agenda.manifest_renewal` TODOを発火。`tradectl strategy manifest renew --id <strategy>`がチェックリストを完了すると`lifecycle.stage_promoted`が再許可（AC-47）。
+- **AuditIntegration**: `audit.manifest_signed`, `audit.manifest_expired`イベントを追加し、`SecureShareService`（§48）で共有可能にする。
+- **Runbook**: `GOV-STRAT-01`に署名/更新手順を追記し、Validation Data Playbookへ`AC-47_manifest_renewal.yaml`を新規作成。
+
