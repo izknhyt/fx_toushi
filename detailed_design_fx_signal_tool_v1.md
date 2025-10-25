@@ -1,4 +1,4 @@
-# FXヒューマン・インザループ投資ツール 詳細設計書 v1.20
+# FXヒューマン・インザループ投資ツール 詳細設計書 v1.21
 
 ## 0. 文書情報
 - 作成日: 2025-02-20
@@ -9,6 +9,7 @@
 ### 0.1 改訂履歴
 | 版 | 日付 | 改訂概要 |
 | --- | --- | --- |
+| v1.21 | 2025-03-03 | §60でSignal Board Shadow/SlackブリッジとGUI準備（FR-12/FR-47, M2準備）を追加。§61でStop/Freeze検証・キャピタルガード回帰ハーネス（AC-31/AC-41, FR-50/FR-51連携）を整理し、Codex向けテスト/Packetを提示。 |
 | v1.20 | 2025-03-02 | §49〜§50にリアルタイムフィード評価/ライセンスガバナンス（M1.2準備, NFR-05/17, AC-45拡張）を追加し、Data Ingestion/HealthMonitor/BackOfficeとの連携、契約証跡/コスト評価/Runbook整備をCodex Packet化。 |
 | v1.19 | 2025-02-28 | §46にモデルリスクレジスタ/Explainability監査（NFR-26, AC-52, FR-55/56連携）を追記し、Scoreboard/Idea Pipeline/Complianceゲートとの連携、証跡テンプレ/CLI/テレメトリ/Packetを整備。 |
 | v1.18 | 2025-02-27 | §43〜§45にスケーリング/リソースガバナンス、プロファイル差分署名、Ops証跡管理（NFR-19/25/28）を追加し、Capacity診断/Config署名/証跡リセット制御のCodex Packetを整備。 |
@@ -5795,4 +5796,175 @@ MkDocsベースのドキュメント生成と、CLI/UXスタイルガイド適�
   1. `tradectl docs build --strict`が成功し、`reports/governance/doc_diff_<date>.md`に前回ビルドとの差分が要約される。
   2. `make check-runbooks`→`DocLint`→`RunbookInventoryService`の連携で、Runbookテンプレ差分がCI上で検知され、`reports/governance/runbook_inventory_status.json`に最新状態が反映される。
   3. `dist/docs_<version>.tar.gz`が`OfflineBundleBuilder`の`manifest.json`へ登録され、`make bundle-verify`でドキュメント展開チェックが通過する。
+
+### 60. Signal Board Shadow & Notification Bridge設計（FR-12, FR-47, M2準備）
+
+FR-12（アラート通知）とFR-47（エマージェンシープロトコル）のM2拡張では、CLI主体のHITL運用を保ちつつSlack/GUI Shadowへ提案・アラートを複製し、緊急時のリアルタイム共有と将来GUI(Tauri)移行の基盤を整備する必要がある。本節では`ShadowBridge`レイヤを新設し、EventBus→Slack/Webhook→Shadow GUIへの一貫した配信・承認フックを定義する。M1 CoreではFeature Flagで無効化し、M2以降の段階導入を想定した設計とする。
+
+#### 60.1 SlackShadowBridge (`src/interfaces/shadow/slack_bridge.py`)
+
+- **責務**: Signal Boardのチケット提案・Health/Kill Switchイベント・OpsアラートをSlackチャネルへ整形送信し、承認/却下/コメントの簡易操作をThreadで受け付ける。承認操作はCLIへ最終決裁を委譲し、Shadow上では`ack`/`comment`のみ可能にする。
+- **データモデル**:
+  | モデル | 主フィールド | 説明 |
+  | --- | --- | --- |
+  | `ShadowChannelConfig` | `channel_id`, `threading_mode∈{'ticket','alert','incident'}`, `allow_ack:bool`, `runbook_ref`, `severity_filter` | Slackチャンネル別設定。`severity_filter`で`alert.warning`のみ等のフィルタを定義。 |
+  | `ShadowPayload` | `event_type`, `ticket_id`, `title`, `body_md`, `badges`, `risk_state`, `board_mode`, `health_state`, `consent_reference_id`, `runbook_link`, `actions:list[SlackAction]` | Slack投稿に必要なデータを保持。 |
+  | `SlackAction` | `id`, `label`, `style∈{'primary','danger','secondary'}`, `callback`, `requires_note` | Thread内ボタン/メニューを表現。承認は禁止（`style='secondary'`, `callback='ack_only'`等）。 |
+- **主要API**:
+  | 関数 | 入力 | 処理 | 出力/副作用 |
+  | --- | --- | --- | --- |
+  | `SlackShadowBridge.publish(payload, *, channel_config)` | `ShadowPayload`, `ShadowChannelConfig` | Richカード整形→Slack Webhook/SDK呼出→`shadow.message.posted`イベント発火 | SlackメッセージID（TS） |
+  | `SlackShadowBridge.handle_interaction(payload)` | Slack Interaction | `callback`判定→`ShadowAckEvent`生成→`audit.shadow_interaction`記録→`ops_worklog`へTODO追加 | `AckReceipt` |
+  | `SlackShadowBridge.sync_threads(ticket_id)` | Ticket ID | 対応するThreadに最新チケットJSON/Runbook差分を再投稿 | `ShadowSyncResult` |
+- **構成**:
+  1. EventBusで`ticket.proposed`, `ticket.updated`, `health.changed`, `emergency.triggered`を購読。
+  2. `ShadowPayloadFactory`がBoardRenderer（§3.15）と同一テンプレを利用してMarkdown整形（Spread/RiskDisclosureバナー含む）。
+  3. Slack投稿後、`ShadowRegistry`が`ticket_id→channel_id/thread_ts`マップを保持し、承認完了時に自動で「Closed」ラベルを付与。
+  4. Interactionは`tradectl shadow ack --source slack --ticket <id>`を内部的に呼び出し、CLI経由で承認ログへ`ack_channel='slack_shadow'`を記録。実際の`approve/reject`はShadowからは不可。
+- **ガードレール**:
+  - Feature Flag `shadow.slack_enabled`（既定False）。
+  - リスク承諾未済（`consent_reference_id is None`）や`board_mode='halted'`時は投稿に`[LOCKED]`バナーを付与し、Thread操作を`comment_only`へ制限。
+  - Emergency通知は`severity='critical'`のみSlackへ送信し、`runbook_ref`を必須化。`ack`が5分以内に得られない場合`AlertDispatcher`がメールへフォールバック。
+- **監査**: `audit.shadow_message`, `audit.shadow_interaction`。フィールドに`channel_id`, `message_ts`, `ticket_id`, `actions`, `actor`, `note_hash`。
+
+#### 60.2 ShadowSessionOrchestrator & GUI Feed (`src/shadow/session.py`, `src/interfaces/gui/shadow_api.py`)
+
+- **目的**: Slack Shadowと将来のTauri GUIを共通のイベントストリームで駆動する。`ShadowSessionOrchestrator`が`EventBus`購読→`ShadowStateStore`へ反映→WebSocket/HTTP経由でGUIに配信する。
+- **アーキテクチャ**:
+  ```
+  EventBus → ShadowSessionOrchestrator → ShadowStateStore (SQLite/Redis future)
+                                    ↘
+                                     SlackShadowBridge (Webhook)
+                                     GUI Shadow API (FastAPI/Tauri bridge)
+  ```
+- **主なコンポーネント**:
+  | コンポーネント | 役割 | 実装メモ |
+  | --- | --- | --- |
+  | `ShadowSessionOrchestrator` | `event_type`に応じて`ShadowStateStore`更新、Slack/GUIブリッジ呼び出し | `start()`で非同期ループ起動。`EventBus.subscribe(pattern=['ticket.*','health.*','ops.agenda.*'])` |
+  | `ShadowStateStore` | 最新チケット/アラート/HealthのShadow表現を保持。`shadow_state.db` (SQLite) に保存 | テーブル: `shadow_ticket`, `shadow_alert`, `shadow_ack`。TTL=36h |
+  | `ShadowGuiAPI` | `GET /shadow/tickets`, `GET /shadow/alerts`, `POST /shadow/ack` | FastAPI (M2 PoC)。CORS/Token認証。 |
+  | `ShadowReplayService` | 過去24hのShadowイベントを`tradectl shadow replay --since`で再送 | 監査/訓練に利用。 |
+- **GUI準備**:
+  - `ShadowGuiAPI`はTauriフロント（M3想定）から利用するREST/WS契約を先行定義。レスポンススキーマは`docs/schema/shadow_gui.yaml`でOpenAPI管理。
+  - `watch`エンドポイントはServer-Sent Events（SSE）で提供し、GUIがリアルタイム更新を表示できる。SSEペイロードには`schema_version='shadow.event.v1'`を明示。
+- **セキュリティ**:
+  - Slack連携用Tokenは`Keychain`/`.env.shadow`で管理。`ShadowSessionOrchestrator`は`config/shadow/channels.yaml`を読み込み、暗号化Webhookを`ShadowSecretsManager`（§42）で復号。
+  - GUI APIは`auth.shadow_tokens`（`config/shadow/tokens.yaml`）を参照し、`token`ヘッダ認証＋レートリミット（既定60 req/min）。
+- **Runbook**:
+  - `RUN-SHADOW-01`: Slackチャンネル追加・Webhook更新・`tradectl shadow test --channel ops-shadow`で疎通確認。
+  - `RUN-SHADOW-02`: GUI Shadow起動手順（PoC）。`tradectl shadow serve --profile paper --port 7777`→Tauriアプリ接続→承認フローの手動検証。
+- **イベント**: `shadow.state.updated`, `shadow.gui.ack_received`, `shadow.slack.error`。`AlertDispatcher`とOps Agenda（§52.3）が購読。
+
+#### 60.3 テレメトリ・テスト・Codex Packet
+
+- **メトリクス** (`metrics/shadow_bridge.jsonl`): `tickets_posted`, `alerts_posted`, `slack_ack_latency_ms`, `gui_clients_connected`, `ack_channel_distribution`。Slack API失敗時は`shadow_bridge.error`イベントを発火し、指数バックオフ3回で再試行。
+- **監査/証跡**:
+  - `reports/shadow/ops_playback/<YYYYMMDD>.md`: 24hのShadow配信ログ（投稿件数、未ACK一覧、Runbookリンク）。
+  - `SecureShareService`（§48）が`shadow`カテゴリで証跡バンドルを生成し、外部レビューへSlackログを共有（PIIマスキング必須）。
+- **テスト**:
+  - `tests/unit/test_slack_shadow_bridge.py`: Payload整形、Feature Flag無効時のスキップ、Runbookリンク埋め込み、429リトライ。
+  - `tests/unit/test_shadow_state_store.py`: SQLiteストアのTTL/アップサート、リプレイ順序。
+  - `tests/integration/test_shadow_orchestrator.py`: EventBus→Slack（モック）/GUI API連携、`tradectl shadow replay` CLI、エラー時フォールバック。
+  - Approvalテスト: `tests/approval/shadow/`でSlack投稿MarkdownとGUI APIレスポンスをスナップショット管理。
+- **Codex Packet案**:
+  | Packet ID | スコープ | 依存セクション | 成果物 | テスト |
+  | --- | --- | --- | --- | --- |
+  | `EP13-SHADOW-P1` | `ShadowStateStore`＋`ShadowSessionOrchestrator`基盤 | §60.2 | `src/shadow/session.py`, `src/shadow/store.py`, ユニットテスト | `pytest -k shadow_state_store`, `pytest -k shadow_orchestrator` |
+  | `EP13-SHADOW-P2` | SlackShadowBridge実装＋CLI `tradectl shadow test/replay` | §60.1, §60.2 | `src/interfaces/shadow/slack_bridge.py`, `src/interfaces/cli/shadow.py` | `pytest -k slack_shadow_bridge`, `pytest-approvaltests -k shadow_slack` |
+  | `EP13-SHADOW-P3` | GUI Shadow API（SSE/REST）＋Validation/Runbook連携 | §60.2, §60.3 | `src/interfaces/gui/shadow_api.py`, OpenAPIスキーマ, Runbook更新 | `pytest -k shadow_gui_api`, `tradectl shadow serve --dry-run` |
+- **受入条件**:
+  1. `tradectl shadow test --channel ops-shadow --ticket sample_ticket.json`がSlackモックへ投稿し、Thread ACKで`audit.shadow_interaction`記録とOps Agenda TODO生成を確認。
+  2. `tradectl shadow serve --profile paper --dry-run`起動後に`curl localhost:7777/shadow/tickets`で最新提案がJSONレスポンス化される。
+  3. `reports/shadow/ops_playback/<date>.md`に投稿件数/未ACK/Runbookリンクが自動出力され、`SecureShareService.prepare_package(profile='ops_shadow')`で暗号化バンドル生成が成功する。
+
+### 61. Stop/Freeze検証 & キャピタルガード回帰ハーネス設計（AC-31/AC-41, FR-50/FR-51連携, M2準備）
+
+AC-31は4ペア×50件チケットの最小距離/丸め検証を自動化し、ブローカー仕様と一致しない提案をゼロにすることを要求する。AC-41ではVaR/ES閾値超過時に提案頻度を50%以上減衰させ、冷却後に自動復帰する挙動を回帰テストで担保する。本節では`ComplianceRegressionSuite`を新設し、Ticket Builder→PreTradeComplianceService→CapitalAllocationGuardの一連をシミュレーションするハーネスを設計する。M1 Coreではオフラインテストとして運用し、M2でCI常設化する。
+
+#### 61.1 TicketScenarioGenerator (`tools/compliance_ticket_generator.py`)
+
+- **目的**: `broker_rules.yaml`と`strategy_manifest.yaml`を基に、代表的なシナリオ（時間帯×ペア×ボラティリティ）でチケットを大量生成し、Stop/Freeze/丸め検証に供する。
+- **入力**:
+  - `config/broker_rules.yaml`: `min_distance_pips`, `freeze_level_pips`, `lot_increment`, `allowed_time_windows`, `fifo_required`。
+  - `data/market_scenarios/*.json`: ボラティリティ/スプレッド分布（`low`, `normal`, `high`）。
+  - `strategies/<id>/sizing_profile.yaml`: 各戦略の推奨リスク/SL/TP。
+- **シナリオ出力**:
+  ```json
+  {
+    "scenario_id": "USDJPY_normal_tokyo_open",
+    "pair": "USDJPY",
+    "mode": "paper",
+    "timestamp": "2025-03-03T00:10:00Z",
+    "spread_pips": 0.18,
+    "atr_pips": 0.55,
+    "proposed_sl_pips": 12.0,
+    "proposed_tp_pips": 18.0,
+    "lot": 0.24,
+    "reason_tags": ["baseline", "m1_core"]
+  }
+  ```
+- **アルゴリズム**:
+  1. `generate(per_pair: int=50)`が各ペアで時間帯/ボラティリティを均等サンプリング。
+  2. `apply_broker_rules()`で`lot`丸め、`sl/tp`を`min_distance`以上に補正。補正後の差異を`adjustments`として保持。
+  3. 生成チケットは`tmp/scenarios/<run_id>/<pair>.jsonl`へ保存し、回帰ハーネスで再利用可能にする。
+- **異常系**: `BrokerRuleViolation`（ルール未定義）、`ScenarioGenerationError`（ボラティリティ分布欠落）。
+- **テスト**: `tests/unit/test_ticket_scenario_generator.py`で丸め・距離補正ロジック、ランダムシード再現性を検証。
+
+#### 61.2 ComplianceRegressionRunner (`tools/compliance_regression.py`)
+
+- **役割**: 生成したチケットを`PreTradeComplianceService`＋`CapitalAllocationGuard`へ通し、違反ゼロと提案スロットリングの挙動を数値化。
+- **ワークフロー**:
+  1. `load_scenarios(path)`で`TicketScenario`を読み込み、`TicketBuilder`へ差し込み。
+  2. `run_pretrade_checks()`が各チケットで`PreTradeComplianceService.evaluate`を実行し、`status`/`violation_codes`を集計。
+  3. `simulate_capital_guard()`がVaR/ESプロファイルを人工的に調整し、`CapitalAllocationGuard.update`を呼び出して`ThrottleDecision`の遷移（`ok`→`warn`→`throttle`→`halt`）を確認。
+  4. `record_results()`が`reports/compliance/regression/<date>.md`と`metrics/compliance_regression.json`を生成。`pass_rate`, `min_distance_violations`, `freeze_level_violations`, `proposal_drop_pct`, `cooldown_recovered_minutes`などを出力。
+- **CLI**:
+  | コマンド | 用途 | 主なオプション | 出力 |
+  | --- | --- | --- | --- |
+  | `tradectl compliance regression run --profile paper --scenarios tmp/scenarios/run_20250303` | AC-31/AC-41回帰実行 | `--capitalsim stress|baseline`, `--export-json` | Markdown/JSON結果、`audit.compliance_regression`記録 |
+  | `tradectl compliance regression diff --against <YYYYMMDD>` | 過去結果比較 | `--json`, `--threshold 0.02` | 差分レポート、閾値超過でExit≠0 |
+  | `tradectl compliance regression generate --per-pair 50` | シナリオ生成 | `--profile`, `--out` | `TicketScenario` JSONL |
+- **メトリクス** (`metrics/compliance_regression.json`):
+  ```json
+  {
+    "schema_version": "compliance.regression.v1",
+    "generated_at": "2025-03-03T09:00:00Z",
+    "profile": "paper",
+    "tickets_tested": 200,
+    "min_distance_violations": 0,
+    "freeze_level_violations": 0,
+    "rounding_issues": 0,
+    "throttle_triggered": true,
+    "proposal_drop_pct": 0.56,
+    "cooldown_recovered_minutes": 185
+  }
+  ```
+- **Runbook連携**: `RUN-COMPLIANCE-02`（新設）で回帰手順→結果レビュー→Config差分確認→承認サインを定義。`OpsWorklogService`が`task='compliance_regression'`で工数を記録。
+
+#### 61.3 テレメトリ・運用・監査
+
+- `AuditTrail`:
+  - `audit.compliance_regression`（`run_id`, `tickets_tested`, `violations`, `throttle_triggered`, `actor`, `artifact_paths`）。
+  - `audit.compliance_regression_diff`（差分比較結果）。
+- `Validation Data Playbook`: `validation_playbook/AC31_stop_freeze.yaml`, `validation_playbook/AC41_capital_guard.yaml`を追加し、最新レポートのハッシュ・承認者・Runbook参照を記録。
+- Ops Agenda連携: 回帰結果で`min_distance_violations>0`または`proposal_drop_pct<0.5`の場合、`OpsAgendaService`が翌営業日TODOを生成し`config/broker_rules.yaml`の見直しを指示。
+- Reporter統合: 週次レポートに`Compliance Regression`セクションを追加し、最新実行日時と主要指標を掲示（FR-51/KPIレビューの補助）。
+
+#### 61.4 テスト戦略・Codex Packet
+
+- **自動テスト**:
+  - `tests/unit/test_compliance_regression_runner.py`: 結果集計、違反検出、JSON出力、閾値判定ロジック。
+  - `tests/integration/test_compliance_regression_cli.py`: `generate`→`run`→`diff`フロー、Audit/Runbook連携、`CapitalAllocationGuard`連動。
+  - `tests/approval/cli/compliance_regression/`: Markdownレポートスナップショット。
+  - `pytest -k compliance_regression`をM2 CIジョブに追加し、`@pytest.mark.m2plus`タグで制御。
+- **Codex Packet案**:
+  | Packet ID | スコープ | 依存セクション | 成果物 | テスト |
+  | --- | --- | --- | --- | --- |
+  | `EP10-COMP-P1` | TicketScenarioGenerator実装＋ユニットテスト | §61.1 | `tools/compliance_ticket_generator.py`, `tests/unit/test_ticket_scenario_generator.py` | `pytest -k ticket_scenario_generator` |
+  | `EP10-COMP-P2` | ComplianceRegressionRunner + CLI `generate/run/diff` | §61.2 | `tools/compliance_regression.py`, `src/interfaces/cli/compliance.py`拡張 | `pytest -k compliance_regression_runner`, `pytest-approvaltests -k compliance_regression_cli` |
+  | `EP10-COMP-P3` | Metrics/Validation/Runbook連携、Ops Agenda/Reporter統合 | §61.3, §61.4 | `metrics/compliance_regression.json`スキーマ, Reporterテンプレ, Validation Playbook/Runbook更新 | `pytest -k compliance_regression_cli`, `make check-validation`, `tradectl compliance regression run --dry-run` |
+- **受入条件**:
+  1. `tradectl compliance regression generate --per-pair 50`で生成したシナリオを`tradectl compliance regression run --profile paper`へ投入した際、`min_distance_violations=0`かつ`freeze_level_violations=0`となること（AC-31）。
+  2. `--capitalsim stress`オプションでVaR/ESを閾値超過に設定した場合、`proposal_drop_pct≥0.5`かつ`throttle_triggered=True`となり、`cooldown_recovered_minutes`が`CapitalGuardPolicy.cooldown_minutes±5`以内に収束すること（AC-41）。
+  3. 実行結果が`reports/compliance/regression/<date>.md`に保存され、`validation_playbook/AC31_stop_freeze.yaml`・`AC41_capital_guard.yaml`へハッシュが追記される。`SecureShareService.prepare_package(profile='compliance_regression')`で外部レビュー向け証跡バンドルを生成できること。
 
