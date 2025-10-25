@@ -1,4 +1,4 @@
-# FXヒューマン・インザループ投資ツール 詳細設計書 v1.24
+# FXヒューマン・インザループ投資ツール 詳細設計書 v1.25
 
 ## 0. 文書情報
 - 作成日: 2025-02-20
@@ -9,6 +9,7 @@
 ### 0.1 改訂履歴
 | 版 | 日付 | 改訂概要 |
 | --- | --- | --- |
+| v1.25 | 2025-03-07 | §78でBacktest回帰CI/データボリューム制御（AC-01/AC-13, NFR-06/NFR-12）を追加し、`make regression-backtest`とGitHub Actions統合、Evidence運用を設計。§79でブローカーAPI接続準備/サンドボックス統合（FR-07/FR-39/FR-58, AC-03/AC-06, NFR-02/NFR-17, M3準備）を定義し、Feature Flag/Runbook/監査フローを追補。Codex Packetとテスト計画を更新。 |
 | v1.24 | 2025-03-06 | §71でHardening検証ハーネス/診断ラボ群（AC-12/AC-14/AC-15/AC-17/AC-18/AC-19/AC-20/AC-21/AC-23/AC-24/AC-25/AC-29/AC-30, NFR-02/NFR-03/NFR-09/NFR-10）を新設し、§72〜§77でPaper-Liveパリティ、流動性ストレス、Pre-Trade強化、Fault Injection、時刻整合、署名管理を追加。Codex Packet/CLI/テレメトリ/テスト計画を更新。 |
 | v1.23 | 2025-03-05 | §67でリスク開示ハードエンフォースメント/デバイスバインディング設計（FR-53/FR-54, AC-44, NFR-17）を追加。§68で研究昇格ゲート/チェックリスト自動化（FR-55/FR-62, AC-46, NFR-21）を詳細化し、Codex PacketとValidation連携を定義。 |
 | v1.22 | 2025-03-04 | §64でマージン・相関ストレスラボとリスクエンベロープ調整（FR-36/FR-37/FR-51, AC-32）を追記。§65でトレーダーワークフローテレメトリ/コーチング基盤（FR-44/FR-48, NFR-11/28）を設計。§66でAcceptable Degradationプレイブック自動化（FR-47, NFR-14/28, AC-34/AC-43）を追加し、Codex Packetとテスト計画を整備。 |
@@ -6702,4 +6703,90 @@ M1.1 Hardeningでは戦略ガード・HITL運用・再現性に関する受入�
 - **ManifestExpiryScheduler (`src/strategies/manifest_expiry.py`)**: `StrategyManifestValidator`（§27.1）に`expires_at`監視を追加し、90日超過で`status='deprecated'`と`ops.agenda.manifest_renewal` TODOを発火。`tradectl strategy manifest renew --id <strategy>`がチェックリストを完了すると`lifecycle.stage_promoted`が再許可（AC-47）。
 - **AuditIntegration**: `audit.manifest_signed`, `audit.manifest_expired`イベントを追加し、`SecureShareService`（§48）で共有可能にする。
 - **Runbook**: `GOV-STRAT-01`に署名/更新手順を追記し、Validation Data Playbookへ`AC-47_manifest_renewal.yaml`を新規作成。
+
+### 78. バックテスト回帰CI & データボリューム制御設計（AC-01/AC-13, NFR-06/NFR-12, M1.1 Hardening）
+
+M1.1で導入予定の`make regression-backtest`ワークフローは、Backtest/Liveの一致率（AC-01/AC-13）とビルド再現性（NFR-06/NFR-12）をCIで常時検証する。計算負荷と証跡保持を両立するため、専用データセットとキャッシュ、エビデンス保管規約、Codex向け指針を設計する。
+
+#### 78.1 RegressionBacktestSuite (`src/backtest/regression.py`)
+- **責務**: `BacktestEngine`（§11.1）を固定シードで複数シナリオ実行し、PF差分/WinRate差分/提案一致率を算出。Paper-Live差分検知（§72）と同一スキーマでJSONを出力し、`DeterminismLab`（§71.5）と整合。
+- **シナリオ定義**: `regression_scenarios.yaml`に`strategy_id`, `window`, `market_data_bundle`, `expected_metrics`を保持。`expected_metrics`は`target`/`tolerance`/`metric_state`で構成し、許容誤差を明示。バンドルは`data/regression_cache/<hash>/bars.parquet`を参照し、`data_hash`と`config_hash`を記録（Validation Data Playbook `AC13_regression.yaml`）。
+- **処理フロー**:
+  1. `RegressionBacktestSuite.load_bundle()`が`manifest.json`からデータ整合性を検証（`sha256`一致でなければ`RegressionDataMismatch`）。
+  2. `run()`で各シナリオを`asyncio.TaskGroup`内で順次実行（最大同時2本、`max_runtime_per_scenario`は`config/regression.yaml`で制御）。
+  3. 結果を`RegressionResult` dataclassにまとめ、`reports/regression/backtest/<timestamp>/summary.md`と`metrics/regression_backtest.jsonl`を生成。閾値逸脱時はExit code 121で失敗し、`health.raise('warn','regression_backtest_drift')`を呼び出す。
+- **I/Oモデル**:
+  | モデル | 主フィールド | 説明 |
+  | --- | --- | --- |
+  | `RegressionScenario` | `id`, `strategy_id`, `window`, `market_data_bundle`, `expected_metrics` | テストケース定義。`expected_metrics`はPF/WinRate/提案一致率等。 |
+  | `RegressionResult` | `scenario_id`, `pf`, `max_dd`, `win_rate`, `signal_match_pct`, `latency_ms`, `status`, `artifacts` | 実行結果。`status ∈ {'pass','warn','fail'}`。 |
+  | `RegressionDrift` | `scenario_id`, `metric`, `expected`, `actual`, `tolerance`, `notes` | 逸脱詳細。Reporter/Runbook連携で使用。 |
+
+#### 78.2 CI/CLI統合
+- **コマンド**:
+  | コマンド | 概要 | 主なオプション | 出力/副作用 |
+  | --- | --- | --- | --- |
+  | `make regression-backtest` | ローカル/CI共通エントリ。`poetry run python -m tools.regression.backtest`を呼び出し、失敗時はArtifactsを`artifacts/regression/<run_id>/`へ保存。 | `DATA_BUNDLE_DIR`, `SKIP_UPLOAD`, `MAX_RUNTIME_MIN` | Markdown/JSONL/差分PNG生成、Exit code管理。 |
+  | `tradectl backtest regression run --scenario <id>` | 単一シナリオ再実行。 | `--bundle`, `--export-md`, `--outdir` | 個別Markdown、`RegressionResult`JSON。 |
+  | `tradectl backtest regression list` | シナリオ一覧。 | `--filter strategy_id=`, `--json` | シナリオ/期待メトリクス表示、`schema_version='regression.scenario.v1'`。 |
+- **GitHub Actions**: `ci/regression-backtest.yml`を新設。`poetry install --with backtest`→`make regression-backtest`→`actions/upload-artifact`で`reports/regression/backtest/<run_id>`を保存。実行時間30分以内を目安に`REGRESSION_MAX_RUNTIME_MIN`環境変数で制御。結果サマリはPRコメントにPF差分/提案一致率を貼り付ける（`tools/regression/post_comment.py`）。
+- **キャッシュ戦略**: `actions/cache`で`data/regression_cache/<bundle_hash>`を共有。更新時は`docs/change_requests/`で承認し、`Validation Data Playbook`の該当行に`bundle_hash`と有効期限を記録。`make regression-backtest --refresh-bundle`は`data/source/`から再構築し、ハッシュが変わった場合は自動でPlaybook更新テンプレを生成。
+
+#### 78.3 エビデンス・Runbook連携
+- `reports/validation_log/AC-13_regression_<date>.md`を自動生成し、各シナリオの期待値/実績/差分/対応アクションを記録。`DocOps Orchestrator`（§58）に登録し、レビュー周期=30日。
+- Runbook `STRAT-M1-VALIDATION`へ「回帰結果確認」チェックを追加。CI失敗時はOps Agenda（§52.3）へ`regression_backtest_drift`TODOを自動生成し、復旧後に`RegressionResult.status='pass'`のスクリーンショットを添付。
+- `SecureShareService`（§48）が`make regression-backtest --upload`実行時に成果物を暗号化ZIPで`evidence/regression/<run_id>.zip`へ出力。外部監査共有時は`access_scope='research_validation'`で配布。
+
+#### 78.4 テスト計画・Codex Packet
+- **テスト**: `pytest -k regression_backtest_unit`（シナリオ読み込み/閾値検証）、`pytest -k regression_backtest_cli`（CLI引数・エラー処理）、`pytest -k regression_backtest_drift`（閾値逸脱時のExit code/Healthイベント）。`DeterminismLab`（§71.5）と併せて週次CIに組み込み。
+- **Codex Packet案**:
+  | Packet ID | スコープ | 成果物 | テスト |
+  | --- | --- | --- | --- |
+  | `EP16-REG-P1` | `RegressionBacktestSuite`コア、シナリオローダ、結果集計 | `src/backtest/regression.py`, `tests/regression/test_suite.py` | `pytest -k regression_backtest_unit` |
+  | `EP16-REG-P2` | CLI/Actions統合、Artifact生成、Healthイベント | `tools/regression/backtest.py`, `src/interfaces/cli/backtest_regression.py`, `ci/regression-backtest.yml` | `make regression-backtest`, `pytest -k regression_backtest_cli` |
+  | `EP16-REG-P3` | Evidence/Playbook連携、自動コメント、SecureShare | `src/backtest/regression.py`拡張, `tools/regression/post_comment.py`, Playbookテンプレ | `make regression-backtest --upload --dry-run`, `make check-validation --category regression` |
+- **受入条件**:
+  1. GitHub Actionsで`make regression-backtest`が30分以内に完走し、PF/WinRate/提案一致率が期待値±許容誤差内であればExit code 0、逸脱時はExit code 121と`health.warn`イベントが記録されること。
+  2. `reports/validation_log/AC-13_regression_<date>.md`に自動で差分サマリが追記され、DocOpsレビューが未実施の場合は`ops.agenda.regression_review_overdue`が生成されること。
+  3. データバンドルを更新した際に`Validation Data Playbook`と`docs/change_requests/`のテンプレが自動生成され、承認なしではCIが`RegressionBundleVersionError`で失敗すること。
+
+### 79. ブローカーAPI接続準備 & サンドボックス統合設計（FR-07/FR-39/FR-58, AC-03/AC-06, NFR-02/NFR-17, M3準備）
+
+M3で予定している自動発注拡張に備え、ブローカーAPI接続層を抽象化し、Paper/Live/HITL運用と共存させる基盤を準備する。FR-07（HITLチケット）、FR-39（Marketable Limitガード）、FR-58（複数口座統合）、AC-03/AC-06（リスク/Kill Switch制御）、NFR-02/NFR-17（信頼性/セキュリティ）を満たすため、サンドボックスモードと権限管理、監査フローを詳細化する。
+
+#### 79.1 BrokerAdapter抽象化 (`src/brokers/adapter.py`)
+- **インターフェース**: `BrokerAdapter`抽象クラスに`place_order`, `modify_order`, `cancel_order`, `fetch_positions`, `fetch_balances`, `stream_events`を定義。戻り値は`BrokerOrder`/`BrokerPosition` dataclass（`schema_version='broker.order.v1'`）。
+- **実装クラス**: `SandboxAdapter`（ローカルモック、デフォルト）、`Mt5Adapter`（MetaTrader5 Bridge, M3候補）、`CTraderAdapter`等。`SandboxAdapter`は`ExecutionModel`のフィル結果をリプレイし、HITL操作との一致を検証する。APIアダプタは`Feature Flag brokers.api_enabled`が`true`の時のみロード。
+- **権限バリデーション**: `AccessGovernanceService`（§70）と連携し、`place_order`時に`principal_id`と`device_id`を必須とする。未承諾/未登録デバイスは`BrokerAccessDenied`で拒否し、`audit.broker_access_denied`を記録。
+- **Kill Switch連携**: `HealthMonitor`（§2.5）と統合し、`KillSwitchState∈{STOP,REDUCE_ONLY}`でAPI呼び出しを拒否。`ReduceOnlyAdapter`ラッパーがReduce-Only提案のみ許可し、FR-42/FR-47の緊急手順と整合。
+
+#### 79.2 OrderRouter & HITL協調 (`src/execution/order_router.py`)
+- **責務**: `TicketBuilder`（§5.4）→`OrderRouter`→`BrokerAdapter`のルートを構築し、HITL承認済みチケットだけがAPI送信対象となるよう`ticket.approved`イベントをトリガーとする。`OrderRouter`は`PolicyContext`（board mode, reduce_only, kill switch）を参照し、条件未達の場合は`OrderDispatchRejected`で手動対応にフォールバック。
+- **Marketable Limit実装**: `FR-39`準拠で`protect_pips`を自動設定。API呼び出し時にブローカー仕様（`broker_rules.yaml`）から最小距離を取得し、サンドボックスでも検証。約定後は`AuditRecord`（`audit.actual_fill_imported`）へAPIレスポンスを保存。
+- **Partial Fill & Retry**: `OrderRouter`が`fill_policy`を`ImmediateOrCancel`/`GoodTillCancel`等で指定し、Partial Fillは`TicketValidator`で再提示する（HITL確認が必要）。APIエラー時は`RetryPolicy`（指数バックオフ、最大3回）を適用し、失敗時は`ops.agenda.broker_retry`TODOを生成。
+
+#### 79.3 Telemetry・監査・セキュリティ
+- **テレメトリ**: `metrics/broker_api.jsonl`に`request_id`, `adapter`, `operation`, `latency_ms`, `status`, `error_code`, `retries`を記録。`uptime_monitor.py`（§75）と連携し、連続エラー>3で`health.raise('warn','broker_api_unstable')`。
+- **監査**: `audit.broker_order_submitted`, `audit.broker_order_ack`, `audit.broker_order_failed`, `audit.broker_position_snapshot`を新設。`SecureShareService`（§48）が暗号化レポートを生成し、外部監査人へ提出可能。
+- **秘密情報管理**: `SecretStore`（§38）に`brokers/<adapter>/api_key`等を保存。`DocOps Orchestrator`（§58）が四半期ごとのキー更新TODOを生成。APIキー取得ログは`reports/governance/licensing/<provider>.md`に追記し、ライセンス条件（再配信禁止等）を`LicenseRegistryService`（§50）で検証。
+
+#### 79.4 Runbook・Feature Flag・受入テスト
+- **Feature Flag**: `config/feature_flags.yaml::brokers.api_enabled`（既定`false`）、`brokers.api_sandbox_only`（既定`true`）。`tradectl cfg flag set --name brokers.api_enabled --value true --scope sandbox`で段階的に有効化。CIはFlagが`true`の場合のみAPI統合テストを実行。
+- **Runbook**: `RUN-BROKER-API-01`を新設。（1）API資格情報準備、（2）サンドボックス接続検証、（3）本番切替手順、（4）緊急停止手順、（5）監査ログ取得。`DocOps Orchestrator`がレビュー周期=45日で監督。
+- **テスト**:
+  - `pytest -k broker_adapter_sandbox`: SandboxAdapterの約定シミュレーション、Marketable Limit/距離検証。
+  - `pytest -k broker_router_hitl`: Ticket承認→OrderRouter→Kill Switch連携の統合テスト。
+  - `pytest -k broker_api_security`: 未登録端末/未承諾ユーザーで拒否されることを検証。
+  - `make broker-api-smoke`（Flag有効時のみ）: 実APIのPing/Orderシミュレーション→`reports/validation_log/AC-06_broker_api_<date>.md`を生成。
+- **Codex Packet案**:
+  | Packet ID | スコープ | 成果物 | テスト |
+  | --- | --- | --- | --- |
+  | `EP17-BROKER-P1` | `BrokerAdapter`基盤、Sandbox実装、SecretStore連携 | `src/brokers/adapter.py`, `src/brokers/sandbox.py`, `tests/unit/test_broker_adapter.py` | `pytest -k broker_adapter_sandbox` |
+  | `EP17-BROKER-P2` | `OrderRouter`とHITL統合、Marketable Limit制御 | `src/execution/order_router.py`, `src/interfaces/cli/broker.py`, `tests/integration/test_broker_router.py` | `pytest -k broker_router_hitl`, `pytest -k broker_api_security` |
+  | `EP17-BROKER-P3` | CI/Runbook/監査/Evidence統合、SecureShare対応 | `ci/broker-api-smoke.yml`, `docs/runbooks/RUN-BROKER-API-01.md`, `tools/broker_api/smoke.py` | `make broker-api-smoke`, `make check-validation --category broker_api` |
+- **受入条件**:
+  1. Flag `brokers.api_enabled=false`時は既存HITLフローに影響を与えず、`BrokerAdapterRegistry`がSandboxのみをロードする。
+  2. Flagを`true`にしたサンドボックス環境で`tradectl broker order simulate --ticket fixtures/orders/sample.json`が成功し、`audit.broker_order_submitted`/`ack`イベントが生成され、`metrics/broker_api.jsonl`に遅延が記録される。
+  3. Kill Switch `STOP`状態でAPI呼び出しを試みると`OrderDispatchRejected(reason='kill_switch_stop')`となり、監査ログとRunbook `RUN-RISK-01`が同期。未登録端末からの呼び出しは`BrokerAccessDenied`で拒否され、Ops Agendaへ`broker.access_review`TODOが追加される。
+
 
