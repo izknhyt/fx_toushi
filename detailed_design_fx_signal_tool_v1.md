@@ -1,4 +1,4 @@
-# FXヒューマン・インザループ投資ツール 詳細設計書 v1.22
+# FXヒューマン・インザループ投資ツール 詳細設計書 v1.23
 
 ## 0. 文書情報
 - 作成日: 2025-02-20
@@ -9,6 +9,7 @@
 ### 0.1 改訂履歴
 | 版 | 日付 | 改訂概要 |
 | --- | --- | --- |
+| v1.23 | 2025-03-05 | §67でリスク開示ハードエンフォースメント/デバイスバインディング設計（FR-53/FR-54, AC-44, NFR-17）を追加。§68で研究昇格ゲート/チェックリスト自動化（FR-55/FR-62, AC-46, NFR-21）を詳細化し、Codex PacketとValidation連携を定義。 |
 | v1.22 | 2025-03-04 | §64でマージン・相関ストレスラボとリスクエンベロープ調整（FR-36/FR-37/FR-51, AC-32）を追記。§65でトレーダーワークフローテレメトリ/コーチング基盤（FR-44/FR-48, NFR-11/28）を設計。§66でAcceptable Degradationプレイブック自動化（FR-47, NFR-14/28, AC-34/AC-43）を追加し、Codex Packetとテスト計画を整備。 |
 | v1.21 | 2025-03-03 | §60でSignal Board Shadow/SlackブリッジとGUI準備（FR-12/FR-47, M2準備）を追加。§61でStop/Freeze検証・キャピタルガード回帰ハーネス（AC-31/AC-41, FR-50/FR-51連携）を整理し、Codex向けテスト/Packetを提示。 |
 | v1.20 | 2025-03-02 | §49〜§50にリアルタイムフィード評価/ライセンスガバナンス（M1.2準備, NFR-05/17, AC-45拡張）を追加し、Data Ingestion/HealthMonitor/BackOfficeとの連携、契約証跡/コスト評価/Runbook整備をCodex Packet化。 |
@@ -6286,4 +6287,148 @@ Acceptable Degradation（データ遅延・スプレッド拡大・レート制�
   1. `HealthMonitor.raise('degraded', reason='data_latency_fetch')`後に`tradectl ops degrade status`でアクション進捗が表示され、各ノード完了時にAuditログとValidation Playbookが更新される。
   2. プレイブック完了後に`OpsReadinessEvaluator`がスコアを更新し、`tradectl dashboard ops`で復旧時間とRunbook遵守率が確認できる。
   3. `SecureShareService.prepare_package(profile='degradation_events')`でプレイブック証跡が暗号化バンドル化され、外部レビューに提供できる。
+
+### 67. リスク開示ハードエンフォースメント & デバイスバインディング設計（FR-53/FR-54, AC-44, NFR-17, M1.1 Hardening準備）
+
+FR-53/FR-54はリスク警告文の強制表示と承諾証跡の完全保存を求め、AC-44は未承諾時に高リスク操作を全面ロックすることを要求する。M1 Coreでは§3.30の`RiskDisclosureService`が警告バナーと手動承諾を提供しているが、M1.1 Hardeningでは**端末バインディング・多段承諾・自動ロールバック**を伴うエンフォースメント層が必要となる。本節では`RiskDisclosureEnforcer`を中心とした強制フロー、デバイス指紋のバリデーション、CLI/Shadow/Runbook統合、Validation Data Playbook強化を定義し、Codexが段階的に実装できるPacketを提示する。
+
+#### 67.1 RiskDisclosureEnforcer (`src/compliance/risk_disclosure_enforcer.py`)
+
+- **責務**: `RiskDisclosureService`（§3.30）から状態を取得し、未承諾・期限切れ・端末不一致時にCLI/Workflow APIをロックする。承諾完了後は`consent_reference_id`を各イベントへ強制付与し、Runbook指定のエビデンスを検証する。
+- **データモデル**:
+  | モデル | 主フィールド | 説明 |
+  | --- | --- | --- |
+  | `ConsentSession` | `session_id`, `device_id`, `user`, `state∈{'pending','in_progress','approved','blocked'}`, `created_at`, `expires_at`, `required_steps` | 承諾フローの進行状態。`required_steps`は`['read_document','ack_checklist','pin_confirm']`等。 |
+  | `BlockRule` | `rule_id`, `scope∈{'cli','api','emergency','board_view'}`, `condition`, `runbook_ref`, `unlock_hint` | エンフォースメント条件。例: `condition='risk_state in {"pending","expired"}'`。 |
+  | `OverrideToken` | `token`, `issued_to`, `reason`, `valid_until`, `approved_by`, `audit_ref` | 緊急時の一時解除トークン（Runbook `COMPLIANCE-01`承認必須）。 |
+- **主要API**:
+  | 関数 | 入力 | 処理 | 出力/副作用 |
+  | --- | --- | --- | --- |
+  | `enforce(action: ConsentAction, *, context: ConsentContext) -> ConsentDecision` | CLI/サービス呼び出し | `RiskDisclosureService.fetch_state()`とデバイス照合→BlockRule評価→必要時に`prompt()`起動 | `ConsentDecision`（`allow|deny|prompt|override_required`） |
+  | `start_session(user, device_fingerprint) -> ConsentSession` | ユーザー、デバイス指紋 | `ConsentSession`生成→`RiskDisclosureService.prompt(mode='enforce')`実行→`session_queue`へ保存 | `ConsentSession` |
+  | `complete_step(session_id, step_id, evidence)` | セッションID、ステップ、証跡 | Check-list進捗更新→`RiskDisclosureService.record_consent`呼出→Audit追記 | 更新済み`ConsentSession` |
+  | `issue_override(runbook_ref, reason, approved_by, valid_minutes)` | Runbook、理由、承認者 | Runbookチェック→`OverrideToken`生成→`audit.risk_override_issued`記録 | `OverrideToken` |
+- **ブロックフロー**:
+  1. CLI/Workflowは`ConsentAction`（例: `board.approve`, `risk.kill_switch`, `emergency.trigger`）を`RiskDisclosureEnforcer.enforce`へ通知。
+  2. 状態が`pending|expired|device_mismatch`の場合は`ConsentDecision=prompt`で`RiskDisclosureService.prompt(mode='enforce')`を起動し、Runbook `COMPLIANCE-01`のチェックリストを表示。
+  3. チェックリスト完了後も`device_fingerprint`が不一致なら`ConsentDecision=deny`とし、`OpsAgendaService`（§52.3）へ「端末登録更新」タスクを自動生成。
+  4. 緊急Overrideは`issue_override`で発行し、`valid_until`内の同一操作のみを許可。使用時に`audit.risk_override_used`を記録し、期限切れ/未使用は週次レポートでハイライト。
+- **EventBus**: `risk_consent.blocked`, `risk_consent.prompted`, `risk_consent.override_issued`, `risk_consent.override_used`を発火し、Dashboard（§37）とOps Evidence Store（§45.1）へ通知。
+
+#### 67.2 DeviceFingerprintManager & Consent Vault (`src/compliance/device_binding.py`, `data/compliance/device_bindings.json`)
+
+- **目的**: 承諾は端末単位で追跡し、端末変更時は再承諾を強制。NFR-17（Keychain/暗号化保護）と整合させる。
+- **データ構造**:
+  | モデル | 主フィールド | 説明 |
+  | --- | --- | --- |
+  | `DeviceBinding` | `device_id`, `fingerprint`, `user`, `first_seen_at`, `last_seen_at`, `consent_reference_id`, `status∈{'active','revoked','pending'}`, `revoked_reason` | 端末ごとの承諾状況。`fingerprint=sha256(serial+machine_uuid+salt)`。 |
+  | `DeviceEvent` | `event_id`, `device_id`, `action∈{'register','rotate','revoke'}`, `actor`, `evidence_path`, `runbook_ref` | 端末操作の証跡。 |
+- **API**:
+  - `register_device(user, fingerprint, *, evidence_path) -> DeviceBinding`: Keychainからfingerprint取得→`device_bindings.json`更新。Runbook `COMPLIANCE-DEVICE-01`のチェックリストを添付。
+  - `validate_device(user, fingerprint) -> ValidationResult`: 一致しなければ`status='mismatch'`と`RiskDisclosureEnforcer`へ返却。
+  - `revoke_device(device_id, reason)`：紛失/退役時。`OpsEvidenceStore`（§45.1）に証跡登録。
+- **Vault**: 承諾ログ（`logs/audit/risk_consent_<date>.jsonl`）と紐付け、`consent_reference_id`→`device_id`→`fingerprint`のチェーンを保持。`SecureShareService`（§48）で`profile='risk_consent'`を選択すると暗号化ZIPを生成。
+- **Security**: `device_bindings.json`は`chmod 600`、`fernet`暗号化。Keyは`Keychain`に保存し、`docs/runbooks/SEC-KEY-01.md`で復号手順を定義。
+
+#### 67.3 CLI/Shadow統合 (`src/interfaces/cli/compliance_risk.py`, `src/interfaces/gui/shadow_api.py`)
+
+- **CLIコマンド**:
+  | コマンド | 説明 | 主なオプション | 出力/副作用 |
+  | --- | --- | --- | --- |
+  | `tradectl compliance risk-disclosure enforce --action <action>` | ブロック状態確認 | `--json`, `--device <id>`, `--dry-run` | `ConsentDecision`、必要ステップ、Runbookリンク |
+  | `tradectl compliance risk-disclosure override issue --action kill_switch --reason <text>` | Override発行 | `--valid-minutes`, `--attach <evidence>` | `OverrideToken`、`audit.risk_override_issued` |
+  | `tradectl compliance device list` | 登録端末一覧 | `--json`, `--show-revoked` | `DeviceBinding`テーブル、指紋ハッシュ隠蔽 |
+  | `tradectl compliance device register --fingerprint auto` | 端末登録 | `--note`, `--evidence`, `--force` | 新規Binding、Ops Evidence登録 |
+- **Shadow/Slack**: `risk_consent.prompted`イベントで専用スレッドを生成し、承諾完了またはOverride使用まで状況を更新。Override発行時はPO/ComplianceへDM通知。
+- **UX**: CLIはRichで`BLOCKED`バナー（赤）、再承諾期限（黄色）、Runbookショートリンク、`required_steps`進捗バーを表示。`--json`は`schema_version='risk_consent.enforce.v1'`。
+
+#### 67.4 テレメトリ・Validation Data Playbook・Runbook
+
+- **メトリクス** (`metrics/risk_consent.jsonl`): `decision`, `action`, `device_id`, `duration_ms`, `override_used`, `required_steps`, `result`. `decision='deny'`が連続3回で`health.raise('warn','risk_consent_blocked')`。
+- **監査**: `audit.risk_consent_blocked`, `audit.risk_consent_override_issued`, `audit.risk_consent_override_used`, `audit.device_registered`. `consent_reference_id`と`device_id`、Runbook IDを必須フィールドに追加。
+- **Validation Data Playbook**: `validation_playbook/AC44_risk_consent.yaml`を新設。承諾スクリーンショット、`metrics/risk_consent.jsonl`抜粋、Override証跡、Runbookサインを記録。`make check-validation`で未添付時は失敗。
+- **Runbook**: `docs/runbooks/COMPLIANCE-01.md`を改訂し、(1) 新規承諾手順、(2) 端末追加/削除、(3) Override発行承認フロー、(4) 再承諾フォローアップを定義。`DocOps Orchestrator`（§58）でレビュー周期=90日。
+
+#### 67.5 テスト・Codex Packet・受入条件
+
+- **自動テスト**:
+  - `tests/unit/test_risk_disclosure_enforcer.py`: BlockRule評価、Override発行、有効期限ロジック、デバイス不一致ハンドリング。
+  - `tests/integration/test_risk_consent_flow.py`: CLI `enforce`→`prompt`→`record_consent`→再試行までのE2E。Override使用と監査記録を検証。
+  - `tests/approval/cli/compliance/risk_consent/`: ブロック時バナー、Override発行、端末登録出力のスナップショット。
+  - `pytest -k risk_consent --m1hardening`タグを追加し、M1.1ジョブで実行。
+- **Codex Packet案**:
+  | Packet ID | スコープ | 成果物 | テスト |
+  | --- | --- | --- | --- |
+  | `EP11-RISKCONSENT-P1` | `RiskDisclosureEnforcer`コア + BlockRule評価 | `src/compliance/risk_disclosure_enforcer.py`, `tests/unit/test_risk_disclosure_enforcer.py` | `pytest -k risk_disclosure_enforcer` |
+  | `EP11-RISKCONSENT-P2` | デバイスバインディング + CLI `device`/`enforce` | `src/compliance/device_binding.py`, `src/interfaces/cli/compliance_risk.py`, Approvalテスト | `pytest -k risk_consent_flow`, `pytest-approvaltests -k risk_consent_cli` |
+  | `EP11-RISKCONSENT-P3` | Metrics/Validation/Runbook/Shadow統合 | `metrics/risk_consent.jsonl`スキーマ, `validation_playbook/AC44_risk_consent.yaml`, Shadow通知 | `pytest -k risk_consent_integration`, `make check-validation` |
+- **受入条件**:
+  1. `tradectl board`で`RiskDisclosureState=status='expired'`の場合、`ConsentDecision=prompt`となり、承諾完了までは`approve`/`kill-switch`/`emergency trigger`が`ConsentRequiredError`でブロックされること（AC-44）。
+  2. 端末変更で`device_fingerprint`が不一致のまま承諾した場合、`RiskDisclosureEnforcer`が`deny`を返し、Ops Agendaに「端末再承認」タスクが自動生成される。
+  3. Overrideを発行→使用→期限切れまでの全ステップで`audit.risk_consent_override_*`と`metrics/risk_consent.jsonl`が更新され、`SecureShareService.prepare_package(profile='risk_consent')`で証跡をバンドルできる。
+
+### 68. 研究昇格ゲート & Promotion Checklist自動化設計（FR-55/FR-62, AC-46, NFR-21, M1.1 Hardening準備）
+
+FR-55/FR-62は研究ノートと戦略Manifestを統合し、Paper昇格前に証跡と指標が揃っていることを保証する。AC-46は`tradectl research promote`実行時にチェックリスト未完了なら昇格を拒否する自動ゲートを要求する。§54（Opportunity Pipeline）と§57（Strategy Lifecycle）でワークフロー骨子は定義済みだが、M1.1 Hardeningでは**Promotion Checklist Service・Evidenceバリデータ・CLIガイダンス**を追加し、Codexが安全に実装できる詳細仕様を示す。
+
+#### 68.1 PromotionChecklistService (`src/research/promotion.py`)
+
+- **責務**: Idea Pipeline/Experiment Tracker/Validation Playbookから昇格要件を収集し、`tradectl research promote`呼び出し時に自動審査する。未達時は`promotion.blocked`イベントで理由とRunbook手順を通知。
+- **データモデル**:
+  | モデル | 主フィールド | 説明 |
+  | --- | --- | --- |
+  | `PromotionChecklist` | `strategy_id`, `target_stage∈{'paper','ready','live_candidate'}`, `items:list[ChecklistItem]`, `last_evaluated_at`, `status∈{'pass','fail','manual_review'}` | ゲート条件。 |
+  | `ChecklistItem` | `item_id`, `description`, `source∈{'experiment','validation_playbook','runbook','risk','ops'}`, `status`, `evidence_refs`, `threshold`, `auto_fix_hint` | 個別項目。例: `experiment.pf_oos>=1.05`。 |
+  | `EvidenceLink` | `path`, `hash`, `type∈{'report','notebook','metrics','signoff'}`, `validated_at`, `validator` | Evidence参照。 |
+- **API**:
+  | 関数 | 入力 | 処理 | 出力/副作用 |
+  | --- | --- | --- | --- |
+  | `load(strategy_id, target_stage) -> PromotionChecklist` | 戦略ID、目標ステージ | `ideas/<id>/checklists/*.yaml`と`validation_playbook/*.yaml`、`ExperimentTrackerService`から項目生成 | `PromotionChecklist` |
+  | `evaluate(checklist, *, metrics, experiment_runs, validation_refs) -> PromotionResult` | KPI/Run情報 | 各項目の閾値・Evidence存在を検証→`status`更新 | `PromotionResult`（`pass|fail|manual_review`, `reasons`) |
+  | `record_manual_review(strategy_id, item_id, reviewer, note, evidence)` | Reviewer情報 | Runbook手順確認→`manual_review`項目を解除→Audit追記 | 更新済みChecklist |
+  | `promote(strategy_id, target_stage, *, dry_run=False)` | CLI要求 | `load`→`evaluate`→`StrategyLifecycleOrchestrator`へイベント送信→`IdeaPipeline`更新 | `PromotionReceipt`。`status='blocked'`で詳細理由 |
+- **連携**:
+  - `ExperimentTrackerService`（§62）から最新`ExperimentRun`を取得。PF/Sharpe/MaxDD/Trades/Consistencyを`ChecklistItem`に反映。
+  - `Validation Data Playbook`（§20）で必要IDが揃っているかチェックし、欠落時は`auto_fix_hint='make check-validation'`を返す。
+  - `RiskDisclosureEnforcer`（§67）が`status!='accepted'`の場合、`PromotionChecklist`に`risk_consent_valid`項目を追加（Paper昇格でも承諾必須）。
+  - `OpsReadinessEvaluator`（§33.1）で`score>=80`未満なら`manual_review`に設定。
+
+#### 68.2 CLI/Workflow統合 (`src/interfaces/cli/research_promote.py`, `docs/runbooks/STRAT-PROMOTE-01.md`)
+
+- **CLI**:
+  | コマンド | 説明 | 主なオプション | 出力/副作用 |
+  | --- | --- | --- | --- |
+  | `tradectl research promote --strategy <id> --to paper` | 昇格実行 | `--dry-run`, `--attach <path>`, `--note`, `--override` | `PromotionReceipt`。`status='blocked'`時は理由と`auto_fix_hint`一覧 |
+  | `tradectl research checklist show --strategy <id> [--to stage]` | チェックリスト表示 | `--json`, `--missing-only`, `--include-evidence` | Richテーブル/JSON、Evidenceリンク |
+  | `tradectl research checklist approve --strategy <id> --item <item_id>` | 手動承認 | `--note`, `--attach`, `--runbook-step` | `record_manual_review`呼び出し、`audit.promotion_manual_review` |
+  | `tradectl research promote simulate --strategy <id> --scenario backfill` | シミュレーション | `--what-if metrics/strategy_scores.jsonl`, `--pending-evidence` | `PromotionResult`予測、Ops Agendaタスク生成 |
+- **UX**: CLIは`blocked`項目に赤バッジ、`manual_review`に黄色バッジ。`--json`は`schema_version='promotion.checklist.v1'`。Richで`auto_fix_hint`をRunbookIDリンクとして表示。
+- **Runbook**: `STRAT-PROMOTE-01`を新設し、(1) 昇格申請準備、(2) チェックリスト補完、(3) Reviewer割当、(4) 再申請手順を定義。DocOps Orchestrator（§58）がレビュー周期=30日。`OpsAgendaService`が`promotion.blocked`受信時にRunbook該当ステップをTODOに反映。
+- **Lifecycle連携**: `PromotionChecklistService.promote`成功時に`LifecycleOrchestrator`（§57.1）へ`lifecycle.stage_promoted`を送信。`status='blocked'`の際は`lifecycle.action_required`をトリガし、Strategy Board（§56.1）議題へ自動追加。
+
+#### 68.3 テレメトリ・Evidence・Validation
+
+- **メトリクス** (`metrics/promotion_gate.jsonl`): `strategy_id`, `target_stage`, `status`, `failed_items`, `duration_sec`, `experiment_runs_used`, `validation_refs_missing`. `status='blocked'`が連続2回で`OpsAgendaService`が週次TODOへ昇格。
+- **監査**: `audit.promotion_requested`, `audit.promotion_blocked`, `audit.promotion_approved`, `audit.promotion_manual_review`. `consent_reference_id`, `experiment_run_ids`, `validation_playbook_ids`, `runbook_ref`を必須化。
+- **Validation Data Playbook**: `validation_playbook/AC46_promotion_gate.yaml`を追加。各昇格試行ごとに`PromotionReceipt`、CLIログ、Evidence一覧、Reviewerサインを記録。`make check-validation`で未記録を検出。
+- **Ops Evidence Store**: `OpsEvidenceStore.register(category='promotion_gate', validation_playbook_id='AC46_promotion_gate')`を必須化し、Evidenceハッシュを保存。
+- **DocOps**: `DecisionJournalManager`（§58）に昇格判断を追記し、週次Strategy Board議事録（§56.2）へリンク。
+
+#### 68.4 テスト・Codex Packet・受入条件
+
+- **自動テスト**:
+  - `tests/unit/test_promotion_checklist.py`: `load`/`evaluate`ロジック、Evidence欠落時の`auto_fix_hint`生成、手動承認の権限チェック。
+  - `tests/integration/test_research_promotion_flow.py`: `ExperimentTracker`→`PromotionChecklistService`→`LifecycleOrchestrator`のE2E。`--dry-run`と`--override`シナリオを検証。
+  - `tests/approval/cli/research/promotion/`: `checklist show`, `promote`（blocked/pass）のCLIスナップショット。
+  - `pytest -k promotion_gate`をM1.1 CIに追加し、`--m1hardening`マーカーで制御。
+- **Codex Packet案**:
+  | Packet ID | スコープ | 成果物 | テスト |
+  | --- | --- | --- | --- |
+  | `EP12-PROMO-P1` | Checklistロード/評価コア | `src/research/promotion.py`, `tests/unit/test_promotion_checklist.py` | `pytest -k promotion_checklist` |
+  | `EP12-PROMO-P2` | CLI `promote`/`checklist`実装 + Runbook | `src/interfaces/cli/research_promote.py`, `docs/runbooks/STRAT-PROMOTE-01.md`, Approvalテスト | `pytest -k research_promotion_flow`, `pytest-approvaltests -k research_promotion_cli` |
+  | `EP12-PROMO-P3` | Metrics/Validation/Ops統合 | `metrics/promotion_gate.jsonl`スキーマ, `validation_playbook/AC46_promotion_gate.yaml`, Ops Agendaフック | `pytest -k promotion_gate_integration`, `make check-validation` |
+- **受入条件**:
+  1. `tradectl research promote --strategy m1_baseline_ma_rsi --to paper --dry-run`でPF/Sharpe/Validation証跡が揃っていれば`status='pass'`となり、`lifecycle.stage_promoted`イベントが生成される。欠落時は`status='blocked'`と不足項目が表示される（AC-46）。
+  2. `ExperimentRun`が`status!='completed'`の場合、`PromotionChecklistService.evaluate`が`fail`を返し、`auto_fix_hint`に`tradectl research experiment run`が提示される。CLIは`OpsAgenda`へTODOを作成。
+  3. 手動承認したChecklist項目は`audit.promotion_manual_review`・`validation_playbook/AC46_promotion_gate.yaml`へ証跡が残り、`SecureShareService.prepare_package(profile='research_promotion')`で外部共有可能なバンドルが生成される。
 
