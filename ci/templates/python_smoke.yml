@@ -1,0 +1,40 @@
+# Template: Python smoke test workflow for FX Toushi
+# Runs the lightweight schema/config validation suite referenced in detailed_design §0.6.9.
+parameters:
+  pythonVersion: '3.11'
+  displayName: 'python-smoke'
+
+jobs:
+  - job: python_smoke
+    displayName: ${{ parameters.displayName }}
+    pool:
+      vmImage: 'ubuntu-latest'
+    steps:
+      - task: UsePythonVersion@0
+        displayName: 'Use Python ${{ parameters.pythonVersion }}'
+        inputs:
+          versionSpec: ${{ parameters.pythonVersion }}
+
+      - script: |
+          python -m pip install --upgrade pip
+          python -m pip install poetry
+        displayName: 'Install Poetry'
+
+      - script: |
+          poetry config virtualenvs.create false --local
+          poetry install --no-root
+        displayName: 'Install project dependencies'
+
+      - script: |
+          mkdir -p artifacts/python-smoke
+          poetry run pytest -k smoke --maxfail=1 --disable-warnings -vv \
+            | tee artifacts/python-smoke/pytest.log
+        displayName: 'Run smoke test suite'
+
+      - task: PublishPipelineArtifact@1
+        displayName: 'Publish smoke logs'
+        condition: succeededOrFailed()
+        inputs:
+          targetPath: artifacts/python-smoke
+          artifact: python-smoke-logs
+          publishLocation: pipeline
