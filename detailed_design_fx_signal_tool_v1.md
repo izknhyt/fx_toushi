@@ -199,6 +199,7 @@
 | 3 | `tests/`は空で、§0.6.3の受入テスト名が未定義。 | Codexがテストを新設する際の命名/配置が分からず、CI整備に遅延。 | `TEST-SMOKE-01` Packetで`tests/unit/test_placeholder.py`（最小Smoke）と`tests/conftest.py`の骨組みを追加し、`pytest.ini`で`filterwarnings`/`markers`を宣言。 |
 | 4 | §79.1が`FieldMapping`/`RATE_LIMIT_SLA`を要求しているが、`src/brokers/adapter.py`は`EndpointSpec`のみ。 | ブローカー統合時にフィールド整合性テストが欠落し、HITL/Live移行のリスクが増大。 | `BROKER-META-01` Packetで`FieldMapping` dataclassと`RATE_LIMIT_SLA`辞書を追補し、`tests/unit/test_broker_adapter_contracts.py`から参照。既存`EndpointSpec`との整合を`docs/review_log.md`に記録。 |
 | 5 | `docs/review_log.md`に本レビュー結果の記録が未反映。 | 変更履歴と意思決定トレースが断絶し、AC-45/AC-51監査要件に抵触。 | 本レビュー完了後に`docs/review_log.md`へ日付・指摘・対応方針を追記し、重大項目は`logs/ops/review.log`へも転記。 |
+| 6 | `config/`配下の雛形（`risk_policy.yaml`/`strategy_manifest.yaml`/`board_modes.yaml`/`sla_thresholds/*.yaml`等）が存在せず、§4.4やRunbook参照と乖離。 | Codexが設定スキーマを前提に実装できず、テスト/CLIが即時失敗する。 | `CONFIG-SCAFF-01` Packetで空/ダミー値を含むYAML雛形と`config/README.md`を作成。`docs/schemas/`のJSON Schemaへリンクし、`pytest -k config_schema_smoke`で検証するスモークテストを追加。 |
 
 上記是正策の進捗は週次Opsレビューで確認し、未完了項目は`OpsAgendaService`（§52.3）にTODOとして登録する。是正完了後、Codexへ渡すPacketには本表の該当番号を「前提条件」として明記すること。
 
@@ -209,6 +210,12 @@
 3. `docs/review_log.md`に本レビュー反映、`docs/prompt_packages/`へPacket下書きを格納済みであること。
 4. Spread/Kill Switch等のリスク閾値ファイル（`config/risk_policy.yaml`など）が`schema/`定義と突合できる形で雛形化されていること。
 5. Codexへ渡すIssue/PRテンプレに§0.6.8の番号を引用し、未解決項目がある場合は「受入不可（前提未了）」ラベルを適用してから再依頼すること。
+
+#### 0.6.10 すご腕SEレビュー（2025-03-10）フォローアップ
+
+- **新規指摘**: 設計では`config/`配下に多数の設定YAMLとスキーマ検証が前提となっているが、現リポジトリにはディレクトリ自体が存在しない。CodexがM1 Packetを実装する際にテストを開始できないため、`CONFIG-SCAFF-01`で最低限の雛形とREADME/Schema紐付けを準備する。
+- **設計補強**: `SpreadCooldownState`の値域（`normal|watch|cooldown|halt`）をコード化してGateState記述と齟齬が無いよう明文化（§4.2）。
+- **ドキュメント整合**: §4.4の設定ファイル記述を更新し、JSON Schemaの配置（`docs/schemas/`）とCodexテスト（`pytest -k config_schema_smoke`）の導線を追記。これにより、設計→実装→テストの経路が一本化される。
 
 ### 0.7 M1 Core機能トレーサビリティ表
 
@@ -1523,6 +1530,12 @@ class GateState:
     reduce_only_reason: Optional[str]
 ```
 
+```python
+SpreadCooldownState = Literal["normal", "watch", "cooldown", "halt"]
+```
+
+> **備考**: M1では`"watch"`/`"halt"`を未使用とし、`SpreadMonitor`（§5.4）と`GateState`の相互参照が型レベルで保証されるように`typing.Literal`で定義する。Codex実装では本エイリアスを`src/execution/spread.py`へ配置し、ユニットテスト`tests/unit/test_spread_monitor.py`で値域外を拒否する。
+
 `HealthState`は`status`, `reasons: dict[str, str]`, `alerts: list[AlertSummary]`, `last_update`を持つ。
 
 ### 4.3 シグナル/チケットパイプライン
@@ -1553,7 +1566,7 @@ class GateState:
 
 ### 4.4 設定ファイル
 - `config/profile_<name>.yaml`主要キー: `provider`, `timeframes.trigger`, `timeframes.regime_ref`, `risk.*`, `gates.*`, `strategies[]`, `execution.*`, `spread.*`, `funding.*`, `correlation.*`, `scheduler.*`。
-- `cfg.schema.json`で型/範囲検証。`apply_patch`時は`jsonschema`+独自検査（丸め、閾値相互制約）。
+- `docs/schemas/cfg.schema.json`（`config/README.md`で参照）で型/範囲検証。`apply_patch`時は`jsonschema`+独自検査（丸め、閾値相互制約）。`CONFIG-SCAFF-01`で雛形作成時に同スキーマを`schema/`シンボリックリンク経由で参照できる状態を保証する。
 - `strategy_manifest.yaml`のキー構成は下表を参照。Manifestは§6.7 Config Governanceのレビュー対象であり、戦略順序・有効化状態の単一情報源となる。
 - `config/brokers/error_map.yaml`はAPIエラー→`trigger_reason`正規化テーブル。CIでは`pytest -k broker_orders`（`tests/unit/test_order_recovery_planner.py`予定）と`make check-validation --category broker_orders`で検証し、`docs/schemas/broker_error_map.schema.json`（新設, Appendix参照）と`pydantic` `BrokerErrorDescriptor`で整合を強制する。Runbook `RUN-BROKER-API-02`と証跡パスの同期が必須。
 
