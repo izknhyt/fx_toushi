@@ -370,6 +370,10 @@ src/
       export.py          # CSV/JSON export
       resync.py          # Catch-up操作
       spread.py          # Spread監視補助
+      broker.py          # tradectl brokerサブコマンド統合（M1.1 Hardeningでサンドボックス操作, M3準備で本稼働）
+      broker_orders.py   # API注文/Recovery操作CLI（M1.1演習でdry-run, M3準備でLive運用）
+      broker_fault.py    # Fault Injection Lab CLI（M1.1演習, M3準備で恒常化）
+      broker_stage.py    # AutonomyStageGuard操作CLI（M3準備, Stage昇格フロー）
     renderers.py        # CLI共通フォーマッタ
   core/
     session.py           # SessionManager, ModeController
@@ -443,6 +447,20 @@ src/
     builder.py           # TradeTicket構築
     validator.py         # Broker検証/TTL/Drift
     checklist.py         # ヒューマンエラーチェック
+  brokers/
+    adapter.py           # BrokerAdapter抽象/SandboxAdapter（M1.1 Hardeningで稼働, M3準備でLive API）
+    sandbox.py           # サンドボックスブリッジ（M1.1演習, M3準備で本番接続）
+    monitor.py           # BrokerApiMonitor/Heartbeat（M1.1演習, M3準備で常時監視）
+    policy.py            # BrokerPolicyEnforcer/RateLimitWindow（M1.1演習, M3準備）
+    failover.py          # ApiFailoverPlanner（M3準備, Emergency連携）
+    certification.py     # BrokerCertificationSuite（M1.1演習, M3準備で承認ゲート）
+    stage_guard.py       # AutonomyStageGuard（M3準備, 段階的自動化）
+    order_lifecycle.py   # OrderLifecycleManager（M3準備, API注文ライフサイクル）
+    order_store.py       # OrderStateStore（M3準備, JSONL永続化）
+    recovery.py          # RecoveryPlanner/Runbook連携（M3準備, エラー回復）
+    fill_shadow.py       # FillShadowRecorder（M1.1演習, M3準備でLive比較）
+    fill_drift.py        # FillDriftDetector（M3準備, 差分アラート）
+    fill_replay.py       # FillReplayService（M1.1演習, M3準備）
   compliance/
     risk_disclosure.py   # RiskDisclosureService（M1.1 enforce、M1はWARNのみ）
   persistence/
@@ -456,6 +474,9 @@ src/
   reporter/
     generator.py         # 週次/成績レポート
     templates/           # Markdownテンプレート
+  diagnostics/
+    broker/
+      api_fault_lab.py   # API Fault Injection Lab（M1.1演習, M3準備で恒常運用）
   infra/
     config.py            # ConfigRegistry + schema検証
     registry.py          # モード別依存性組立
