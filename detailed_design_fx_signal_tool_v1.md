@@ -1890,6 +1890,9 @@ HealthMonitor.ack()
 | ERROR-C08 | Snapshot破損 | SnapshotManager | `hard_stop(snapshot)`・Resync要求 | 最新バックアップ復元 |
 | ERROR-C09 | Account CSV不整合 | AccountService | `soft_stop(account)`・詳細ログ | CSV修正 + 再同期 |
 | ERROR-C10 | Scheduler遅延 | Scheduler | `SchedulerLagWarning`→`degraded` | ラグ解消 + ack |
+| ERROR-B01 | ブローカーAPIタイムアウト | OrderLifecycleManager（`stage=awaiting_ack`）/BrokerApiMonitor（HTTP504/timeout検知） | `EmergencyOrchestrator`で`api_retry`プラン起動、`health.warn('broker_api_timeout')`、Runbook `RUN-BROKER-API-02#TO-02`の再送・証跡採取を実施 | 再送成功で`status=confirmed`へ遷移し、`metrics/broker_orders.jsonl`の`latency_ms`が`config.brokers.slo.latency_warn_ms`未満へ回復 |
+| ERROR-B02 | レートリミット枯渇 | BrokerApiMonitor（`rate_limit_bucket`低下）/OrderLifecycleManager（待機注文滞留検知） | `StageGuard`縮退＋低優先度注文の延期、`health.warn('broker_rate_limit')`発火、Runbook `RUN-BROKER-API-02#RL-01`でRateLimitWindowの再調整 | `RateLimitWindow.remaining_tokens`が通常水準へ戻り、`queue_wait_ms`が`config.brokers.slo.queue_warn_sec`未満に解消 |
+| ERROR-B03 | コンプライアンス拒否 | OrderLifecycleManager（`broker_reject`）/BrokerApiMonitor（`compliance_flagged`イベント） | `health.raise('major','broker_compliance_reject')`でKill Switch検討、Runbook `RUN-BROKER-API-02#RJ-04`と`RUN-BROKER-API-03`の是正手順を実施 | `tradectl compliance explain`で違反解消を確認し再承認、`audit.order_recovery_completed`が発行される |
 
 #### 7.1 アラート重大度分類
 | 重大度 | 説明 | 主な発火イベント | オペレータ対応目標 | 通知経路 |
@@ -1937,10 +1940,14 @@ HealthMonitor.ack()
 | 成功率（シグナル採用率）(`ticket_accept_rate`) | `Signal Board`でHITL承認済みチケット数/提案数を日次で集計し`metrics/board.jsonl`へ記録。 | ローリング7日で40%未満 | ローリング7日で25%未満 or 1日10件連続拒否 | 週次レポート + CLI WARN | トレーダー + PO / `RUN-BOARD-02` |
 | ドローダウン (`max_drawdown_pct`) | `PerformanceStats`を日次再計算し、累積リターンの最大下落率を監視。`metrics/performance.jsonl`へ出力。 | 累積DDが10%超過 | 累積DDが15%超過 or 日次DD>5% | CLI WARN + メール + Kill Switch推奨 | リスク担当 / `RUN-RISK-03` |
 | APIエラー率 (`provider_error_rate`) | プロバイダ別に429/5xxの件数を集計し`metrics/provider_health.jsonl`へ記録。 | 10分間で5%超 | 10分間で15%超 or 3分連続リトライ枯渇 | CLI WARN + メール + 将来Slack | Data担当 / `RUN-DATA-07` |
+| ブローカー注文レイテンシ (`latency_ms`) | `OrderLifecycleManager`が`metrics/broker_orders.jsonl`へ記録する`stage=submit→ack`の経過時間。 | p95が`config.brokers.slo.latency_warn_ms`超を3ウィンドウ継続 | p99が`config.brokers.slo.latency_critical_ms`超 or `health.raise('critical','broker_api_timeout')`発火 | CLI WARN + メール + `health`イベント | Ops / `RUN-BROKER-API-02#TO-02`, `RUN-BROKER-API-03` |
+| ブローカーキュー待機時間 (`queue_wait_ms`) | `OrderLifecycleManager`がPending注文の待機秒数を算出し`metrics/broker_orders.jsonl`へ追記。`broker_queue_backlog`ルールと連動。 | p95が`config.brokers.slo.queue_warn_sec`×1000超 or Pending 3件 | 任意1件が`config.brokers.slo.queue_warn_sec`の2倍を5分継続 or `health.raise('critical','broker_queue_backlog')` | CLI WARN + メール + Pager（エスカレーション） | Ops / `RUN-BROKER-API-02#RL-01`, `RUN-BROKER-API-03` |
+| ブローカー回復経過時間 (`recovery_elapsed_sec`) | `OrderLifecycleManager`の`RecoveryPlan`が完了するまでの秒数。`metrics/broker_orders.jsonl`の`recovery_status`と併せて記録。 | `recovery_elapsed_sec`が`config.brokers.recovery.sla_minutes`×60秒を2回連続で超過 | `recovery_elapsed_sec`が`config.brokers.recovery.max_sec`超 or `status='error'`継続15分 | CLI WARN + メール + Incident起票 | Ops + Compliance / `RUN-BROKER-API-02#RJ-04`, `RUN-BROKER-API-03` |
 | アラート未対応滞留 (`alert_ack_latency_sec`) | `health_state_transitions.jsonl`で`ack_ts - emitted_ts`を計測。 | WARN/MAJORで15分超過 | CRITICALで5分超過 | CLI WARN + メール (エスカレーション) | 運用統括 / `RUN-OPS-01` |
 | Kill Switch状態 (`kill_switch_state`) | `risk_manager`が出力する状態を`metrics/risk.jsonl`へ書込。 | `soft_stop`継続>30分 | `hard_stop`発火 | CLI INFO（WARN継続時メール） | リスク担当 / `RUN-RISK-01` |
 
 - すべての閾値は`config/sla_thresholds/active.yaml`で上書き可能とし、変更時は`AlertDispatcher`が`AlertEvent(reason="threshold_update")`を発火する。
+- Codexチェック: Validation Data Playbook `validation_playbook/AC41_broker_orders.yaml`とCIジョブ[`ci/broker-orders.yml`](ci/broker-orders.yml)が`metrics/broker_orders.jsonl`とRunbook参照 (`make check-validation --category broker_orders`) を自動監査する。
 - メール通知は`ops@domain`グループへ送付。M2でPrometheus/Slack連携予定。閾値超過イベントはRunbookに沿って対応ログ（開始/完了時刻・担当者）を`logs/ops/alerts.log`へ追記する。
 
 #### 7.5 インシデント対応フローとエスカレーション
