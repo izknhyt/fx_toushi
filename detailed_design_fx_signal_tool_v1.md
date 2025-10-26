@@ -6790,3 +6790,133 @@ M3で予定している自動発注拡張に備え、ブローカーAPI接続層
   3. Kill Switch `STOP`状態でAPI呼び出しを試みると`OrderDispatchRejected(reason='kill_switch_stop')`となり、監査ログとRunbook `RUN-RISK-01`が同期。未登録端末からの呼び出しは`BrokerAccessDenied`で拒否され、Ops Agendaへ`broker.access_review`TODOが追加される。
 
 
+### 80. ブローカーFillシャドー & インフライト突合設計（FR-07/FR-39/FR-58/FR-64, AC-03/AC-06/AC-41, NFR-02/NFR-12, M3準備）
+
+自動発注フェーズ（M3）への移行前に、API経由の注文とHITL実績をリアルタイムで比較できる“Fillシャドー”層を構築する。FR-07/FR-39のHITL一貫性、FR-58複数口座統合、FR-64日次ステートメント突合、AC-03/AC-06のKill Switch即応、AC-41キャピタル保護、NFR-02/12の信頼性・レイテンシ監視を満たすように、APIレスポンス→Fillログ→ステートメントの三重照合を行う。M1では監査ログ/CSV比較のみだが、M1.1でPaper段階のサンドボックス実験、M3でLive API本接続へ拡張する想定で設計する。
+
+#### 80.1 コンポーネント概要
+| コンポーネント | ファイル | 役割 | 主な入出力 |
+| --- | --- | --- | --- |
+| `FillShadowRecorder` | `src/brokers/fill_shadow.py` | `OrderRouter`（§79.2）から流れるAPIレスポンス/ステータス更新を受信し、チケット/Fill/ステートメント参照キーを揃えた`ShadowFillRecord`を生成。 | 入力: `OrderDispatchContext`, `BrokerOrderAck`, `BrokerOrderUpdate`<br>出力: `ShadowFillRecord`（JSONL）, `shadow.fill_recorded`イベント |
+| `FillShadowStore` | 同上 | SQLite/ParquetハイブリッドでAPIレスポンスを永続化。`statement_ref`（口座ID/日付/連番）と`ticket_id`をキーに多重索引を保持。 | 入力: `ShadowFillRecord`<br>出力: `ShadowFillQueryResult`, `ShadowFillDriftReport` |
+| `FillDriftDetector` | `src/brokers/fill_drift.py` | APIレスポンス・HITL入力・ステートメントCSVを照合し、価格/ロット/SL/TP/Swap差分を検出。閾値超過で`KillSwitch`/`HealthMonitor`へ通知。 | 入力: `ShadowFillRecord`, `TicketRecord`, `StatementRecord`<br>出力: `FillDriftAlert`, `ops.agenda.fill_investigate` |
+| `FillReplayService` | `src/brokers/fill_replay.py` | `ShadowFillRecord`を時間順に再生し、Paper/Backtest環境でAPI挙動を再現。`ExecutionModel`/`RiskManager`の期待値と差分を比較。 | 入力: `replay_range`, `filter`<br>出力: `FillReplayReport`, `pytest`フィクスチャ |
+| `BrokerShadowCLI` | `src/interfaces/cli/broker.py` | `tradectl broker shadow start/replay/status/export`を提供。Runbook `RUN-BROKER-API-01`内のPaper検証・差分調査手順を自動化。 | CLI出力/JSON/Markdown、`reports/validation_log/broker_shadow_<date>.md` |
+
+- **データ構造** (`docs/schema/broker_shadow.json`)
+  - `ShadowFillRecord`: `shadow_id`, `ticket_id`, `order_id`, `account_id`, `symbol`, `direction`, `lots`, `price_request`, `price_ack`, `price_final`, `slippage_pips`, `ttl_sec`, `status∈{'pending','accepted','filled','partial','rejected','cancelled'}`, `fill_ts`, `ack_latency_ms`, `fill_latency_ms`, `board_mode`, `kill_switch_state`, `policy_flags`, `statement_ref`, `raw_payload`。
+  - `FillDriftAlert`: `ticket_id`, `order_id`, `dimension∈{'price','lots','swap','commission','status','ttl'}`, `expected`, `actual`, `tolerance`, `severity`, `runbook_ref`, `evidence_path`。
+  - `FillReplayReport`: `replay_id`, `adapter`, `orders_replayed`, `fills_replayed`, `avg_ack_latency_ms`, `avg_fill_latency_ms`, `mismatch_count`, `board_mode_histogram`, `kill_switch_histogram`, `drift_summary`。
+
+#### 80.2 API→HITL→ステートメント突合フロー
+1. `OrderRouter.dispatch()`が`ticket.approved`イベントを受け取り、`BrokerAdapter.place_order()`を呼び出す。
+2. `BrokerAdapter`はレスポンスを`BrokerOrderAck`として返却。`FillShadowRecorder.on_ack()`が呼ばれ、`ShadowFillRecord(status='accepted')`を生成。
+3. API側からステータス更新/Fill通知が届くたびに`FillShadowRecorder.on_update()`が実行され、`status`と`price_final`/`lots`等を更新した`ShadowFillRecord`を追記。
+4. ヒューマンが`tradectl ticket fill import`または手動入力で実績Fillを登録すると`TicketRecord.fill_info`が更新され、`FillDriftDetector.compare_with_ticket()`が`price_request`/`price_final`/`ttl_sec`/`policy_flags`を照合。
+5. 毎日`tradectl reconcile statements`が完了すると`StatementRecord`が生成され、`FillDriftDetector.compare_with_statement()`が`statement_ref`基準で差分を判定。価格差>0.3pips、ロット差>0.01、Swap差>0.2R等の閾値で`FillDriftAlert`。
+6. `FillDriftAlert`は`HealthMonitor.raise('degraded','broker_fill_drift')`とOps Agenda `fill_investigate`を発火。Kill Switchが`STOP`の場合は`BrokerShadowCLI status`で解除条件を提示。
+7. Runbook `RUN-BROKER-API-01`では、Paper口座でのAPI検証/Shadow突合→手動注文→ステートメント取り込みまでを24h以内に完結させ、`reports/validation_log/AC-06_broker_api_<date>.md`に結果を記録。`FillShadowRecorder.export()`が証跡CSV/JSONを生成し添付。
+
+#### 80.3 Kill Switch/Board Mode連携
+- Kill Switchが`STOP`の場合、`FillShadowRecorder`は`status='blocked'`で記録し、APIへ注文を送信しない。`OrderRouter`側で既に拒否されるが、Shadowログ上も`kill_switch_block`として残す。
+- BoardMode=`guarded`の際は`policy_flags`に`reduce_only`を付与し、Fillが`reduce_only`以外で実行された場合は`severity='critical'`のドリフトとして扱う。
+- `FillDriftDetector`は`KillSwitchState`/`BoardMode`の履歴を同時保存し、回避すべき操作（例: Guarded中の新規エントリ）が発生した場合にRunbook `RUN-RISK-01`の`guarded_violation`セクションを自動リンクする。
+
+#### 80.4 テレメトリ・Evidence連携
+- `metrics/broker_shadow.jsonl`: `orders`, `fills`, `avg_ack_latency_ms`, `avg_fill_latency_ms`, `slippage_mean_pips`, `drift_price_count`, `drift_swap_count`, `board_mode_distribution`。
+- `logs/broker/shadow_events.jsonl`: `shadow.fill_recorded`, `shadow.fill_drift_detected`, `shadow.replay_completed`。`evidence/broker_shadow/<YYYYMMDD>/`に各イベントのJSON/Markdownを保存。
+- `reports/validation_log/broker_shadow_<date>.md`: CLI `tradectl broker shadow report --date`で生成。`FillDriftAlert`とRunbook対応ステップ、Opsコメントを記載。
+- `SecureShareService.prepare_package(profile='broker_shadow')`で監査向け暗号化バンドルを生成し、`docs/reports/templates/broker_shadow_summary.md`を参照。
+
+#### 80.5 CLI仕様 (`tradectl broker shadow`) とRunbook動線
+| サブコマンド | 引数 | 処理 | 出力/副作用 |
+| --- | --- | --- | --- |
+| `start` | `--adapter {sandbox,mt5,ctrader}`, `--profile <paper/live>`, `--persist` | Shadow記録ジョブを起動。`Scheduler`に`shadow_record_job`を登録し、`FillShadowRecorder`を起動。 | ジョブID、ログパス。Kill Switch STOP時は起動拒否。 |
+| `status` | `--adapter`, `--window <minutes>`, `--alerts` | `FillShadowStore`を照会し、最新Shadowイベントと未解決`FillDriftAlert`を表示。 | CLIテーブル、`ops.agenda`リンク。 |
+| `replay` | `--from <ts>`, `--to <ts>`, `--adapter`, `--mode {paper,backtest}`, `--strict` | `FillReplayService`でShadowログ再生→`ExecutionModel`/`RiskManager`比較。`--strict`で閾値超過を即エラー。 | `FillReplayReport`（Markdown/JSON）、`pytest`互換結果。 |
+| `export` | `--date`, `--format {json,csv,parquet}`, `--dest <path>` | Shadowログ/アラートをエクスポート。`SecureShareService`と連携。 | ファイルパス、Evidence登録。 |
+| `ack` | `--alert-id`, `--note`, `--runbook-step` | `FillDriftAlert`対応状況を更新し、Runbook手順に紐づけ。 | `AckReceipt`, `audit.shadow_ack` |
+
+- Runbook `RUN-BROKER-API-01.step4`は`tradectl broker shadow replay --strict --from <ts>`の実行を必須とし、結果を`reports/validation_log/AC-06_broker_api_<date>.md`へ貼り付ける。
+- Ops訓練`TR-18`では、故意に`reduce_only`違反Fillを挿入し`FillDriftDetector`の挙動・Kill Switch推奨を確認する。
+
+#### 80.6 Codex実装パケット
+| Packet ID | スコープ | 成果物 | テスト |
+| --- | --- | --- | --- |
+| `EP17-BROKER-P4` | `FillShadowRecorder`/`FillShadowStore`/CLI `shadow start/status/export` | `src/brokers/fill_shadow.py`, `src/interfaces/cli/broker.py`, `tests/unit/test_fill_shadow_store.py` | `pytest -k fill_shadow_store`, `pytest -k broker_shadow_cli` |
+| `EP17-BROKER-P5` | `FillDriftDetector`/`FillReplayService`/`metrics`/`reports`生成 | `src/brokers/fill_drift.py`, `src/brokers/fill_replay.py`, `src/reports/broker_shadow.py`, `tests/integration/test_broker_shadow.py` | `pytest -k broker_shadow`, `pytest -k broker_replay`, `make broker-api-smoke`（Flag有効時） |
+| `EP17-BROKER-P6` | Statement突合・SecureShare/Evidence統合 | `src/reconciliation/statement.py`拡張, `src/brokers/fill_shadow.py`フック, `tools/broker_shadow/export.py` | `pytest -k reconciliation`, `make check-validation --category broker_shadow` |
+
+- **受入条件**:
+  1. Paperモード（`brokers.api_enabled=true`, `brokers.api_sandbox_only=true`）で`tradectl broker shadow start`→`OrderRouter`経由のサンドボックス注文→`tradectl broker shadow status --alerts`を実行すると`ShadowFillRecord`が生成され、未Fill状態では`status=pending`、Fill完了で`status=filled`になる。
+  2. 手動でFill価格を0.5pipsずらしたステートメントを投入すると`FillDriftDetector`が`severity=major`アラートを発行し、`HealthMonitor`が`degraded(reason='broker_fill_drift')`へ遷移。Runbook参照と`ops.agenda.fill_investigate`TODOが生成される。
+  3. `tradectl broker shadow replay --strict`が`ExecutionModel.expected_slippage`との差分を報告し、許容超過時にExit code 99で失敗する。CIで`pytest -k broker_shadow`が通過し、`metrics/broker_shadow.jsonl`にレポートが出力される。
+
+#### 80.7 テスト計画
+- **ユニット**: `tests/unit/test_fill_shadow_store.py`（Insert/Query/TTL）、`tests/unit/test_fill_drift_detector.py`（閾値比較、policy flag違反）、`tests/unit/test_fill_replay.py`（リプレイ統計）。
+- **統合**: `tests/integration/test_broker_shadow.py`（SandboxAdapter→Shadow→Drift検出→CLI→HealthMonitor連携）、`tests/integration/test_statement_bridge.py`（ステートメント突合連携）。
+- **リグレッション**: `make regression-broker-shadow`（Backtest回帰CIに統合）。`ci/broker-shadow.yml`で`brokers.api_enabled=true`のマトリクスジョブを追加。
+- **Ops演習**: `docs/runbooks/RUN-BROKER-API-01.md`を更新し、`TR-18`訓練シナリオでShadow差分検証→Runbook記録までの所要時間を測定。`ops_worklog`で30分以内に差分判定が完了するかを追跡し、`reports/ops/workload_<YYYYMM>.md`で改善効果をレビュー。
+
+### 81. ブローカーAPI信頼性ガード & レートリミット制御設計（FR-07/FR-39/FR-58, AC-03/AC-06/AC-32, NFR-02/NFR-05/NFR-19, M3準備）
+
+API接続を常用するには、レスポンス遅延・レート制限・接続断の兆候を即座に検出し、HITL運用とKill Switchに反映する必要がある。FR-07/FR-39/FR-58の自動発注準備、AC-03/AC-06のStop/Reduce-Only即応、AC-32のリスクエンベロープ制御、NFR-02/05/19の信頼性・監査性・リソースガバナンスを満たすため、BrokerAdapter層に監視・バジェット管理・フェイルオーバー手順を組み込む。
+
+#### 81.1 監視・制御コンポーネント
+| コンポーネント | ファイル | 役割 | 主な指標 |
+| --- | --- | --- | --- |
+| `BrokerApiMonitor` | `src/brokers/monitor.py` | API呼び出し毎のレイテンシ/成否を計測し、SLO逸脱を`HealthMonitor`へ通知。 | `latency_p50/p95`, `error_rate`, `timeouts`, `rate_limit_hits`, `concurrent_requests` |
+| `RateLimitWindow` | 同上 | ブローカー別レート制限（例: 60req/min）をトークンバケットで管理し、送信前チェック・待機・延期を制御。 | `tokens_remaining`, `refill_rate`, `queue_length` |
+| `ApiFailoverPlanner` | `src/brokers/failover.py` | API障害時にRunbook/Shadow/Manual fallbackへの切替シナリオを生成。`EmergencyOrchestrator`（§19）と統合。 | `failover_stage`, `manual_steps`, `expected_recovery_min` |
+| `BrokerHeartbeat` | `src/brokers/monitor.py` | 定期的に`get_time`, `ping`, `fetch_positions`を実行し、遅延/失敗を検出。 | `heartbeat_latency`, `heartbeat_status` |
+| `BrokerPolicyEnforcer` | `src/brokers/policy.py` | ブローカー毎の最大ポジション/同時注文数/取引可能時間を検証し、違反時に即Reject。 | `max_orders`, `open_positions`, `trading_sessions` |
+| `BrokerMonitorCLI` | `src/interfaces/cli/broker.py` | `tradectl broker monitor status/test/limit`コマンドを提供。`ops.agenda`とRunbook誘導。 | CLIテーブル、JSON、`reports/ops/broker_monitor_<date>.md` |
+
+#### 81.2 APIリクエストライフサイクル
+1. `OrderRouter`が`RateLimitWindow.reserve()`を呼び出し、トークンが不足している場合は`retry_after`秒待機または`OrderDispatchDeferred`イベントを返す。`max_queue_sec`を超えると`KillSwitch`へ`soft_stop(api_backlog)`を通知。
+2. トークンを確保したら`BrokerAdapter`がAPIを実行。開始時刻/終了時刻/ステータスを`BrokerApiMonitor.record()`で測定。
+3. レイテンシが`config.broker.slo.latency_warn_ms`（例: 750ms）を超えると`warning`イベント、`latency_critical_ms`（例: 1500ms）を超えると`critical`イベントを発行。連続3回で`HealthMonitor.raise('degraded','broker_latency')`。
+4. HTTPエラー/タイムアウト発生時は`BrokerApiMonitor.record_error()`で`error_bucket`へ分類（`auth`, `rate_limit`, `network`, `unknown`）。`rate_limit`は自動的に`RateLimitWindow.shrink_capacity()`を呼び出し、再試行までの待機時間を指数的に延長。
+5. `ApiFailoverPlanner`は`HealthMonitor`から`degraded(reason='broker_latency')`等の通知を受け、`EmergencyOrchestrator`へ`api_failover`アクションセットを登録。Runbook `RUN-BROKER-API-02`の手順（Shadow継続/手動注文への切替/キー無効化）をCLIで誘導。
+6. 再開時は`BrokerApiMonitor.recover()`がレートウィンドウ/エラーカウンタをリセットし、`ops_worklog`に復旧時間を記録。`FillShadowRecorder`（§80）と連携して`status='blocked'`からの回復を確認する。
+
+#### 81.3 レート制限制御
+- `RateLimitWindow`は`config/broker/<adapter>.yaml`で設定された`burst`, `sustained_per_min`, `reset_sec`, `priority_rules`を読み込み、トークンバケット方式で制御。
+- `priority_rules`: `{'order.place': 'high', 'order.modify': 'high', 'order.cancel': 'medium', 'account.fetch': 'low'}`など。`OrderRouter`は高優先度のバックログが存在する場合、低優先度リクエストを自動延期。
+- `tradectl broker monitor limit set --burst 30 --sustained 60`で運用中に閾値調整可能。変更は`audit.broker_limit_changed`に記録し、`docs/change_requests/`経由の承認がないと反映されない。
+- Rate Limit消費状況は`metrics/broker_rate_limit.jsonl`へ追記し、`GuardedMetricsSink`（§52）経由でアラート。`p95 queue wait`が`config.broker.slo.queue_warn_sec`を超えた場合はOpsへ通知。
+
+#### 81.4 テレメトリ・通知
+- `metrics/broker_api.jsonl`に`latency_ms`, `status`, `error_bucket`, `rate_limit_tokens`, `queue_wait_ms`, `heartbeat_latency_ms`を記録（§79.3の拡張）。
+- `alerts/broker_api.yaml`: `broker.latency.warn`, `broker.latency.critical`, `broker.error.rate_limit`, `broker.error.auth`, `broker.queue.backlog`, `broker.heartbeat.timeout`のアラートを定義。`AlertDispatcher`がCLI/Slack Shadow/メールへ通知。
+- `reports/ops/broker_monitor_<date>.md`: CLI `tradectl broker monitor report --window 24h`で生成。SLO遵守率、Rate Limit利用率、Failover履歴、未対応TODOを記録。
+- `ops_worklog`には自動で`{"task":"broker_api_recovery","duration_min":...}`を追記し、Ops負荷を可視化。
+
+#### 81.5 Runbook/Feature Flag
+- Feature Flag: `config/feature_flags.yaml::brokers.monitor_enabled`（既定`false`）。M1 CoreでOFF、M1.1 Hardeningでサンドボックス監視、M3でLiveへ展開。
+- Runbook `RUN-BROKER-API-02`（新規）
+  1. `tradectl broker monitor status --alerts`で現状確認。
+  2. `tradectl broker monitor test --adapter sandbox`で疎通確認（`BrokerHeartbeat`）。
+  3. `tradectl broker monitor limit plan --scenario throttle`で自動計算された待機時間/手動注文比率を確認。
+  4. `EmergencyOrchestrator`を介した`api_failover`シナリオ発動（`tradectl emergency dispatch --plan api_failover`）。
+  5. 復旧後に`tradectl broker monitor report --window 4h --attach`でEvidence生成。Ops/POサインを`reports/validation_log/AC-06_broker_api_<date>.md`へ追記。
+
+#### 81.6 Codex実装パケット
+| Packet ID | スコープ | 成果物 | テスト |
+| --- | --- | --- | --- |
+| `EP17-BROKER-P7` | `BrokerApiMonitor`/`RateLimitWindow`/Metrics/Alert | `src/brokers/monitor.py`, `src/brokers/policy.py`, `tests/unit/test_broker_monitor.py` | `pytest -k broker_monitor`, `pytest -k broker_rate_limit` |
+| `EP17-BROKER-P8` | CLI/Runbook統合・Failover Planner | `src/interfaces/cli/broker.py`拡張, `src/brokers/failover.py`, `docs/runbooks/RUN-BROKER-API-02.md` | `pytest -k broker_monitor_cli`, `tradectl broker monitor test --adapter sandbox`（approval） |
+| `EP17-BROKER-P9` | Emergency/Shadow/HealthMonitor連携 | `src/emergency/planner.py`拡張, `src/core/health.py`フック, `src/interfaces/gui/shadow_api.py`通知 | `pytest -k emergency_broker_api`, `pytest -k health_broker_monitor`, `make broker-api-smoke` |
+
+- **受入条件**:
+  1. サンドボックスで人工的にレイテンシ>1500msを発生させると`broker.latency.critical`アラートがSlack Shadowへ配信され、`HealthMonitor`が`degraded(reason='broker_latency')`に遷移。`tradectl broker monitor status --alerts`で未対応アラートが表示される。
+  2. `RateLimitWindow`のトークン消費が閾値を下回ると低優先度リクエストが自動延期され、高優先度の`place_order`が成功する。`pytest -k broker_rate_limit`でQueue挙動が検証される。
+  3. `EmergencyOrchestrator`経由で`api_failover`が発動すると、`OrderRouter`が自動停止し、Runbook手順リンクとOps TODOが生成される。復旧後に`tradectl broker monitor report --window 1h`がSLO復帰を証跡化する。
+
+#### 81.7 テスト計画
+- **ユニット**: `tests/unit/test_broker_monitor.py`（SLO計測/アラート）、`tests/unit/test_broker_rate_limit.py`（トークンバケット/優先度キュー）、`tests/unit/test_broker_failover.py`（ステージ遷移）。
+- **統合**: `tests/integration/test_broker_monitor_cli.py`（CLI操作/Alert/HealthMonitor連携）、`tests/integration/test_emergency_broker_api.py`（Failover Planner→Emergency Orchestrator→Ops TODO）。
+- **CI**: `ci/broker-api-monitor.yml`でサンドボックスモックに対し`make broker-api-monitor-smoke`を実行。レートリミット挙動は`pytest -k broker_rate_limit --run-slow`で検証。
+- **Ops演習**: `TR-19 API Degradation Drill`を追加し、レイテンシ増加→Kill Switch判断→手動注文切替→復旧の所要時間を測定。`ops_worklog`に自動追記し、週次Opsレビューで評価。
+
+これらの追補により、サンドボックス段階でAPIレスポンスとHITL運用の差異を可視化し、M3移行時に自動発注へ移行してもKill Switch/Board Mode/Runbook連携が破綻しないことをCodexが段階的に検証できる。`FillShadow`と`BrokerApiMonitor`の二重の安全網を整備することで、手動運用の品質を維持しながらAPI自動化の信頼性・監査性・テレメトリを高水準で確保するロードマップを示す。
