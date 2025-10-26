@@ -1,4 +1,4 @@
-# FXヒューマン・インザループ投資ツール 詳細設計書 v1.28
+# FXヒューマン・インザループ投資ツール 詳細設計書 v1.29
 
 ## 0. 文書情報
 - 作成日: 2025-02-20
@@ -9,6 +9,7 @@
 ### 0.1 改訂履歴
 | 版 | 日付 | 改訂概要 |
 | --- | --- | --- |
+| v1.29 | 2025-03-11 | §88でAudit Bundle Orchestrator & Evidence Vault設計（FR-11/FR-52/FR-59, AC-06/AC-42/AC-53, M2+）を追加し、コンポーネント責務/CLI仕様/署名スキーマ/Runbook連携/CIテスト指針をCodex Packet化。 |
 | v1.28 | 2025-03-10 | §87でSignal Streaming Gateway & Offline Sync設計（FR-12/FR-47, NFR-02/NFR-11/NFR-18, M3準備）を新設し、Shadow Session多重接続/バックプレッシャ/再送/オフラインキャッシュ設計、信頼性/レイテンシ指標、Validation Data Playbook/Runbook/Feature Flag/テスト運用を定義。 |
 | v1.27 | 2025-03-09 | §86でSignal Board Tauri GUI/HITLインタラクション（FR-12/FR-47/FR-48, NFR-11/NFR-15, M3準備）を追加し、コンポーネント分割/状態遷移/エラー通知、CLI/Shadow APIとの契約、Telemetry・監査・Runbook手順、Codex Packetとテスト計画を定義。 |
 | v1.26 | 2025-03-08 | §84でAPI注文ライフサイクル/エラー回復設計（FR-07/FR-39/FR-58, AC-03/AC-06/AC-32/AC-41, NFR-02/NFR-05/NFR-19）を追加し、`OrderLifecycleManager`/`OrderStateStore`/Runbook連携/CLI/Telemetry/テストパケットを定義。§85でAPIフォールトインジェクション&演習ラボ（FR-47/FR-63, AC-34/AC-43, NFR-02/NFR-28）を新設し、StageGuard/FillShadow/DocOps統合とCodex Packet/証跡運用を設計。 |
@@ -7577,4 +7578,161 @@ API接続の信頼性を高めるには、レート制限・レスポンス遅�
   - GitHub Actions `ci/shadow-gateway.yml`を追加し、`pytest -k shadow_gateway`、`make load-shadow-gateway --duration 5m --smoke`、`make chaos-shadow-gateway --fault drop-events --smoke`を夜間実行。
   - `make check-validation --category shadow_gateway`と`tradectl validation audit --category shadow_gateway`を必須化し、Validation Data Playbookの欠落をCIで検知。
   - 成果物（SQLite/Parquet）のハッシュは`data_manifest.json`に自動追記。差分検知時は`docs/change_requests/SHADOW-GW-<date>.md`を生成し、Codexがレビュー可能なテンプレを添付。
+
+### 88. Audit Bundle Orchestrator & Evidence Vault設計（FR-11/FR-52/FR-59, AC-06/AC-42/AC-53, M2+）
+
+#### 88.1 スコープと責務分担
+
+- **目的**: 月次/四半期で監査証跡（シグナル履歴/承認・約定ログ/設定差分/リスク承諾/ベンチマーク比較）を`audit_pack/<period>/`へ集約し、署名付きマニフェストで改ざん耐性を担保する。外部監査/トレーダーQA/ガバナンス会議で即参照できるWORM保管を提供（FR-11, FR-52, FR-59）。
+- **対象マイルストーン**: M2（Hardening完了後）。M1 Coreでは`reports/validation_log/`と`data_manifest.json`での計測/署名を先行整備済み。M2で`AuditBundleService`を有効化、M3でマルチブローカー統合（AC-53）とGUI閲覧を拡張予定。
+- **主要コンポーネント**:
+  | コンポーネント | ファイル | 役割 | 担当 | 依存 |
+  | --- | --- | --- | --- | --- |
+  | `AuditBundleService` | `src/audit/bundle/service.py` | 収集タスク定義、Evidence抽象化、ファイル生成/検証 | Codex（Backend） | `EvidenceCatalog`, `SignatureEngine`, `AuditManifest` |
+  | `EvidenceCatalog` | `src/audit/bundle/catalog.py` | 収集対象メタをYAMLで宣言し、Runbook/Validation Data Playbookと同期 | Ops/DocOps | `docs/audit/catalog.yaml`, `Validation Data Playbook` |
+  | `SignatureEngine` | `src/audit/bundle/signature.py` | `cryptography`ベースで`audit_manifest.sig`署名/検証、鍵ローテーション運用 | Security Advisor | `config/keys/audit_signing.pem`, `docs/security/key_rotation.md` |
+  | `AuditBundleCLI` | `src/interfaces/cli/audit.py` | `tradectl audit bundle/verify/list` CLI提供、Codex PacketへのI/O契約 | Codex（CLI） | Typer, Rich, `AuditBundleService` |
+  | `AuditEvidenceStore` | `src/persistence/audit_store.py` | `audit_pack/<period>/`のWORM化、`manifest`検証、Retention管理 | Codex（Infra） | `pyarrow`, `SQLite`, `FileLock` |
+- **責務境界**:
+  - `AuditBundleService`はドメインイベントを再集計せず、既存ストア（`logs/events/*.jsonl`, `reports/weekly/*.md`, `config/`ディレクトリ、`risk_consent`署名ログ）からEvidence Snapshotを作成。
+  - `EvidenceCatalog`は「収集項目/ファイルパス/整形スクリプト/Validation ID」を宣言し、`make audit-bundle --check`で欠落検出。Runbook `GOV-AUD-01`更新時はCatalog→Validation Playbook→CLIテンプレの順でリンク更新。
+  - `SignatureEngine`はキーの抽象化を行い、macOS Keychain/Hardware Token連携（M3+想定）に差し替え可能な`Signer`プロトコルを定義。
+
+#### 88.2 データフローとジョブ構成
+
+1. **トリガー**: `tradectl audit bundle --period 202503` または GitHub Actions `ci/audit-bundle.yml`（毎月第1営業日06:30 JST, Dry-Run）。
+2. **収集計画ロード**: `AuditBundleService.load_catalog(period)` が `docs/audit/catalog.yaml`（YAML Schema: `category`, `source`, `glob`, `transform`, `validation_id`, `retention_months`）を読み込み、対象ファイルリストを構築。M2ではカテゴリ固定（`signals`, `tickets`, `executions`, `config_diff`, `risk_consent`, `benchmark`）。
+3. **Evidence抽出**:
+   - `signals`: `logs/events/signals/<YYYY>/signal_*.jsonl` を日次でフィルタし、`jq`ライクな`EvidenceTransform`（Python callable）で`SignalSnapshot` Parquetを生成。
+   - `tickets`: `logs/events/tickets/<YYYY>/ticket_*.jsonl` + `reports/trader_signoff/*.md` を突合し、承認者・コメント・チェックリスト状態を付与。
+   - `executions`: `reports/performance/executions/<mode>/<YYYYMM>.parquet` + `broker_statements/<broker>/<YYYYMM>.csv`（AC-53連携, Optional）をマージ。
+   - `config_diff`: `reports/audit/config_diff/<period>.md` を`git diff`から自動生成（§43 Config Governanceと共通モジュール）。
+   - `risk_consent`: `logs/audit/risk_consent_*.jsonl` + `docs/legal/risk_disclosure.md`のハッシュを整形。
+   - `benchmark`: `reports/benchmark/<period>.md`（Paper vs ベンチマーク）を埋め込み。
+4. **Manifest構築**: `AuditManifest.build(evidences)` が JSON（`version`, `period`, `generated_at`, `inputs[]`, `hashes`, `validation_links`, `signing_key_id`, `retention_until`）を生成し、`audit_pack/<period>/audit_manifest.json` へ出力。
+5. **署名**: `SignatureEngine.sign(manifest_path)` が `audit_manifest.sig` を作成。署名方式は`ed25519`（default）/`rsa-pss`（fallback）をサポート。キーIDと`KeyRotationPolicy`（`config/security/key_rotation.yaml`）をManifestへ記載。
+6. **Integrity Check**: `AuditEvidenceStore.verify(period)` がハッシュ再計算→署名検証。エラー時は`AuditBundleException`を投げ、`HealthMonitor`へ `health.changed(reason=audit_bundle_failed)` イベント送信。
+7. **WORM化**: 成果物を`audit_pack/<period>/`へ配置し、`AuditEvidenceStore.freeze(period)`が macOS `chmod -w` + `xattr com.apple.quarantine` + `FileLock` で書込み禁止化。将来はS3互換WORMバケットを追加（M3）。
+8. **Validation連携**: `Validation Data Playbook`（`validation_playbook/FR59_audit_bundle.yaml`）へ自動追記（`generated_at`, `manifest_hash`, `signer`, `verification_log`, `approvers`）。`tradectl validation audit --category audit_bundle`がCLIで検証可。
+
+#### 88.3 CLI/API仕様 (`src/interfaces/cli/audit.py`)
+
+| コマンド | 説明 | 主引数 | オプション | 出力/副作用 |
+| --- | --- | --- | --- | --- |
+| `tradectl audit bundle --period <YYYYMM>` | Audit Bundle生成（本番）。`period`は月単位、四半期は`--quarter`指定で`YYYYQ#`へ変換。 | `--mode` (`live|paper|all`, 既定`all`) | `--dry-run`（生成せず検証のみ）, `--no-freeze`（WORM化スキップ, CI用）, `--include-statement`（AC-53, ステートメント突合を必須化） | `audit_pack/<period>/`配下へ成果物生成、`reports/audit/audit_pack/<period>.md`へサマリ出力 |
+| `tradectl audit verify --period <YYYYMM>` | 署名/ハッシュ検証。 | 同上 | `--evidence <category>`（特定カテゴリのみ再検証） | `stdout`/Richテーブルで検証結果。失敗時は非0終了 + `AuditBundleVerificationError` |
+| `tradectl audit list` | 既存Bundle一覧。 | - | `--status`（`valid|invalid|pending`）, `--since <YYYYMM>` | Manifestステータス/Retention期限/署名者を出力。`Validation Data Playbook`リンクを併記 |
+
+- CLIはTyperベース。`AuditBundleService`との境界: CLIで入力検証→サービス呼出→結果テーブル整形。Codex実装では`AuditBundleResult` dataclass（`period`, `outputs`, `manifest_path`, `signature_path`, `warnings[]`）を返し、CLIでRich表示/ログ出力。
+- `--include-statement`は`broker_statements/`欠落時にエラー。M2.1（AC-53）でLive口座必須化。Paperのみの場合は警告ログ（`level=warning`, `code=audit_bundle_statement_missing`）を出す。
+- CLIログは`audit.bundle`名前空間で統一し、`audit.bundle.generate`, `audit.bundle.verify`, `audit.bundle.freeze`イベントを`audit`ストアへ永続化。
+
+#### 88.4 スキーマ/フォーマット
+
+- **`audit_manifest.json` Schema (JSON Schema draft-07)**:
+  ```json
+  {
+    "type": "object",
+    "required": ["version", "period", "generated_at", "inputs", "hashes", "signing_key_id"],
+    "properties": {
+      "version": {"type": "string", "enum": ["1.0"]},
+      "period": {"type": "string", "pattern": "^(\\d{6}|\\d{4}Q[1-4])$"},
+      "generated_at": {"type": "string", "format": "date-time"},
+      "mode": {"type": "string", "enum": ["paper", "live", "all"]},
+      "inputs": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "required": ["category", "path", "records", "hash"],
+          "properties": {
+            "category": {"type": "string"},
+            "path": {"type": "string"},
+            "records": {"type": "integer", "minimum": 0},
+            "hash": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+            "validation_id": {"type": "string"},
+            "notes": {"type": "string"}
+          }
+        }
+      },
+      "hashes": {
+        "type": "object",
+        "required": ["manifest", "archive"],
+        "properties": {
+          "manifest": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+          "archive": {"type": "string", "pattern": "^[a-f0-9]{64}$"}
+        }
+      },
+      "signing_key_id": {"type": "string"},
+      "retention_until": {"type": "string", "format": "date"},
+      "validation_links": {
+        "type": "array",
+        "items": {"type": "string", "pattern": "^validation_playbook/"}
+      }
+    }
+  }
+  ```
+- **`EvidenceTransform`インターフェース** (`src/audit/bundle/types.py`):
+  ```python
+  Protocol EvidenceTransform:
+      def __call__(self, source_files: list[Path], period: Period) -> EvidenceResult: ...
+
+  @dataclass
+  class EvidenceResult:
+      category: str
+      output_path: Path
+      record_count: int
+      metadata: dict[str, Any]
+  ```
+- Evidence出力形式:
+  | カテゴリ | 形式 | 詳細 |
+  | --- | --- | --- |
+  | `signals` | Parquet (`schema/signals_v2.parquet`) | カラム: `ts`, `pair`, `strategy_id`, `score`, `gate_state`, `board_mode`, `risk_flags[]` |
+  | `tickets` | JSONL (`schema/tickets_v3.jsonl`) | `ticket_id`, `action`, `checklist`, `approver`, `latency_ms`, `audit_ref` |
+  | `executions` | Parquet (`schema/executions_v2.parquet`) | `ticket_id`, `fill_price`, `slippage_pips`, `result_r`, `statement_ref` |
+  | `config_diff` | Markdown (`reports/audit/config_diff/<period>.md`) | 前回リリースタグとの差分、`git commit`リンク |
+  | `risk_consent` | JSONL (`logs/audit/risk_consent_snapshot_<period>.jsonl`) | `consent_id`, `user`, `version`, `hash` |
+  | `benchmark` | Markdown (`reports/benchmark/<period>.md`) | KPI比較、PF/Sharpe/MaxDD/HitRate |
+
+- **Archive**: `audit_pack/<period>/audit_bundle_<period>.tar.zst` を生成。`hashes.archive`がZstandard圧縮後のSHA-256。`--dry-run`時は`.tmp`拡張子。
+
+#### 88.5 運用・非機能要件
+
+- **パフォーマンス**: 月次Bundle生成は最大15分以内（NFR-05）。Evidence抽出はマルチプロセス（`ProcessPoolExecutor`）でカテゴリ並列化。I/O負荷を抑えるため、Parquetは`pyarrow.dataset.write_dataset`で`partitioning=Hive` (`pair=`)を採用。
+- **信頼性**:
+  - 生成失敗時は`AuditBundleService`が `RetryPolicy(max_attempts=3, backoff=exponential)` を適用。再試行上限超過で`HealthState=degraded(reason=audit_bundle_failed)`。
+  - 署名検証失敗/ハッシュ不一致は`IncidentSeverity=P1`扱い。Runbook `GOV-AUD-01`に沿って24h以内に再生成し、`docs/change_requests/AUDIT-<period>.md`で原因分析。
+- **セキュリティ**:
+  - 署名鍵は`config/keys/audit_signing.pem`（ED25519）。権限: `chmod 600`, 所有者: Ops。`KeyRotationPolicy`で四半期ごとのローテーション、旧鍵は`config/keys/archive/<YYYYMM>.pem`へ移動し読み取り専用化。
+  - Bundle出力後は`FileLock`＋`xattr com.apple.FinderInfo`で誤操作防止。削除操作は`tradectl audit purge`（M3+）のみ許可予定。
+- **監査ログ**: `audit.audit_bundle`イベントを`logs/audit/audit_bundle_<period>.jsonl`へ記録。フィールド: `event`, `period`, `status`, `manifest_hash`, `signer`, `duration_ms`, `warnings`. CLI成功時は`status=success`。
+- **可観測性**: `metrics/audit_bundle.jsonl`へ `step`, `duration_ms`, `records` を記録。Prometheus Exporter（§2.7）にも `audit_bundle_last_success_timestamp`, `audit_bundle_duration_ms` を追加。
+- **Retention**: `retention_months`に従い、`AuditEvidenceStore.expire()`が期限切れBundleを削除候補としてリスト出力。自動削除は行わず、OpsがRunbookで承認後に`tradectl audit purge --period`（M3+）を実行。
+- **互換性**: Manifestバージョンは`1.0`固定。将来スキーマ変更時は`version`増分＋互換性変換ロジックを`AuditManifest.upgrade()`へ追加。
+
+#### 88.6 Codex実装パッケージとテスト指針
+
+- **Implementation Packets**:
+  | Packet ID | 主スコープ | 参照セクション | 成果物 | テスト |
+  | --- | --- | --- | --- | --- |
+  | `EP22-AUDIT-BUNDLE-P1` | `AuditBundleService`基盤 + Catalog Loader | §88.1, §88.2 | `service.py`, `catalog.py`, `types.py` | `pytest -k audit_bundle_service`; `poetry run mypy src/audit/bundle` |
+  | `EP22-AUDIT-BUNDLE-P2` | CLI + Manifest/署名 | §88.3, §88.4 | `interfaces/cli/audit.py`, `signature.py`, `tests/approval/test_audit_cli.py` | `pytest -k audit_cli`; `tradectl audit bundle --period 202503 --dry-run` |
+  | `EP22-AUDIT-BUNDLE-P3` | Evidence Transform + Integration | §88.2, §88.4, §88.5 | `transforms/*.py`, `audit_store.py`, `metrics`追加 | `pytest -k audit_evidence`; `make audit-bundle --check`; `pytest tests/integration/test_audit_bundle.py` |
+- **Codexプロンプト必須要素**:
+  - CLI Docstring/`--help`は日本語+英語サマリ併記。
+  - `EvidenceTransform`にはデータ量サンプル（`tests/data/audit_bundle/sample_signals.jsonl`等）を同梱。
+  - 署名テストは`tests/fixtures/keys/test_audit_signing.pem`を使用し、本番鍵と分離。CIでは`export AUDIT_SIGNING_KEY_PATH=tests/fixtures/keys/test_audit_signing.pem`で上書き。
+- **テスト/CI統合**:
+  - GitHub Actions `ci/audit-bundle.yml`: `pytest -k audit_bundle`, `poetry run tradectl audit bundle --period $(date +%Y%m --date='-1 month') --dry-run --no-freeze`, `poetry run tradectl audit verify --period $(date +%Y%m --date='-1 month')`。
+  - `make audit-bundle --check`はCatalog宣言とValidation Playbook整合チェック（`python -m audit.bundle.check catalog.yaml validation_playbook/FR59_audit_bundle.yaml`）。欠落項目はCI失敗。
+- **Runbook連携**:
+  - `GOV-AUD-01`更新時に`docs/audit/catalog.yaml`/CLIヘルプ/Validation Playbookを同時改訂するチェックリストをRunbookへ追記。
+  - 監査レビュー会議（四半期）で`reports/audit/audit_pack/<period>.md`を用意し、Bundle生成ログ＋KPIs (`bundle_generation_duration_ms`, `missing_evidence_count`) を確認。Ops/Treder/Complianceがサインしたら`Validation Data Playbook`へ記録。
+
+#### 88.7 将来拡張フック（M3+）
+
+- **マルチブローカー統合（AC-53）**: `EvidenceTransform.executions`でBroker別テンプレ（`docs/templates/statement_format.md`）を解釈し、差分サマリ（`statement_gap_r`）をManifestへ記録。乖離>0.5Rで`HealthState=degraded(reason=statement_gap)`イベントをEmit。
+- **外部監査エクスポート**: `AuditBundleService.export(destination='s3')`を追加し、S3 Object Lockバケットへアップロード。`export`結果は`audit_manifest.json`に`external_upload`セクションを追記。
+- **GUI/Tauri統合**: Signal Board GUI（§86）へ`Audit Bundle Viewer`パネルを追加予定。Manifest一覧・署名検証・差分ダウンロードをGUIで実行可能にし、CLIと共通API (`AuditBundleQueryService`) を提供。
+- **差分通知**: 連続期間でEvidence差分>10%（例: チケット件数激減）を検知した場合、`Observability Exporter`（§65）経由でSlack/メール通知。ルールは`config/audit/diff_thresholds.yaml`で調整。
+
 
