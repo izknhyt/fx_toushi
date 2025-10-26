@@ -1,30 +1,28 @@
-[project]
+[tool.poetry]
 name = "fx-toushi"
 version = "0.1.0"
 description = ""
-authors = [
-    {name = "Codex",email = "codex@openai.com"}
-]
+authors = ["Codex <codex@openai.com>"]
 readme = "README.md"
-requires-python = "^3.11"
-dependencies = [
-    "typer (>=0.20.0,<0.21.0)",
-    "rich (>=14.2.0,<15.0.0)",
-    "pydantic (>=2.12.3,<3.0.0)",
-    "pandas (>=2.3.3,<3.0.0)",
-    "jsonschema (>=4.25.1,<5.0.0)"
-]
+packages = [{ include = "brokers", from = "src" }]
 
-
-[build-system]
-requires = ["poetry-core>=2.0.0,<3.0.0"]
-build-backend = "poetry.core.masonry.api"
+[tool.poetry.dependencies]
+python = "^3.11"
+typer = "^0.20.0"
+rich = "^14.2.0"
+pydantic = "^2.12.3"
+pandas = "^2.3.3"
+jsonschema = "^4.25.1"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.4.2"
 black = "^23.12.0"
 ruff = "^0.14.2"
 mypy = "^1.18.2"
+
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"
 
 [tool.black]
 line-length = 100
@@ -56,4 +54,3 @@ strict = true
 pretty = true
 show_error_codes = true
 warn_unused_configs = true
-
