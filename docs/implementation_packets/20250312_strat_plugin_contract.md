@@ -20,6 +20,7 @@
 | src/strategies/registry.py | Manifestロード時にProtocol準拠検査・`StrategyRegistrationError(code='contract_violation')`のFail-Fast実装。 | `pytest -k strategy_registry` | N/A |
 | tests/unit/test_strategy_plugin_contract.py | Protocol準拠/seed決定論/ログ付与のスモークテストを追加。 | `pytest -k strategy_plugin_contract` | N/A |
 | docs/trader_signoff/PKG-STRAT-IFACE-01.md | CLIスナップショット/Runbookリンク/承認サイン欄を作成。 | `tradectl board --view strategy --save-snapshot ...` | N/A |
+| detailed_design_fx_signal_tool_v1.md | §3.3のFeatureContext仕様・§3.5の利用例を整備し、`available_keys`/`get_latest`の契約と必須Featureキー表を追加。 | N/A | N/A |
 
 ### 2.1 EntryMode / FillStyle リテラル更新（§3.6, §4.3）
 - `EntryMode = Literal["market", "marketable_limit", "limit_requote"]`
@@ -29,12 +30,19 @@
   - `ExecutionAdjustments.fill_style` と `TradeTicket.entry.fill_style` で共有。CLI出力キーは`fill_policy`。
   - 監査: Validation Log `AC-02_execution_pipeline.md` の `fill_policy` 列で表記一致を検証。
 
+### 2.2 FeatureContext契約更新（§3.3, §3.5）
+- `FeatureContext.available_keys` は `<feature>_<tf>`（例: `ema_fast_5m`, `macd_signal_1h`, `donchian_upper_1d`）形式の `frozenset[str]` とし、`StrategyMetadata.required_features` は同一文字列を列挙する。
+- `FeatureContext.get_latest(symbol, feature, timeframe)` / `lookup(symbol, feature, timeframe)` をStrategy Pluginが利用するコード例を §3.5 に追加し、`FeatureLookupError`・`FeatureStaleError` をFail-Fastさせる運用を明文化する。
+- 指標キーとタイムフレームのマッピング表を §3.3.2 に追加し、Codex 実装者が `metadata.required_features` へ貼り付けるべき文字列を一覧化する。
+- dataclass 例: `FeatureFrameView`（`last_updated`, `values`, `latest`, `window`）と `FeatureContext`（`symbols`, `timeframes`, `available_keys`, `frame`, `lookup`, `get_latest`）を提示し、Codex が型シグネチャを迷わないようにする。
+
 ## 3. チェックリスト
 - [ ] 設計整合: §3.5.5・§0.6.11と照合し、Protocol/ログ要件を満たす
 - [ ] テスト実行: `poetry run pytest -k "strategy_plugin_contract or strategy_registry"`
 - [ ] 監査ログ検証: `logs/signals/raw/<date>.jsonl`に`seed`/`feature_sample`が記録されていることを確認
 - [ ] Rollback手順記載: docs/governance/feature_flag_register.mdへ「Strategy Plugin Contract」項目を追記
 - [ ] Trader Sign-offテンプレ発行: docs/trader_signoff/PKG-STRAT-IFACE-01.md にスクリーンショット・承認サイン
+- [ ] FeatureContext契約: `poetry run pytest -k "feature_context_contract"` を将来のCIテンプレに追加し、`available_keys` 表と一致することを確認
 
 ## 4. エビデンス
 - CLI/スクリーンショット: docs/trader_signoff/PKG-STRAT-IFACE-01.md を参照
@@ -64,6 +72,7 @@ M1 スコープで要求されている `pytest -k` コマンドの進捗は次�
 | data_status_cli | レート制限ステージ評価ログを自動点検し、Ops 手順と同期する。 | `pytest -k "data_status_cli"` | 未実装（CLI／メトリクス連携のコードが未着手）。 |
 | strategy_determinism | Backtest / Paper / Live でシグナル決定論を担保する。 | `pytest -k "strategy_determinism"` | 未実装（StrategyEngine 実装とテストが未着手）。 |
 | strategy_plugin_contract | Strategy Plugin Protocol への準拠を静的に検証する。 | `pytest -k "strategy_plugin_contract"` | 未実装（Protocol テスト未整備）。 |
+| feature_context_contract | FeatureContext/FeatureFrameView の契約と必須Featureキーのセットを検証する。 | `pytest -k "feature_context_contract"` | 未実装（FeatureContextダミー実装とテストが未整備）。 |
 | strategy_manifest | `strategy_manifest.yaml` のバリデーションとガバナンス手順の検証。 | `pytest -k "strategy_manifest"` | 未実装（Manifest テスト未整備）。 |
 | strategy_registry | Strategy Registry のロードと Fail-Fast 振る舞いを検証する。 | `pytest -k "strategy_registry"` | 未実装（Registry テスト未整備）。 |
 | ticket_builder | チケット JSON 整形と HITL UX の要件を検証する。 | `pytest -k "ticket_builder"` | 未実装（Ticket Builder 実装／テストが未整備）。 |
