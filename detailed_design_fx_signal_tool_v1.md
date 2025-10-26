@@ -188,6 +188,28 @@
 - **WIP制限**: Codex作業中Packetは最大2件まで。Spread/Catch-up/Health関連（高リスクPacket）は単独で進行し、他Packetを一時停止する。
 - **メトリクス**: Packet完了までのリードタイムを`metrics/implementation_packets.jsonl`に記録し、週次レビューでボトルネック（レビュー待ち時間>2日など）を分析する。
 
+#### 0.6.8 Codexキックオフレビュー是正事項
+
+すご腕SE・トレーダー観点での初回レビューにより、現状のリポジトリと本詳細設計とのギャップを以下の通り整理した。Codexへ実装を依頼する前に、必ず是正またはチケット化する。
+
+| # | 指摘内容 | 影響 | 是正方針 / トラッキング先 |
+| --- | --- | --- | --- |
+| 1 | `pyproject.toml`/`poetry.lock`が未配置で、§1.7・§3.22の依存管理方針と乖離。 | 依存解決が属人的になり、Codexが環境を再現できない。 | `docs/implementation_packets/`に`PKG-BOOT-01` Packetを起票し、Python 3.11・Lint/Testツールを明記した`pyproject.toml`を作成。`docs/development_style_and_linting.md`と整合を取る。 |
+| 2 | `src/`配下は`brokers/adapter.py`のみで、§1.3のディレクトリ構成に必要なパッケージ雛形が存在しない。 | Codexがクラス配置やインポート方針を誤解し、後続のPR差分が巨大化。 | `SRC-SCAFF-01` Packetで`src/app/__init__.py`等の空ファイルと`tests/unit/`雛形を生成し、`__all__`と型別Protocolを先に宣言。M1未スコープのディレクトリは`README.md`でスタブ理由を記載。 |
+| 3 | `tests/`は空で、§0.6.3の受入テスト名が未定義。 | Codexがテストを新設する際の命名/配置が分からず、CI整備に遅延。 | `TEST-SMOKE-01` Packetで`tests/unit/test_placeholder.py`（最小Smoke）と`tests/conftest.py`の骨組みを追加し、`pytest.ini`で`filterwarnings`/`markers`を宣言。 |
+| 4 | §79.1が`FieldMapping`/`RATE_LIMIT_SLA`を要求しているが、`src/brokers/adapter.py`は`EndpointSpec`のみ。 | ブローカー統合時にフィールド整合性テストが欠落し、HITL/Live移行のリスクが増大。 | `BROKER-META-01` Packetで`FieldMapping` dataclassと`RATE_LIMIT_SLA`辞書を追補し、`tests/unit/test_broker_adapter_contracts.py`から参照。既存`EndpointSpec`との整合を`docs/review_log.md`に記録。 |
+| 5 | `docs/review_log.md`に本レビュー結果の記録が未反映。 | 変更履歴と意思決定トレースが断絶し、AC-45/AC-51監査要件に抵触。 | 本レビュー完了後に`docs/review_log.md`へ日付・指摘・対応方針を追記し、重大項目は`logs/ops/review.log`へも転記。 |
+
+上記是正策の進捗は週次Opsレビューで確認し、未完了項目は`OpsAgendaService`（§52.3）にTODOとして登録する。是正完了後、Codexへ渡すPacketには本表の該当番号を「前提条件」として明記すること。
+
+#### 0.6.9 Codex着手前チェックリスト
+
+1. `poetry install --no-root`が成功し、`python -m tradectl --help`（仮スタブ可）が0終了すること。
+2. `pytest -k smoke`が通る最小テストスイートを確立し、CIテンプレ（`ci/templates/python_smoke.yml`）に組み込むこと。
+3. `docs/review_log.md`に本レビュー反映、`docs/prompt_packages/`へPacket下書きを格納済みであること。
+4. Spread/Kill Switch等のリスク閾値ファイル（`config/risk_policy.yaml`など）が`schema/`定義と突合できる形で雛形化されていること。
+5. Codexへ渡すIssue/PRテンプレに§0.6.8の番号を引用し、未解決項目がある場合は「受入不可（前提未了）」ラベルを適用してから再依頼すること。
+
 ### 0.7 M1 Core機能トレーサビリティ表
 
 | 機能 | 要件定義参照 | 基本設計参照 | 入力データ | 出力/副作用 | 稼働条件 | 外部API/サービス依存 | 要確認事項 |
@@ -491,6 +513,7 @@ tests/
   unit/
   integration/
 ```
+- **現状のリポジトリ差分**: 2025-03-10時点では`src/brokers/adapter.py`のみが実装済みであり、上記ディレクトリの大半は未作成。§0.6.8で整理した`SRC-SCAFF-01` Packetを優先し、空モジュールでも`__init__.py`や型プロトコルを配置したうえでCodexへ委託する。スタブを追加した際は`README.md`や`__all__`で将来機能とFeature Flagの位置づけを明示し、意図しない名前空間の乱立を防ぐ。
 
 ランタイムディレクトリとして `config/`, `data/`, `logs/`, `snapshots/`, `reports/`, `metrics/` を使用する。
 
@@ -6858,6 +6881,7 @@ M3で予定している自動発注拡張に備え、ブローカーAPI接続層
 - **実装クラス**: `SandboxAdapter`（ローカルモック、デフォルト）、`Mt5Adapter`（MetaTrader5 Bridge, M3候補）、`CTraderAdapter`等。`SandboxAdapter`は`ExecutionModel`のフィル結果をリプレイし、HITL操作との一致を検証する。APIアダプタは`Feature Flag brokers.api_enabled`が`true`の時のみロード。
 - **権限バリデーション**: `AccessGovernanceService`（§70）と連携し、`place_order`時に`principal_id`と`device_id`を必須とする。未承諾/未登録デバイスは`BrokerAccessDenied`で拒否し、`audit.broker_access_denied`を記録。
 - **Kill Switch連携**: `HealthMonitor`（§2.5）と統合し、`KillSwitchState∈{STOP,REDUCE_ONLY}`でAPI呼び出しを拒否。`ReduceOnlyAdapter`ラッパーがReduce-Only提案のみ許可し、FR-42/FR-47の緊急手順と整合。
+- **現実装との差分**: 現在の`src/brokers/adapter.py`は`EndpointSpec`定義とサンプルエンドポイントのみを保持している。`BROKER-META-01` Packetで`FieldMapping`/`RateLimitSla`/`AdapterContract`を追補し、テストと設計（§79.6）を同期させるまで、本節の要件は未充足扱いとする。
 
 #### 79.2 OrderRouter & HITL協調 (`src/execution/order_router.py`)
 - **責務**: `TicketBuilder`（§5.4）→`OrderRouter`→`BrokerAdapter`のルートを構築し、HITL承認済みチケットだけがAPI送信対象となるよう`ticket.approved`イベントをトリガーとする。`OrderRouter`は`PolicyContext`（board mode, reduce_only, kill switch）を参照し、条件未達の場合は`OrderDispatchRejected`で手動対応にフォールバック。
