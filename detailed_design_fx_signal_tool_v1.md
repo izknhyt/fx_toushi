@@ -1480,17 +1480,72 @@ class GateState:
 | `SizedSignal` | `risk_vetted`, `size`, `risk_R`, `margin_estimate`, `ttl_factor`, `expected_fill` |
 | `TradeTicket` | `ticket_id`, `symbol`, `side`, `entry`, `size`, `sl`, `tp`, `score`, `ttl_sec`, `drift_guard_R`, `badges`, `checklist`, `cfg_hash`, `expires_at`, `created_ts` |
 
+#### 4.3.1 API注文ライフサイクル構造体（§84.1参照）
+- **共通前提**: `OrderLifecycleManager`/`OrderStateStore`（§84.1/§84.2）が使用するオブジェクト。`schema_version`は`broker.order_state.v1`系列で固定し、JSONL永続化時は`docs/schemas/order_state.schema.json`との整合を必須とする。
+
+| モデル | 主フィールド | 型・バリデーション要件 |
+| --- | --- | --- |
+| `OrderEnvelope` | `order_id`, `external_id`, `mode`, `stage_guard_stage`, `strategy_id`, `ticket_id`, `profile`, `risk_snapshot`, `protect_pips`, `reduce_only`, `submitted_by`, `submitted_at` | `order_id`: `str`（`OLM-<YYYYMMDD>-<uuid>`フォーマット）。`mode`: `Literal['paper','live','backtest']`。`stage_guard_stage`: `Literal['manual_only','partial_auto','full_auto']`。`risk_snapshot`: `RiskManagerDecision`サマリで`risk_snapshot['schema_version']=='risk.decision.v1'`を確認。`protect_pips`: `Decimal`≥0（`quantize('0.1')`）。`submitted_at`: `datetime`（UTC）必須。 |
+| `OrderState` | `order_id`, `status`, `last_transition`, `attempt`, `error_code`, `retry_after`, `ack_received_at`, `fill_summary`, `evidence_hash` | `status`: `Literal['created','queued','pending_ack','partial_fill','filled','canceled','rejected','error','reconciled']`。`attempt`: `PositiveInt`。`error_code`: `Optional[str]`（存在時は`config/brokers/error_map.yaml`で定義済みか検証）。`retry_after`: `Optional[int]`（秒, `0≤value≤7200`）。`fill_summary`: `dict`（`FillShadow`生成の`schema_version='broker.fill_summary.v1'`確認）。`evidence_hash`: `str`（SHA256, 64桁）。`last_transition`/`ack_received_at`: UTC `datetime`。 |
+| `RecoveryPlan` | `order_id`, `plan_id`, `trigger_reason`, `actions`, `assigned_to`, `runbook_ref`, `status`, `error_context` | `plan_id`: `str`（`RCV-<order_id>-<seq>`）。`trigger_reason`: `Literal['rate_limit','timeout','partial_fill_timeout','broker_reject','unknown_error']`。`actions`: `list[RecoveryAction]`（各要素は`action_type∈{'wait','retry','convert_to_reduce_only','escalate'}`、`parameters`辞書）。`assigned_to`: `Optional[str]`（OpsロールID, `snake_case`）。`runbook_ref`: `str`（`RUN-BROKER-API-02#<step>`形式）。`status`: `Literal['planned','in_progress','completed','aborted']`。`error_context`: `ErrorContext`モデルで`retry_policy.mode∈{'auto','manual'}`・`max_attempts≥0`・`backoff_sec`単調増加を検証。 |
+| `OrderCompletionReceipt` | `order_id`, `final_status`, `fill_summary`, `statement_reconciled`, `completed_at`, `ops_worklog_id`, `evidence_paths` | `final_status`: `Literal['filled','canceled','rejected']`（`OrderState.status`が`reconciled`であることを前提に一致を検証）。`statement_reconciled`: `bool`（`True`である場合のみ`OrderLifecycleManager.finalize`が成功）。`evidence_paths`: `list[Path]`（`evidence/broker/<order_id>/`配下、存在チェック必須）。`ops_worklog_id`: `UUID`。`completed_at`: `datetime`（UTC）。 |
+
+- **バリデーションフロー**:
+  1. `OrderLifecycleManager.create()`で`OrderEnvelope`を構築し、`pydantic`バリデーション→`audit.order_created`へ書き出す。
+  2. 状態更新時は`OrderStateStore.save_state()`が`OrderState`を`docs/schemas/order_state.schema.json`で検証後に`orders/<mode>/<YYYYMMDD>.jsonl`へappendする（CI: `pytest -k json_schema_validation`）。
+  3. `RecoveryPlanner.lookup_error()`が`config/brokers/error_map.yaml`の`trigger_reason`/`retry_policy`を取り込み`RecoveryPlan`へ反映。検証失敗時は`OrderState.status='error'`のまま`unknown_error`として再分類。
+  4. `OrderLifecycleManager.finalize()`は`OrderCompletionReceipt`を生成し、`StatementReconciler`の結果ハッシュと`evidence_paths`がRunbook要求（`RUN-BROKER-API-02`）を満たすか確認する。
+
+
 ### 4.4 設定ファイル
 - `config/profile_<name>.yaml`主要キー: `provider`, `timeframes.trigger`, `timeframes.regime_ref`, `risk.*`, `gates.*`, `strategies[]`, `execution.*`, `spread.*`, `funding.*`, `correlation.*`, `scheduler.*`。
 - `cfg.schema.json`で型/範囲検証。`apply_patch`時は`jsonschema`+独自検査（丸め、閾値相互制約）。
 - `strategy_manifest.yaml`のキー構成は下表を参照。Manifestは§6.7 Config Governanceのレビュー対象であり、戦略順序・有効化状態の単一情報源となる。
+- `config/brokers/error_map.yaml`はAPIエラー→`trigger_reason`正規化テーブル。CIでは`pytest -k broker_orders`（`tests/unit/test_order_recovery_planner.py`予定）と`make check-validation --category broker_orders`で検証し、`docs/schemas/broker_error_map.schema.json`（新設, Appendix参照）と`pydantic` `BrokerErrorDescriptor`で整合を強制する。Runbook `RUN-BROKER-API-02`と証跡パスの同期が必須。
+
+#### 4.4.1 `strategy_manifest.yaml`
 
 | キー | 説明 | バリデーション |
 | --- | --- | --- |
-| `strategies.<id>.enabled` | 戦略を`run_all`へ登録するかどうか | `bool`必須。`true`の戦略が最低1件存在しないと`ManifestValidationError`。
-| `strategies.<id>.priority` | 実行順序（小さいほど先） | `int`必須。範囲0〜255。重複は警告ログ、Issue/PRで理由説明必須。
-| `strategies.<id>.weight` | スコアリング時の重み | `float`必須。0.0〜1.0。環境ごとの合計は1.0以内。欠落時はデフォルト不可。
-| `strategies.<id>.feature_flags` | 戦略固有のFeature Flag群 | `dict[str,bool]`任意。キーは`[a-z0-9_]+`。`true`のみStrategyContextへ伝搬。
+| `strategies.<id>.enabled` | 戦略を`run_all`へ登録するかどうか | `bool`必須。`true`の戦略が最低1件存在しないと`ManifestValidationError`。|
+| `strategies.<id>.priority` | 実行順序（小さいほど先） | `int`必須。範囲0〜255。重複は警告ログ、Issue/PRで理由説明必須。|
+| `strategies.<id>.weight` | スコアリング時の重み | `float`必須。0.0〜1.0。環境ごとの合計は1.0以内。欠落時はデフォルト不可。|
+| `strategies.<id>.feature_flags` | 戦略固有のFeature Flag群 | `dict[str,bool]`任意。キーは`[a-z0-9_]+`。`true`のみStrategyContextへ伝搬。|
+
+#### 4.4.2 `config/brokers/error_map.yaml`
+- **ファイル構造**:
+  ```yaml
+  version: 1
+  error_map:
+    <broker_code>:
+      <error_code>:
+        trigger_reason: rate_limit | timeout | partial_fill_timeout | broker_reject | unknown_error
+        audit_event_id: audit.order_recovery_planned.<suffix>
+        runbook_ref: RUN-BROKER-API-02#<step>
+        retry_policy:
+          mode: auto | manual
+          max_attempts: <int>
+          backoff_sec: [<int>, ...] # `mode=auto`時のみ
+          cooldown_sec: <int>       # `mode=manual`時オプション（秒）
+        evidence_path_template: evidence/broker/<order_id>/<slug>/
+        required_context: [http_status, retry_after_sec, ...]
+        notes:
+          - <docops_update_hint>
+  ```
+- **バリデーション要件**:
+  - `version`: `int`（既定1）。変更時は`docs/schemas/broker_error_map.schema.json`の`$id`と`semver`更新を伴う。
+  - `broker_code`: `snake_case`。`OrderEnvelope.profile`と一致する`brokers.<code>`が`config/profile_*.yaml`に存在することを`OrderLifecycleManager`起動時に検証。
+  - `error_code`: `UPPER_SNAKE_CASE`。`retry_policy.mode='auto'`の場合は`backoff_sec`を必須化し、昇順（単調増加）であることを`RecoveryPlanner`が確認。`mode='manual'`では`backoff_sec`禁止。
+  - `trigger_reason`: `Literal['rate_limit','timeout','partial_fill_timeout','broker_reject','unknown_error']`。`unknown_error`指定時は`required_context`を空にしてRunbookが即時エスカレーションを要求する。
+  - `audit_event_id`: `audit.order_recovery_planned.*`接頭辞に一致。CIで`tests/schema/test_json_schema_validation.py::test_order_state_validates_recovery_plan`と同一辞書を参照し、未登録のIDを拒否。
+  - `runbook_ref`: `RUN-BROKER-API-02#<ID>`。`DocLint`（§78.2）でアンカー存在を確認。
+  - `evidence_path_template`: `Path`。`<order_id>`プレースホルダ必須。`OrderCompletionReceipt.evidence_paths`の親ディレクトリとして利用される。
+  - `required_context`: `list[str]`。要素は`[a-z0-9_]+`で、`RecoveryPlan.error_context.context_data`に存在しないキーが指定された場合は`ValidationError`を発生させ`unknown_error`へフォールバック。
+  - `notes`: 任意の`list[str]`。DocOpsがRunbook更新やCI追加時に使用する。内容は`<=256`文字に制限。
+- **CI/テスト**:
+  - `pytest -k broker_orders`：`tests/unit/test_order_recovery_planner.py::test_error_code_mapping`で`trigger_reason`/`retry_policy`の組み合わせと`required_context`必須性を確認（§84.6参照）。
+  - `pytest -k json_schema_validation`：`tests/schema/test_json_schema_validation.py`に`BrokerErrorMapValidator`ケースを追加し、`docs/schemas/broker_error_map.schema.json`でYAML→JSON変換結果を検証。
+  - `make check-validation --category broker_orders`：`validation_playbook/AC41_broker_orders.yaml`のエントリと`evidence_path_template`の整合をチェック。Runbook/DocOps更新漏れがある場合はCIを失敗させる。
 
 
 ### 4.5 イベントスキーマ
@@ -2846,6 +2901,7 @@ Codex実装で差異が生じやすいイベント/監査/メトリクスのス�
   | --- | --- | --- |
   | `accounts_profile.schema.json` | `accounts/<broker>/<account_id>.yaml` | `tradectl account aggregate`（`--schema-check`予定） |
   | `order_state.schema.json` | `orders/<mode>/<YYYYMMDD>.jsonl` | `tradectl broker orders list`（`--schema-check`予定） |
+  | `broker_error_map.schema.json` | `config/brokers/error_map.yaml` | `make check-validation --category broker_orders`, `pytest -k broker_orders` |
   | `event_resync_completed.schema.json` | `resync.completed`イベント | `tradectl resync --since ... --schema-check`（将来） |
   | `audit_ticket_action.schema.json` | `ticket.action`レコード | `tools/replay_signals.py --validate` |
   | `metrics_pipeline.schema.json` | `pipeline_step_elapsed_ms`メトリクス | `tradectl metrics report --validate` |
