@@ -10,7 +10,7 @@
 | data_status_cli | レート制限ステージ評価ログを自動点検し、Ops 手順と同期する。 | `pytest -k "data_status_cli"` | 未実装（CLI／メトリクス連携のコードが未着手）。 |
 | strategy_determinism | Backtest / Paper / Live でシグナル決定論を担保する。 | `pytest -k "strategy_determinism"` | 未実装（StrategyEngine 実装とテストが未着手）。 |
 | strategy_plugin_contract | Strategy Plugin Protocol への準拠を静的に検証する。 | `pytest -k "strategy_plugin_contract"` | 未実装（Protocol テスト未整備）。 |
-| feature_context_contract | FeatureContext / FeatureFrameView の契約と `metadata.required_features` キー表との一致を検証する。 | `pytest -k "feature_context_contract"` | 未実装（FeatureContext ダミー実装とテストが未整備）。 |
+| feature_context_contract | FeatureContext / FeatureFrameView の契約と `metadata.required_features` キー表との一致を検証する。 | `pytest -k "feature_context_contract and smoke"` | 雛形追加（smoke skip、FeatureContext 実装待ち）。 |
 | strategy_manifest | `strategy_manifest.yaml` のバリデーションとガバナンス手順の検証。 | `pytest -k "strategy_manifest"` | 未実装（Manifest テスト未整備）。 |
 | strategy_registry | Strategy Registry のロードと Fail-Fast 振る舞いを検証する。 | `pytest -k "strategy_registry"` | 未実装（Registry テスト未整備）。 |
 | ticket_builder | チケット JSON 整形と HITL UX の要件を検証する。 | `pytest -k "ticket_builder"` | 未実装（Ticket Builder 実装／テストが未整備）。 |
