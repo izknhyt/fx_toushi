@@ -2841,14 +2841,16 @@ Codex実装で差異が生じやすいイベント/監査/メトリクスのス�
 - `MetricsWriter.flush_interval_sec`は60秒既定。Codexが新規メトリクスを追加する際は表へ追補し、`metrics/<metric>.jsonl`ファイル名も明示すること。
 
 ### 16.5 JSON Schemaリファレンス
-- `docs/schemas/`配下に以下のJSON Schemaを配置し、Codexは更新時に`pytest -k json_schema_validation`を追加実行する。
+- `docs/schemas/`配下に以下のJSON Schemaを配置し、Codexは更新時に`pytest -k json_schema_validation`を追加実行する（ランタイム検証は同名ファイルを指す`schema/`シンボリックリンク経由で行う）。
   | Schemaファイル | 対象 | バリデーション対象コマンド |
   | --- | --- | --- |
+  | `accounts_profile.schema.json` | `accounts/<broker>/<account_id>.yaml` | `tradectl account aggregate`（`--schema-check`予定） |
+  | `order_state.schema.json` | `orders/<mode>/<YYYYMMDD>.jsonl` | `tradectl broker orders list`（`--schema-check`予定） |
   | `event_resync_completed.schema.json` | `resync.completed`イベント | `tradectl resync --since ... --schema-check`（将来） |
   | `audit_ticket_action.schema.json` | `ticket.action`レコード | `tools/replay_signals.py --validate` |
   | `metrics_pipeline.schema.json` | `pipeline_step_elapsed_ms`メトリクス | `tradectl metrics report --validate` |
   | `risk_disclosure_state.schema.json` | `consent_state.json` | `tradectl compliance status` |
-- Schema変更のGitフロー: `docs/change_requests/`に起票→`schemas/`更新→`tests/schema/test_*.py`追加→Codexへ共有。
+- Schema変更のGitフロー: `docs/change_requests/`に起票→`docs/schemas/`更新→`tests/schema/test_*.py`追加→Codexへ共有。
 
 ### 16.6 Codex実装チェックリスト
 - 変更対象がイベント/監査/メトリクスを追加・更新する場合、PRテンプレートに以下のチェックボックスを追加で使用する。
@@ -5075,7 +5077,7 @@ M2で必須となるFR-58「複数口座統合」とFR-51「キャピタル配�
   | `SymbolExposure` | `symbol`, `gross`, `net`, `direction_bias`, `risk_contribution_R`, `bucket` | 通貨ペア単位のエクスポージャ。`bucket`はCorrelation Guardのバケット（要件§4.6）と整合。 |
   | `PortfolioVariance` | `kind ∈ {'statement','config','fx_rate'}`, `severity`, `details`, `detected_at`, `recommended_action` | 乖離や欠損の記録。Runbook `RUN-ACCOUNT-02`で参照。 |
 - **処理フロー**:
-  1. `load_profiles()`が`accounts/**/*.yaml`を読み込みJSON Schema検証（`schema/accounts_profile.schema.json`）を実施。`margin_mode`や`base_currency`の未定義は`AccountProfileValidationError`でブロック。
+  1. `load_profiles()`が`accounts/**/*.yaml`を読み込みJSON Schema検証（`schema/accounts_profile.schema.json`。正式版は`docs/schemas/accounts_profile.schema.json`で管理）を実施。`margin_mode`や`base_currency`の未定義は`AccountProfileValidationError`でブロック。
   2. `collect_snapshots(since)`が`reports/performance/<mode>/<date>.parquet`とブローカーCSV/APIインポート（`data/account/<broker>/<YYYYMMDD>.csv`）をロードし、`AccountSnapshot`へ正規化。Paperでは`Reporter`出力、Liveでは`StatementIntegrator`（§47）経由の実績を利用。換算レートは`fx_rates`サービス（§6）を参照。
   3. `aggregate(portfolio_currency='JPY')`が全`AccountSnapshot`を共通通貨に換算し、`weight`に基づく基準配分と比較。ヘッジ口座(`is_hedge=True`)は対象シンボルの逆方向ポジションと相殺し、純エクスポージャと合成`R_eff`を算出。
   4. `analyze_variance()`が`StatementIntegrator`（§47）・`CapitalAllocationGuard`（§21）・`CorrelationGuard`（§6）と比較し、しきい値（例: `equity_diff_pct>0.5%`, `net_exposure_diff_R>0.05`）を超えた場合に`PortfolioVariance`を生成。
@@ -7179,7 +7181,7 @@ sequenceDiagram
 
 #### 84.2 OrderStateStore (`src/brokers/order_store.py`)
 
-- **永続化**: `orders/<mode>/<YYYYMMDD>.jsonl`に`OrderState`と`RecoveryPlan`を記録し、`OrderEnvelope`は`orders/<mode>/<order_id>.yaml`でメタデータ保存。`jsonlines`形式を採用し、CIで`schema/order_state.schema.json`を検証。
+- **永続化**: `orders/<mode>/<YYYYMMDD>.jsonl`に`OrderState`と`RecoveryPlan`を記録し、`OrderEnvelope`は`orders/<mode>/<order_id>.yaml`でメタデータ保存。`jsonlines`形式を採用し、CIで`schema/order_state.schema.json`（レジストリは`docs/schemas/order_state.schema.json`）を検証。
 - **API**:
   | 関数 | 説明 |
   | --- | --- |

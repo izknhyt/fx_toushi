@@ -1,0 +1,318 @@
+openapi: 3.1.0
+info:
+  title: Shadow GUI API (Draft)
+  version: 0.1.0
+  description: |
+    Server-Sent Events and REST endpoints that power the Shadow GUI (detailed design §60.2).
+    Tokens are distributed via `config/shadow/tokens.yaml` and supplied through the `X-Shadow-Token`
+    header. All responses embed `schema_version` fields to keep parity with the Slack shadow bridge.
+servers:
+  - url: https://shadow.fx-toushi.local/api
+    description: Production deployment (future)
+  - url: http://localhost:7777
+    description: Local development via `tradectl shadow serve`
+security:
+  - ShadowToken: []
+paths:
+  /shadow/tickets:
+    get:
+      tags: [Tickets]
+      summary: List open ticket proposals replicated to the shadow feed.
+      operationId: listShadowTickets
+      parameters:
+        - in: query
+          name: mode
+          schema:
+            type: string
+            enum: [paper, live]
+          description: Filter tickets by execution mode.
+        - in: query
+          name: since
+          schema:
+            type: string
+            format: date-time
+          description: Return tickets updated after this timestamp.
+      responses:
+        '200':
+          description: Shadow ticket snapshot.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [schema_version, tickets]
+                properties:
+                  schema_version:
+                    type: string
+                    const: shadow.ticket.v1
+                  generated_at:
+                    type: string
+                    format: date-time
+                  tickets:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ShadowTicket'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /shadow/alerts:
+    get:
+      tags: [Alerts]
+      summary: Return health and operations alerts surfaced to Shadow.
+      operationId: listShadowAlerts
+      parameters:
+        - in: query
+          name: severity
+          schema:
+            type: string
+            enum: [info, warn, critical]
+          description: Optional severity filter.
+      responses:
+        '200':
+          description: Alert feed snapshot.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [schema_version, alerts]
+                properties:
+                  schema_version:
+                    type: string
+                    const: shadow.alert.v1
+                  generated_at:
+                    type: string
+                    format: date-time
+                  alerts:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ShadowAlert'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /shadow/ack:
+    post:
+      tags: [Acknowledgements]
+      summary: Record an acknowledgement sourced from the GUI.
+      operationId: acknowledgeShadowEntity
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ShadowAckRequest'
+      responses:
+        '202':
+          description: Acknowledgement accepted for asynchronous processing.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ShadowAckReceipt'
+        '400':
+          description: Invalid payload.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /shadow/watch:
+    get:
+      tags: [Events]
+      summary: Server-Sent Event stream combining tickets, alerts, and agenda changes.
+      operationId: watchShadowEvents
+      responses:
+        '200':
+          description: SSE payload with newline delimited events.
+          headers:
+            Content-Type:
+              schema:
+                type: string
+                const: text/event-stream
+          content:
+            text/event-stream:
+              schema:
+                type: string
+                description: >-
+                  Stream of events formatted according to the HTML5 EventSource protocol where the
+                  `data` field encodes a JSON object compliant with `ShadowEvent`.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+components:
+  securitySchemes:
+    ShadowToken:
+      type: apiKey
+      in: header
+      name: X-Shadow-Token
+      description: Shared secret provisioned in `config/shadow/tokens.yaml`.
+  responses:
+    Unauthorized:
+      description: Authentication failed.
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [error, message]
+            properties:
+              error:
+                type: string
+                enum: [unauthorized]
+              message:
+                type: string
+  schemas:
+    ShadowTicket:
+      type: object
+      required:
+        - ticket_id
+        - symbol
+        - side
+        - score
+        - issued_at
+        - ttl_sec
+        - status
+        - board_mode
+        - kill_switch_state
+        - ack_state
+      additionalProperties: false
+      properties:
+        ticket_id:
+          type: string
+          description: Signal identifier emitted by the board pipeline.
+        symbol:
+          type: string
+          pattern: ^[A-Z]{6}$
+        side:
+          type: string
+          enum: [buy, sell]
+        score:
+          type: number
+        issued_at:
+          type: string
+          format: date-time
+        ttl_sec:
+          type: integer
+          minimum: 0
+        status:
+          type: string
+          enum: [proposed, snoozed, expired, executed]
+        board_mode:
+          type: string
+          enum: [normal, guarded, halted]
+        kill_switch_state:
+          type: string
+          enum: [running, soft_stop, stop]
+        ack_state:
+          type: string
+          enum: [pending, acknowledged, suppressed]
+        ack_required:
+          type: boolean
+        strategy_id:
+          type: string
+        regime:
+          type: string
+        risk_badge:
+          type: string
+        runbook_ref:
+          type: string
+          pattern: ^RUN-[A-Z0-9\-]+(#.+)?$
+        last_update:
+          type: string
+          format: date-time
+        notes:
+          type: array
+          items:
+            type: string
+        tags:
+          type: array
+          items:
+            type: string
+    ShadowAlert:
+      type: object
+      required:
+        - alert_id
+        - title
+        - severity
+        - state
+        - raised_at
+        - source
+      additionalProperties: false
+      properties:
+        alert_id:
+          type: string
+        title:
+          type: string
+        severity:
+          type: string
+          enum: [info, warn, critical]
+        state:
+          type: string
+          enum: [open, acknowledged, closed]
+        raised_at:
+          type: string
+          format: date-time
+        acknowledged_at:
+          type: string
+          format: date-time
+        acknowledged_by:
+          type: string
+        ack_deadline:
+          type: string
+          format: date-time
+        runbook_ref:
+          type: string
+          pattern: ^RUN-[A-Z0-9\-]+(#.+)?$
+        source:
+          type: string
+        payload:
+          type: object
+          additionalProperties: true
+    ShadowAckRequest:
+      type: object
+      required:
+        - entity_type
+        - entity_id
+        - source
+      additionalProperties: false
+      properties:
+        entity_type:
+          type: string
+          enum: [ticket, alert]
+        entity_id:
+          type: string
+        source:
+          type: string
+          enum: [gui]
+        note:
+          type: string
+        runbook_step:
+          type: string
+    ShadowAckReceipt:
+      type: object
+      required:
+        - ack_id
+        - entity_type
+        - entity_id
+        - acked_at
+      additionalProperties: false
+      properties:
+        ack_id:
+          type: string
+        entity_type:
+          type: string
+          enum: [ticket, alert]
+        entity_id:
+          type: string
+        acked_at:
+          type: string
+          format: date-time
+        actor:
+          type: string
+    ShadowEvent:
+      type: object
+      required: [event_type, occurred_at, payload]
+      properties:
+        event_type:
+          type: string
+          enum: [ticket.updated, alert.updated, agenda.updated]
+        occurred_at:
+          type: string
+          format: date-time
+        payload:
+          oneOf:
+            - $ref: '#/components/schemas/ShadowTicket'
+            - $ref: '#/components/schemas/ShadowAlert'
+            - type: object
+              description: Ops agenda deltas
+              additionalProperties: true
