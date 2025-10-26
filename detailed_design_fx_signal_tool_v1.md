@@ -867,6 +867,74 @@ M2以降で変更が見込まれる領域について、実装/運用負荷を�
 - 欠損バーが混入した場合は`DataQualityGuard`が隔離済みである前提だが、再サンプリング後の窓不足 (k < n) では`nan_policy='propagate'`を採用し、StrategyEngineが例外ケースでフォールバック動作を選択できるようにする。
 - Feature Flagは`config/feature_pipeline.yaml`で管理し、`indicators.macd.enabled`や`indicators.bollinger.enabled`などのキーで個別にON/OFFを切り替える。`tests/integration/test_feature_pipeline.py`はFlag切替時の再計算結果とキャッシュ整合を検証し、SMA/EMA/RSI/ATR/EMA傾きは常時Trueとする。
 
+#### 3.3.2 FeatureContext / FeatureFrameView（Strategy層への提供契約）
+
+```python
+from __future__ import annotations
+
+from dataclasses import dataclass
+from datetime import datetime
+from typing import Mapping, Sequence
+
+
+@dataclass(slots=True, frozen=True)
+class FeatureFrameView:
+    symbol: str
+    timeframe: str  # "5m" | "1h" | "1d"
+    columns: tuple[str, ...]
+    last_updated: datetime
+    values: Mapping[str, Sequence[float]]  # 各キー→最新n本の値（降順）
+
+    def latest(self, key: str) -> float: ...
+    def window(self, key: str, length: int) -> Sequence[float]: ...
+
+
+@dataclass(slots=True)
+class FeatureContext:
+    symbols: frozenset[str]
+    timeframes: Mapping[str, frozenset[str]]  # symbol→利用可能タイムフレーム
+    available_keys: frozenset[str]  # "<feature>_<tf>" 形式
+
+    def frame(self, symbol: str, timeframe: str) -> FeatureFrameView: ...
+    def lookup(self, symbol: str, feature: str, timeframe: str) -> FeatureFrameView: ...
+    def get_latest(self, symbol: str, feature: str, timeframe: str) -> float: ...
+```
+
+| 属性/メソッド | 型 | 説明 | 異常系 |
+| --- | --- | --- | --- |
+| `symbols` | `frozenset[str]` | FeaturePipelineで更新済みのシンボル一覧。 | 未ロードシンボルを`frame`/`lookup`した場合は`FeatureLookupError(symbol, timeframe)`。 |
+| `timeframes` | `Mapping[str, frozenset[str]]` | 各シンボルで利用可能なタイムフレーム集合（例: `{ "USDJPY": {"5m", "1h", "1d"} }`）。 | 未サポートTFは`FeatureLookupError`。 |
+| `available_keys` | `frozenset[str]` | `feature`と`timeframe`を`_`で結合したキー（例: `ema_fast_5m`）。`metadata.required_features`はこの集合の部分集合である必要がある。 | 存在しないキーを参照すると`FeatureContractError(feature_tf)`をログしてFail-Fast。 |
+| `frame(symbol, timeframe)` | `FeatureFrameView` | 指定シンボル/タイムフレームの最新ウィンドウを返却。`FeatureFrameView.columns`は`available_keys`をフィルタしたもの。 | `FeatureLookupError` |
+| `lookup(symbol, feature, timeframe)` | `FeatureFrameView` | `feature`と`timeframe`を結合したキーで絞り込んだビューを返す。複数列の`values`を保つ。 | `FeatureLookupError`（キーが存在しない場合）、`FeatureStaleError`（`last_updated`が`config.feature.max_lag_sec`超過）。 |
+| `get_latest(symbol, feature, timeframe)` | `float` | 指定Featureの最新値を返却。内部的に`lookup`を利用し`FeatureFrameView.latest`を呼び出す。 | `FeatureLookupError`、`FeatureNaNError`（直近値がNaNの場合）。 |
+
+- `FeatureFrameView.values`は降順（最新→過去）で最大`config.feature_pipeline.window_size`本を保持し、Strategyプラグインが複数バーを参照できるようにする。
+- StrategyEngineはプラグイン実行前に`required_features ⊆ FeatureContext.available_keys`を検証し、不足がある場合は`StrategyRegistrationError(code='feature_contract')`でFail-Fastする。
+- `available_keys`のフォーマットは**機能名（英小文字+`_`区切り） + `_` + タイムフレーム略称**とする。タイムフレーム略称は`{"5m", "15m", "1h", "4h", "1d"}`を許容し、M1では`5m`/`1h`/`1d`のみを使用する。
+
+##### 指標キーと`metadata.required_features`指定一覧
+
+| 指標カテゴリ | 説明 | `metadata.required_features`で指定するキー | タイムフレーム | 備考 |
+| --- | --- | --- | --- | --- |
+| 移動平均（短期） | EMA21相当の高速線 | `ema_fast_5m` | `5m` | `FeaturePipeline`は`ema_fast`ラベルで窓21を保持。 |
+| 移動平均（長期） | EMA55相当の低速線 | `ema_slow_5m` | `5m` | トレンドフォロー系のゴールデンクロス判定に使用。 |
+| 単純移動平均 | SMA20 | `sma_20_5m` | `5m` | ボリンジャーバンドのベース列と一致。 |
+| RSI | RSI14 | `rsi_14_5m` | `5m` | 0-100スケール、`FeatureFrameView.values`には直近100本を保持。 |
+| ボリンジャーバンド（上） | Middle + 2σ | `bb_upper_5m` | `5m` | Middle列は`bb_middle_5m`、下限は`bb_lower_5m`。 |
+| ATR | ATR14 | `atr_14_1h` | `1h` | サイジング制御で`stop_level_pips`に適用。 |
+| EMA傾き | EMA55の一階差分 | `ema55_slope_1h` | `1h` | レジームフィルタに利用。 |
+| MACDライン | EMA12-EMA26 | `macd_line_1h` | `1h` | Signal線/ヒストグラムとセットで提供。 |
+| MACDシグナル | MACDのEMA9 | `macd_signal_1h` | `1h` | クロス判定。 |
+| MACDヒストグラム | MACD-LineとSignalの差 | `macd_hist_1h` | `1h` | 0クロス監視。 |
+| ドンチャン上限 | 20期間高値 | `donchian_upper_1d` | `1d` | ブレイクアウト判定。 |
+| ドンチャン下限 | 20期間安値 | `donchian_lower_1d` | `1d` | 損切りトリガ。 |
+| ドンチャン中央値 | `(upper+lower)/2` | `donchian_mid_1d` | `1d` | レジーム補助。 |
+| Zスコア | Closeの標準化 | `zscore_20_1d` | `1d` | レバレッジ調整に利用。 |
+
+- Strategyプラグインは`metadata.required_features`に上表のキー文字列を列挙する。将来の指標追加時は同形式で命名し、`docs/implementation_packets/20250312_strat_plugin_contract.md`のテーブルも更新すること。
+- マルチタイムフレームで同一指標を要求する場合は`ema_fast_5m`と`ema_fast_1h`のようにタイムフレーム別のキーを独立して指定する。`available_keys`にも両方の文字列が含まれ、`get_latest`はタイムフレーム引数で識別する。
+
 ### 3.4 RegimeDetector (`src/features/regime.py`)
 - **公開API**: `update(feature_frame)`, `current_state()`。
 - **アルゴリズム**: ADX, TrueRange, 標準偏差, 自己相関, 平均リターンを0-1正規化→重み付き合算→Softmax。ヒステリシスにより急峻な切替を抑制。
@@ -1092,6 +1160,40 @@ class StrategyMetadata:
         return self.required_features.issubset(context.features.available_keys)
 ```
 
+- **FeatureContext利用例（StrategyPluginProtocol内）**
+
+```python
+class MaRsiPlugin(StrategyPluginProtocol):
+    id = "m1_baseline_ma_rsi"
+    metadata = StrategyMetadata(
+        name="MA/RSI Baseline",
+        version="1.0.0",
+        required_features=frozenset({"ema_fast_5m", "ema_slow_5m", "rsi_14_5m"}),
+        seed_offset=101,
+    )
+
+    def required_warmup_bars(self) -> int:
+        return 120
+
+    def cooldown_bars(self) -> int:
+        return 4
+
+    def evaluate(self, context: StrategyContext) -> Iterable[RawSignal]:
+        fast = context.features.get_latest(symbol="USDJPY", feature="ema_fast", timeframe="5m")
+        slow = context.features.get_latest(symbol="USDJPY", feature="ema_slow", timeframe="5m")
+        rsi = context.features.get_latest(symbol="USDJPY", feature="rsi_14", timeframe="5m")
+
+        macd_view = context.features.lookup(symbol="USDJPY", feature="macd_signal", timeframe="1h")
+        macd_signal = macd_view.latest("macd_signal_1h")
+
+        if fast <= slow or rsi > 70 or macd_signal < 0:
+            return []
+
+        return [build_long_signal(context=context, fast=fast, slow=slow, rsi=rsi)]
+```
+
+- `FeatureContext.available_keys`は`{"ema_fast_5m", "macd_signal_1h", ...}`のような`<feature>_<tf>`形式を返し、`StrategyMetadata.required_features`はこの文字列集合の部分集合でなければならない。
+- `FeatureContext.lookup()`/`get_latest()`は対象キーが存在しない、または`FeatureFrameView.last_updated`が`config.feature.max_lag_sec`を超えている場合に`FeatureLookupError`または`FeatureStaleError`を送出し、StrategyEngineは`StrategyExecutionError(cause='feature_missing')`を発生させて当該プラグインの出力を棄却する。
 - **決定論/ログ要件**
   - `evaluate()`は`RawSignal`を返す際、`signal_id = f"{self.id}:{context.clock.bar_ts:%Y%m%d%H%M}:{hash_components}"`で生成し、`hash_components`には主要Featureキーと`seed`を含める。
   - 乱数を用いる場合は`random.Random(context.seed)`を利用し、NumPy使用時も`np.random.Generator(np.random.PCG64(context.seed))`で初期化する。
