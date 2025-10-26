@@ -1,0 +1,54 @@
+# config/feature_pipeline.yaml -- CONFIG-SCAFF-01 scaffold
+# 詳細設計 §3.4〜§3.5 (Feature Pipeline/Signal Engine) と Runbook STRAT-M1-VALIDATION を参照。
+# Schema: docs/schemas/feature_pipeline.schema.json （schema_version 更新時に要同期）。
+
+schema_version: 0  # TODO: FeaturePipeline モデル整備後に更新
+pipeline:
+  default_timeframe_minutes: 5
+  lookback_bars: 512
+  resample:
+    enabled: true
+    timeframes:
+      - 5m
+      - 1h
+      - 1d
+indicators:
+  sma_20:
+    enabled: true
+    window: 20
+    output_key: sma_20
+  ema_55:
+    enabled: true
+    window: 55
+    output_key: ema_55
+  rsi_14:
+    enabled: true
+    window: 14
+    output_key: rsi_14
+  atr_14:
+    enabled: true
+    window: 14
+    output_key: atr_14
+  ema_slope_55:
+    enabled: true
+    window: 55
+    derivative: first
+    output_key: ema_slope_55
+  macd_12_26_9:
+    enabled: false  # Guardedモード時は OFF を推奨（§3.5.2）
+    fast_period: 12
+    slow_period: 26
+    signal_period: 9
+    output_key: macd_12_26_9
+  bollinger_20_2:
+    enabled: false
+    window: 20
+    stddev: 2.0
+    output_key: bollinger_20_2
+  donchian_20:
+    enabled: false
+    window: 20
+    output_key: donchian_20
+feature_flags:
+  enable_pipeline_latency_metrics: true
+  use_experimental_features: false

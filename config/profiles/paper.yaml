@@ -1,0 +1,52 @@
+# config/profiles/paper.yaml -- CONFIG-SCAFF-01 scaffold
+# 詳細設計 §3.1 / §4.4 および Runbook RUN-DATA-05・RUN-HITL-01 を参照。
+# Schema: docs/schemas/cfg.schema.json （schema_version 更新時に要同期）。
+
+schema_version: 0  # TODO: cfg.schema.json 整備後に更新
+profile_id: paper
+metadata:
+  description: "Paper モード用初期値。SLA逸脱時は RUN-DATA-05/06 のチェックリストで承認。"
+  runbook_refs:
+    - docs/runbooks/RUN-DATA-05.md
+    - docs/runbooks/RUN-HITL-01.md
+    - reports/validation_log/AC-45_sla_20250220.md
+mode: paper
+data_ingestion:
+  provider: yfinance
+  fallback_providers:
+    - dukascopy
+  poll_interval_sec: 15
+  catch_up_enabled: true
+  manual_fallback_allowed: true
+  sla_threshold_profile: default
+timeframes:
+  trigger: 5m
+  regime_ref: 1h
+risk:
+  policy_id: m1_baseline
+  overrides:
+    board_mode_on_soft_stop: guarded
+gates:
+  board_mode_default: normal
+  enable_news_block: true
+  require_double_ack_on_resume: true
+strategies:
+  - id: m1_baseline_ma_rsi
+    enabled: true
+    weight: 1.0
+execution:
+  slippage_bps: 8
+  latency_simulation_ms: 250
+spread:
+  source: blended
+  cooldown_minutes: 10
+  guard_threshold_pips: 1.2
+funding:
+  apply_swap: true
+  accrual_calendar: TARGET
+correlation:
+  dataset: data/correlation/initial/bootstrap.parquet
+scheduler:
+  timezone: Asia/Tokyo
+  session_start: "06:00"
+  session_end: "05:00+1"
