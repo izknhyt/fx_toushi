@@ -45,3 +45,20 @@
 | 日付 | 更新者 | 内容 |
 | --- | --- | --- |
 | 2025-03-12 | Codex Liaison | 初版作成（SEレビュー#7是正） |
+
+## 8. 進捗管理
+
+M1 スコープで要求されている `pytest -k` コマンドの進捗は次表で管理する。Apple Silicon (M1) 環境での必須テストとして、Codex／Ops が同じ一覧を参照できるよう `tests/README.md` と同期する。
+
+| テスト名 | 目的 | pytest コマンド | 実装状況 |
+| --- | --- | --- | --- |
+| config_schema_smoke | `config/` 雛形を JSON Schema と突き合わせるスモーク検証。 | `pytest -k "config_schema_smoke"` | 未実装（テスト雛形と config スキーマの整備が未着手）。 |
+| data_status_cli | レート制限ステージ評価ログを自動点検し、Ops 手順と同期する。 | `pytest -k "data_status_cli"` | 未実装（CLI／メトリクス連携のコードが未着手）。 |
+| strategy_determinism | Backtest / Paper / Live でシグナル決定論を担保する。 | `pytest -k "strategy_determinism"` | 未実装（StrategyEngine 実装とテストが未着手）。 |
+| strategy_plugin_contract | Strategy Plugin Protocol への準拠を静的に検証する。 | `pytest -k "strategy_plugin_contract"` | 未実装（Protocol テスト未整備）。 |
+| strategy_manifest | `strategy_manifest.yaml` のバリデーションとガバナンス手順の検証。 | `pytest -k "strategy_manifest"` | 未実装（Manifest テスト未整備）。 |
+| strategy_registry | Strategy Registry のロードと Fail-Fast 振る舞いを検証する。 | `pytest -k "strategy_registry"` | 未実装（Registry テスト未整備）。 |
+| ticket_builder | チケット JSON 整形と HITL UX の要件を検証する。 | `pytest -k "ticket_builder"` | 未実装（Ticket Builder 実装／テストが未整備）。 |
+| json_schema_validation | 取引状態およびアカウント関連 JSON Schema の整合性を検証する。 | `pytest -k "json_schema_validation"` | 実装済（`tests/schema/test_json_schema_validation.py`）。 |
+
+> **補足**: 指定された共有スプレッドシートは現時点で提供されていないため、進捗トラッキングは本表および `tests/README.md` を共通の参照点とする。
