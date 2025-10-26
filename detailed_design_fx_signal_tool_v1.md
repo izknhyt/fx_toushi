@@ -6782,8 +6782,8 @@ M3で予定している自動発注拡張に備え、ブローカーAPI接続層
 - **Codex Packet案**:
   | Packet ID | スコープ | 成果物 | テスト |
   | --- | --- | --- | --- |
-  | `EP17-BROKER-P1` | `BrokerAdapter`基盤、Sandbox実装、SecretStore連携 | `src/brokers/adapter.py`, `src/brokers/sandbox.py`, `tests/unit/test_broker_adapter.py` | `pytest -k broker_adapter_sandbox` |
-  | `EP17-BROKER-P2` | `OrderRouter`とHITL統合、Marketable Limit制御 | `src/execution/order_router.py`, `src/interfaces/cli/broker.py`, `tests/integration/test_broker_router.py` | `pytest -k broker_router_hitl`, `pytest -k broker_api_security` |
+  | `EP17-BROKER-P1` | `BrokerAdapter`基盤、Sandbox実装、SecretStore連携 | `src/brokers/adapter.py`（`EndpointSpec`/`FieldMapping`/`RATE_LIMIT_SLA`）, `src/brokers/sandbox.py`, `tests/unit/test_broker_adapter.py`, `tests/unit/test_broker_adapter_contracts.py`, `tests/fixtures/brokers/{mt5,ctrader}_order_ack.json` | `pytest -k broker_adapter_sandbox`, `pytest -k broker_adapter_contracts` |
+  | `EP17-BROKER-P2` | `OrderRouter`とHITL統合、Marketable Limit制御 | `src/execution/order_router.py`, `src/interfaces/cli/broker.py`, `tests/integration/test_broker_router.py`, `tests/approval/broker/orders/`（MT5/cTraderモック） | `pytest -k broker_router_hitl`, `pytest -k broker_api_security`, `pytest-approvaltests -k broker_router_ack` |
   | `EP17-BROKER-P3` | CI/Runbook/監査/Evidence統合、SecureShare対応 | `ci/broker-api-smoke.yml`, `docs/runbooks/RUN-BROKER-API-01.md`, `tools/broker_api/smoke.py` | `make broker-api-smoke`, `make check-validation --category broker_api` |
 - **受入条件**:
   1. Flag `brokers.api_enabled=false`時は既存HITLフローに影響を与えず、`BrokerAdapterRegistry`がSandboxのみをロードする。
@@ -6802,6 +6802,67 @@ M3で予定している自動発注拡張に備え、ブローカーAPI接続層
 | `config/brokers/slo.yaml::latency_warn_ms`, `latency_critical_ms`, `queue_warn_sec` | `latency_warn_ms=750`, `latency_critical_ms=1500`, `queue_warn_sec`はOps定義（初期は認定リハーサル値を採用） | Sandbox: `broker.latency.*`アラート閾値として使用し、`broker_api_unstable`健全性フラグを検証。<br>Paper: `BrokerCertificationSuite`の`rate_limit_burst`シナリオで閾値遵守を確認。<br>Live: `OrderLifecycleManager`がキュー待機時間を監視し、Kill Switch判断材料とする。 | `pytest -k broker_monitor`<br>`pytest -k broker_certification_suite`（バースト検証）<br>`tradectl broker monitor report --window 4h`<br>Runbook: `RUN-BROKER-API-02`, `RUN-BROKER-API-03` | [EP17-BROKER-P7](#ep17-broker-p7)<br>[EP17-BROKER-P10](#ep17-broker-p10) |
 | `alerts/broker_api.yaml::broker.latency.warn`, `broker.latency.critical`, `broker.error.rate_limit`, `broker.error.auth`, `broker.heartbeat.timeout` | `latency.warn`/`critical`は上記SLO値を参照、`error.*`は`RateLimitWindow`/認証失敗を検知、`heartbeat.timeout`はモニタリング間隔×2で発火 | Sandbox: Slack Shadow通知と`ops_worklog`記録の演習を実施。<br>Paper: `EmergencyOrchestrator api_failover`ドリルと連動。<br>Live: `StageGuard`降格とKill Switch操作の起点。 | `pytest -k broker_monitor`<br>`make broker-api-monitor-smoke`<br>Runbook: `RUN-BROKER-API-02` | [EP17-BROKER-P7](#ep17-broker-p7)<br>[ci/broker-api-monitor.yml](#ci-broker-api-monitor) |
 | `alerts/broker_api.yaml::broker.queue.backlog` | `queue_warn_sec`超過時にWARN、連続発火で`health.warn('broker_queue_backlog')` | Sandbox: `RateLimitWindow`縮退テストでシグナル発火を確認。<br>Paper: `CutoverChecklist API-02/03`でキュー滞留ゼロを証跡化。<br>Live: `OrderLifecycleManager`/`OrderStateStore`がPending注文にWARNバッジを付与し、OpsがRunbook `RUN-BROKER-API-02`で対応。 | `pytest -k order_lifecycle_manager`<br>`pytest -k broker_rate_limit`<br>`tradectl broker orders list --status pending_ack`（CLI Approval）<br>Runbook: `RUN-BROKER-API-02`, `RUN-BROKER-API-03` | [EP17-BROKER-P16](#ep17-broker-p16)<br>[ci/broker-fault-lab.yml](#ci-broker-fault-lab) |
+
+#### 79.6 優先接続候補API概要（MT5 / cTrader）
+
+サンドボックス検証後に優先的に本番接続を目指す候補として、MetaTrader5 Bridge（MT5）とcTrader Open APIを位置づける。両者のエンドポイント/認証フロー/注文フィールド対応/非機能制約を以下に整理し、`src/brokers/adapter.py`のメタデータと整合させる。
+
+##### 79.6.1 エンドポイント一覧と認証
+
+| Adapter | フェーズ | メソッド | エンドポイント（Sandbox / Live） | プロトコル | 必須ヘッダ | 認証ステップ | 備考 |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| MT5 | セッション確立 | POST | `/api/auth/start` (`https://sandbox-mt5.example.com` / `https://mt5.example.com`) | REST | `Content-Type: application/json`, `X-MT5-Client: {app_id}` | `session_establish` | ログイン資格情報 or 証明書フィンガープリントを提示し`session_id`/`refresh_token`を取得。 |
+| MT5 | トークン更新 | POST | `/api/auth/refresh` | REST | `Content-Type`, `X-MT5-Session: {session_id}` | `token_refresh` | 有効期限30分のうち残り5分で自動更新。401/5403受領時は即座に再ログイン。 |
+| MT5 | 注文送信 | POST | `/api/trade/order` | SOAP | `Content-Type: text/xml`, `SOAPAction: OrderSend`, `X-MT5-Session` | `request` | `ticket_id`→`request_id`を伝播。`retcode=0`で受理。 |
+| MT5 | 注文変更 | POST | `/api/trade/order/modify` | SOAP | `Content-Type: text/xml`, `SOAPAction: OrderModify`, `X-MT5-Session` | `request` | 価格/TTL/SL/TP修正をサポート。 |
+| MT5 | ポジション照会 | GET | `/api/account/positions` | REST | `Accept: application/json`, `X-MT5-Session` | `request` | オープンポジション/証拠金スナップショット。 |
+| cTrader | セッション確立 | POST | `/connect/token` (`https://sandbox.spotware.com` / `https://api.spotware.com`) | REST | `Content-Type: application/x-www-form-urlencoded`, `Authorization: Basic {client_id:client_secret}` | `session_establish` | OAuth2 Password/Refreshグラント。Scope=`trading`。 |
+| cTrader | トークン更新 | POST | `/connect/token` | REST | `Content-Type`, `Authorization: Basic ...` | `token_refresh` | `refresh_token`で更新。残り5分で自動実行。429時は`Retry-After`必須。 |
+| cTrader | 注文送信 | POST | `/openapi/trade/v1/orders` | REST | `Content-Type: application/json`, `Authorization: Bearer {access_token}`, `X-Spotware-Trading-Account: {account_id}` | `request` | Market/Limit/Stop。レスポンスは`orderId`/`clientOrderId`を返却。 |
+| cTrader | 注文変更 | PATCH | `/openapi/trade/v1/orders/{order_id}` | REST | `Content-Type`, `Authorization`, `X-Spotware-Trading-Account` | `request` | 価格/数量/有効期限更新。 |
+| cTrader | ポジション照会 | GET | `/openapi/trade/v1/positions` | REST | `Accept: application/json`, `Authorization`, `X-Spotware-Trading-Account` | `request` | オープンポジション/証拠金照会。 |
+
+- セッション/トークン更新は`OrderRouter`側の`AuthScheduler`（M2+予定）で自動化し、`metrics/broker_api.jsonl::heartbeat_latency_ms`で監視する。
+- SOAP呼び出しを行うMT5では`X-MT5-Session`と`SOAPAction`を`RetryPolicy`内で再設定する。cTraderのRESTは`Retry-After`ヘッダを必ず尊重。
+
+##### 79.6.2 注文リクエスト/レスポンスのフィールド対応
+
+| Ticketフィールド | MT5リクエスト/レスポンス | cTraderリクエスト/レスポンス | Direction | 備考 |
+| --- | --- | --- | --- | --- |
+| `ticket_id` | `request_id` | `clientOrderId` | Request→Response | HITLチケットとAPIレスポンスの突合キー。Shadowログにも保存。 |
+| `order_id` | `order`（応答） | `orderId`（応答） | Response | API受入後に割当。Modify/Cancelの主キー。 |
+| `symbol` | `symbol`（ブローカー表記） | `symbol` | 双方向 | `SymbolMap`でサフィックス調整。 |
+| `side` | `type`（0=buy,1=sell） | `tradeSide`（`BUY`/`SELL`） | Request | `OrderRouter`が`Enum`化して変換。 |
+| `lots` | `volume`（ロット） | `volume`（100k通貨単位） | 双方向 | ロット丸めは下表参照。 |
+| `price` | `price` | `requestedPrice` | Request | `SymbolInfo.digits`/`pricePrecision`で丸め。 |
+| `sl` | `sl` | `stopLoss` | Request | Noneの場合は未設定扱い。 |
+| `tp` | `tp` | `takeProfit` | Request | Noneの場合は未設定扱い。 |
+| `ttl_sec` | `expiration`（サーバーTZ） | `goodTillTime`（UTC RFC3339） | Request | `OrderRouter`がBroker TZへ変換後送信。 |
+| `status` | `retcode`/`order_state` | `orderStatus` | Response | `filled`/`partial`等を内部`BrokerOrderStatus`へマッピング。 |
+
+- **Lot/価格丸め**: MT5は`0.10`ロット刻み・最小`0.10`、価格はシンボル桁数まで。cTraderは`0.01`ロット刻み・最小`0.01`、価格は0.1pips単位。
+- **タイムゾーン**: MT5はサーバータイム（例: `Europe/Helsinki`）、cTraderはUTC。`OrderRouter`は`Ticket.timestamp`（UTC）から変換し、Shadowログに双方の時刻を記録。
+- **有効期限**: MT5 `expiration >= server_time + 60s`が必須。cTrader `goodTillTime`は30日以内。GTC/GTD/GTTは`policy_flags`で制御。
+
+##### 79.6.3 レートリミット・SLA・再試行
+
+| Adapter | エンドポイント | Rate Limit | SLA指標 (p95) | 想定エラーコード | 再試行ポリシー | `config/brokers/<adapter>.yaml`へ転記するキー |
+| --- | --- | --- | --- | --- | --- | --- |
+| MT5 | `/api/trade/order` | 50 req/min/account, バースト10 req/5s | Ack < 800ms, Fill < 2s | 401, 429, 503, 5403 | 500ms指数バックオフ×3 → Ops Escalation | `rate_limit.order_send`, `sla.order_ack_ms`, `sla.fill_latency_ms`, `retry.order_send.max_attempts` |
+| MT5 | `/api/account/positions` | 30 req/min | Response < 600ms | 401, 429, 504 | 1sリニアバックオフ×2 | `rate_limit.positions`, `sla.snapshot_ms`, `retry.snapshot.max_attempts` |
+| cTrader | `/openapi/trade/v1/orders` | 20 req/s バースト, 300 req/5min | Ack < 700ms | 400, 401, 403, 429, 500 | `Retry-After`尊重, 最大3回→Manual | `rate_limit.order_send`, `sla.order_ack_ms`, `retry.order_send.max_attempts` |
+| cTrader | `/openapi/trade/v1/positions` | 10 req/s | Response < 500ms | 401, 404, 429, 503 | 1s待機×1 → Ops | `rate_limit.positions`, `sla.snapshot_ms`, `retry.snapshot.max_attempts` |
+
+- `RateLimitWindow`（§81.3）は上記Rate Limitを既定値としてロードし、`RetryPolicy`は`config/brokers/<adapter>.yaml::retry.*`を参照する。
+- SLA逸脱時は`BrokerApiMonitor`（§81.1）が`health.degraded(reason='broker_latency')`を送出し、`RUN-BROKER-API-02`で手動確認。
+- エラーコードに`429`が含まれる場合は`metrics/broker_rate_limit.jsonl`へ`rate_limit_tokens`を記録し、`ops.agenda.broker_retry`を生成。
+
+##### 79.6.4 テスト・モック・Codex Packet連携
+
+- `src/brokers/adapter.py`に`EndpointSpec`/`FieldMapping`/`RATE_LIMIT_SLA`を定義し、モックレスポンス（`tests/fixtures/brokers/mt5_order_ack.json`等）から検証できるようにする。`EP17-BROKER-P1`で必須。
+- `tests/unit/test_broker_adapter_contracts.py`（新規）でメタデータとRunbook値の齟齬を検知し、`pytest -k broker_adapter_contracts`をCIへ追加。
+- `tests/fixtures/brokers/ctrader_order_ack.json`に`orderId`, `orderStatus`を格納し、`OrderRouter`統合テスト（`EP17-BROKER-P2`）のApprovalで使用。
+- `make broker-api-smoke`実行時は上記Rate Limit/SLA値を読み込み、`reports/validation_log/AC-06_broker_api_<date>.md`へ比較表を出力する。
 
 <div id="broker-setting-packet-links"></div>
 
