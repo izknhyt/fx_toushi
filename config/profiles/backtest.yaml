@@ -1,0 +1,46 @@
+# config/profiles/backtest.yaml -- CONFIG-SCAFF-01 scaffold
+# 詳細設計 §3.1 (ModeContext) / §4.4 (profile キー構成) と Runbook STRAT-M1-VALIDATION を参照。
+# Schema: docs/schemas/cfg.schema.json （schema_version 更新時は同期）。
+
+schema_version: 0  # TODO: cfg.schema.json 整備後に更新
+profile_id: backtest
+metadata:
+  description: "バックテスト専用の最小プロファイル。ダミーデータでの整合確認用。"
+  runbook_refs:
+    - docs/runbooks/STRAT-M1-VALIDATION.md
+    - reports/validation_log/templates/playbook_entry.md
+mode: backtest
+data_ingestion:
+  provider: local_parquet
+  symbols:
+    - USDJPY
+    - EURUSD
+  catch_up_enabled: false
+  manual_fallback_allowed: false
+timeframes:
+  trigger: 5m
+  regime_ref: 1h
+risk:
+  policy_id: m1_baseline
+  overrides: {}
+gates:
+  board_mode_default: normal
+  enable_news_block: false
+strategies:
+  - id: m1_baseline_ma_rsi
+    enabled: true
+    weight: 1.0
+execution:
+  slippage_bps: 0
+  latency_simulation_ms: 0
+spread:
+  source: synthetic
+  cooldown_minutes: 0
+funding:
+  apply_swap: false
+correlation:
+  dataset: data/correlation/initial/bootstrap.parquet
+scheduler:
+  timezone: Asia/Tokyo
+  session_start: "05:00"
+  session_end: "05:00+1"

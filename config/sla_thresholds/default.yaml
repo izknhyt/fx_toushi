@@ -1,0 +1,28 @@
+# config/sla_thresholds/default.yaml -- CONFIG-SCAFF-01 scaffold
+# 詳細設計 §3.1 / §4.4 / §9.4.4 と Runbook RUN-DATA-05・RUN-DATA-06 を参照。
+# Schema: docs/schemas/sla_threshold_profile.schema.json （schema_version 更新時は同期）。
+
+schema_version: 0  # TODO: sla_threshold_profile スキーマ整備後に更新
+profile_id: default
+provider_thresholds:
+  yfinance:
+    fetch:
+      target_ms: 60000
+      warning_ms: 90000
+      critical_ms: 120000
+    processing:
+      target_ms: 18000
+      warning_ms: 24000
+      critical_ms: 30000
+  dukascopy:
+    fetch:
+      target_ms: 15000
+      warning_ms: 20000
+      critical_ms: 25000
+    processing:
+      target_ms: 10000
+      warning_ms: 15000
+      critical_ms: 20000
+notes: |
+  Runbook `docs/runbooks/RUN-DATA-05.md` 手順1で参照する基準値。実際の閾値は Validation Data Playbook
+  AC-45 行のサインオフ後に更新してください。適用時は `reports/validation_log/AC-45_sla_<date>.md` へリンクを記録。
