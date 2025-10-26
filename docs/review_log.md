@@ -67,6 +67,7 @@
   - `SpreadCooldownState`の値域が記述上のみで型定義されておらず、Codex実装時の齟齬リスクがあるため、`Literal`による型エイリアスを詳細設計へ追記。
   - 設定ファイルセクションで`cfg.schema.json`の参照先が曖昧だったため、`docs/schemas/`配下の実体とRunbook/テスト導線を明示。
 - Follow-up Packets: `CONFIG-SCAFF-01`（新規, 起票担当: Codex Liaison, 締切: 2025-03-13 JST EOD）
+- Status Update (2025-03-13): `config/risk_policy.yaml` の雛形を作成し、Spread/Kill Switch主要閾値をコメント付きで整備済み。
 - Ops Agenda Sync: Ops ManagerがOPS-2025-03-12-02へTODO追記済み
 - Next Review Gate: 2025-03-15 Codexスプリントキックオフで前提条件チェック（§0.6.9）を再実施
 
