@@ -1,4 +1,4 @@
-# FXヒューマン・インザループ投資ツール 詳細設計書 v1.26
+# FXヒューマン・インザループ投資ツール 詳細設計書 v1.27
 
 ## 0. 文書情報
 - 作成日: 2025-02-20
@@ -9,6 +9,7 @@
 ### 0.1 改訂履歴
 | 版 | 日付 | 改訂概要 |
 | --- | --- | --- |
+| v1.27 | 2025-03-09 | §86でSignal Board Tauri GUI/HITLインタラクション（FR-12/FR-47/FR-48, NFR-11/NFR-15, M3準備）を追加し、コンポーネント分割/状態遷移/エラー通知、CLI/Shadow APIとの契約、Telemetry・監査・Runbook手順、Codex Packetとテスト計画を定義。 |
 | v1.26 | 2025-03-08 | §84でAPI注文ライフサイクル/エラー回復設計（FR-07/FR-39/FR-58, AC-03/AC-06/AC-32/AC-41, NFR-02/NFR-05/NFR-19）を追加し、`OrderLifecycleManager`/`OrderStateStore`/Runbook連携/CLI/Telemetry/テストパケットを定義。§85でAPIフォールトインジェクション&演習ラボ（FR-47/FR-63, AC-34/AC-43, NFR-02/NFR-28）を新設し、StageGuard/FillShadow/DocOps統合とCodex Packet/証跡運用を設計。 |
 | v1.25 | 2025-03-07 | §78でBacktest回帰CI/データボリューム制御（AC-01/AC-13, NFR-06/NFR-12）を追加し、`make regression-backtest`とGitHub Actions統合、Evidence運用を設計。§79でブローカーAPI接続準備/サンドボックス統合（FR-07/FR-39/FR-58, AC-03/AC-06, NFR-02/NFR-17, M3準備）を定義し、Feature Flag/Runbook/監査フローを追補。Codex Packetとテスト計画を更新。 |
 | v1.24 | 2025-03-06 | §71でHardening検証ハーネス/診断ラボ群（AC-12/AC-14/AC-15/AC-17/AC-18/AC-19/AC-20/AC-21/AC-23/AC-24/AC-25/AC-29/AC-30, NFR-02/NFR-03/NFR-09/NFR-10）を新設し、§72〜§77でPaper-Liveパリティ、流動性ストレス、Pre-Trade強化、Fault Injection、時刻整合、署名管理を追加。Codex Packet/CLI/テレメトリ/テスト計画を更新。 |
@@ -7410,4 +7411,84 @@ API接続の信頼性を高めるには、レート制限・レスポンス遅�
   3. `auth_error`シナリオで`AccessGovernanceService`がAPIキー失効を検知し、`EmergencyOrchestrator.api_failover`が起動→Kill Switch `soft_stop`推奨→DocOpsがRunbook更新TODOを生成する一連のフローが自動化される。
 
 これらの追加により、API注文処理と障害対応の詳細設計が明確化され、Codexは段階的自動化に必要なコード/テスト/Runbook/証跡を安全に実装できる。ヒューマン・トレーダーとOpsチームは、ライフサイクル監視・フォールト演習・Evidence管理を通じてAPI自動化への信頼性と監査性を確保しつつ、将来の完全自動化に備えた運用成熟度を高められる。
+
+
+### 86. Signal Board Tauri GUI & HITL Interaction設計（FR-12/FR-47/FR-48, NFR-11/NFR-15, M3準備）
+
+#### 86.1 コンポーネント分割と状態管理
+
+- **アプリ構成**:
+  1. `AppShell`（Tauriメインウィンドウ/メニュー。レイアウト、テーマ、アプリケーションレベルショートカットを制御）。
+  2. `BoardWorkspace`（Signalカードリスト、リスクパネル、チャット/Shadowブリッジステータスの複合ビュー）。
+  3. `OpsOverlay`（Runbookショートカット、アラートサマリ、実況ノート入力。NFR-11対応でオペレーション情報を常時提示）。
+  4. `StageGuardPanel`（現在のStageGuard/BoardModeを可視化し、遷移要求を受信。FR-47との整合）。
+  5. `CommandPalette`（CLIコマンド・ショートカット発火。将来のShadow API経由操作も統一）。
+
+- **状態ストア**: `GuiStateStore`（§86.3表参照）が`mode`, `health`, `sync_status`, `pending_actions`, `user_ack`を保持。`persisted_state.json`（`app_dir/state/`）に暗号化保存し、`last_snapshot_hash`でバックエンドと合致チェック。
+
+- **状態遷移**（HITL観点）:
+  | 状態 | 遷移トリガー | 主UI挙動 | バックエンド要求 |
+  | --- | --- | --- | --- |
+  | `booting` | Tauri起動、`app:ready`イベント未受信 | Splash＋最新Runbookリンク表示 | `event_bridge.init()`が`/state/bootstrap`へ要求 |
+  | `syncing` | `app:ready`→`state:syncing`イベント | Signal一覧をプレースホルダ表示、StageGuardは読み取り専用 | `state_store.hydrate()`→`tradectl board sync --json`を呼び出し、Shadow API（M3）を事前フェッチ |
+  | `ready` | `sync:complete`且つ`health=ok` | 完全操作可。承認/拒否ボタン有効 | `command_handler.enable_interactions()` |
+  | `degraded` | `health=degraded` or `board_mode=guarded` | 黄色バナー＋自動チェックリスト展開。重要指標を赤枠表示 | `viewmodel.request_mitigations()`が`ops://stage_guard/review`へイベント送信 |
+  | `halted` | Kill Switch or `board_mode=halted` | Signal操作無効、Runbook「Emergency-01」ショートカットをモーダル表示 | `command_handler.route_to_cli('tradectl emergency status')` |
+  | `offline` | イベントブリッジ断 or バックエンド5xx | グレースケール化＋再接続ボタン。最終同期時刻を表示 | `event_bridge.retry(backoff)`がCLI/Shadow API双方へヘルスチェック |
+
+- **HITLインタラクション**: カード操作は`ticket.approve`, `ticket.defer`, `ticket.reject`イベントで伝播。各操作は`AuditWriter`（§30.1）へ`source='gui.tauri'`として保存。ヒューマンの再確認フローは`user_ack`フラグで追跡し、アプリ再起動時に未確認カードを自動ハイライト。
+
+#### 86.2 エラーバナー/警告ダイアログ仕様
+
+- **バナー階層**:
+  - `info`（青）: 新しいRunbook版が公開された場合に`DocOpsService`からのpushで表示。自動で`Docs`サイドバーを開く。
+  - `warn`（黄）: `health=degraded`、`ops_agenda.pending>0`、Shadow API遅延（>3s）等。ボタン: `View Agenda`, `Acknowledge`。
+  - `error`（赤）: Kill Switch, Broker接続喪失, 同期不可（5分超）。即座に操作を凍結し`Retry`/`Open Runbook`/`Escalate to Ops`ボタンを表示。
+
+- **警告ダイアログ**:
+  | ダイアログID | 発火条件 | 内容 | アクション |
+  | --- | --- | --- | --- |
+  | `confirm_halt_override` | ユーザーが`board_mode=halted`で承認操作を試行 | 「Boardは停止モード。Runbook Emergency-01手順に従い確認してください。」 | `Open Runbook`, `Request Override (ops)`（Shadow API経由でOps Slackへリクエスト送信） |
+  | `missing_stageguard_ack` | StageGuard降格後にOps ACKが未完 | チェックリスト＋Ops連絡先表示 | `Mark as Reviewed`, `Open Agenda` |
+  | `cli_execution_failure` | CLIコマンドが非0終了 | 標準出力を整形表示＋再実行オプション | `Retry`, `Copy Logs`, `File Incident` |
+
+- **アクセシビリティ**: 全バナー/ダイアログはWCAG 2.2 AA色差を満たし、スクリーンリーダー用`aria-live=assertive`（`error`）/`polite`（`warn`）を設定。キーボードフォーカスはダイアログ内ループを維持し、`Esc`で閉じられる。
+
+#### 86.3 `src/interfaces/gui/tauri_app/`モジュール構造と契約
+
+| モジュール | 主責務 | 外部契約/将来拡張 |
+| --- | --- | --- |
+| `event_bridge.rs` | Backend（Rust）⇔Frontend（TypeScript/React）イベントのPub/Sub。`app:ready`、`state:*`、`ticket:*`イベントを標準化。 | CLI: `tradectl board sync --json`出力を`StateSnapshot`に変換。Shadow API(M3): WebSocket(`/shadow/events`)をサブスクし`ShadowEvent`をGUIに転送。 |
+| `state_store.rs` | `GuiStateStore`の実装。暗号化永続化、`rehydrate()`/`persist()`/`reduce()`関数を提供。 | CLI: `tradectl board state export --path <file>`との互換フォーマット。Shadow API: `GET /shadow/state`比較で差分警告。 |
+| `viewmodel.rs` | Signalカード/StageGuard/Agendaのドメイン表現をUI向け構造にマッピング。 | CLI: `tradectl board tickets --json`スキーマと1:1。Shadow API: `POST /shadow/actions`に送信する`ActionEnvelope`を生成。 |
+| `command_handler.rs` | GUI操作をCLI/Shadow APIコマンドに変換し実行。失敗時に§86.2のダイアログを発火。 | CLI: `tradectl ticket approve/reject/defer`を同期呼び出し。Shadow API: `PUT /shadow/tickets/<id>`（M3）を非同期呼び出し。 |
+| `telemetry.rs` | GUI内操作ログ、レンダリング時間、エラー計測を収集し`TelemetryExporter`へ送信。 | CLI: `tradectl telemetry push --category gui`バッチ送信（M2+）。Shadow API: エージェント状態メトリクス連携 (`shadow.gui.latency`). |
+| `runbook_bridge.rs` | Runbook markdownを取得しGUI内で差分表示。DocOps通知を処理。 | CLI: `tradectl runbook fetch --id <RUN-ID>`結果をキャッシュ。Shadow API: Slack Shadow経由で更新通知を受信。 |
+| `testing/fixtures.rs` | Snapshot/E2Eテスト用のモックデータ、シナリオロード。 | CLI: `tradectl board fixtures export`との整合を保ち、Codexが共通資産を利用。 |
+
+将来CLIとShadow APIの多重接続をサポートするため、各モジュールは`BridgeContract`トレイト（`execute(request) -> Response`）へ準拠し、接続先をFeature Flag `gui.shadow_bridge_enabled`で切替可能にする。M3でShadow APIを本接続する際は、同トレイトを実装する`ShadowBridgeClient`を注入するだけで済む構成とする。
+
+#### 86.4 テレメトリ・監査・Runbook運用
+
+- **テレメトリ（`metrics/gui_board.jsonl`）**: `session_id`, `user_role`, `state_transition`, `latency_ms`, `shadow_roundtrip_ms`, `banner_level`, `command`, `result`, `error_code`. `latency_ms>800`または`shadow_roundtrip_ms>3000`でWARN。
+- **Audit**: `AuditWriter`に`action='gui.ticket' | 'gui.state' | 'gui.command'`を追記。`delta`は`{ "ticket_id": ..., "action": ..., "source": "tauri" }`。Ops承認は`ops_ack_user`とタイムスタンプを含む。
+- **Runbook更新フロー**: GUIが`DocOpsService`から`runbook.update`イベントを受信した際、`Docs`サイドバーに差分を表示し、ユーザーが`Acknowledge`するまで`user_ack=false`として`state_store`に記録。Runbook更新手順は`docs/runbooks/RUN-GUI-BOARD-01.md`にまとめ、変更時は`make gui-runbook-update`コマンドでCodexがスクリーンショット＋差分を自動添付。
+- **監査レポート**: 月次で`tradectl audit export --category gui`を実行し、`reports/audit/gui_board/<YYYYMM>.jsonl`へ保存。`AuditBundleService`（§30.1）に組み込み、GUI発のStageGuard操作が全て追跡されることを保証。
+
+#### 86.5 Codex実装パケットとテスト計画
+
+- **Codex Packet案**:
+  | Packet ID | スコープ | 成果物 | テスト |
+  | --- | --- | --- | --- |
+  | `EP18-GUI-P1` | Tauri AppShell/State Store/イベントブリッジ基盤 | `src/interfaces/gui/tauri_app/event_bridge.rs`, `state_store.rs`, `viewmodel.rs` | `pnpm test --filter gui-state`, `cargo test -p tauri_app` |
+  | `EP18-GUI-P2` | SignalカードUI・Command Handler統合 | `src/interfaces/gui/tauri_app/command_handler.rs`, `frontend/components/SignalCard.tsx` | `pnpm test --filter gui-command`, `tradectl board fixtures export`＋`pnpm run lint` |
+  | `EP18-GUI-P3` | Telemetry/Audit/Runbook連携＋Shadow準備 | `src/interfaces/gui/tauri_app/telemetry.rs`, `runbook_bridge.rs`, `docs/runbooks/RUN-GUI-BOARD-01.md` | `pytest -k gui_audit_bridge`, `tradectl telemetry push --dry-run` |
+
+- **テスト計画**:
+  - **E2E**: `tests/e2e/gui_board_hitl.spec.ts`（Playwright）。シナリオ: 正常承認、StageGuard降格、Kill Switch発火、Shadow遅延シミュレーション。CIで`pnpm exec playwright test --project=tauri`を実行。
+  - **スナップショット**: `tests/snapshot/gui_board.spec.tsx`でSignalカード/バナー/ダイアログをApprovalテスト。`pnpm exec jest --updateSnapshot`はRunbook承認後のみ許可。
+  - **アクセシビリティ**: `pnpm exec axe-playwright --scenario gui-board-critical`でARIA/カラーコントラストチェック。月次Opsレビュー前に実行し、改善事項を`ops.agenda.gui_a11y`へ記録。
+  - **Performance Smoke (NFR-15)**: `pnpm exec vitest run --config vitest.gui.perf.ts`でレンダリング時間とShadow往復遅延の閾値（800ms/3s）を検証。
+
+- **HITL Runbookとの整合**: GUI機能変更時は`docs/runbooks/RUN-GUI-BOARD-01.md`とOps演習`reports/drill/gui_board/<date>.md`をセットで更新。`make hitl-drill-log`でスクリーンショット・操作ログを収集し、Codexが次スプリントの検証素材に利用する。
 
