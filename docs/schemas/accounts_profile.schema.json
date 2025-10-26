@@ -1,0 +1,95 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://fx-toushi.dev/schemas/accounts_profile.schema.json",
+  "title": "AccountProfile",
+  "description": "Portfolio account configuration as consumed by AccountAggregatorService (detailed design §51.1).",
+  "type": "object",
+  "required": [
+    "account_id",
+    "broker",
+    "mode",
+    "base_currency",
+    "weight",
+    "margin_mode",
+    "max_leverage",
+    "is_hedge",
+    "statement_path",
+    "import_schedule_cron"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "description": "Semantic version tag for this schema instance (e.g. accounts.profile.v1).",
+      "pattern": "^accounts\\.profile\\.v[0-9]+$"
+    },
+    "account_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Unique identifier for the trading account (broker native identifier)."
+    },
+    "broker": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Broker code matching config/brokers/*.yaml entries."
+    },
+    "mode": {
+      "type": "string",
+      "description": "Operating mode for the account.",
+      "enum": [
+        "paper",
+        "live"
+      ]
+    },
+    "base_currency": {
+      "type": "string",
+      "description": "Primary reporting currency for the account (ISO-4217).",
+      "pattern": "^[A-Z]{3}$"
+    },
+    "weight": {
+      "type": "number",
+      "description": "Portfolio weighting ratio (0.0-1.0).",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "margin_mode": {
+      "type": "string",
+      "description": "Broker specific margin configuration label (e.g. netting, hedged).",
+      "minLength": 1,
+      "pattern": "^[a-zA-Z0-9_\\-]+$"
+    },
+    "max_leverage": {
+      "type": "number",
+      "description": "Maximum leverage configured for the account.",
+      "exclusiveMinimum": 0
+    },
+    "is_hedge": {
+      "type": "boolean",
+      "description": "Marks hedge-only accounts that offset exposure across the portfolio."
+    },
+    "statement_path": {
+      "type": "string",
+      "description": "Filesystem or object storage path template used to import broker statements.",
+      "minLength": 1
+    },
+    "import_schedule_cron": {
+      "type": "string",
+      "description": "Cron expression describing when daily/weekly imports should run.",
+      "pattern": "^([0-9*/,-]+\\s+){4}[0-9*/,-]+$"
+    },
+    "tags": {
+      "type": "array",
+      "description": "Optional labels used by governance reporting.",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "uniqueItems": true
+    },
+    "notes": {
+      "type": "string",
+      "description": "Free-form operator guidance attached to the account profile.",
+      "maxLength": 2048
+    }
+  }
+}

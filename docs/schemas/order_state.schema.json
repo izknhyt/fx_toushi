@@ -1,0 +1,223 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://fx-toushi.dev/schemas/order_state.schema.json",
+  "title": "OrderStateRecord",
+  "description": "Order lifecycle snapshot and optional recovery plan (detailed design §84.1-§84.3).",
+  "$ref": "#/$defs/OrderState",
+  "$defs": {
+    "IsoDateTime": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "RecoveryAction": {
+      "type": "object",
+      "description": "Single remediation step executed as part of a recovery plan.",
+      "required": [
+        "code",
+        "label"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "type": "string",
+          "description": "Action identifier consumed by RecoveryPlanner.",
+          "pattern": "^[a-z0-9_\\-]+$"
+        },
+        "label": {
+          "type": "string",
+          "description": "Human readable summary of the action.",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "parameters": {
+          "type": "object",
+          "description": "Optional parameter bag forwarded to automation hooks.",
+          "additionalProperties": true
+        },
+        "requires_manual": {
+          "type": "boolean",
+          "description": "True when human approval or execution is required."
+        }
+      }
+    },
+    "RecoveryPlan": {
+      "type": "object",
+      "description": "Structured remediation workflow generated when an order encounters an error.",
+      "required": [
+        "order_id",
+        "plan_id",
+        "trigger_reason",
+        "actions",
+        "runbook_ref",
+        "status"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "order_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Identifier of the order associated with this plan."
+        },
+        "plan_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Deterministic identifier for the generated recovery plan."
+        },
+        "trigger_reason": {
+          "type": "string",
+          "description": "Normalized reason for initiating recovery (see §84.3.1).",
+          "enum": [
+            "rate_limit",
+            "timeout",
+            "partial_fill_timeout",
+            "broker_reject",
+            "unknown_error"
+          ]
+        },
+        "actions": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/RecoveryAction"
+          }
+        },
+        "assigned_to": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Ops owner currently responsible for the recovery workflow.",
+          "minLength": 1
+        },
+        "runbook_ref": {
+          "type": "string",
+          "description": "Anchored reference into RUN-BROKER-API-02 or related runbooks.",
+          "pattern": "^[A-Z0-9\\-]+(#.+)?$"
+        },
+        "status": {
+          "type": "string",
+          "description": "Execution status of the recovery plan.",
+          "enum": [
+            "planned",
+            "in_progress",
+            "completed",
+            "aborted"
+          ]
+        },
+        "created_at": {
+          "$ref": "#/$defs/IsoDateTime"
+        },
+        "updated_at": {
+          "$ref": "#/$defs/IsoDateTime"
+        },
+        "notes": {
+          "type": "array",
+          "description": "Optional operator notes appended during execution.",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 512
+          }
+        }
+      }
+    },
+    "OrderState": {
+      "type": "object",
+      "description": "Latest broker order status persisted by OrderStateStore.",
+      "required": [
+        "order_id",
+        "status",
+        "last_transition",
+        "attempt",
+        "evidence_hash"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {
+          "type": "string",
+          "description": "Schema tag stored alongside persisted records.",
+          "pattern": "^broker.order_state.v[0-9]+$"
+        },
+        "order_id": {
+          "type": "string",
+          "description": "Identifier emitted by OrderLifecycleManager.",
+          "minLength": 1
+        },
+        "status": {
+          "type": "string",
+          "description": "Current lifecycle status for the order (see §84.1).",
+          "enum": [
+            "created",
+            "queued",
+            "pending_ack",
+            "partial_fill",
+            "filled",
+            "canceled",
+            "rejected",
+            "error",
+            "reconciled"
+          ]
+        },
+        "last_transition": {
+          "$ref": "#/$defs/IsoDateTime"
+        },
+        "attempt": {
+          "type": "integer",
+          "description": "Number of dispatch attempts performed so far.",
+          "minimum": 1
+        },
+        "error_code": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Raw broker error code, if any.",
+          "minLength": 1
+        },
+        "retry_after": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "Back-off hint in seconds provided by RateLimitWindow or broker.",
+          "minimum": 0
+        },
+        "ack_received_at": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/IsoDateTime"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Timestamp of the most recent acknowledgement event."
+        },
+        "fill_summary": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "FillShadow hash key summarising the aggregated fills.",
+          "minLength": 1
+        },
+        "evidence_hash": {
+          "type": "string",
+          "description": "Immutable hash of the supporting evidence bundle.",
+          "pattern": "^[A-Fa-f0-9]{32,64}$"
+        },
+        "recovery_plan": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RecoveryPlan"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Active recovery plan when the order is in an error state."
+        }
+      }
+    }
+  }
+}
