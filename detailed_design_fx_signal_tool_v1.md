@@ -1,4 +1,4 @@
-# FXヒューマン・インザループ投資ツール 詳細設計書 v1.28
+# FXヒューマン・インザループ投資ツール 詳細設計書 v1.29
 
 ## 0. 文書情報
 - 作成日: 2025-02-20
@@ -9,6 +9,7 @@
 ### 0.1 改訂履歴
 | 版 | 日付 | 改訂概要 |
 | --- | --- | --- |
+| v1.29 | 2025-03-12 | すご腕SEレビュー反映。§0.6.11を新設しレビュー結果/フォローアップを整理。§3.5にStrategy Plugin契約/コンテキスト仕様を追記し、シグナル疑似コードをExecutionModel/SpreadMonitorの実APIと整合。Codex向けチェックリストと監査リンクを更新。 |
 | v1.28 | 2025-03-10 | §87でSignal Streaming Gateway & Offline Sync設計（FR-12/FR-47, NFR-02/NFR-11/NFR-18, M3準備）を新設し、Shadow Session多重接続/バックプレッシャ/再送/オフラインキャッシュ設計、信頼性/レイテンシ指標、Validation Data Playbook/Runbook/Feature Flag/テスト運用を定義。 |
 | v1.27 | 2025-03-09 | §86でSignal Board Tauri GUI/HITLインタラクション（FR-12/FR-47/FR-48, NFR-11/NFR-15, M3準備）を追加し、コンポーネント分割/状態遷移/エラー通知、CLI/Shadow APIとの契約、Telemetry・監査・Runbook手順、Codex Packetとテスト計画を定義。 |
 | v1.26 | 2025-03-08 | §84でAPI注文ライフサイクル/エラー回復設計（FR-07/FR-39/FR-58, AC-03/AC-06/AC-32/AC-41, NFR-02/NFR-05/NFR-19）を追加し、`OrderLifecycleManager`/`OrderStateStore`/Runbook連携/CLI/Telemetry/テストパケットを定義。§85でAPIフォールトインジェクション&演習ラボ（FR-47/FR-63, AC-34/AC-43, NFR-02/NFR-28）を新設し、StageGuard/FillShadow/DocOps統合とCodex Packet/証跡運用を設計。 |
@@ -216,6 +217,23 @@
 - **新規指摘**: 設計では`config/`配下に多数の設定YAMLとスキーマ検証が前提となっているが、現リポジトリにはディレクトリ自体が存在しない。CodexがM1 Packetを実装する際にテストを開始できないため、`CONFIG-SCAFF-01`で最低限の雛形とREADME/Schema紐付けを準備する。
 - **設計補強**: `SpreadCooldownState`の値域（`normal|watch|cooldown|halt`）をコード化してGateState記述と齟齬が無いよう明文化（§4.2）。
 - **ドキュメント整合**: §4.4の設定ファイル記述を更新し、JSON Schemaの配置（`docs/schemas/`）とCodexテスト（`pytest -k config_schema_smoke`）の導線を追記。これにより、設計→実装→テストの経路が一本化される。
+
+#### 0.6.11 すご腕SEレビュー（2025-03-12）所見サマリ
+
+- **レビュー範囲**: §0.6 Codexハンドオフ指針、§3.5 StrategyEngine/Signalパイプライン、§3.6 ExecutionModel連携、§7.6 週次レポート受入条件。
+- **主な是正**:
+  - Strategy Plugin契約と`StrategyContext`構造が暗黙的だったため、§3.5.5でProtocol/必須フィールド/決定論シード伝播の具体例を明文化。
+  - シグナル疑似コード（§3.5.2）がExecutionModel/SpreadMonitor APIと不整合（`ExecutionModel.apply(sig)`呼び出し）だったため、現行IFに合わせて`market_snapshot`/`spread_state`を渡す形へ修正し、Backtest/Paper/Liveの決定論前提が満たされるよう補足。
+  - Codexレビュー観点での監査導線が不足していたため、Runbook/レビュー記録のクロスリンクとCLIスナップショット要求を§0.6.11および§7.6に追記。
+- **フォローアップ/監査トレーサビリティ**:
+
+| # | 指摘内容 | 対応状況 | フォローアップ/トラッキング | 所管 | 期限 |
+| --- | --- | --- | --- | --- | --- |
+| 7 | `StrategyPlugin`のProtocol/ベースクラスがリポジトリに存在せず、Codex実装時に署名が揺らぐリスク。 | §3.5.5で契約を明文化。`docs/implementation_packets/20250312_strat_plugin_contract.md`を新規起票し、`src/strategies/base.py`にProtocolスタブを追加するタスクを明示。 | `PKG-STRAT-IFACE-01`（新規, Codex Liaison起票, スプリントM1-02に割当） | 開発/Codex Liaison | 2025-03-15 JST |
+| 8 | シグナル検証ログ/CLI証跡のRunbook同期がバラバラ。週次レビューでKPIと突合する導線が弱い。 | 本節と§7.6へRunbook ID記載・CLIスナップショット必須化を追記。`reports/validation_log/AC-45_sla_<date>.md`に`signal_cycle_snapshot`項目を追加するためのテンプレ更新を要請。 | `DOC-RUNBOOK-ALIGN-02`（Ops Manager起票予定, `docs/templates/validation_log.md`更新） | Ops Manager | 2025-03-18 JST |
+| 9 | Codex PRレビュー時の必須添付物がIssueテンプレに反映されていない。 | `docs/templates/codex_issue.md`へ§0.6.11の必須項目を転記するIssueを作成。テンプレ更新までは手動チェックリストを使用。 | Issue `OPS-58`（Jira, Ops Manager記入） | Ops Manager | 2025-03-20 JST |
+
+- **アクションアイテム**: 各フォローアップは週次Opsレビューで進捗確認し、完了時に`docs/review_log.md`へ「Closed #7」の追記を行う。未完了の場合は`docs/change_requests/`に正式化してからCodex依頼を保留する。
 
 ### 0.7 M1 Core機能トレーサビリティ表
 
@@ -954,12 +972,15 @@ def run_signal_cycle(bar: MarketBar, ctx: ModeContext) -> list[TicketProposal]:
         gate=gate_state,
         account=AccountService.refresh_state(ctx),
         config=ConfigRegistry.snapshot(),
+        clock=ctx.clock,
     )
 
     performance_stats = PerformanceRepository.load(symbols=strategy_ctx.watchlist)
     penalties = PenaltyRegistry.snapshot(now=bar.ts)
+    market_snapshot = MarketDataCache.snapshot(symbols=strategy_ctx.watchlist, timeframe=bar.timeframe)
+    spread_state = SpreadMonitor.current_state(symbols=strategy_ctx.watchlist)
 
-    raw_signals = []
+    raw_signals: list[RawSignal] = []
     for plugin in StrategyRegistry.active_plugins():
         if not plugin.metadata.is_applicable(strategy_ctx):
             continue
@@ -967,11 +988,33 @@ def run_signal_cycle(bar: MarketBar, ctx: ModeContext) -> list[TicketProposal]:
 
     ranked = ScoringService.rank(raw_signals, performance_stats, penalties)
     risk_vetted = RiskManager.evaluate(ranked, strategy_ctx)
+    execution_adjustments: dict[str, ExecutionAdjustments] = {}
+    for sig in risk_vetted:
+        snapshot = market_snapshot[sig.symbol]
+        spread = spread_state.get(sig.symbol)
+        execution_adjustments[sig.signal_id] = ExecutionModel.apply(
+            sig,
+            market_snapshot=snapshot,
+            spread_state=spread,
+            mode_context=ctx,
+        )
+
     sized = [
-        PositionSizer.size(sig, strategy_ctx.account, BrokerSpecs.load())
+        PositionSizer.size(
+            sig,
+            strategy_ctx.account,
+            BrokerSpecs.load(),
+            execution_adjustments[sig.signal_id],
+        )
         for sig in risk_vetted
     ]
-    tickets = [TicketBuilder.build(sig, ExecutionModel.apply(sig)) for sig in sized]
+    tickets = [
+        TicketBuilder.build(
+            sized_sig,
+            execution_adjustments[sized_sig.signal_id],
+        )
+        for sized_sig in sized
+    ]
     return [t for t in tickets if t.is_actionable()]
 ```
 
@@ -1005,8 +1048,67 @@ def run_signal_cycle(bar: MarketBar, ctx: ModeContext) -> list[TicketProposal]:
 | 指標計算異常 | `IndicatorError`が発生しリトライ失敗 | `HealthMonitor.hard_stop('indicator')`→Kill Switchレビュー、`tradectl resync --since`で再計算 | `logs/errors/indicator.log`、Runbook `RUN-DATA-08` |
 | アカウント情報遅延 | `AccountService.refresh_state`が`stale_ts`を返却 | `RiskManager`が`account_stale`でReject、`health.raise('degraded','account_state_stale')` | `logs/account/stale.log`、Runbook `RUN-OPS-06` |
 
+#### 3.5.5 Strategy Plugin契約・決定論要件
+
+- **StrategyContextフィールド**（StrategyEngineが各プラグインに渡す不変ビュー）
+
+| フィールド | 型 | 説明 | 取得元/備考 |
+| --- | --- | --- | --- |
+| `features` | `FeatureContext` | シンボル×タイムフレーム毎の指標ビュー。`lookup(symbol, feature, timeframe)`でアクセス。 | `FeaturePipeline.update()`が返した差分キャッシュ。 |
+| `regime` | `RegimeState` | ボラティリティ/トレンド判定。`mode ∈ {range, trend, spike}`。 | `RegimeDetector.update()`結果。 |
+| `gate` | `GateState` | カレンダー/スプレッド/ニュース/Board Modeのブロック状態。 | `GateAggregator.snapshot()`、Kill Switchを含む。 |
+| `account` | `AccountState` | エクイティ、利用可能証拠金、通貨バケット露出。`stale_ts`付き。 | `AccountService.refresh_state(ctx)`、Paperはシミュレーション口座。 |
+| `config` | `ConfigSnapshot` | `risk_policy`, `strategy_manifest`, `board_modes`等のハッシュ付き読み取り専用ビュー。 | `ConfigRegistry.snapshot()`、変更時は`cfg_hash`が更新。 |
+| `clock` | `MarketClock` | `now`, `timeframe`, `trading_calendar`を保持。決定論シードに使用。 | `ModeContext.clock`を透過。 |
+| `seed` | `int` | `ModeContext.deterministic_seed ^ strategy_metadata.seed_offset`で算出。 | 各プラグインが乱数を使用する場合に必須。 |
+
+- **StrategyPluginProtocol**（Codex実装が準拠すべきIF）
+
+```python
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from typing import ClassVar, Iterable, Protocol
+
+class StrategyPluginProtocol(Protocol):
+    id: ClassVar[str]
+    metadata: StrategyMetadata
+
+    def required_warmup_bars(self) -> int: ...
+    def cooldown_bars(self) -> int: ...
+    def evaluate(self, context: StrategyContext) -> Iterable[RawSignal]: ...
+
+
+@dataclass(slots=True)
+class StrategyMetadata:
+    name: str
+    version: str
+    required_features: frozenset[str]
+    tags: frozenset[str] = field(default_factory=frozenset)
+    seed_offset: int = 0
+
+    def is_applicable(self, context: StrategyContext) -> bool:
+        return self.required_features.issubset(context.features.available_keys)
+```
+
+- **決定論/ログ要件**
+  - `evaluate()`は`RawSignal`を返す際、`signal_id = f"{self.id}:{context.clock.bar_ts:%Y%m%d%H%M}:{hash_components}"`で生成し、`hash_components`には主要Featureキーと`seed`を含める。
+  - 乱数を用いる場合は`random.Random(context.seed)`を利用し、NumPy使用時も`np.random.Generator(np.random.PCG64(context.seed))`で初期化する。
+  - `RawSignal.debug_notes`へ`{"feature_sample": {...}, "regime": context.regime.mode, "seed": context.seed}`を格納し、`logs/signals/raw/<YYYYMMDD>.jsonl`に出力する。
+  - `StrategyEngine.run_all`は各プラグイン実行前後に`metrics/strategy_execution.jsonl`へ`duration_ms`, `num_signals`, `seed`を記録し、p95が`config.strategy.exec_p95_ms`を超えた場合はWARNログと`ops_worklog`へのTODOを生成する。
+
+- **テスト/受入観点**
+  - `pytest -k strategy_plugin_contract`でProtocol準拠（`inspect.signature`/`typing.get_type_hints`）を検証するテストを追加する。
+  - Backtest決定論: `tradectl benchmark replay --strategy <id> --window 2024-01-01:2024-01-31 --tolerance 1e-9`を2回実行し、`metrics/benchmark_replay.jsonl`のハッシュが一致することをCIで確認。
+  - CLIレビュー: Packet受入時は`tradectl board --view strategy --strategy-id <id> --save-snapshot evidence/strategy_board_<id>.json`を取得し、`docs/trader_signoff/<packet>.md`へ添付する。
+
+- **フォールバック/拡張ポイント**
+  - (M1) `cooldown_bars`は共有`CooldownRegistry`で管理し、連続エントリー抑止をStrategyEngineが保証。M2以降は`ReduceOnlyAdvisor`と連携する。
+  - プラグイン停止時は`strategy_manifest.yaml`の`enabled=false`に加え、`StrategyMetadata.tags`へ`"disabled:<ticket_id>"`を付与し、CLIボードでグレー表示する。
+  - 実装がProtocolに適合しない場合は`StrategyRegistrationError(code='contract_violation')`で起動時にFail-Fastし、Runbook `GOV-STRAT-01`の承認を経るまでリトライ禁止とする。
+
 ### 3.6 ExecutionModel & SpreadMonitor (`src/execution/model.py`, `src/execution/spread.py`)
-- **公開API**: `ExecutionModel.apply(raw_signal, market_snapshot, spread_state)`, `SpreadMonitor.update(spread_frame)`。
+- **公開API**: `ExecutionModel.apply(raw_signal, market_snapshot, spread_state, *, mode_context)`, `SpreadMonitor.update(spread_frame)`。
 - **入力**: `execution_model.yaml`, `SpreadMetrics`, `RegimeState`, `config.execution.*`。
 - **アルゴリズム**:
   - **M1 Core**ではヒューマン遅延Δtと滑り補正を`execution_model.yaml`および`config.execution.*`に保持した平均値（例: `execution.human_delay_secs`, `execution.slippage_mean_pips`）で決定し、`MarketFrame`終値を基準に`expected_entry`と`expected_slippage`を算出する。Marketable Limit保護は`protection_pips`定数で指値/TTLを決定し、`ttl_seconds`は`execution.human_delay_secs + execution.ttl_buffer_sec`として決定論的に返す。
@@ -1019,7 +1121,7 @@ def run_signal_cycle(bar: MarketBar, ctx: ModeContext) -> list[TicketProposal]:
 #### APIインターフェース一覧
 | API/関数 | 入力 | 処理 | 出力 | 異常系 |
 | --- | --- | --- | --- | --- |
-| `ExecutionModel.apply(raw_signal, market_snapshot, spread_state)` | `RawSignal`, 市場スナップショット（価格、ボラ指標）、Spread状態、実行設定 | 遅延・滑り補正計算→TTL/保護幅決定→`ExecutionAdjustments`生成 | `ExecutionAdjustments`, `SizedSignal`候補 | 市場データ欠落: `ExecutionModelInputError`。ブローカー制約違反: `ExecutionRuleViolation` |
+| `ExecutionModel.apply(raw_signal, market_snapshot, spread_state, *, mode_context)` | `RawSignal`, 市場スナップショット（価格、ボラ指標）、Spread状態、実行設定、`ModeContext` | 遅延・滑り補正計算→TTL/保護幅決定→`ExecutionAdjustments`生成（モード別ログ/乱数シードを考慮） | `ExecutionAdjustments`, `SizedSignal`候補 | 市場データ欠落: `ExecutionModelInputError`。ブローカー制約違反: `ExecutionRuleViolation` |
 | `ExecutionModel.validate_config(config)` | `execution_model.yaml`, 許容範囲設定 | 設定スキーマ検証→危険値（遅延>90s等）を警告→監査記録 | `ValidationReport` | スキーマ不正: `ExecutionConfigError` |
 | `SpreadMonitor.update(spread_frame)` | `SpreadMetrics`（最新スプレッド、分位、時間）、閾値設定 | ローリング統計更新→`cooldown_state`遷移→EventBus通知 | `SpreadCooldownState` | データ欠落: `SpreadDataDegraded` |
 | `SpreadMonitor.sample(symbol)` | シンボル、ウィンドウ長 | 現在状態と履歴サマリを返却 | `SpreadSample`（state, p95, p99, duration） | シンボル未登録: `SpreadMonitorNotFound` |
@@ -2033,6 +2135,26 @@ HealthMonitor.ack()
 
 - 運用当番表は`docs/ops/rota.xlsx`で管理し、週次レビューで更新。連絡手段のテストは月次`RUN-OPS-02`で検証する。
 - エスカレーション記録は`logs/ops/incident_<timestamp>.md`に自動テンプレとして含まれ、Runbook改訂時には当該節番号を更新する。
+#### 7.6 週次レポート受入条件と証跡管理（FR-10, AC-45）
+
+- **対象範囲**: Reporter週次Markdown（`reports/weekly/<YYYY-WW>.md`）、`metrics/`/`logs/`で集計されるKPI、`docs/review_log.md`週次エントリ。
+- **HITLチェックリスト**（週次レビュー開始前に完了）
+  1. `tradectl report weekly --dry-run --week <YYYY-WW> --save-snapshot reports/weekly/evidence/<YYYY-WW>/report.json`を実行し、CLI出力を保存。
+  2. `tradectl board --view strategy --save-snapshot reports/weekly/evidence/<YYYY-WW>/board_snapshot.json`でSignal Boardサマリを取得し、`reports/validation_log/AC-45_sla_<date>.md`の`signal_cycle_snapshot`項目にパスを追記。
+  3. `metrics/strategy_execution.jsonl`のローリング7日統計を`tools/metrics_extract.py --source metrics/strategy_execution.jsonl --window 7d --out reports/weekly/evidence/<YYYY-WW>/strategy_execution.md`で抽出し、Runbook `RUN-PERF-01`チェックリストに添付。
+  4. `logs/signals/raw/<date>.jsonl`から代表的な`signal_id`を3件抽出し、`docs/review_log.md`該当週エントリの「Follow-up Tickets」に添付。ハッシュ不一致時は`PKG-STRAT-IFACE-01`チェックリストで再調査。
+- **承認ワークフロー**
+  - Ops Manager: `docs/review_log.md`週次エントリの`Next ToDo`欄にCLI/メトリクス証跡パスを貼付し、「Signal Cycle Snapshot」「Strategy Execution Metrics」の確認チェックを実施。
+  - Trader Lead: `docs/trader_signoff/<packet>.md`（該当Packet）を更新し、`signal_cycle_snapshot`ファイルを参照してApprove/Rejectを記載。
+  - Product Owner: 週次Markdown内`## KPI Sign-off`節に`decision = approve|hold|escalate`を記入し、Runbook `STRAT-M1-VALIDATION`のサイン欄に署名。
+- **Codexレビュー必須添付物**（Issue/PRテンプレ更新対象）
+  - 週次レポート生成に関連するPRは、上記CLIスナップショット2種と`metrics/strategy_execution.jsonl`抽出結果を`evidence/`フォルダに格納して添付する。
+  - `pytest -k weekly_report`の実行ログと`reports/weekly/templates/m1_core.md`のdiffをPR本文へ貼付。差分がない場合も`No template change`と記載。
+  - `docs/review_log.md`該当週エントリのGit差分リンクをPR本文に記載し、Opsレビュー者が即座に参照できるようにする。
+- **監査/Runbook連携**
+  - `reports/validation_log/templates/weekly.md`へ`signal_cycle_snapshot`/`strategy_execution_extract`欄を追加（`DOC-RUNBOOK-ALIGN-02`で管理）。
+  - 監査チームは四半期レビュー時に`reports/weekly/evidence/`配下をサンプリングし、証跡欠損があれば`logs/ops/review.log`へ記録。欠損が連続2週以上の場合は`health.raise('degraded','weekly_report_evidence_missing')`を発火する。
+
 ## 8. 非機能要件への対応
 
 ### 8.1 性能 (NFR-07, NFR-08)
