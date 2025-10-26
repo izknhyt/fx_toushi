@@ -1,4 +1,4 @@
-# FXヒューマン・インザループ投資ツール 詳細設計書 v1.25
+# FXヒューマン・インザループ投資ツール 詳細設計書 v1.26
 
 ## 0. 文書情報
 - 作成日: 2025-02-20
@@ -9,6 +9,7 @@
 ### 0.1 改訂履歴
 | 版 | 日付 | 改訂概要 |
 | --- | --- | --- |
+| v1.26 | 2025-03-08 | §84でAPI注文ライフサイクル/エラー回復設計（FR-07/FR-39/FR-58, AC-03/AC-06/AC-32/AC-41, NFR-02/NFR-05/NFR-19）を追加し、`OrderLifecycleManager`/`OrderStateStore`/Runbook連携/CLI/Telemetry/テストパケットを定義。§85でAPIフォールトインジェクション&演習ラボ（FR-47/FR-63, AC-34/AC-43, NFR-02/NFR-28）を新設し、StageGuard/FillShadow/DocOps統合とCodex Packet/証跡運用を設計。 |
 | v1.25 | 2025-03-07 | §78でBacktest回帰CI/データボリューム制御（AC-01/AC-13, NFR-06/NFR-12）を追加し、`make regression-backtest`とGitHub Actions統合、Evidence運用を設計。§79でブローカーAPI接続準備/サンドボックス統合（FR-07/FR-39/FR-58, AC-03/AC-06, NFR-02/NFR-17, M3準備）を定義し、Feature Flag/Runbook/監査フローを追補。Codex Packetとテスト計画を更新。 |
 | v1.24 | 2025-03-06 | §71でHardening検証ハーネス/診断ラボ群（AC-12/AC-14/AC-15/AC-17/AC-18/AC-19/AC-20/AC-21/AC-23/AC-24/AC-25/AC-29/AC-30, NFR-02/NFR-03/NFR-09/NFR-10）を新設し、§72〜§77でPaper-Liveパリティ、流動性ストレス、Pre-Trade強化、Fault Injection、時刻整合、署名管理を追加。Codex Packet/CLI/テレメトリ/テスト計画を更新。 |
 | v1.23 | 2025-03-05 | §67でリスク開示ハードエンフォースメント/デバイスバインディング設計（FR-53/FR-54, AC-44, NFR-17）を追加。§68で研究昇格ゲート/チェックリスト自動化（FR-55/FR-62, AC-46, NFR-21）を詳細化し、Codex PacketとValidation連携を定義。 |
@@ -7033,4 +7034,156 @@ API自動化の導入は一気通貫ではなく、ヒューマン監督とメ�
   3. `EmergencyOrchestrator.api_failover`発動中は`AutonomyStageGuard`が自動で`manual_only`へ降格し、復旧後に`BrokerCertificationSuite`再実行→承認ワークフロー完了まで再昇格できない。
 
 これらの節により、API自動化のローンチと監督体制が設計レベルで明確化され、Codexは安全に段階的自動化を実装できる。ヒューマン・トレーダーはSupervisionConsoleでリアルタイムに状況を把握でき、Ops/POはCutoverチェックリストとAutonomy Stageの両輪でリスクコントロールを行える。証跡とRunbookが密に連携することで、外部監査や将来の自動化拡張に耐える運用基盤を構築する。
+
+### 84. ブローカーAPI注文ライフサイクル & エラー回復設計（FR-07/FR-39/FR-58, AC-03/AC-06/AC-32/AC-41, NFR-02/NFR-05/NFR-19, M3準備）
+
+FillShadow/RateLimit/StageGuardの各レイヤを束ね、API注文の生成→送信→Fill確認→照合作業→エラー復旧までをトレーサブルに管理する。FR-07/39が求めるHITL一貫性、FR-58複数口座運用、AC-03/06/32/41のリスク/Kill Switch/保護付き成行要件、NFR-02/05/19の信頼性・監査性・リソース管理を満たすため、注文ライフサイクル専用の管理モジュールとRunbook連携を設計する。
+
+#### 84.1 OrderLifecycleManager (`src/brokers/order_lifecycle.py`)
+
+- **責務**: API注文の状態遷移（`created → queued → pending_ack → filled/partial/canceled/rejected → reconciled`）を一元管理し、RateLimitWindow/StageGuard/FillShadowと相互作用。手動介入が必要な場合はOps AgendaへTODOを発行。
+- **データモデル**:
+  | モデル | 主フィールド | 説明 |
+  | --- | --- | --- |
+  | `OrderEnvelope` | `order_id`, `external_id`, `mode`, `stage_guard_stage`, `strategy_id`, `ticket_id`, `profile`, `risk_snapshot`, `protect_pips`, `reduce_only`, `submitted_by`, `submitted_at` | 注文のメタデータ。`risk_snapshot`は`RiskManagerDecision`（§5.5）からの抜粋。 |
+  | `OrderState` | `order_id`, `status ∈ {'created','queued','pending_ack','partial_fill','filled','canceled','rejected','error','reconciled'}`, `last_transition`, `attempt`, `error_code`, `retry_after`, `ack_received_at`, `fill_summary`, `evidence_hash` | 現在の状態。`fill_summary`は`FillShadow`のハッシュキー。 |
+  | `RecoveryPlan` | `order_id`, `plan_id`, `trigger_reason`, `actions:list[RecoveryAction]`, `assigned_to`, `runbook_ref`, `status ∈ {'planned','in_progress','completed','aborted'}` | エラー回復手順。 |
+- **状態遷移**:
+  | 現在→遷移先 | トリガ | 副作用 |
+  | --- | --- | --- |
+  | `created → queued` | `OrderRouter.submit()`呼び出し | `RateLimitWindow.reserve()`結果を格納。待機時間が`queue_warn_sec`超過で`health.warn('broker_queue_backlog')`。 |
+  | `queued → pending_ack` | API送信成功 | `BrokerApiMonitor.record()`へレイテンシ記録。`OrderEnvelope.stage_guard_stage`が`manual_only`の場合は警告ログを出し、自動送信を拒否。 |
+  | `pending_ack → partial_fill/filled` | `BrokerAdapter`からFillイベント受信 | `FillShadowRecorder`へイベントフォワード、`OrderState.fill_summary`更新。 |
+  | `pending_ack → error` | `timeout`, `network_error`, `rate_limit`等 | `RecoveryPlan`生成、`EmergencyOrchestrator`へ`api_order_recovery`プラン登録。 |
+  | `partial_fill → reconciled` | `StatementReconciler`照合完了（§25, §80） | `OrderLifecycleManager.close(order_id)`が監査ログを出力し、`ops_worklog`へ所要時間記録。 |
+- **インターフェース**:
+  | 関数 | 入力 | 出力 | 説明 |
+  | --- | --- | --- | --- |
+  | `create(ticket: TicketPayload, *, stage_guard_ctx)` | チケット、StageGuard情報 | `OrderEnvelope` | Reduce-Only/Marketable Limitパラメータを評価し、OrderRouterへ引き渡す前に監査イベントを作成。 |
+  | `update_state(order_id, status, *, payload=None)` | 注文ID, 新状態, 追加情報 | `OrderState` | 状態更新と共にRunbookリンク、Evidence、RateLimit統計を更新。 |
+  | `schedule_recovery(order_id, trigger_reason)` | 注文ID, 失敗理由 | `RecoveryPlan` | 手動/自動の回復手順を生成し、`OpsAgendaService`（§33.2）へTODO発行。 |
+  | `attach_fill(order_id, fill_event)` | Fillイベント | `OrderState` | FillShadowと同期し、部分約定でも残数量を計算。 |
+  | `finalize(order_id)` | 注文ID | `OrderCompletionReceipt` | `StatementReconciler`完了を待って`audit.order_lifecycle_completed`を発火。 |
+- **StageGuard連携**: `AutonomyStageGuard`（§83.1）が`manual_only`の場合、`create()`はAPI送信を拒否し`OrderDispatchRejected(reason='stage_manual_only')`を返す。`reduce_only`ではReduce-Onlyフラグの強制確認を実施。`partial_auto`以上では`StrategyManifest.auto_whitelist`を検証し、未登録戦略はキューで保留。
+- **Kill Switch連携**: `HealthMonitor`が`soft_stop`/`hard_stop`に遷移した場合、`OrderLifecycleManager`は未送信注文を`cancelled(reason='kill_switch')`へ強制遷移し、FillShadowへキャンセル通知を送る（AC-03/AC-06）。
+
+#### 84.2 OrderStateStore (`src/brokers/order_store.py`)
+
+- **永続化**: `orders/<mode>/<YYYYMMDD>.jsonl`に`OrderState`と`RecoveryPlan`を記録し、`OrderEnvelope`は`orders/<mode>/<order_id>.yaml`でメタデータ保存。`jsonlines`形式を採用し、CIで`schema/order_state.schema.json`を検証。
+- **API**:
+  | 関数 | 説明 |
+  | --- | --- |
+  | `save_state(order_state)` | JSONLへappend。`orjson`でシリアライズし、`fsync`で書き込み完了を保証（NFR-02）。 |
+  | `load(order_id)` | YAML/JSONLから最新状態を組み立てる。 |
+  | `list(filter_by=None, *, status_in=None, strategy_id=None)` | 状態一覧を取得し、監査・CLI用に利用。 |
+  | `lock(order_id)` | `filelock`で排他制御。重複送信を防ぎ、`OrderRouter`との競合を排除。 |
+- **監査**: 保存時に`audit.order_state_saved`イベントを生成し、`SecureShareService`（§48）で暗号化バンドル化が可能。`OrderState`には`evidence_hash`を必須化し、FillShadow/StatementReconcilerとの照合結果ハッシュを格納。
+- **Retention**: `OrderStateStore.cleanup(days=90)`が過去ファイルを`archive/orders/<YYYYMM>/`へ移動し、`OpsWorklog`に所要時間を記録。移動前に`checksums/order_states_<YYYYMM>.sha256`を生成し、NFR-05の追跡性を担保。
+
+#### 84.3 エラー回復・Runbook統合 (`RecoveryPlanner`, `EmergencyOrchestrator`)
+
+- **RecoveryPlanner (`src/brokers/recovery.py`)**: `OrderLifecycleManager.schedule_recovery`が利用。シナリオ別アクションテンプレートを持ち、`rate_limit`, `timeout`, `partial_fill_timeout`, `broker_reject`, `unknown_error`に分類。
+  - `rate_limit`: `wait`アクションで`retry_after`秒待機→`StageGuard`が`partial_auto`以上なら優先度を落として再送。`Runbook` `RUN-BROKER-API-02`ステップ2参照。
+  - `timeout`: `EmergencyOrchestrator`（§19）へ`api_retry`プランを登録。`tradectl emergency dispatch --plan api_retry`で手順を出力。
+  - `partial_fill_timeout`: 未約定数量をReduce-Onlyチケットへ変換し、HITLで執行する指示を生成（FR-07/FR-39）。
+  - `broker_reject`: `Compliance`違反/ポジション制限を解析し、`Runbook RUN-COMPLIANCE-02`へのリンクと再入力ガイドを提示。
+- **Ops Agenda**: RecoveryPlanごとに`ops.agenda.order_recovery`TODOを作成。期限は`trigger_ts + config.brokers.recovery.sla_minutes`。超過すると`health.warn('broker_recovery_overdue')`。
+- **DocOps**: `RecoveryPlan`完了時に`docs/runbooks/RUN-BROKER-API-02.md`該当セクションへリンクを自動追記し、DocOps Orchestrator（§58）へ「演習完了」ログを送付。
+- **Manual Override**: `tradectl broker orders override --order <id> --action abort`でRecoveryPlanを強制終了可能。操作には`role∈{'ops_manager','po'}`＋`FIDO`認証が必須（§83.4）。
+
+#### 84.4 CLI (`tradectl broker orders *`)
+
+- **コマンド一覧**:
+  | コマンド | 概要 | 主なオプション | 出力/副作用 |
+  | --- | --- | --- | --- |
+  | `tradectl broker orders list` | 現在のAPI注文を一覧表示 | `--status`, `--strategy`, `--stage`, `--json`, `--include-recovery` | Richテーブル、`schema_version='broker.orders.v1'` JSON。 |
+  | `tradectl broker orders show --order <id>` | 個別注文詳細 | `--include-history`, `--include-evidence` | 状態遷移、RecoveryPlan、監査イベントIDを表示。 |
+  | `tradectl broker orders replay --order <id>` | APIレスポンス/Fillイベントを再生 | `--strict`, `--compare-fill-shadow` | FillShadowと差異がある場合にExit code 99（AC-41）。 |
+  | `tradectl broker orders override --order <id> --action {retry,abort,manual}` | Recovery操作 | `--note`, `--runbook-step`, `--assign <user>` | RecoveryPlan更新、Ops Agenda再割当。 |
+  | `tradectl broker orders export --from <date>` | JSON/CSVエクスポート | `--format {jsonl,csv}`, `--dest <path>` | `SecureShareService`へEvidence登録。 |
+- **UX**: `list`は状態別に色分け（`pending_ack`=青、`partial_fill`=黄、`error`=赤）。`--json`は`OrderEnvelope`と`OrderState`を統合し、`evidence_hash`と`recovery_plan_id`を必須フィールドに含む。`replay`は`FillShadow`の`fill_drift`を併記。
+- **権限**: `override`は`AccessGovernanceService`（§70）で`ops_manager`以上のみ許可。`--manual`指定時はヒューマン承認ログ（`audit.order_manual_intervention`）を出力し、Runbook`RUN-BROKER-API-02`の該当ステップIDを入力必須。
+
+#### 84.5 テレメトリ・監査・Runbook
+
+- **メトリクス** (`metrics/broker_orders.jsonl`): `order_id`, `stage`, `status`, `latency_ms`, `queue_wait_ms`, `fill_duration_ms`, `recovery_status`, `recovery_elapsed_sec`, `remaining_qty`, `stage_guard_stage`, `rate_limit_bucket`. `latency_ms>config.brokers.slo.latency_warn_ms`でWARN、`recovery_elapsed_sec>config.brokers.recovery.max_sec`でCRITICAL。
+- **監査**: `audit.order_created`, `audit.order_state_changed`, `audit.order_recovery_planned`, `audit.order_recovery_completed`, `audit.order_manual_intervention`, `audit.order_lifecycle_completed`。全イベントに`consent_reference_id`, `stage_guard_stage`, `runbook_ref`, `evidence_hash`を付与。
+- **Runbook**: `docs/runbooks/RUN-BROKER-API-02.md`へ「API注文ライフサイクル」章を追加。ステップ: (1) 状態確認 (`tradectl broker orders list`), (2) RecoveryPlanレビュー, (3) 手動介入（必要時）, (4) Statement照合確認, (5) Evidence添付。DocOps OrchestratorがRunbook更新時に`ops.agenda.docops_pending`を生成。
+- **Validation Data Playbook**: `validation_playbook/AC41_broker_orders.yaml`を新設し、`OrderLifecycle`のEvidence（CLIログ、FillShadow比較、RecoveryPlan完了記録）を格納。`make check-validation --category broker_orders`で欠落検出。
+
+#### 84.6 テスト計画・Codex Packet
+
+- **ユニット**: `tests/unit/test_order_lifecycle_manager.py`（状態遷移、StageGuard/RateLimit統合、エラー分類）、`tests/unit/test_order_state_store.py`（永続化/ロック/復元）、`tests/unit/test_order_recovery_planner.py`（シナリオ別手順）。
+- **統合**: `tests/integration/test_broker_order_flow.py`（Ticket→StageGuard→OrderLifecycle→FillShadow→StatementReconciler）、`tests/integration/test_broker_order_recovery.py`（RateLimit/Timeout/Partial Fillシナリオ）。`pytest -k broker_orders`でタグ管理。
+- **フォールト**: `tests/fault/test_broker_order_faults.py`（`make broker-fault-smoke`で実行）にてAPI失敗をモックし、RecoveryPlan/HealthMonitor連携を確認。
+- **CI**: `ci/broker-orders.yml`を追加し、`pytest -k broker_orders`＋`pytest -k broker_order_recovery`＋`make broker-fault-smoke`を実行。成果物（`broker_orders_report.json`）をArtifact化してPRへサマリを投稿。
+- **Codex Packet案**:
+  | Packet ID | スコープ | 成果物 | テスト |
+  | --- | --- | --- | --- |
+  | `EP17-BROKER-P16` | `OrderLifecycleManager`＋`OrderStateStore`基盤 | `src/brokers/order_lifecycle.py`, `src/brokers/order_store.py`, ユニットテスト | `pytest -k order_lifecycle_manager`, `pytest -k order_state_store` |
+  | `EP17-BROKER-P17` | RecoveryPlanner/Runbook/CLI統合 | `src/brokers/recovery.py`, `src/interfaces/cli/broker_orders.py`, `docs/runbooks/RUN-BROKER-API-02.md`追補 | `pytest -k broker_order_recovery`, `pytest-approvaltests -k broker_orders_cli`, `make check-validation --category broker_orders` |
+  | `EP17-BROKER-P18` | Telemetry/Health/CI統合・Faultテスト | `metrics/broker_orders.jsonl`スキーマ, `ci/broker-orders.yml`, `tests/fault/test_broker_order_faults.py` | `make broker-fault-smoke`, `pytest -k broker_orders_fault`, `make check-validation --category broker_orders` |
+- **受入条件**:
+  1. `tradectl broker orders list --status pending_ack`が`queue_wait_ms>config.brokers.slo.queue_warn_sec`の注文にWARNバッジを表示し、`RateLimitWindow`縮退が自動適用される。`HealthMonitor`が`broker_queue_backlog`アラートを発火する。
+  2. `timeout`をモックした統合テストで`RecoveryPlanner`が`api_retry`プランを生成し、`EmergencyOrchestrator`→`ops.agenda.order_recovery`TODO→Runbook記録→再送成功までが自動で証跡化される。
+  3. 部分約定シナリオで`OrderLifecycleManager.finalize()`が`StatementReconciler`の差分0を確認後に`audit.order_lifecycle_completed`を出力し、`validation_playbook/AC41_broker_orders.yaml`が更新される。差分が残る場合は`status='error'`を維持して再調査を強制。
+
+### 85. ブローカーAPIフォールトインジェクション & 運用演習ラボ設計（FR-47/FR-63, AC-34/AC-43, NFR-02/NFR-03/NFR-28, M3準備）
+
+API接続の信頼性を高めるには、レート制限・レスポンス遅延・Fill不一致などの障害を事前に注入し、Runbook/StageGuard/Emergency手順を反復練習する仕組みが必要である。FR-47のEmergencyプロトコル、FR-63のOpsレディネス、AC-34/AC-43のAcceptable Degradation/Kill Switch手順、NFR-02/03/28の信頼性・可用性・オペレーション証跡要件に応えるため、API専用のFault Injection Labを新設する。
+
+#### 85.1 ApiFaultInjectionLab (`src/diagnostics/broker/api_fault_lab.py`)
+
+- **構造**:
+  | コンポーネント | 役割 |
+  | --- | --- |
+  | `ApiFaultScenario` dataclass | `scenario_id`, `description`, `fault_type ∈ {'latency_spike','timeout','rate_limit_exhaust','partial_fill_loss','auth_error','payload_mismatch'}`, `parameters`, `expected_stage_guard_action`, `runbook_refs`. |
+  | `ApiFaultInjector` | `BrokerAdapter`へFaultを注入するラッパー。遅延挿入/HTTPエラー/レスポンス改ざん/Fill欠落をシミュレート。 |
+  | `ScenarioExecutor` | `OrderLifecycleManager`と`FillShadow`を駆動し、StageGuard/RecoveryPlan/HealthMonitorの挙動を収集。 |
+  | `LabReporter` | `reports/diagnostics/api_fault/<scenario>/<timestamp>.md`を生成し、RunbookとEvidenceをリンク。 |
+- **API**: `run(scenario_id: str, *, iterations: int = 1, auto_stage: bool = True) -> FaultRunResult`。`auto_stage`=Trueの場合、StageGuardをシナリオに合わせて自動遷移させる（例: `latency_spike`→`reduce_only`提案）。
+- **出力**: `FaultRunResult`は`metrics/broker_fault_lab.jsonl`に`{"scenario_id","result","stage_guard_action","recovery_duration_sec","health_events","ops_todo_created"}`を追記。失敗時は`result='fail'`とRunbook未完一覧を添付。
+- **シナリオ例**:
+  - `latency_spike`: 連続3回の1500ms遅延→`AutonomyStageGuard`が`manual_only`へ降格し、`broker.latency.critical`アラートが発火。
+  - `rate_limit_exhaust`: トークン枯渇→`RateLimitWindow.shrink_capacity()`→低優先度注文延期→`OrderLifecycleManager`が`queue`滞留を記録。
+  - `partial_fill_loss`: Fillイベントの一部欠落→`FillShadow`が`severity=major`を発火→RecoveryPlanがReduce-Only指示を生成。
+  - `auth_error`: APIキー無効→`AccessGovernanceService`が`status='revoked'`端末を検知→EmergencyOrchestratorが`api_failover`を起動。
+- **Integration Hooks**: FaultRun中は`ops_readiness_score`（§5.12）に対するスコア更新を行い、演習未完了の場合はスコアを減点。`DocOps Orchestrator`へScenarioログを転送し、Runbook改訂が必要な場合は`ops.agenda.docops_pending`を追加。
+
+#### 85.2 CLI (`tradectl broker simulate fault`)
+
+- **コマンド**:
+  | コマンド | 主なオプション | 出力/副作用 |
+  | --- | --- | --- |
+  | `tradectl broker simulate fault --scenario <id>` | `--iterations`, `--auto-stage/--no-auto-stage`, `--attach-evidence`, `--dry-run` | 実行ログ、StageGuard遷移、RecoveryPlan概要を表示。Evidenceは`reports/diagnostics/api_fault/<scenario>/`へ保存。 |
+  | `tradectl broker simulate list` | `--json`, `--filter <fault_type>` | 登録済みシナリオ一覧。 |
+  | `tradectl broker simulate verify --scenario <id>` | `--expected-stage`, `--expected-alert` | StageGuard/Alert/RecoveryPlanが期待通りか検証。 |
+- **UX**: CLIは実行結果をタイムライン形式で表示（EventBusイベント→HealthState→StageGuard→Ops TODO）。`--attach-evidence`時は`SecureShareService`へのアップロードリンクを生成。
+- **権限**: Fault実行は`ops_manager`/`quant_lead`のみ。`--no-auto-stage`で人間が手動操作する場合、`RunbookStep`入力を必須とし`audit.api_fault_manual`を記録。
+
+#### 85.3 テレメトリ・Ops連携・Validation
+
+- **メトリクス** (`metrics/broker_fault_lab.jsonl`): `scenario_id`, `timestamp`, `result`, `stage_guard_action`, `health_events`, `ops_todo_count`, `recovery_duration_sec`, `docops_followup_required`. `result='fail'`または`docops_followup_required=true`でWARN。
+- **Ops Agenda**: Fault実行後は`ops.agenda.api_fault_followup`を自動生成し、Runbook更新/Trainingの完了期限を設定。完了時は`OpsWorklog`へ所要時間を記録し、`ops_readiness_score`へ加点。
+- **DocOps**: `LabReporter`が生成したMarkdownを`docs/runbooks/RUN-BROKER-API-02.md`へ差分提案し、DocOps Orchestratorがレビューを強制（NFR-28）。
+- **Validation Data Playbook**: `validation_playbook/AC43_api_fault.yaml`を新設し、FaultRunログ、Healthイベント、Ops TODO完了証跡を保存。`make check-validation --category api_fault`で欠落を検出。
+- **HealthMonitor**: FaultRun中に発生した`broker.latency.*`や`broker.queue.backlog`は`HealthMonitor`のシミュレーテッドフラグをONにし、実運用との混同を避ける。演習終了時に自動クリア。
+
+#### 85.4 テスト計画・Codex Packet
+
+- **ユニット**: `tests/unit/test_api_fault_lab.py`（シナリオロード、Fault注入、StageGuard期待値確認）、`tests/unit/test_api_fault_cli.py`（CLI引数検証、JSON出力）。
+- **統合**: `tests/integration/test_api_fault_scenarios.py`（latency/rate_limit/partial_fill/ auth_error）、`tests/integration/test_api_fault_stageguard.py`（StageGuard降格とRecoveryPlan連携）。
+- **CI**: `ci/broker-fault-lab.yml`を追加し、`pytest -k api_fault_lab`＋`tradectl broker simulate fault --scenario latency_spike --dry-run`を実行。`--dry-run`では副作用の無いモックを使用し、CI時間を制御。
+- **Codex Packet案**:
+  | Packet ID | スコープ | 成果物 | テスト |
+  | --- | --- | --- | --- |
+  | `EP17-BROKER-P19` | FaultシナリオDSL/Injector基盤 | `src/diagnostics/broker/api_fault_lab.py`, `tests/unit/test_api_fault_lab.py` | `pytest -k api_fault_lab` |
+  | `EP17-BROKER-P20` | CLI/Report/Validation統合 | `src/interfaces/cli/broker_fault.py`, `reports/diagnostics/api_fault/`テンプレ, `validation_playbook/AC43_api_fault.yaml` | `pytest -k api_fault_cli`, `make check-validation --category api_fault`, `tradectl broker simulate fault --scenario latency_spike --dry-run` |
+  | `EP17-BROKER-P21` | StageGuard/Health/Ops連携・CI | `src/brokers/stage_guard.py`拡張, `src/core/health.py`シミュレーションフラグ, `ci/broker-fault-lab.yml` | `pytest -k api_fault_stageguard`, `make broker-autonomy-smoke`, `ci/broker-fault-lab.yml` |
+- **受入条件**:
+  1. `tradectl broker simulate fault --scenario latency_spike --iterations 3`実行で`AutonomyStageGuard`が自動降格し、`ops.agenda.api_fault_followup`が生成される。演習完了後に`ops_readiness_score`が更新される。
+  2. `partial_fill_loss`シナリオで`FillShadow`が`severity=major`を発火し、`OrderLifecycleManager`がReduce-Only指示付きRecoveryPlanを生成。`validation_playbook/AC41_broker_orders.yaml`と`AC43_api_fault.yaml`の両方に証跡が記録される。
+  3. `auth_error`シナリオで`AccessGovernanceService`がAPIキー失効を検知し、`EmergencyOrchestrator.api_failover`が起動→Kill Switch `soft_stop`推奨→DocOpsがRunbook更新TODOを生成する一連のフローが自動化される。
+
+これらの追加により、API注文処理と障害対応の詳細設計が明確化され、Codexは段階的自動化に必要なコード/テスト/Runbook/証跡を安全に実装できる。ヒューマン・トレーダーとOpsチームは、ライフサイクル監視・フォールト演習・Evidence管理を通じてAPI自動化への信頼性と監査性を確保しつつ、将来の完全自動化に備えた運用成熟度を高められる。
 
