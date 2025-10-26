@@ -58,3 +58,14 @@
 - Follow-up Packets: `PKG-BOOT-01`, `SRC-SCAFF-01`, `TEST-SMOKE-01`, `BROKER-META-01`（起票担当: Codex Liaison, 締切: 2025-03-12 JST EOD）
 - Ops Agenda Sync: Ops Managerが`OpsAgendaService`へTODO登録済み（Ref: agenda entry OPS-2025-03-11-01）
 - Next Review Gate: 2025-03-14 スプリント計画レビューで是正状況を確認し、未完了項目は`docs/change_requests/`で正式化する。
+
+### 2025-03-11 Detail Design Review (Follow-up)
+- Reviewer: SE/Trader Lead
+- Scope: `detailed_design_fx_signal_tool_v1.md` v1.28（§0.6.8, §4.2, §4.4）
+- Findings Summary:
+  - `config/`ディレクトリと設定YAML雛形が欠落しており、設計記載のスキーマ検証が実行できないギャップを確認。`CONFIG-SCAFF-01` Packetを新規追加し、`docs/schemas/`へのリンクとスモークテスト（`pytest -k config_schema_smoke`）を要求。
+  - `SpreadCooldownState`の値域が記述上のみで型定義されておらず、Codex実装時の齟齬リスクがあるため、`Literal`による型エイリアスを詳細設計へ追記。
+  - 設定ファイルセクションで`cfg.schema.json`の参照先が曖昧だったため、`docs/schemas/`配下の実体とRunbook/テスト導線を明示。
+- Follow-up Packets: `CONFIG-SCAFF-01`（新規, 起票担当: Codex Liaison, 締切: 2025-03-13 JST EOD）
+- Ops Agenda Sync: Ops ManagerがOPS-2025-03-12-02へTODO追記済み
+- Next Review Gate: 2025-03-15 Codexスプリントキックオフで前提条件チェック（§0.6.9）を再実施
