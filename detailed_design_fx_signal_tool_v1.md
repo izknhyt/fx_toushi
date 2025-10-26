@@ -1,4 +1,4 @@
-# FXヒューマン・インザループ投資ツール 詳細設計書 v1.29
+# FXヒューマン・インザループ投資ツール 詳細設計書 v1.30
 
 ## 0. 文書情報
 - 作成日: 2025-02-20
@@ -9,6 +9,7 @@
 ### 0.1 改訂履歴
 | 版 | 日付 | 改訂概要 |
 | --- | --- | --- |
+| v1.30 | 2025-03-14 | GateStateフィールドを再整理し、`calendar_block`/`spread_cooldown`命名に統一。§3.5.4例外表・Spreadクールダウン節・Reporter Feature Flag表記・Codexハンドオフチェックリストを更新し、監査用語と整合。レビュー履歴を追加。 |
 | v1.29 | 2025-03-12 | すご腕SEレビュー反映。§0.6.11を新設しレビュー結果/フォローアップを整理。§3.5にStrategy Plugin契約/コンテキスト仕様を追記し、シグナル疑似コードをExecutionModel/SpreadMonitorの実APIと整合。Codex向けチェックリストと監査リンクを更新。 |
 | v1.28 | 2025-03-10 | §87でSignal Streaming Gateway & Offline Sync設計（FR-12/FR-47, NFR-02/NFR-11/NFR-18, M3準備）を新設し、Shadow Session多重接続/バックプレッシャ/再送/オフラインキャッシュ設計、信頼性/レイテンシ指標、Validation Data Playbook/Runbook/Feature Flag/テスト運用を定義。 |
 | v1.27 | 2025-03-09 | §86でSignal Board Tauri GUI/HITLインタラクション（FR-12/FR-47/FR-48, NFR-11/NFR-15, M3準備）を追加し、コンポーネント分割/状態遷移/エラー通知、CLI/Shadow APIとの契約、Telemetry・監査・Runbook手順、Codex Packetとテスト計画を定義。 |
@@ -210,7 +211,7 @@
 1. `poetry install --no-root`が成功し、`python -m tradectl --help`（仮スタブ可）が0終了すること。
 2. `pytest -k smoke`が通る最小テストスイートを確立し、CIテンプレ（`ci/templates/python_smoke.yml`）に組み込むこと。
 3. `docs/review_log.md`に本レビュー反映、`docs/prompt_packages/`へPacket下書きを格納済みであること。
-4. Spread/Kill Switch等のリスク閾値ファイル（`config/risk_policy.yaml`など）が`schema/`定義と突合できる形で雛形化されていること。
+4. Spread/Kill Switch等のリスク閾値ファイル（`config/risk_policy.yaml`など）が`schema/`定義と突合できる形で雛形化され、`GateState`スキーマ（`news_block`/`holiday_block`/`calendar_block`/`spread_cooldown`/`reduce_only`）と整合していること。
 5. Codexへ渡すIssue/PRテンプレに§0.6.8の番号を引用し、未解決項目がある場合は「受入不可（前提未了）」ラベルを適用してから再依頼すること。
 
 #### 0.6.10 すご腕SEレビュー（2025-03-10）フォローアップ
@@ -1123,7 +1124,7 @@ def run_signal_cycle(bar: MarketBar, ctx: ModeContext) -> list[TicketProposal]:
 | ケース | トリガー条件 | フェイルセーフ動作 | Runbook/ログ |
 | --- | --- | --- | --- |
 | データ欠損 | `FeaturePipeline`で`nan_policy`が発動し窓サイズ不足 | 該当シグナルを`plugin.skip(reason='feature_gap')`で棄却、`data.feature_gap`イベントを発火 | `logs/ops/data_gaps.log`、Runbook `RUN-DATA-06` |
-| 急変動（スプレッド拡大） | `SpreadMonitor`が`spread_state`を`halt`または`p95`超過に設定 | `GateState.spread_block=True`で全戦略抑止、`tradectl board --guarded`を推奨 | `health_state_transitions.jsonl`、Runbook `RUN-RISK-02` |
+| 急変動（スプレッド拡大） | `SpreadMonitor`が`spread_state`を`halt`または`p95`超過に設定 | `gate_state.spread_cooldown != "normal"`で全戦略抑止、`tradectl board --guarded`を推奨 | `health_state_transitions.jsonl`、Runbook `RUN-RISK-02` |
 | 急変動（価格ギャップ） | `RegimeDetector.volatility`が閾値超過、または`|bar.return|>config.execution.max_gap` | `ExecutionModel`が`expected_slippage`へギャップ分を上乗せし、許容超過でシグナル除外 | `logs/execution/gap_reject.log`、Runbook `RUN-RISK-03` |
 | 外部イベント遮断 | `CalendarService.is_blocked(symbol)`が真 | `StrategyEngine`が`gate_state.calendar_block`を検出して即時Reject | `calendar/block_events.jsonl`、Runbook `RUN-OPS-04` |
 | 指標計算異常 | `IndicatorError`が発生しリトライ失敗 | `HealthMonitor.hard_stop('indicator')`→Kill Switchレビュー、`tradectl resync --since`で再計算 | `logs/errors/indicator.log`、Runbook `RUN-DATA-08` |
@@ -1512,7 +1513,7 @@ Checklist (mandatory items marked with *):
 ### 3.18 Reporter (`src/reporter/generator.py`)
 - **公開API**: `generate_weekly(profile)`, `generate_daily(date)`, `emit_summary()`。
 - **M1 Core出力範囲**: `PerformanceStats`からSharpe/最大DD/WinRate/累積Rを抽出し、`primary_comment`（主要イベント1件の短文）と共にMarkdownを生成する。テンプレートは[docs/templates/reports/weekly_m1_core.md](docs/templates/reports/weekly_m1_core.md)（週次）と[docs/templates/reports/daily_m1_core.md](docs/templates/reports/daily_m1_core.md)（日次）を使用し、欠損メトリクスは`status=pending`で表示する。`emit_summary()`は同じ4指標をJSONで返し、Signal Boardヘッダに埋め込む（FR-10）。
-- **拡張要素の段階的有効化**: Spread統計、Correlationガード履歴、Resync/StressTest/Journal要約、Kill Switchログ、Config差分はFeature Flag `feature_flags.reporter.enable_extended_blocks`配下で管理し、既定`False`（M1 Core）とする。M1.1以降で同FlagをON、または派生Flag（例:`reporter.enable_spread_block`, `reporter.enable_kill_switch_block`）を用意して順次解放する。Flagが無効の場合は対応ブロックをスキップし、テンプレートには`<!-- deferred:M1.1 -->`コメントを残すのみとする。
+- **拡張要素の段階的有効化**: Spread統計、Correlationガード履歴、Resync/StressTest/Journal要約、Kill Switchログ、Config差分はFeature Flag `feature_flags.reporter.enable_extended_blocks`配下で管理し、既定`False`（M1 Core）とする。M1.1以降で同FlagをON、または派生Flag（例:`reporter.enable_spread_cooldown_block`, `reporter.enable_kill_switch_block`）を用意して順次解放する。Flagが無効の場合は対応ブロックをスキップし、テンプレートには`<!-- deferred:M1.1 -->`コメントを残すのみとする。
 - **依存**: M1 Coreでは`PerformanceStats`、`reports/performance/paper|live/*.parquet`、`logs/events`（主要コメント抽出のみ）に限定する。Feature Flag有効時にのみ`metrics/pipeline.jsonl`、`kill_switch_events.jsonl`、`config/diff/`を追加読み込みする。
 - **リスク概要/キルスイッチ連携**: `RiskSummaryBuilder`はM1.1で有効化し、Flag無効時は`RiskSummaryStub`が`None`を返す。M1.1では`risk_policy.yaml`の閾値と`kill_switch_events.jsonl`を集計し、逸脱時に`[ALERT]`バッジを付与、閾値変更は`reports/risk/threshold_change_<date>.md`へのリンクを付ける。
 - **同期メタデータ**: `kpi_snapshot_version`のみをM1 Coreで記録し、Feature Flagが有効化された際に`threshold_version`や`extended_block_version`を追加する。`tradectl risk status`はメタデータ齟齬を監視し、Flag無効時は拡張フィールドを`not_applicable`表示とする。
@@ -1763,11 +1764,16 @@ class GateState:
     news_reason: Optional[str]
     news_release_ts: Optional[datetime]
     holiday_block: bool
+    calendar_block: bool
+    calendar_reason: Optional[str]
     spread_cooldown: SpreadCooldownState
     spread_reason: Optional[str]
     reduce_only: bool
     reduce_only_reason: Optional[str]
 ```
+
+`calendar_block`は`CalendarService`が重要イベントの±指定ウィンドウに入ったシンボルへ設定し、`calendar_reason`にイベントIDやRunbook参照を保持する。
+Spreadガードは連続状態（`SpreadCooldownState`）で管理し、`spread_reason`に直近の判定根拠（例:`p95_exceeded`）を記録する。
 
 ```python
 SpreadCooldownState = Literal["normal", "watch", "cooldown", "halt"]
@@ -1972,7 +1978,7 @@ ModeController遷移: `BACKTEST ↔ PAPER ↔ LIVE`は`active_jobs=0`かつ未�
 
 ### 5.4 Spreadクールダウン判定
 1. `spread_pips > spread_max_pips`または分位超過で`SpreadCooldownState=cooldown`。
-2. `GateState.spread_cooldown=True`、解除時刻を`cooldown_eta`に保持。
+2. `GateState.spread_cooldown in {'cooldown','halt'}`、解除時刻を`cooldown_eta`に保持。
 3. Risk/Ticketは理由をバッジ表示し新規提案を抑止。
 4. 正常化バー数が`cooldown_release_bars`連続で満たされると解除。
 
