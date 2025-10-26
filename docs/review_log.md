@@ -68,6 +68,7 @@
   - 設定ファイルセクションで`cfg.schema.json`の参照先が曖昧だったため、`docs/schemas/`配下の実体とRunbook/テスト導線を明示。
 - Follow-up Packets: `CONFIG-SCAFF-01`（新規, 起票担当: Codex Liaison, 締切: 2025-03-13 JST EOD）
 - Status Update (2025-03-13): `config/risk_policy.yaml` の雛形を作成し、Spread/Kill Switch主要閾値をコメント付きで整備済み。
+- Update (2025-03-14): `ci/templates/python_smoke.yml` を追加し、README/詳細設計§0.6.9の前提どおり `poetry install --no-root` → `pytest -k smoke` を実行するCIテンプレートをパイプライン対象に登録。失敗時の検証ログは`python-smoke-logs`アーティファクトで保存するよう構成。
 - Ops Agenda Sync: Ops ManagerがOPS-2025-03-12-02へTODO追記済み
 - Next Review Gate: 2025-03-15 Codexスプリントキックオフで前提条件チェック（§0.6.9）を再実施
 
