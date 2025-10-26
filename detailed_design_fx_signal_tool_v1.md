@@ -7067,6 +7067,29 @@ FillShadow/RateLimit/StageGuardの各レイヤを束ね、API注文の生成→�
 - **StageGuard連携**: `AutonomyStageGuard`（§83.1）が`manual_only`の場合、`create()`はAPI送信を拒否し`OrderDispatchRejected(reason='stage_manual_only')`を返す。`reduce_only`ではReduce-Onlyフラグの強制確認を実施。`partial_auto`以上では`StrategyManifest.auto_whitelist`を検証し、未登録戦略はキューで保留。
 - **Kill Switch連携**: `HealthMonitor`が`soft_stop`/`hard_stop`に遷移した場合、`OrderLifecycleManager`は未送信注文を`cancelled(reason='kill_switch')`へ強制遷移し、FillShadowへキャンセル通知を送る（AC-03/AC-06）。
 
+```mermaid
+sequenceDiagram
+    participant ASG as AutonomyStageGuard
+    participant OR as OrderRouter
+    participant BA as BrokerAdapter
+    participant FS as FillShadow
+    participant OLM as OrderLifecycleManager
+    participant RP as RecoveryPlanner
+
+    ASG->>OR: OrderDispatchApproved(stage=partial_auto)
+    OR->>BA: submitOrder(envelope)
+    BA-->>OLM: stateUpdate(status=pending_ack)
+    BA-->>FS: BrokerFillReceived(trigger="pending_ack→filled")
+    FS-->>OLM: fillApplied(summary)
+    OLM-->>RP: RecoveryPlanIssued(trigger="pending_ack→error", runbook="RUN-BROKER-API-02")
+    RP-->>OLM: recoveryActionsGenerated()
+```
+
+- `OrderDispatchApproved`: StageGuardが自動送信を許可したイベント。
+- `BrokerFillReceived`: `pending_ack→filled`トリガーでFillShadowが受信する約定イベント。
+- `RecoveryPlanIssued`: `pending_ack→error`トリガーで`RUN-BROKER-API-02`参照の回復手順を生成するイベント。
+- `recoveryActionsGenerated`: `RecoveryPlanner`がRunbook（`RUN-BROKER-API-02`）を基にOpsアクションを返却した応答。
+
 #### 84.2 OrderStateStore (`src/brokers/order_store.py`)
 
 - **永続化**: `orders/<mode>/<YYYYMMDD>.jsonl`に`OrderState`と`RecoveryPlan`を記録し、`OrderEnvelope`は`orders/<mode>/<order_id>.yaml`でメタデータ保存。`jsonlines`形式を採用し、CIで`schema/order_state.schema.json`を検証。
