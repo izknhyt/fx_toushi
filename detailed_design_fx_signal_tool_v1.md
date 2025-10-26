@@ -1059,6 +1059,7 @@ def run_signal_cycle(bar: MarketBar, ctx: ModeContext) -> list[TicketProposal]:
     penalties = PenaltyRegistry.snapshot(now=bar.ts)
     market_snapshot = MarketDataCache.snapshot(symbols=strategy_ctx.watchlist, timeframe=bar.timeframe)
     spread_state = SpreadMonitor.current_state(symbols=strategy_ctx.watchlist)
+    # spread_state: dict[str, SpreadState]（§3.6 SpreadStateデータモデル）。キーはシンボル。値は最新スナップショット。
 
     raw_signals: list[RawSignal] = []
     for plugin in StrategyRegistry.active_plugins():
@@ -1098,6 +1099,8 @@ def run_signal_cycle(bar: MarketBar, ctx: ModeContext) -> list[TicketProposal]:
     return [t for t in tickets if t.is_actionable()]
 ```
 
+- `spread_state`は`dict[str, SpreadState]`で、キーはシグナル対象シンボル、値は§3.6「SpreadStateデータモデル」で定義したスナップショット。`SpreadMonitor.current_state()`が例外を送出した場合は、当該シンボルのシグナルをRejectし`ExecutionModel.apply`を呼び出さない。
+
 `StrategyManifestResolver.effective_symbols(...)`は`strategy_manifest.yaml`上で`enabled=True`かつ現在のBoard Modeで許可されたシンボルを列挙し、未指定の場合は`feature_frame.symbols`（`FeaturePipeline`が供給する実測シンボル集合）をフォールバックに用いる。両方の経路で得られた集合から`GateState`/`RegimeState`が遮断を宣言したシンボルを除外した結果を`StrategyContext.watchlist`へ渡すことで、後続コンポーネントが`strategy_ctx.watchlist`を参照すれば常にアクティブな監視対象のみを取得できる。
 
 #### 3.5.3 運用制約と計算式
@@ -1124,7 +1127,7 @@ def run_signal_cycle(bar: MarketBar, ctx: ModeContext) -> list[TicketProposal]:
 | ケース | トリガー条件 | フェイルセーフ動作 | Runbook/ログ |
 | --- | --- | --- | --- |
 | データ欠損 | `FeaturePipeline`で`nan_policy`が発動し窓サイズ不足 | 該当シグナルを`plugin.skip(reason='feature_gap')`で棄却、`data.feature_gap`イベントを発火 | `logs/ops/data_gaps.log`、Runbook `RUN-DATA-06` |
-| 急変動（スプレッド拡大） | `SpreadMonitor`が`spread_state`を`halt`または`p95`超過に設定 | `gate_state.spread_cooldown != "normal"`で全戦略抑止、`tradectl board --guarded`を推奨 | `health_state_transitions.jsonl`、Runbook `RUN-RISK-02` |
+| 急変動（スプレッド拡大） | `SpreadMonitor`が`SpreadState.state`（§3.6）を`halt`へ遷移、または`SpreadState.percentile >= 0.95` | `gate_state.spread_cooldown != "normal"`で全戦略抑止、`tradectl board --guarded`を推奨 | `health_state_transitions.jsonl`、Runbook `RUN-RISK-02` |
 | 急変動（価格ギャップ） | `RegimeDetector.volatility`が閾値超過、または`|bar.return|>config.execution.max_gap` | `ExecutionModel`が`expected_slippage`へギャップ分を上乗せし、許容超過でシグナル除外 | `logs/execution/gap_reject.log`、Runbook `RUN-RISK-03` |
 | 外部イベント遮断 | `CalendarService.is_blocked(symbol)`が真 | `StrategyEngine`が`gate_state.calendar_block`を検出して即時Reject | `calendar/block_events.jsonl`、Runbook `RUN-OPS-04` |
 | 指標計算異常 | `IndicatorError`が発生しリトライ失敗 | `HealthMonitor.hard_stop('indicator')`→Kill Switchレビュー、`tradectl resync --since`で再計算 | `logs/errors/indicator.log`、Runbook `RUN-DATA-08` |
@@ -1246,13 +1249,13 @@ FillStyle = Literal["ioc", "fok", "gtd"]
 | `gtd` | `GTD` | `limit_requote`や`ttl_seconds > execution.ttl_gtd_threshold_sec`のとき。`OrderLifecycleManager`がGood-Till-Dayで発注。 | Runbook `RUN-HITL-01` Step 5 と Validation Log `AC-02_execution_pipeline.md`の証跡は、この表記に一致する必要がある。 |
 
 <!-- Audit expects the literal strings above for RUN-HITL-01 and Validation Log AC-02. -->
-- **公開API**: `ExecutionModel.apply(raw_signal, market_snapshot, spread_state, *, mode_context)`, `SpreadMonitor.update(spread_frame)`。
+- **公開API**: `ExecutionModel.apply(raw_signal, market_snapshot, spread_state, *, mode_context)`, `SpreadMonitor.update(spread_frame)`, `SpreadMonitor.current_state(symbols: Iterable[str] &#124; None = None)`。
 - **入力**: `execution_model.yaml`, `SpreadMetrics`, `RegimeState`, `config.execution.*`。
 - **アルゴリズム**:
   - **M1 Core**ではヒューマン遅延Δtと滑り補正を`execution_model.yaml`および`config.execution.*`に保持した平均値（例: `execution.human_delay_secs`, `execution.slippage_mean_pips`）で決定し、`MarketFrame`終値を基準に`expected_entry`と`expected_slippage`を算出する。Marketable Limit保護は`protection_pips`定数で指値/TTLを決定し、`ttl_seconds`は`execution.human_delay_secs + execution.ttl_buffer_sec`として決定論的に返す。
   - **M1.1以降**はヒューマン遅延を`distribution.human_delay`から抽出し、滑り補正をシンボル×レジーム毎のp10/p50/p90から補間する拡張に差し替える。
   - SpreadMonitorはローリング分位で`SpreadCooldownState`を算出し、`gate_state.spread_cooldown`を更新。
-- **出力**: `ExecutionAdjustments`（expected_entry, expected_slippage, fill_style, ttl_seconds, drift_guard_R）、`SpreadState`。
+- **出力**: `ExecutionAdjustments`（expected_entry, expected_slippage, fill_style, ttl_seconds, drift_guard_R）、`dict[str, SpreadState]`。
 - **M1 Core整合性**: `ExecutionAdjustments`の全フィールドを決定論的に供給し、Risk Manager/PositionSizer/Scoringが`expected_entry`/`ttl_seconds`を必須前提として参照できるようにする。M1.1で確率分布化する際も同じAPIシグネチャを維持する。
 - **エラーハンドリング**: Spreadデータ欠損で`SpreadDataDegraded`→`HealthMonitor.degraded`。Market snapshot不足は該当シグナルを拒否。
 
@@ -1262,7 +1265,21 @@ FillStyle = Literal["ioc", "fok", "gtd"]
 | `ExecutionModel.apply(raw_signal, market_snapshot, spread_state, *, mode_context)` | `RawSignal`, 市場スナップショット（価格、ボラ指標）、Spread状態、実行設定、`ModeContext` | 遅延・滑り補正計算→TTL/保護幅決定→`ExecutionAdjustments`生成（モード別ログ/乱数シードを考慮） | `ExecutionAdjustments`, `SizedSignal`候補 | 市場データ欠落: `ExecutionModelInputError`。ブローカー制約違反: `ExecutionRuleViolation` |
 | `ExecutionModel.validate_config(config)` | `execution_model.yaml`, 許容範囲設定 | 設定スキーマ検証→危険値（遅延>90s等）を警告→監査記録 | `ValidationReport` | スキーマ不正: `ExecutionConfigError` |
 | `SpreadMonitor.update(spread_frame)` | `SpreadMetrics`（最新スプレッド、分位、時間）、閾値設定 | ローリング統計更新→`cooldown_state`遷移→EventBus通知 | `SpreadCooldownState` | データ欠落: `SpreadDataDegraded` |
+| `SpreadMonitor.current_state(symbols: Iterable[str] &#124; None)` | 監視対象シンボル（省略時は全シンボル） | 内部キャッシュから最新`SpreadState`辞書を構築し、`symbols`フィルタを適用 | `dict[str, SpreadState]` | 未初期化: `SpreadMonitorNotInitialized`。欠損シンボル: `SpreadMonitorNotFound` |
 | `SpreadMonitor.sample(symbol)` | シンボル、ウィンドウ長 | 現在状態と履歴サマリを返却 | `SpreadSample`（state, p95, p99, duration） | シンボル未登録: `SpreadMonitorNotFound` |
+
+#### SpreadStateデータモデル
+| フィールド | 型 | 説明 | 備考 |
+| --- | --- | --- | --- |
+| `state` | `Literal["normal", "watch", "cooldown", "halt"]` | ゲート判定用の現在ステータス。 | GateStateの`spread_cooldown`と同一語彙を使用。 |
+| `spread_pips` | `Decimal` | 直近測定したスプレッド（pips）。 | `SpreadMetrics.latest_spread_pips`を反映。 |
+| `percentile` | `float` | ローリング分布内の位置（0.0〜1.0）。 | `SpreadMonitor`内部分位数から算出。 |
+| `threshold_pips` | `Decimal` | 遷移判定に用いた閾値。 | `config.execution.spread_thresholds`由来。 |
+| `cooldown_eta` | `datetime &#124; None` | `state='cooldown'`以上時の解除予定時刻。 | `SpreadMonitor`が`None`を許容。 |
+| `last_updated` | `datetime` | 状態算出タイムスタンプ。 | `SpreadMetrics.ts`を転記。 |
+| `lookback_window_sec` | `int` | 分位計算に使用したローリング窓の秒数。 | メトリクス/監査で復元可能にする。 |
+
+`SpreadMonitor.current_state()`および監査ログ・イベント定義で参照する`spread_state`は上記`SpreadState`構造体の辞書（キーはシンボル、値は`SpreadState`）として扱う。
 
 ### 3.7 ScoringService (`src/scoring/basic.py`, `src/scoring/hybrid.py`, `src/scoring/stability.py`, `src/scoring/ranking.py`)
 - **公開API**: `rank(raw_signals, performance_stats, penalties)`。
@@ -1580,10 +1597,10 @@ Checklist (mandatory items marked with *):
 | ストア | スキーマ定義 | インデックス/パーティション | 更新ポリシー |
 | --- | --- | --- | --- |
 | イベントログ (`logs/events/YYYYMMDD.jsonl`) | JSON Lines。共通フィールド: `ts`, `event_type`, `version`, `payload`, `context`（`mode`, `board_mode`, `cfg_hash`, `data_hash`）。`payload`は§16.1参照。 | 日別ファイル分割。CLI `tradectl events tail --since`は日別読み込み。`ts`でソート済み、追加インデックス不要。将来SQLiteへインポートする際は`(event_type, ts)`複合インデックスを追加。 | 追記専用。日跨ぎで新ファイルを作成し、旧ファイルは`EventBusConfig.retention_days`超過で`logs/events/archive/`へ圧縮移動（既定7日）。削除禁止。 |
-| 監査ログ (`logs/audit/YYYYMMDD.jsonl`) | JSON Lines。フィールド: `ts`, `record_type`, `ticket_id`, `action`, `actor`, `delta`, `board_mode`, `spread_state`, `health_state`, `consent_reference_id`, `notes`, `cfg_hash`, `data_hash`. `delta`はbefore/after差分を含む。 | 日別ファイル。承認追跡用に`ticket_id`でgrep可能にするため`ticket_id`を先頭に固定。M2+でSQLite `audit_records`テーブルを作成し、`ticket_id`, `action`, `ts`インデックスを付与。 | 追記専用。監査ログは90日保管後にアーカイブし、`logs/audit/archive/`へ移動。手動削除禁止。 |
+| 監査ログ (`logs/audit/YYYYMMDD.jsonl`) | JSON Lines。フィールド: `ts`, `record_type`, `ticket_id`, `action`, `actor`, `delta`, `board_mode`, `spread_state: dict[str, SpreadState]`, `health_state`, `consent_reference_id`, `notes`, `cfg_hash`, `data_hash`（§3.6）。`delta`はbefore/after差分を含む。 | 日別ファイル。承認追跡用に`ticket_id`でgrep可能にするため`ticket_id`を先頭に固定。M2+でSQLite `audit_records`テーブルを作成し、`ticket_id`, `action`, `ts`インデックスを付与。 | 追記専用。監査ログは90日保管後にアーカイブし、`logs/audit/archive/`へ移動。手動削除禁止。 |
 | スナップショット (`snapshots/latest/*.json`) | JSON。構造体: `account_state`, `open_tickets[]`, `gate_state`, `health_state`, `cfg_hash`, `data_hash`, `last_bar_ts`, `version`. `account_state`内は`balance`, `equity`, `margin`, `open_positions[]`, `swap_realized`. | 最新のみ保持し、世代管理 (`snapshots/history/YYYYMMDDHHMM.json`) をオプションで保存。ファイル名に時刻を含め疑似インデックス。復旧時は`last_bar_ts`でソート。 | `SnapshotManager.persist()`が`ttl_minutes`ごと、または重大イベント後に更新。履歴世代は14件まで保持し、それ以上は最古を削除（監査除外）。 |
 | メトリクス (`metrics/*.jsonl`) | JSON Lines。共通フィールド: `ts`, `metric`, `value`, `labels`. 例: `metric='data_ingestion_delay_sec'`, `labels={'phase':'fetch','provider':'yfinance','symbol':'EURUSD'}`。 | ファイル別にメトリクス種別を分割 (`pipeline`, `data_ingestion_sla`, `scheduler`, `risk`). 集計用にPrometheus Exporterへ転送する際は`metric+label`でインメモリインデックス。 | 24時間ごとにローテーション。`tradectl metrics purge --days N`で古いファイルをアーカイブ。 |
-| SQLite (`logs/audit.db`) | テーブル例: `audit_records(id INTEGER PRIMARY KEY, ts TEXT, ticket_id TEXT, action TEXT, actor TEXT, delta JSON, consent_reference_id TEXT, board_mode TEXT, spread_state TEXT, health_state TEXT, cfg_hash TEXT, data_hash TEXT)`. | `CREATE INDEX idx_audit_ticket_ts ON audit_records(ticket_id, ts)`、`idx_audit_actor_ts(actor, ts)`。 | M1はオプション。利用時は`AuditWriter`がJSONLと二重書込。VACUUMは週次ジョブで実行。 |
+| SQLite (`logs/audit.db`) | テーブル例: `audit_records(id INTEGER PRIMARY KEY, ts TEXT, ticket_id TEXT, action TEXT, actor TEXT, delta JSON, consent_reference_id TEXT, board_mode TEXT, spread_state JSON, health_state TEXT, cfg_hash TEXT, data_hash TEXT)`（`spread_state`は`dict[str, SpreadState]`をJSON保存）。 | `CREATE INDEX idx_audit_ticket_ts ON audit_records(ticket_id, ts)`、`idx_audit_actor_ts(actor, ts)`。 | M1はオプション。利用時は`AuditWriter`がJSONLと二重書込。VACUUMは週次ジョブで実行。 |
 
 #### 3.20.2 APIインターフェース一覧
 | API/関数 | 入力 | 処理 | 出力 | 異常系 |
@@ -1902,11 +1919,13 @@ FillStyle = Literal["ioc", "fok", "gtd"]
 | `risk_metrics_snapshot` | `ts`, `mode`, `r_eff`, `threshold`, `bucket_exposures`, `correlation_matrix_hash`, `ui_hints` |
 | `health_state_changed` | `ts`, `from`, `to`, `reason`, `alert_id` |
 | `config_changed` | `ts`, `profile`, `diff_summary`, `cfg_hash` |
-| `spread_state_changed` | `ts`, `symbol`, `from`, `to`, `threshold`, `cooldown_eta` |
+| `spread_state_changed` | `ts`, `symbol`, `from`, `to`, `snapshot: SpreadState`, `cooldown_eta` |
 | `resync_completed` | `ts`, `bars_processed`, `data_hash`, `snapshot_hash` |
 | `actual_fill_imported` | `ts`, `ticket_id`, `signal_id`, `fill_ts`, `fill_price`, `quantity`, `slippage_pips`, `fill_delay_sec`, `reconciled`, `csv_hash` |
 | `actual_fill_import_summary` | `ts`, `imported_count`, `unmatched_count`, `slippage_stats`, `csv_path`, `csv_hash` |
 | `actual_fill_import_failed` | `ts`, `csv_path`, `missing_columns`, `error`, `csv_hash` |
+
+`spread_state_changed.from`/`to`は`SpreadState.state`、`cooldown_eta`は§3.6のデータモデルと同一型を使用し、`snapshot`全体を監査ログとテレメトリへ転送する。
 
 ### 4.6 リスクスナップショット (`RiskMetricsSnapshot`)
 - **スキーマ**: `ts`, `mode`, `r_eff`, `threshold`, `bucket_exposures`（JSON: `{bucket: {gross_R, net_R, position_count}}`）, `correlation_matrix_path`, `correlation_matrix_hash`, `top_pairs`（相関上位3組）, `ui_hints`（Signal Board表示用）。
@@ -2901,7 +2920,17 @@ linked_runbook: docs/runbooks/RUN-XXXX-YY.md
       "actor": "ops_manager",
       "consent_reference_id": "rc-20250220-0001",
       "board_mode": "guarded",
-      "spread_state": "normal",
+      "spread_state": {
+        "USDJPY": {
+          "state": "normal",
+          "spread_pips": 0.8,
+          "percentile": 0.32,
+          "threshold_pips": 1.5,
+          "cooldown_eta": null,
+          "last_updated": "2025-02-20T07:14:55Z",
+          "lookback_window_sec": 900
+        }
+      },
       "health_state": "ok",
       "cfg_hash": "cfg_abcd",
       "data_hash": "data_efgh",
@@ -2939,7 +2968,7 @@ linked_runbook: docs/runbooks/RUN-XXXX-YY.md
 - **抽出件数0件**: Exit 0（成功）だがCLIに`record_count=0`を表示し、Runbook `GOV-AUD-01`の承認欄には「対象期間なし」と記載する。
 
 #### H.6 監査ログ項目
-- エクスポート対象レコードは`AuditWriter`が保持する以下フィールドを必須とする: `ts`, `record_type`, `ticket_id`, `action`, `actor`, `consent_reference_id`, `board_mode`, `spread_state`, `health_state`, `cfg_hash`, `data_hash`, `notes`, `delta.decision`, `delta.document_hash`, `delta.consent_version`, `delta.expires_at`, `delta.ack_user`, `delta.ack_evidence`。
+- エクスポート対象レコードは`AuditWriter`が保持する以下フィールドを必須とする: `ts`, `record_type`, `ticket_id`, `action`, `actor`, `consent_reference_id`, `board_mode`, `spread_state: dict[str, SpreadState]`（§3.6）、`health_state`, `cfg_hash`, `data_hash`, `notes`, `delta.decision`, `delta.document_hash`, `delta.consent_version`, `delta.expires_at`, `delta.ack_user`, `delta.ack_evidence`。
 - エクスポート処理自体の監査レコード（ステップ6）は`ticket_id=None`, `action='audit.export'`, `delta={'type':'risk_consent','filters':{...},'record_count':N}`とし、`consent_reference_id`は未設定。CLIユーザIDを`actor`に設定し、`notes`へ出力ファイルパスを格納する。
 - 監査ログの保存先とローテーションは§13.6の規約（`logs/audit/YYYYMMDD.jsonl(.zst)`）に従い、エクスポート結果は`reports/audit/exports/`配下に保管する。Runbook `GOV-AUD-01`はこの両者を突合し、`COMPLIANCE-01`の承諾台帳と`consent_reference_id`を一致確認する。
 
@@ -3231,7 +3260,7 @@ Codex実装で差異が生じやすいイベント/監査/メトリクスのス�
 | `health.changed` | `src/core/health.py::HealthStateChanged` | `from_state:str`, `to_state:str`, `reasons:list[str]`, `ack_required:bool`, `suggested_board_mode:Literal['normal','guarded','halted']`, `auto_ack_required:bool` | `HealthMonitor._transition` | CLI `status`, AlertDispatcher, Runbook。ユニットテスト`test_health_state_transitions`で`schema_version`確認。 |
 | `degraded_ack.registered` | `src/core/health_store.py::DegradedAckRegistered` | `ack_id:str`, `actor:str`, `source:Literal['cli.board','cli.data','ops_automation']`, `reason:str`, `stage_after:Literal['normal','guarded','halted']`, `runbook_ref:str`, `related_event_id:str`, `business_day_seq:int`, `notes:Optional[str]` | `HealthMonitor.ack`（`tradectl board --guarded`等） | AuditWriter, Ops Agenda, Runbook `RUN-DATA-05/06`照合。`tests/integration/test_health_ack_flow.py`でLedger/イベント同期を確認。 |
 | `ticket.issued` | `src/ticket/builder.py::TicketIssued` | `ticket_id:str`, `symbol:str`, `side:Literal['long','short']`, `score:float`, `ttl_seconds:int`, `checklist:list[str]`, `risk_summary:dict`, `board_mode:str`, `consent_required:bool`, `degraded_reason:Optional[str]` | `TicketBuilder.build` | CLI Board, AuditWriter, Snapshot。`pytest -k ticket_builder`で`orjson.loads`比較。 |
-| `ticket.action` | `src/persistence/audit.py::TicketActionLogged` | `ticket_id`, `action:Literal['approve','reject','edit','expire']`, `actor`, `delta:dict`, `consent_reference_id:Optional[str]`, `board_mode`, `spread_state`, `health_state`, `notes:str` | `AuditWriter.record_ticket_action` | `logs/audit`, Reporter、KPI分析。`tests/integration/test_audit_log.py`でタイムゾーン/ハッシュ確認。 |
+| `ticket.action` | `src/persistence/audit.py::TicketActionLogged` | `ticket_id`, `action:Literal['approve','reject','edit','expire']`, `actor`, `delta:dict`, `consent_reference_id:Optional[str]`, `board_mode`, `spread_state: dict[str, SpreadState]`, `health_state`, `notes:str` | `AuditWriter.record_ticket_action` | `logs/audit`, Reporter、KPI分析。`tests/integration/test_audit_log.py`でタイムゾーン/ハッシュ確認。 |
 | `data.latency_alert` | `src/data/quality.py::DataLatencyAlert` | `symbol`, `provider`, `lag_seconds:float`, `clock_drift_ms:int`, `severity:Literal['warn','major','critical']`, `manual_csv_required:bool` | `DataQualityGuard.evaluate` | HealthMonitor, AlertDispatcher, Ops Agenda。テスト`test_data_quality_alert_payload`で閾値別期待値確認。 |
 | `benchmark_gap` | `src/reporter/benchmark.py::BenchmarkGapEvent` | `provider`, `window`, `missing_ratio:float`, `mode:Literal['paper','live']`, `action_url:str` | `BenchmarkComparator.compare` | HealthMonitor (M1.1+), Reporter, Ops Readiness。`pytest -k benchmark`で生成。 |
 | `risk.consent_warning` | `src/compliance/risk_disclosure.py::RiskDisclosureEvent` | `status`, `version`, `expires_at`, `required_action`, `renderer_hint`, `ack_user:Optional[str]` | `RiskDisclosureService.prompt/record_consent` | CLI Board、AuditWriter、Reporter。`tests/unit/test_risk_disclosure_service.py`でバナー文言整合。 |
@@ -3309,7 +3338,7 @@ CodexがCLI層を安全に実装・改修できるよう、`tradectl`コマン�
   - `ops_worklog.jsonl`へ`{"task":"board_review","duration_min":<入力 or 既定>}`を追記（§8.9）。
 - **出力仕様**:
   - チケット行: `id`, `symbol`, `side`, `score`, `ttl`, `spread`, `regime`, `risk_badge`, `consent`。
-  - Diagnosticsビューは`RiskMetricsSnapshot`、`deterministic_hash`, `spread_state`を縦並びで表示。
+  - Diagnosticsビューは`RiskMetricsSnapshot`、`deterministic_hash`, `spread_state (dict[str, SpreadState])`を縦並びで表示。
 - **テスト**: `pytest -k board_cli_snapshot`（Approval）, `pytest -k board_guarded_toggle`。
 - **Runbook**: `RUN-DATA-05`(Acceptable Degradation)と`RUN-RISK-02`(Kill Switch)のステップIDをバナーに表示。
 
