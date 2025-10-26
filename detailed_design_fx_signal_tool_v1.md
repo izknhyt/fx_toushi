@@ -6790,6 +6790,32 @@ M3で予定している自動発注拡張に備え、ブローカーAPI接続層
   2. Flagを`true`にしたサンドボックス環境で`tradectl broker order simulate --ticket fixtures/orders/sample.json`が成功し、`audit.broker_order_submitted`/`ack`イベントが生成され、`metrics/broker_api.jsonl`に遅延が記録される。
   3. Kill Switch `STOP`状態でAPI呼び出しを試みると`OrderDispatchRejected(reason='kill_switch_stop')`となり、監査ログとRunbook `RUN-RISK-01`が同期。未登録端末からの呼び出しは`BrokerAccessDenied`で拒否され、Ops Agendaへ`broker.access_review`TODOが追加される。
 
+#### 79.5 ブローカーAPI設定サマリ
+
+| 設定ファイル/キー | 既定値（初期想定） | 適用ステージ | 関連テスト/Runbook | Codex Packet / CI |
+| --- | --- | --- | --- | --- |
+| `config/feature_flags.yaml::brokers.api_enabled` | `false` | Sandbox: サンドボックス接続検証時のみ`true`に昇格（`brokers.api_sandbox_only`と併用）。<br>Paper: `BrokerCertificationSuite`完了後に`CutoverChecklist API-01`を満たしたタイミングで`true`。<br>Live: `AutonomyStageGuard`が`partial_auto/full_auto`へ遷移した場合にのみ`true`を許容。 | `pytest -k broker_adapter_sandbox`<br>`make broker-api-smoke`<br>Runbook: `RUN-BROKER-API-01` | [EP17-BROKER-P1](#ep17-broker-p1)<br>[ci/broker-api-smoke.yml](#ci-broker-api-smoke) |
+| `config/feature_flags.yaml::brokers.api_sandbox_only` | `true` | Sandbox: 常に`true`でLiveエンドポイントを無効化。<br>Paper: 認定合格後も`paper`プロファイルでは`true`を維持し、Live移行時に`false`へ切替。<br>Live: `brokers.api_enabled=true`かつ`CutoverChecklist API-04/05`完了後にのみ`false`へ変更。 | `pytest -k broker_api_security`<br>`tradectl broker shadow replay --strict`（サンドボックス境界検証）<br>Runbook: `RUN-BROKER-API-01` | [EP17-BROKER-P2](#ep17-broker-p2)<br>[EP17-BROKER-P5](#ep17-broker-p5) |
+| `config/feature_flags.yaml::brokers.monitor_enabled` | `false` | Sandbox: M1.1 Hardeningで監視ドリル実施時に`true`。<br>Paper: Rate Limit演習（`CutoverChecklist API-03`）に合わせて`true`。<br>Live: M3移行時に常時`true`とし、`StageGuard manual_only`降格時も監視継続。 | `pytest -k broker_monitor`<br>`pytest -k broker_rate_limit`<br>`tradectl broker monitor test --adapter sandbox`（Approval）<br>Runbook: `RUN-BROKER-API-02` | [EP17-BROKER-P7](#ep17-broker-p7)<br>[ci/broker-api-monitor.yml](#ci-broker-api-monitor) |
+| `config/feature_flags.yaml::brokers.certification_required` | `true` | Sandbox: 開発用途で`false`を許容するが、証跡付きでRunbook例外手続きを実施。<br>Paper: `BrokerCertificationSuite`が`pass`するまで`true`固定。<br>Live: `CutoverChecklist`と`ReleaseGate`が完了するまで`true`で強制。 | `pytest -k broker_certification_suite`<br>`make broker-certification-smoke`<br>Runbook: `RUN-BROKER-API-03` | [EP17-BROKER-P10](#ep17-broker-p10)<br>[ci/broker-certification.yml](#ci-broker-certification) |
+| `config/brokers/sandbox.yaml::rate_limit`（`burst`, `sustained_per_min`, `reset_sec`, `priority_rules.*`） | `burst=30`, `sustained_per_min=60`, `reset_sec=60`, `priority_rules={'order.place':'high','order.modify':'high','order.cancel':'medium','account.fetch':'low'}` | Sandbox: CLI `tradectl broker monitor limit set`で上記値を既定としてSmoke実施。<br>Paper: `CutoverChecklist API-03`で逸脱ゼロを確認しつつ必要に応じて微調整。<br>Live: `AutonomyStageGuard`降格時にも即時反映できるようOpsが同値を初期値としてレビュー。 | `pytest -k broker_rate_limit`<br>`make broker-api-monitor-smoke`<br>Runbook: `RUN-BROKER-API-02` | [EP17-BROKER-P7](#ep17-broker-p7)<br>[ci/broker-api-monitor.yml](#ci-broker-api-monitor) |
+| `config/brokers/slo.yaml::latency_warn_ms`, `latency_critical_ms`, `queue_warn_sec` | `latency_warn_ms=750`, `latency_critical_ms=1500`, `queue_warn_sec`はOps定義（初期は認定リハーサル値を採用） | Sandbox: `broker.latency.*`アラート閾値として使用し、`broker_api_unstable`健全性フラグを検証。<br>Paper: `BrokerCertificationSuite`の`rate_limit_burst`シナリオで閾値遵守を確認。<br>Live: `OrderLifecycleManager`がキュー待機時間を監視し、Kill Switch判断材料とする。 | `pytest -k broker_monitor`<br>`pytest -k broker_certification_suite`（バースト検証）<br>`tradectl broker monitor report --window 4h`<br>Runbook: `RUN-BROKER-API-02`, `RUN-BROKER-API-03` | [EP17-BROKER-P7](#ep17-broker-p7)<br>[EP17-BROKER-P10](#ep17-broker-p10) |
+| `alerts/broker_api.yaml::broker.latency.warn`, `broker.latency.critical`, `broker.error.rate_limit`, `broker.error.auth`, `broker.heartbeat.timeout` | `latency.warn`/`critical`は上記SLO値を参照、`error.*`は`RateLimitWindow`/認証失敗を検知、`heartbeat.timeout`はモニタリング間隔×2で発火 | Sandbox: Slack Shadow通知と`ops_worklog`記録の演習を実施。<br>Paper: `EmergencyOrchestrator api_failover`ドリルと連動。<br>Live: `StageGuard`降格とKill Switch操作の起点。 | `pytest -k broker_monitor`<br>`make broker-api-monitor-smoke`<br>Runbook: `RUN-BROKER-API-02` | [EP17-BROKER-P7](#ep17-broker-p7)<br>[ci/broker-api-monitor.yml](#ci-broker-api-monitor) |
+| `alerts/broker_api.yaml::broker.queue.backlog` | `queue_warn_sec`超過時にWARN、連続発火で`health.warn('broker_queue_backlog')` | Sandbox: `RateLimitWindow`縮退テストでシグナル発火を確認。<br>Paper: `CutoverChecklist API-02/03`でキュー滞留ゼロを証跡化。<br>Live: `OrderLifecycleManager`/`OrderStateStore`がPending注文にWARNバッジを付与し、OpsがRunbook `RUN-BROKER-API-02`で対応。 | `pytest -k order_lifecycle_manager`<br>`pytest -k broker_rate_limit`<br>`tradectl broker orders list --status pending_ack`（CLI Approval）<br>Runbook: `RUN-BROKER-API-02`, `RUN-BROKER-API-03` | [EP17-BROKER-P16](#ep17-broker-p16)<br>[ci/broker-fault-lab.yml](#ci-broker-fault-lab) |
+
+<div id="broker-setting-packet-links"></div>
+
+- <a id="ep17-broker-p1"></a>`EP17-BROKER-P1`: §79.4のCodex Packet案（BrokerAdapter基盤）。
+- <a id="ep17-broker-p2"></a>`EP17-BROKER-P2`: §79.4のCodex Packet案（OrderRouter/HITL統合）。
+- <a id="ep17-broker-p5"></a>`EP17-BROKER-P5`: §80.4〜§80.6のCodex Packet案（FillShadow/Shadow突合）。
+- <a id="ep17-broker-p7"></a>`EP17-BROKER-P7`: §81.6のCodex Packet案（Monitor/RateLimit/Alert）。
+- <a id="ep17-broker-p10"></a>`EP17-BROKER-P10`: §82.5のCodex Packet案（BrokerCertificationSuite）。
+- <a id="ep17-broker-p16"></a>`EP17-BROKER-P16`: §84.5のCodex Packet案（OrderLifecycle/OrderStateStore）。
+- <a id="ci-broker-api-smoke"></a>`ci/broker-api-smoke.yml`: §79.4のCIジョブ（APIスモーク）。
+- <a id="ci-broker-api-monitor"></a>`ci/broker-api-monitor.yml`: §81.7のCIジョブ（Monitor/RateLimit）。
+- <a id="ci-broker-certification"></a>`ci/broker-certification.yml`: §82.5のCIジョブ（認定シナリオ）。
+- <a id="ci-broker-fault-lab"></a>`ci/broker-fault-lab.yml`: §85.4のCIジョブ（Fault Injection/StageGuard演習）。
+
 
 ### 80. ブローカーFillシャドー & インフライト突合設計（FR-07/FR-39/FR-58/FR-64, AC-03/AC-06/AC-41, NFR-02/NFR-12, M3準備）
 
