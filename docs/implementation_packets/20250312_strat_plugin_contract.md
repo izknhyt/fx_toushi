@@ -21,6 +21,14 @@
 | tests/unit/test_strategy_plugin_contract.py | Protocol準拠/seed決定論/ログ付与のスモークテストを追加。 | `pytest -k strategy_plugin_contract` | N/A |
 | docs/trader_signoff/PKG-STRAT-IFACE-01.md | CLIスナップショット/Runbookリンク/承認サイン欄を作成。 | `tradectl board --view strategy --save-snapshot ...` | N/A |
 
+### 2.1 EntryMode / FillStyle リテラル更新（§3.6, §4.3）
+- `EntryMode = Literal["market", "marketable_limit", "limit_requote"]`
+  - Ticket Builder / CLIバッジ表示: `Market (IOC)`、`Marketable Limit`、`Limit (Requote)`。
+  - 監査: Runbook `RUN-HITL-01` と Validation Log `AC-02_execution_pipeline.md` が同一文字列を要求。
+- `FillStyle = Literal["ioc", "fok", "gtd"]`
+  - `ExecutionAdjustments.fill_style` と `TradeTicket.entry.fill_style` で共有。CLI出力キーは`fill_policy`。
+  - 監査: Validation Log `AC-02_execution_pipeline.md` の `fill_policy` 列で表記一致を検証。
+
 ## 3. チェックリスト
 - [ ] 設計整合: §3.5.5・§0.6.11と照合し、Protocol/ログ要件を満たす
 - [ ] テスト実行: `poetry run pytest -k "strategy_plugin_contract or strategy_registry"`
