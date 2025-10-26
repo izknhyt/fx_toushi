@@ -912,6 +912,8 @@ class FeatureContext:
 - `FeatureFrameView.values`は降順（最新→過去）で最大`config.feature_pipeline.window_size`本を保持し、Strategyプラグインが複数バーを参照できるようにする。
 - StrategyEngineはプラグイン実行前に`required_features ⊆ FeatureContext.available_keys`を検証し、不足がある場合は`StrategyRegistrationError(code='feature_contract')`でFail-Fastする。
 - `available_keys`のフォーマットは**機能名（英小文字+`_`区切り） + `_` + タイムフレーム略称**とする。タイムフレーム略称は`{"5m", "15m", "1h", "4h", "1d"}`を許容し、M1では`5m`/`1h`/`1d`のみを使用する。
+- `config/feature_pipeline.yaml`の`indicators.*.output_key`（単一列指標）および`indicators.*.output_keys`（複数列指標）が`pipeline.resample.timeframes`で宣言したタイムフレーム集合と直積され、`FeaturePipeline`は`<output_key>_<tf>`形式に正規化した集合を`FeatureContext.available_keys`へ登録する。例として`indicators.ema_fast`に`timeframes: ["5m"]`を指定すると`available_keys`へ`ema_fast_5m`が追加され、`macd_12_26_9.output_keys.histogram: macd_hist`と`timeframes: ["1h"]`を組み合わせると`macd_hist_1h`が生成される。
+- ボリンジャーバンドのような複数列指標では`output_keys`に`{"upper": "bb_upper", "middle": "bb_middle", "lower": "bb_lower"}`を設定し、各列がタイムフレーム別に`bb_upper_5m`等へ展開される。ManifestやStrategyPluginは展開後の文字列のみを参照し、基底の`output_key`名はFeaturePipeline内部の算出ラベルとして利用する。
 
 ##### 指標キーと`metadata.required_features`指定一覧
 
@@ -1193,6 +1195,7 @@ class MaRsiPlugin(StrategyPluginProtocol):
 ```
 
 - `FeatureContext.available_keys`は`{"ema_fast_5m", "macd_signal_1h", ...}`のような`<feature>_<tf>`形式を返し、`StrategyMetadata.required_features`はこの文字列集合の部分集合でなければならない。
+- `strategy_manifest.yaml`の`strategies.<id>.required_features`も`FeatureContext.available_keys`と同じ集合を前提に列挙する。例えば`macd_signal_1h`を要求する戦略は、設定ファイル側で`macd_12_26_9.output_keys.signal: macd_signal`と`timeframes: ["1h"]`が有効化されていることを前提にする。FeaturePipelineが新たな`output_key`を追加した場合はManifestとテスト資産を同時更新し、Fail-Fastで不一致を検知する。
 - `FeatureContext.lookup()`/`get_latest()`は対象キーが存在しない、または`FeatureFrameView.last_updated`が`config.feature.max_lag_sec`を超えている場合に`FeatureLookupError`または`FeatureStaleError`を送出し、StrategyEngineは`StrategyExecutionError(cause='feature_missing')`を発生させて当該プラグインの出力を棄却する。
 - **決定論/ログ要件**
   - `evaluate()`は`RawSignal`を返す際、`signal_id = f"{self.id}:{context.clock.bar_ts:%Y%m%d%H%M}:{hash_components}"`で生成し、`hash_components`には主要Featureキーと`seed`を含める。
@@ -1202,6 +1205,7 @@ class MaRsiPlugin(StrategyPluginProtocol):
 
 - **テスト/受入観点**
   - `pytest -k strategy_plugin_contract`でProtocol準拠（`inspect.signature`/`typing.get_type_hints`）を検証するテストを追加する。
+  - `pytest -k "feature_context_contract and smoke"`で`FeatureContext.available_keys`とManifest `required_features`の整合をスモーク検証する。CIの`python-smoke`ジョブに含め、欠落キーは開発段階で即検知する。
   - Backtest決定論: `tradectl benchmark replay --strategy <id> --window 2024-01-01:2024-01-31 --tolerance 1e-9`を2回実行し、`metrics/benchmark_replay.jsonl`のハッシュが一致することをCIで確認。
   - CLIレビュー: Packet受入時は`tradectl board --view strategy --strategy-id <id> --save-snapshot evidence/strategy_board_<id>.json`を取得し、`docs/trader_signoff/<packet>.md`へ添付する。
 
