@@ -46,3 +46,15 @@
 ## 監査リンク
 - 週次コメント締切超過時は`reports/validation_log/AC-45_sla_<date>.md`に遅延理由を記録する。
 - 実験結果が承認されなかった場合は`reports/research/m1_baseline/validation_<date>.md`に原因を追記し、次週のレビューでフォローアップする。
+
+## 特別レビュー記録
+
+### 2025-03-10 Detail Design Review (Special)
+- Reviewer: SE/Trader Lead（Codex Liaison同席）
+- Scope: `detailed_design_fx_signal_tool_v1.md` v1.28（§0.6〜§1.3・§79）とリポジトリ初期状態の実査
+- Findings Summary:
+  - `pyproject.toml`欠落・ソーススキャフォールド未整備・テスト雛形未整備など、設計と実装準備のギャップを5項目抽出（§0.6.8参照）。
+  - Broker Adapterメタデータは`EndpointSpec`のみ実装済みであり、`FieldMapping`/`RateLimitSla`定義が不足（§79.1注記）。
+- Follow-up Packets: `PKG-BOOT-01`, `SRC-SCAFF-01`, `TEST-SMOKE-01`, `BROKER-META-01`（起票担当: Codex Liaison, 締切: 2025-03-12 JST EOD）
+- Ops Agenda Sync: Ops Managerが`OpsAgendaService`へTODO登録済み（Ref: agenda entry OPS-2025-03-11-01）
+- Next Review Gate: 2025-03-14 スプリント計画レビューで是正状況を確認し、未完了項目は`docs/change_requests/`で正式化する。
