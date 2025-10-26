@@ -201,6 +201,7 @@
 | 4 | §79.1が`FieldMapping`/`RATE_LIMIT_SLA`を要求しているが、`src/brokers/adapter.py`は`EndpointSpec`のみ。 | ブローカー統合時にフィールド整合性テストが欠落し、HITL/Live移行のリスクが増大。 | `BROKER-META-01` Packetで`FieldMapping` dataclassと`RATE_LIMIT_SLA`辞書を追補し、`tests/unit/test_broker_adapter_contracts.py`から参照。既存`EndpointSpec`との整合を`docs/review_log.md`に記録。 |
 | 5 | `docs/review_log.md`に本レビュー結果の記録が未反映。 | 変更履歴と意思決定トレースが断絶し、AC-45/AC-51監査要件に抵触。 | 本レビュー完了後に`docs/review_log.md`へ日付・指摘・対応方針を追記し、重大項目は`logs/ops/review.log`へも転記。 |
 | 6 | `config/`配下の雛形（`risk_policy.yaml`/`strategy_manifest.yaml`/`board_modes.yaml`/`sla_thresholds/*.yaml`等）が存在せず、§4.4やRunbook参照と乖離。 | Codexが設定スキーマを前提に実装できず、テスト/CLIが即時失敗する。 | `CONFIG-SCAFF-01` Packetで空/ダミー値を含むYAML雛形と`config/README.md`を作成。`docs/schemas/`のJSON Schemaへリンクし、`pytest -k config_schema_smoke`で検証するスモークテストを追加。 |
+|   |   |   | ✅ 2025-03-13: `config/risk_policy.yaml` 雛形を追加し、Spread/Kill Switch主要閾値をコメント付きで配置。 |
 
 上記是正策の進捗は週次Opsレビューで確認し、未完了項目は`OpsAgendaService`（§52.3）にTODOとして登録する。是正完了後、Codexへ渡すPacketには本表の該当番号を「前提条件」として明記すること。
 
