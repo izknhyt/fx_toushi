@@ -1,4 +1,4 @@
-# FXヒューマン・インザループ投資ツール 詳細設計書 v1.27
+# FXヒューマン・インザループ投資ツール 詳細設計書 v1.28
 
 ## 0. 文書情報
 - 作成日: 2025-02-20
@@ -9,6 +9,7 @@
 ### 0.1 改訂履歴
 | 版 | 日付 | 改訂概要 |
 | --- | --- | --- |
+| v1.28 | 2025-03-10 | §87でSignal Streaming Gateway & Offline Sync設計（FR-12/FR-47, NFR-02/NFR-11/NFR-18, M3準備）を新設し、Shadow Session多重接続/バックプレッシャ/再送/オフラインキャッシュ設計、信頼性/レイテンシ指標、Validation Data Playbook/Runbook/Feature Flag/テスト運用を定義。 |
 | v1.27 | 2025-03-09 | §86でSignal Board Tauri GUI/HITLインタラクション（FR-12/FR-47/FR-48, NFR-11/NFR-15, M3準備）を追加し、コンポーネント分割/状態遷移/エラー通知、CLI/Shadow APIとの契約、Telemetry・監査・Runbook手順、Codex Packetとテスト計画を定義。 |
 | v1.26 | 2025-03-08 | §84でAPI注文ライフサイクル/エラー回復設計（FR-07/FR-39/FR-58, AC-03/AC-06/AC-32/AC-41, NFR-02/NFR-05/NFR-19）を追加し、`OrderLifecycleManager`/`OrderStateStore`/Runbook連携/CLI/Telemetry/テストパケットを定義。§85でAPIフォールトインジェクション&演習ラボ（FR-47/FR-63, AC-34/AC-43, NFR-02/NFR-28）を新設し、StageGuard/FillShadow/DocOps統合とCodex Packet/証跡運用を設計。 |
 | v1.25 | 2025-03-07 | §78でBacktest回帰CI/データボリューム制御（AC-01/AC-13, NFR-06/NFR-12）を追加し、`make regression-backtest`とGitHub Actions統合、Evidence運用を設計。§79でブローカーAPI接続準備/サンドボックス統合（FR-07/FR-39/FR-58, AC-03/AC-06, NFR-02/NFR-17, M3準備）を定義し、Feature Flag/Runbook/監査フローを追補。Codex Packetとテスト計画を更新。 |
@@ -7491,4 +7492,89 @@ API接続の信頼性を高めるには、レート制限・レスポンス遅�
   - **Performance Smoke (NFR-15)**: `pnpm exec vitest run --config vitest.gui.perf.ts`でレンダリング時間とShadow往復遅延の閾値（800ms/3s）を検証。
 
 - **HITL Runbookとの整合**: GUI機能変更時は`docs/runbooks/RUN-GUI-BOARD-01.md`とOps演習`reports/drill/gui_board/<date>.md`をセットで更新。`make hitl-drill-log`でスクリーンショット・操作ログを収集し、Codexが次スプリントの検証素材に利用する。
+
+### 87. Signal Streaming Gateway & Offline Sync設計（FR-12/FR-47, NFR-02/NFR-11/NFR-18, M3準備）
+
+#### 87.1 Shadow Session多重接続アーキテクチャと`src/shadow/gateway/`モジュール
+
+- **目的**: Signal Board（§60, §86）で利用するShadow StreamingをM3向けに本番化し、Shadow SessionあたりSSE（イベントレイヤ）とWebSocket（アクション/低遅延チャネル）を多重接続する。FR-12/FR-47の要件を満たすため、平均レイテンシ<400ms（NFR-11）、断絶時自動復旧<30秒（NFR-02）、ローカルキャッシュ整合性>99.9%（NFR-18）を指標化する。
+- **接続構成**:
+  | チャネル | 用途 | 接続方式 | 主なイベント/メッセージ | 運用メモ |
+  | --- | --- | --- | --- | --- |
+  | `shadow://session/<id>/events` | Signal/Health/Agendaの逐次イベント配信 | Server-Sent Events (SSE) | `signal.delta`, `health.beat`, `agenda.patch` | SSEはHTTP/2キープアライブ。`Retry:`ヘッダは指数バックオフ（初回1s→最大20s）。 |
+  | `shadow://session/<id>/commands` | 承認/Reject/DeferなどHITL操作の送信とACK取得 | WebSocket (双方向) | `command.request`, `command.ack`, `command.retry` | WebSocketは`ping/pong` 5s。`command.retry`は§87.1再送ロジック参照。 |
+  | `shadow://session/<id>/recovery` | キャッシュ一括送信・履歴再同期 | SSE（バルクJSON Lines） | `cache.sync`, `cache.complete` | オフライン復帰時にSSEを優先。`cache.sync`が`recovery_token`を更新。 |
+- **バックプレッシャ制御**:
+  1. `BackpressureGovernor`がSSEバッファ長（既定256イベント）とWebSocket待機メッセージ（既定32）を監視。`metrics/shadow_gateway.jsonl`へ`queue_depth`を記録し、閾値80%で`apply_throttle()`を発火。
+  2. スロットル時は`command.request`送信を保留し、GUIへ`shadow.gateway.backpressure`イベントを配信。OpsはRunbook `RUN-SHADOW-GW-01`チェックリスト（§87.2）で確認。
+  3. `BackpressureGovernor`はSSEの`Last-Event-ID`を用いた再開と`recovery`チャネルの差分補填を自動連携する。
+- **再送ロジック（`RetryOrchestrator`）**:
+
+  | ケース | トリガー | 動作 | SLA |
+  | --- | --- | --- | --- |
+  | `event_gap` | SSEの`Last-Event-ID`差分が>1 | `recovery`チャネルへ`cache.sync`を要求し、`offline_cache.replay()`で欠落を補完 | <5sで欠落補填 |
+  | `command_ack_timeout` | WebSocket送信→ACK未達（>3s） | `command.retry`を送信し、3回失敗時は`ops://shadow/escalate`へイベント通知 | 3リトライ以内 |
+  | `session_drop` | WebSocket切断（`close_code!=1000`） | SSEのみで`halt`命令は送らず、`SessionSupervisor`が再接続（指数バックオフ最大45s） | 再接続<30s |
+- **オフラインキャッシュ構成**:
+  - SQLite (`shadow_gateway/cache/session_cache.db`): `events`テーブル（`event_id`, `session_id`, `topic`, `payload`, `received_at`, `replay_at`）。バックプレッシャ発生時の一時退避とGUI再起動時のリプレイに使用。最大保持48時間。
+  - Parquet (`data/shadow_gateway/cache/<session>/<yyyymmdd>.parquet`): `signal_snapshot`, `agenda_snapshot`, `latency_samples`列を保持し、Paper/Live比較の回帰基盤として活用。日次でローリング圧縮し、`Validation Data Playbook`リンクを付与。
+  - `OfflineCacheManager`はSQLite→Parquetのフラッシュを15分間隔で実行。`flush`失敗時は`AuditWriter`へ`category='shadow.cache'`を記録しRunbookへ通知。
+- **`src/shadow/gateway/`モジュール定義**:
+  | モジュール | 主責務 | 主要API/データ構造 | 依存 |
+  | --- | --- | --- | --- |
+  | `connection_profile.py` | SSE/WSエンドポイント、証明書、Feature Flag状態を1プロファイルに集約。 | `ShadowConnectionProfile.from_env(mode)` | `FeatureFlagService`, `SecretStore` |
+  | `session_supervisor.py` | Shadow Session開始/停止、再接続、`Last-Event-ID`管理。 | `SessionSupervisor.start(profile)`, `handle_disconnect(reason)` | `connection_profile`, `sse_client`, `ws_client`, `retry_orchestrator` |
+  | `sse_client.py` | SSE購読の接続/ハートビート/エラーハンドリング。 | `SSEClient.stream(callback, *, last_event_id)` | `httpx`, `backpressure` |
+  | `ws_client.py` | WebSocket送信・ACK待機、`command.retry`発火。 | `WSClient.send(action) -> AckReceipt` | `websockets`, `backpressure`, `audit` |
+  | `backpressure.py` | SSE/WSキュー監視、スロットル制御。 | `BackpressureGovernor.observe(channel, depth)` | `metrics`, `offline_cache` |
+  | `retry_orchestrator.py` | §87.1再送ケースを統制、指数バックオフ。 | `RetryOrchestrator.schedule(event)` | `session_supervisor`, `offline_cache` |
+  | `offline_cache.py` | SQLite/Parquetキャッシュ管理、`flush`スケジュール。 | `OfflineCacheManager.persist(event)`, `replay(session_id, since)` | `sqlite3`, `pyarrow` |
+  | `metrics.py` | 信頼性/レイテンシ指標の計測・エクスポート。 | `GatewayMetrics.record(metric, value, *, tags)` | `TelemetryExporter` |
+  | `audit.py` | セッションイベント/再送/キャッシュ操作の監査ログ。 | `AuditSink.append(event_type, payload)` | `AuditWriter`（§30.1） |
+  | `feature_flag.py` | Feature Flagトグル判定、グレースロールアウト。 | `ShadowGatewayFeature.is_enabled(flag, mode)` | `FeatureFlagService`（§3.13） |
+  | `__init__.py` | DIコンテナ向けファクトリ、`GatewayBootstrap.configure()`で各モジュールを束ねる。 | `GatewayBootstrap.configure(mode)` | `ops.config`, `metrics` |
+
+#### 87.2 信頼性・レイテンシ指標、メトリクス、監査・Runbook運用
+
+- **指標定義**:
+  | 指標ID | 定義 | 目標値 | アラート閾値 | 記録先 |
+  | --- | --- | --- | --- | --- |
+  | `shadow.gateway.availability` | セッション稼働時間÷監視時間 | ≥99.5%（月次） | <99.0%でP1 | `metrics/shadow_gateway.jsonl::availability` |
+  | `shadow.gateway.latency_p95` | `command.request`→ACKまでのP95 | ≤400ms | >500ms連続5分 | `metrics/shadow_gateway.jsonl::latency_p95` |
+  | `shadow.gateway.reconnect_time` | 切断検知→再接続完了まで | ≤30s | >45s | `metrics/shadow_gateway.jsonl::reconnect_time` |
+  | `shadow.gateway.cache_replay_success` | SQLite→Parquet再生成功率 | 100% | <99.9% | `reports/ops/shadow_gateway/cache_replay.md` |
+- **メトリクス収集**:
+  - `GatewayMetrics`がPrometheusフォーマット (`/metrics/shadow-gateway`) とJSON Lines (`metrics/shadow_gateway.jsonl`) を同時出力。フィールド: `session_id`, `channel`, `latency_ms`, `queue_depth`, `retry_count`, `backpressure_state`.
+  - `BackpressureGovernor`は`telemetry.shadow_gateway.backpressure`イベントをEmitし、DocOpsダッシュボード（§45.1）へ送信。
+  - `OfflineCacheManager`は`cache.flush_duration_ms`/`flush_batch_events`をメトリクス化し、Parquet出力時に`data_manifest`（§20）へハッシュを登録。
+- **監査ログ**:
+  - `audit.shadow_gateway.session`（開始/終了/再接続）。payload: `session_id`, `profile`, `reason`, `last_event_id`.
+  - `audit.shadow_gateway.retry`（再送試行）。payload: `event_type`, `attempt`, `backoff_ms`, `result`.
+  - `audit.shadow_gateway.cache`（SQLite書込/Parquetフラッシュ/リプレイ）。payload: `cache_key`, `batch_size`, `duration_ms`, `checksum`.
+- **Runbook演習（フェイルオーバー/キャッシュリプレイ）**:
+  1. `RUN-SHADOW-GW-01` Shadow Gatewayフェイルオーバードリル: (a) Feature Flagで`shadow.gateway.force_failover=true`、(b) `SessionSupervisor`がSecondaryエンドポイントへ切替、(c) `metrics`/`audit`確認、(d) Validation Data Playbook更新。演習後は`tradectl shadow gateway failover --restore`で解除。
+  2. `RUN-SHADOW-GW-02` キャッシュリプレイドリル: (a) ネットワーク遮断シミュレーション（`make chaos-shadow-gateway --mode offline`）、(b) `OfflineCacheManager.replay`でGUIへ補填、(c) `reports/ops/shadow_gateway/cache_replay.md`テンプレに結果記載、(d) `validation_playbook/FR47_shadow_gateway.yaml`へ証跡リンク。
+  3. 両Runbookは`OpsEvidenceStore.register(category='shadow_gateway', validation_playbook_id='FR47_shadow_gateway')`を必須とし、演習完了時に`ops.evidence.shadow_gateway`イベントを出す。
+
+- **Validation Data Playbook**: `validation_playbook/FR47_shadow_gateway.yaml`を新設。以下を必須フィールドとする: `session_profile`, `cache_checksum`, `failover_timestamp`, `replay_latency_ms`, `approvers`. `make check-validation --category shadow_gateway`で欠落をCI検出。
+
+#### 87.3 Codexテスト指針とFeature Flag運用
+
+- **Codex向けテストパッケージ**:
+  | Packet ID | スコープ | テスト/コマンド | 成功条件 | 証跡 |
+  | --- | --- | --- | --- | --- |
+  | `EP20-SHADOW-GW-P1` | `session_supervisor`/`sse_client`/`ws_client`基盤 | `pytest -k shadow_gateway_session` | 再接続<30s、`Last-Event-ID`連番一致、RetryログがAudit出力 | `reports/tests/shadow_gateway/session_<date>.md` |
+  | `EP20-SHADOW-GW-P2` | バックプレッシャ/再送/キャッシュ | `pytest -k shadow_gateway_backpressure`; `make load-shadow-gateway --duration 10m` | Queue深度80%でスロットル発火、キャッシュリプレイ成功率100% | `metrics/shadow_gateway.jsonl`, `reports/ops/shadow_gateway/cache_replay.md` |
+  | `EP20-SHADOW-GW-P3` | フォールトインジェクション/Feature Flag/回帰 | `make chaos-shadow-gateway --fault drop-commands`; `pytest -k shadow_gateway_regression` | `command.retry`3回以内でACK、Feature Flag OFF時は安全停止、Regression差分≤5イベント | `reports/tests/shadow_gateway/chaos_<date>.md`, `validation_playbook/FR47_shadow_gateway.yaml` |
+
+- **Feature Flag運用**:
+  - Flags: `shadow.gateway.streaming`, `shadow.gateway.offline_cache`, `shadow.gateway.force_failover`. 初期状態は`streaming`=Paperのみ、`offline_cache`=全環境、`force_failover`=false。
+  - `FeatureFlagService`（§3.13）で環境ごと（`paper`, `live`）に`gradual_rollout`を設定。Live有効化はPO+Ops二重承認、`docs/change_requests/`で記録。
+  - Flag変更時の手順: (1) `tradectl feature set shadow.gateway.streaming --env paper --value true`, (2) `GatewayBootstrap.configure`が新設定を再ロード、(3) `metrics/shadow_gateway.jsonl`で`flag_state`を確認、(4) Validation Data Playbookへ変更ログ追記。
+  - Incident時は`shadow.gateway.streaming=false`で即座にCLIルート（§60.3）へフォールバック。`SessionSupervisor`はSSE/WSを停止し、`audit.shadow_gateway.session`に`state='disabled'`を記録。
+
+- **回帰テストとCI統合**:
+  - GitHub Actions `ci/shadow-gateway.yml`を追加し、`pytest -k shadow_gateway`、`make load-shadow-gateway --duration 5m --smoke`、`make chaos-shadow-gateway --fault drop-events --smoke`を夜間実行。
+  - `make check-validation --category shadow_gateway`と`tradectl validation audit --category shadow_gateway`を必須化し、Validation Data Playbookの欠落をCIで検知。
+  - 成果物（SQLite/Parquet）のハッシュは`data_manifest.json`に自動追記。差分検知時は`docs/change_requests/SHADOW-GW-<date>.md`を生成し、Codexがレビュー可能なテンプレを添付。
 
