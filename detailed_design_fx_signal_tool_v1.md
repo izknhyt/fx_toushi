@@ -7197,6 +7197,34 @@ sequenceDiagram
   - `timeout`: `EmergencyOrchestrator`（§19）へ`api_retry`プランを登録。`tradectl emergency dispatch --plan api_retry`で手順を出力。
   - `partial_fill_timeout`: 未約定数量をReduce-Onlyチケットへ変換し、HITLで執行する指示を生成（FR-07/FR-39）。
   - `broker_reject`: `Compliance`違反/ポジション制限を解析し、`Runbook RUN-COMPLIANCE-02`へのリンクと再入力ガイドを提示。
+- **エラーコード→`trigger_reason`対応**: 対象ブローカーが返却するコードを`trigger_reason`へ正規化し、監査・Runbook・Evidenceの紐付けを強制する。`config/brokers/error_map.yaml`で管理し、`RecoveryPlanner`起動時に`yaml.safe_load`→`pydantic`検証を行う。
+
+##### 84.3.1 ブローカーエラーコード正規化テーブル
+
+| Broker Error Code | `trigger_reason` | 監査イベントID | Runbook参照 | 再試行ポリシー | Evidence保管先 |
+| --- | --- | --- | --- | --- | --- |
+| `RATE_LIMIT_EXCEEDED` | `rate_limit` | `audit.order_recovery_planned.rate_limit` | `RUN-BROKER-API-02#RL-01`（レート制限解消） | 自動: 最大3回、指数バックオフ[60, 120, 240]秒。超過時は手動移管。 | `evidence/broker/<order_id>/rate_limit/`（`rate_limit_window.json`＋CLIログ） |
+| `GATEWAY_TIMEOUT` / HTTP504 | `timeout` | `audit.order_recovery_planned.timeout` | `RUN-BROKER-API-02#TO-02`（API再送指示） | 自動: 1回リトライ後、`EmergencyOrchestrator`経由で手動承認必須。 | `evidence/broker/<order_id>/timeout/`（`orchestrator_plan.yaml`＋Timeline） |
+| `PARTIAL_FILL_STALE` | `partial_fill_timeout` | `audit.order_recovery_planned.partial_fill` | `RUN-BROKER-API-02#PF-03`（Reduce-Only変換） | 手動: Reduce-Onlyチケット作成→HITL承認。自動再送なし。 | `evidence/broker/<order_id>/partial_fill/`（FillShadow diff, チケットJSON） |
+| `ORDER_REJECT_COMPLIANCE` | `broker_reject` | `audit.order_recovery_planned.reject` | `RUN-BROKER-API-02#RJ-04`（コンプライアンス確認） | 手動: 原因分析→修正後にHITL再送。自動再試行禁止。 | `evidence/broker/<order_id>/reject/`（Broker理由、Policy Snapshot） |
+| `UNKNOWN` / fallback | `unknown_error` | `audit.order_recovery_planned.unknown` | `RUN-BROKER-API-02#UN-05`（即時エスカレーション） | 手動: `EmergencyOrchestrator`が`ops_manager`へページング。 | `evidence/broker/<order_id>/unknown/`（原文レスポンス、StageGuard状態） |
+
+- **設定ファイル** (`config/brokers/error_map.yaml`):
+  - ルートキー`error_map.<broker_code>`に`trigger_reason`, `audit_event_id`, `runbook_ref`, `retry_policy.{mode,max_attempts,backoff_sec|cooldown_sec}`, `evidence_path_template`, `required_context`を持つ。
+  - `OrderLifecycleManager`は`RecoveryPlanner`提供の`lookup_error(code: str) -> BrokerErrorDescriptor`を通じて利用。`required_context`に列挙されたキーがレスポンスに欠落した場合は`audit.order_recovery_planned.context_missing`を追加で記録し、`unknown_error`扱いにフォールバック。
+- **`RecoveryPlan.error_context`スキーマ**: `pydantic` `ErrorContext`モデルで管理し、以下のフィールドを必須化。
+  | フィールド | 型 | 説明 |
+  | --- | --- | --- |
+  | `broker_code` | `str` | ブローカー固有エラーコード（例:`RATE_LIMIT_EXCEEDED`）。 |
+  | `trigger_reason` | `Literal['rate_limit','timeout','partial_fill_timeout','broker_reject','unknown_error']` | 正規化済み分類。 |
+  | `audit_event_id` | `str` | 対応する監査イベント。 |
+  | `runbook_ref` | `str` | 対処手順（アンカー付き）。 |
+  | `retry_policy` | `RetryPolicy`（`mode: Literal['auto','manual']`, `max_attempts: int`, `backoff_sec: list[int] \| None`, `handoff_role: str \| None`） | 自動/手動再試行の制御。 |
+  | `evidence_path` | `str` | Evidence保存ルート（テンプレ内の`<order_id>`置換後）。 |
+  | `context_data` | `dict[str, Any]` | `required_context`で宣言されたキー＋レスポンスメタ情報（例:`retry_after_sec`,`http_status`）。 |
+  | `notes` | `list[str]` | Ops/DocOps向け補足（Runbook更新要否等）。 |
+  生成時に`RecoveryPlanner`が`context_data`へ`OrderLifecycleManager`から受け取った`stage_guard_stage`, `attempt_count`, `last_attempt_ts`を格納し、`audit.order_recovery_planned.*`へ連携する。
+- **DocOps/RUNBOOK更新指示**: 上記テーブル追加に伴い、`DocOps Orchestrator`は`docs/runbooks/RUN-BROKER-API-02.md`へ`§4 エラーコード別対応`セクションを追補し、Runbook内の各アンカー（`#RL-01`等）で必要なEvidence添付ステップを明文化する。更新完了までは`ops.agenda.docops_pending`をOpenに保つ。
 - **Ops Agenda**: RecoveryPlanごとに`ops.agenda.order_recovery`TODOを作成。期限は`trigger_ts + config.brokers.recovery.sla_minutes`。超過すると`health.warn('broker_recovery_overdue')`。
 - **DocOps**: `RecoveryPlan`完了時に`docs/runbooks/RUN-BROKER-API-02.md`該当セクションへリンクを自動追記し、DocOps Orchestrator（§58）へ「演習完了」ログを送付。
 - **Manual Override**: `tradectl broker orders override --order <id> --action abort`でRecoveryPlanを強制終了可能。操作には`role∈{'ops_manager','po'}`＋`FIDO`認証が必須（§83.4）。
@@ -7225,6 +7253,7 @@ sequenceDiagram
 
 - **ユニット**: `tests/unit/test_order_lifecycle_manager.py`（状態遷移、StageGuard/RateLimit統合、エラー分類）、`tests/unit/test_order_state_store.py`（永続化/ロック/復元）、`tests/unit/test_order_recovery_planner.py`（シナリオ別手順）。
 - **統合**: `tests/integration/test_broker_order_flow.py`（Ticket→StageGuard→OrderLifecycle→FillShadow→StatementReconciler）、`tests/integration/test_broker_order_recovery.py`（RateLimit/Timeout/Partial Fillシナリオ）。`pytest -k broker_orders`でタグ管理。
+- **ユニット/統合追加シナリオ**: モックブローカーエラーコード（`RATE_LIMIT_EXCEEDED`, `GATEWAY_TIMEOUT`, `ORDER_REJECT_COMPLIANCE`等）を注入し、`OrderLifecycleManager.schedule_recovery`が対応する`trigger_reason`/`runbook_ref`/`retry_policy`を含む`RecoveryPlan`を返すことを検証する。ユニット（`tests/unit/test_order_recovery_planner.py::test_error_code_mapping`）と統合（`tests/integration/test_broker_order_recovery.py::test_mock_error_code_mapping`）で実施し、Evidenceパスと監査イベントの整合性も確認する。
 - **フォールト**: `tests/fault/test_broker_order_faults.py`（`make broker-fault-smoke`で実行）にてAPI失敗をモックし、RecoveryPlan/HealthMonitor連携を確認。
 - **CI**: `ci/broker-orders.yml`を追加し、`pytest -k broker_orders`＋`pytest -k broker_order_recovery`＋`make broker-fault-smoke`を実行。成果物（`broker_orders_report.json`）をArtifact化してPRへサマリを投稿。
 - **Codex Packet案**:
