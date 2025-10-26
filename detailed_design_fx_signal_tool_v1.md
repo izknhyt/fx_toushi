@@ -1037,13 +1037,21 @@ def run_signal_cycle(bar: MarketBar, ctx: ModeContext) -> list[TicketProposal]:
     feature_frame = FeaturePipeline.update(bar)
     regime_state = RegimeDetector.update(feature_frame)
     gate_state = GateAggregator.snapshot()
+    config_snapshot = ConfigRegistry.snapshot()
+    watchlist = StrategyManifestResolver.effective_symbols(
+        manifest=config_snapshot.strategy_manifest,
+        feature_ctx=feature_frame,
+        gate_state=gate_state,
+        regime_state=regime_state,
+    )
     strategy_ctx = StrategyContext(
         features=feature_frame.lookup_ctx(),
         regime=regime_state,
         gate=gate_state,
         account=AccountService.refresh_state(ctx),
-        config=ConfigRegistry.snapshot(),
+        config=config_snapshot,
         clock=ctx.clock,
+        watchlist=watchlist,
     )
 
     performance_stats = PerformanceRepository.load(symbols=strategy_ctx.watchlist)
@@ -1089,6 +1097,8 @@ def run_signal_cycle(bar: MarketBar, ctx: ModeContext) -> list[TicketProposal]:
     return [t for t in tickets if t.is_actionable()]
 ```
 
+`StrategyManifestResolver.effective_symbols(...)`は`strategy_manifest.yaml`上で`enabled=True`かつ現在のBoard Modeで許可されたシンボルを列挙し、未指定の場合は`feature_frame.symbols`（`FeaturePipeline`が供給する実測シンボル集合）をフォールバックに用いる。両方の経路で得られた集合から`GateState`/`RegimeState`が遮断を宣言したシンボルを除外した結果を`StrategyContext.watchlist`へ渡すことで、後続コンポーネントが`strategy_ctx.watchlist`を参照すれば常にアクティブな監視対象のみを取得できる。
+
 #### 3.5.3 運用制約と計算式
 
 - **取引コスト（トータルスプレッド換算）**
@@ -1130,6 +1140,7 @@ def run_signal_cycle(bar: MarketBar, ctx: ModeContext) -> list[TicketProposal]:
 | `gate` | `GateState` | カレンダー/スプレッド/ニュース/Board Modeのブロック状態。 | `GateAggregator.snapshot()`、Kill Switchを含む。 |
 | `account` | `AccountState` | エクイティ、利用可能証拠金、通貨バケット露出。`stale_ts`付き。 | `AccountService.refresh_state(ctx)`、Paperはシミュレーション口座。 |
 | `config` | `ConfigSnapshot` | `risk_policy`, `strategy_manifest`, `board_modes`等のハッシュ付き読み取り専用ビュー。 | `ConfigRegistry.snapshot()`、変更時は`cfg_hash`が更新。 |
+| `watchlist` | `frozenset[str]` | StrategyEngineが監視・評価対象とするシンボル集合。ManifestとFeaturePipelineの整合済み。 | `StrategyManifestResolver.effective_symbols(...)`、不足時は`feature_frame.symbols`から派生。 |
 | `clock` | `MarketClock` | `now`, `timeframe`, `trading_calendar`を保持。決定論シードに使用。 | `ModeContext.clock`を透過。 |
 | `seed` | `int` | `ModeContext.deterministic_seed ^ strategy_metadata.seed_offset`で算出。 | 各プラグインが乱数を使用する場合に必須。 |
 
@@ -1196,6 +1207,7 @@ class MaRsiPlugin(StrategyPluginProtocol):
 
 - `FeatureContext.available_keys`は`{"ema_fast_5m", "macd_signal_1h", ...}`のような`<feature>_<tf>`形式を返し、`StrategyMetadata.required_features`はこの文字列集合の部分集合でなければならない。
 - `strategy_manifest.yaml`の`strategies.<id>.required_features`も`FeatureContext.available_keys`と同じ集合を前提に列挙する。例えば`macd_signal_1h`を要求する戦略は、設定ファイル側で`macd_12_26_9.output_keys.signal: macd_signal`と`timeframes: ["1h"]`が有効化されていることを前提にする。FeaturePipelineが新たな`output_key`を追加した場合はManifestとテスト資産を同時更新し、Fail-Fastで不一致を検知する。
+- `StrategyContext.watchlist`は`StrategyManifestResolver.effective_symbols(...)`が返す`frozenset[str]`で、Manifestで`enabled=True`かつボードモード・戦略ガードにより許可されたシンボルを起点に構築する。Manifestがウォッチリストを省略する場合は`feature_frame.symbols`から導出し、Gate/Regimeが遮断したシンボルを除外した結果のみをStrategy Pluginへ渡す。
 - `FeatureContext.lookup()`/`get_latest()`は対象キーが存在しない、または`FeatureFrameView.last_updated`が`config.feature.max_lag_sec`を超えている場合に`FeatureLookupError`または`FeatureStaleError`を送出し、StrategyEngineは`StrategyExecutionError(cause='feature_missing')`を発生させて当該プラグインの出力を棄却する。
 - **決定論/ログ要件**
   - `evaluate()`は`RawSignal`を返す際、`signal_id = f"{self.id}:{context.clock.bar_ts:%Y%m%d%H%M}:{hash_components}"`で生成し、`hash_components`には主要Featureキーと`seed`を含める。

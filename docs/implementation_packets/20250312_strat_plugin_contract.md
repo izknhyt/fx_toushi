@@ -16,7 +16,7 @@
 ## 2. 変更サマリ
 | コンポーネント | 変更内容 | テスト指示 | Feature Flag |
 | --- | --- | --- | --- |
-| src/strategies/base.py | `StrategyPluginProtocol`/`StrategyMetadata` dataclass/`StrategyContext`型ヒントのスタブを追加。`Protocol`で`evaluate/required_warmup_bars/cooldown_bars`を宣言し、決定論シード伝播をdocstringに明記。 | `pytest -k strategy_plugin_contract` | N/A |
+| src/strategies/base.py | `StrategyPluginProtocol`/`StrategyMetadata` dataclass/`StrategyContext`型ヒントのスタブを追加。`Protocol`で`evaluate/required_warmup_bars/cooldown_bars`を宣言し、決定論シード伝播と`watchlist`導出をdocstringに明記。 | `pytest -k strategy_plugin_contract` | N/A |
 | src/strategies/registry.py | Manifestロード時にProtocol準拠検査・`StrategyRegistrationError(code='contract_violation')`のFail-Fast実装。 | `pytest -k strategy_registry` | N/A |
 | tests/unit/test_strategy_plugin_contract.py | Protocol準拠/seed決定論/ログ付与のスモークテストを追加。 | `pytest -k strategy_plugin_contract` | N/A |
 | docs/trader_signoff/PKG-STRAT-IFACE-01.md | CLIスナップショット/Runbookリンク/承認サイン欄を作成。 | `tradectl board --view strategy --save-snapshot ...` | N/A |
@@ -35,6 +35,10 @@
 - `FeatureContext.get_latest(symbol, feature, timeframe)` / `lookup(symbol, feature, timeframe)` をStrategy Pluginが利用するコード例を §3.5 に追加し、`FeatureLookupError`・`FeatureStaleError` をFail-Fastさせる運用を明文化する。
 - 指標キーとタイムフレームのマッピング表を §3.3.2 に追加し、Codex 実装者が `metadata.required_features` へ貼り付けるべき文字列を一覧化する。
 - dataclass 例: `FeatureFrameView`（`last_updated`, `values`, `latest`, `window`）と `FeatureContext`（`symbols`, `timeframes`, `available_keys`, `frame`, `lookup`, `get_latest`）を提示し、Codex が型シグネチャを迷わないようにする。
+- `StrategyContext.watchlist` を `frozenset[str]` で明文化し、Manifestの有効シンボル集合と `FeaturePipeline` からのフォールバック（`feature_frame.symbols`）を組み合わせて算出する手順、および `GateState` / `RegimeState` による除外ロジックを §3.5.2 に追記する。
+
+### 2.3 Codex Prompt用 StrategyContext 属性一覧（§3.5.5）
+- `StrategyContext` が公開するフィールド: `features`, `regime`, `gate`, `account`, `config`, `watchlist`, `clock`, `seed`。Codex プロンプトでは順序と名称を固定化し、`watchlist` を監視対象シンボル集合として参照すること。
 
 ## 3. チェックリスト
 - [ ] 設計整合: §3.5.5・§0.6.11と照合し、Protocol/ログ要件を満たす
