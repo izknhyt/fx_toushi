@@ -1109,6 +1109,24 @@ class StrategyMetadata:
   - 実装がProtocolに適合しない場合は`StrategyRegistrationError(code='contract_violation')`で起動時にFail-Fastし、Runbook `GOV-STRAT-01`の承認を経るまでリトライ禁止とする。
 
 ### 3.6 ExecutionModel & SpreadMonitor (`src/execution/model.py`, `src/execution/spread.py`)
+```python
+EntryMode = Literal["market", "marketable_limit", "limit_requote"]
+FillStyle = Literal["ioc", "fok", "gtd"]
+```
+
+| EntryMode | Ticket/CLIバッジ表示 | 適用条件 | デフォルト/備考 |
+| --- | --- | --- | --- |
+| `market` | `Market (IOC)` | Spreadが`config.execution.market_spread_max`以下かつ`RawSignal.entry_price`が`market_snapshot`と±0.5pips以内。緊急クローズや`RUN-HITL-01`手順で即時執行指定されたケース。 | `ExecutionModel`が`fill_style='ioc'`を強制。`Ticket Builder`は`badge.execution_mode`に同一ラベルを表示し、CLI `tradectl board`も同値を出力する。 |
+| `marketable_limit` | `Marketable Limit` | 通常ケース。`expected_slippage`が閾値内で、`ttl_seconds`が`execution.ttl_buffer_sec`以上確保できる。 | **既定値**。`RawSignal.entry_mode`未設定時に`ExecutionModel`が採用し、`limit_price = expected_entry ± protection_pips`を算出する。 |
+| `limit_requote` | `Limit (Requote)` | `expected_slippage`が`config.execution.limit_requote_slippage_pips`を超過した場合にStrategy側へリクエストを返す。Runbook `RUN-HITL-01`の手動再入力手順に遷移。 | `ExecutionModel.apply`は`fill_style='gtd'`を伴い、Ticketに「再入力待ち」バナーを掲示する。 |
+
+| FillStyle | Ticket/CLIバッジ表示 | 適用条件 | デフォルト/備考 |
+| --- | --- | --- | --- |
+| `ioc` | `IOC` | `EntryMode='market'`または`ttl_seconds <= 5`。`ExecutionAdjustments`はFill不可時に即Cancel扱い。 | **既定値**。`RawSignal.entry_mode`未指定のMarketable Limitでも、Spreadクールダウン中はIOCへフォールバック。 |
+| `fok` | `FOK` | Partial Fill禁止が必要なシナリオ。`config.execution.require_full_fill_symbols`にシンボルが含まれる場合に採用。 | `Ticket Builder`は「Full Fill Required」バッジを追加し、CLIは`fill_policy=fok`を同一表記で出力する。 |
+| `gtd` | `GTD` | `limit_requote`や`ttl_seconds > execution.ttl_gtd_threshold_sec`のとき。`OrderLifecycleManager`がGood-Till-Dayで発注。 | Runbook `RUN-HITL-01` Step 5 と Validation Log `AC-02_execution_pipeline.md`の証跡は、この表記に一致する必要がある。 |
+
+<!-- Audit expects the literal strings above for RUN-HITL-01 and Validation Log AC-02. -->
 - **公開API**: `ExecutionModel.apply(raw_signal, market_snapshot, spread_state, *, mode_context)`, `SpreadMonitor.update(spread_frame)`。
 - **入力**: `execution_model.yaml`, `SpreadMetrics`, `RegimeState`, `config.execution.*`。
 - **アルゴリズム**:
@@ -1642,6 +1660,24 @@ SpreadCooldownState = Literal["normal", "watch", "cooldown", "halt"]
 `HealthState`は`status`, `reasons: dict[str, str]`, `alerts: list[AlertSummary]`, `last_update`を持つ。
 
 ### 4.3 シグナル/チケットパイプライン
+```python
+EntryMode = Literal["market", "marketable_limit", "limit_requote"]
+FillStyle = Literal["ioc", "fok", "gtd"]
+```
+
+| EntryMode | `RawSignal`設定源 | `ExecutionAdjustments`での処理 | `TradeTicket`/CLI表示 | Runbook/Validationログ |
+| --- | --- | --- | --- | --- |
+| `market` | Strategy Pluginが即時執行を要求（未指定時は§3.6の既定値へフォールバック）。 | `fill_style='ioc'`固定、`ttl_seconds`を`config.execution.market_ttl_sec`へ切り詰め。 | `entry.mode_label="Market (IOC)"`としてバッジ表示。 | Runbook `RUN-HITL-01` Step 3、Validation Log `AC-02_execution_pipeline.md`の`entry_mode_label`列。 |
+| `marketable_limit` | Strategy出力が未指定の場合のデフォルト。 | `limit_price = expected_entry ± protection_pips`、`fill_style`はSpread状況に応じ`ioc`または`fok`。 | `entry.mode_label="Marketable Limit"`で表示。 | 同上。 |
+| `limit_requote` | Strategy/Execution Modelが滑り閾値超過を検知。 | `fill_style='gtd'`、`ttl_seconds`は`execution.ttl_requote_sec`。 | `entry.mode_label="Limit (Requote)"`と赤バナー。 | Runbook `RUN-HITL-01` Step 5、Validation Log `AC-02_execution_pipeline.md`。 |
+
+| FillStyle | `ExecutionAdjustments.fill_style` | `TradeTicket`適用箇所 | CLI出力キー | 備考 |
+| --- | --- | --- | --- | --- |
+| `ioc` | デフォルト。Spread冷却中も`marketable_limit`をIOCで送信する。 | `ticket.entry.fill_style`、Badge `fill_policy`. | `fill_policy=ioc`。 | `RUN-HITL-01`での緊急クローズ確認時に一致必須。 |
+| `fok` | `config.execution.require_full_fill_symbols`指定時。 | `ticket.entry.fill_style`、Badge `fill_policy`. | `fill_policy=fok`。 | `AC-02_execution_pipeline.md`の`fill_policy`列で監査。 |
+| `gtd` | `limit_requote`または長TTL。 | `ticket.entry.fill_style`。 | `fill_policy=gtd`。 | `OrderLifecycleManager`がGTDでブローカーへ転送。 |
+
+<!-- Audit expects the literal strings above for RUN-HITL-01 and Validation Log AC-02. -->
 | 構造体 | フィールド |
 | --- | --- |
 | `RawSignal` | `strategy_id`, `symbol`, `side`, `entry_mode`, `entry_price`, `sl_price`, `tp_price`, `rationale`, `badges` |
@@ -1649,6 +1685,19 @@ SpreadCooldownState = Literal["normal", "watch", "cooldown", "halt"]
 | `RiskVettedSignal` | `ranked`, `kill_switch_state`, `risk_flags`, `gate_snapshot` |
 | `SizedSignal` | `risk_vetted`, `size`, `risk_R`, `margin_estimate`, `ttl_factor`, `expected_fill` |
 | `TradeTicket` | `ticket_id`, `symbol`, `side`, `entry`, `size`, `sl`, `tp`, `score`, `ttl_sec`, `drift_guard_R`, `badges`, `checklist`, `cfg_hash`, `expires_at`, `created_ts` |
+
+#### 4.3.0 値域と表示ルール（RawSignal / ExecutionAdjustments / TradeTicket）
+
+| 構造体 | フィールド | 値域/型 | デフォルト/設定源 | Ticket Builder/CLI 表示 |
+| --- | --- | --- | --- | --- |
+| `RawSignal` | `entry_mode` | `EntryMode` | Strategy Pluginが明示しない場合は`ExecutionModel`が`marketable_limit`を補完。 | `badge.entry_mode`=`Market (IOC)`/`Marketable Limit`/`Limit (Requote)`（§3.6表と同一文字列）。 |
+| `ExecutionAdjustments` | `fill_style` | `FillStyle` | `ExecutionModel.apply`がSpread/Runbook条件に従い決定。 | CLI `tradectl board --ticket`の`fill_policy`に同一ラベル。 |
+| `ExecutionAdjustments` | `ttl_seconds` | `PositiveInt` | `EntryMode`に応じ`market`: `config.execution.market_ttl_sec`、`marketable_limit`: `human_delay + ttl_buffer`、`limit_requote`: `execution.ttl_requote_sec`。 | Ticket表示 `TTL`列で秒数、Badge `expiry`に`<N>s`。 |
+| `TradeTicket.entry` | `mode` | `EntryMode` | `ExecutionAdjustments`から委譲。 | CLIヘッダとBadge両方で§3.6表のラベルを使用。 |
+| `TradeTicket.entry` | `fill_style` | `FillStyle` | `ExecutionAdjustments.fill_style`を引き継ぎ。 | CLI `fill_policy`表示およびBoardバッジで共有。 |
+| `TradeTicket.badges.execution_mode` | `Literal['Market (IOC)','Marketable Limit','Limit (Requote)']` | Ticket Builderが`entry.mode_label`をコピー。 | 同上。 | Runbook `RUN-HITL-01`/Validation Log `AC-02_execution_pipeline.md`は同じ表記を証跡で検証。 |
+
+`Ticket Builder`（`src/ticket/builder.py`）とCLI `tradectl board`/`tradectl ticket`は、上記ラベルを共有`constants.py`（M1 Coreではモジュール内定数）から参照し、Badgeの英字表記を同一にする。Validation Log `AC-02_execution_pipeline.md`の`entry_mode_label`・`fill_policy`列、Runbook `RUN-HITL-01` Step 3/5のスクリーンショットはこの表を文字列一致で照合する。
 
 #### 4.3.1 API注文ライフサイクル構造体（§84.1参照）
 - **共通前提**: `OrderLifecycleManager`/`OrderStateStore`（§84.1/§84.2）が使用するオブジェクト。`schema_version`は`broker.order_state.v1`系列で固定し、JSONL永続化時は`docs/schemas/order_state.schema.json`との整合を必須とする。
