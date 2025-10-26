@@ -7150,7 +7150,7 @@ FillShadow/RateLimit/StageGuardの各レイヤを束ね、API注文の生成→�
   | --- | --- | --- | --- |
   | `create(ticket: TicketPayload, *, stage_guard_ctx)` | チケット、StageGuard情報 | `OrderEnvelope` | Reduce-Only/Marketable Limitパラメータを評価し、OrderRouterへ引き渡す前に監査イベントを作成。 |
   | `update_state(order_id, status, *, payload=None)` | 注文ID, 新状態, 追加情報 | `OrderState` | 状態更新と共にRunbookリンク、Evidence、RateLimit統計を更新。 |
-  | `schedule_recovery(order_id, trigger_reason)` | 注文ID, 失敗理由 | `RecoveryPlan` | 手動/自動の回復手順を生成し、`OpsAgendaService`（§33.2）へTODO発行。 |
+  | `schedule_recovery(order_id, trigger_reason)` | 注文ID, 失敗理由 | `RecoveryPlan` | 手動/自動の回復手順を生成し、`OpsAgendaService`（§52.3）へTODO発行。 |
   | `attach_fill(order_id, fill_event)` | Fillイベント | `OrderState` | FillShadowと同期し、部分約定でも残数量を計算。 |
   | `finalize(order_id)` | 注文ID | `OrderCompletionReceipt` | `StatementReconciler`完了を待って`audit.order_lifecycle_completed`を発火。 |
 - **StageGuard連携**: `AutonomyStageGuard`（§83.1）が`manual_only`の場合、`create()`はAPI送信を拒否し`OrderDispatchRejected(reason='stage_manual_only')`を返す。`reduce_only`ではReduce-Onlyフラグの強制確認を実施。`partial_auto`以上では`StrategyManifest.auto_whitelist`を検証し、未登録戦略はキューで保留。
