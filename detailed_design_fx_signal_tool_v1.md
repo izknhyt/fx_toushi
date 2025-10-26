@@ -6920,3 +6920,117 @@ API接続を常用するには、レスポンス遅延・レート制限・接�
 - **Ops演習**: `TR-19 API Degradation Drill`を追加し、レイテンシ増加→Kill Switch判断→手動注文切替→復旧の所要時間を測定。`ops_worklog`に自動追記し、週次Opsレビューで評価。
 
 これらの追補により、サンドボックス段階でAPIレスポンスとHITL運用の差異を可視化し、M3移行時に自動発注へ移行してもKill Switch/Board Mode/Runbook連携が破綻しないことをCodexが段階的に検証できる。`FillShadow`と`BrokerApiMonitor`の二重の安全網を整備することで、手動運用の品質を維持しながらAPI自動化の信頼性・監査性・テレメトリを高水準で確保するロードマップを示す。
+
+### 82. ブローカーAPIローンチ認定 & ドライラン制御設計（FR-07/FR-39/FR-58/FR-60, AC-03/AC-06/AC-31/AC-41, NFR-02/NFR-05/NFR-17, M3準備）
+
+自動発注を有効化する前に、サンドボックス〜Paper〜Live切替の全ステップを証跡付きで検証し、FR-60のリリースゲートと連動した承認プロセスを構築する。`BrokerCertificationSuite`と`CutoverChecklistService`を新設し、Backtest/FillShadow/RateLimit/Runbook演習の完了を強制することで、ヒューマン・トレーダーが安心してAPI接続をONにできる状態を担保する。
+
+#### 82.1 BrokerCertificationSuite (`src/brokers/certification.py`)
+- **コア構造**:
+  | クラス/関数 | 役割 | I/O | 備考 |
+  | --- | --- | --- | --- |
+  | `BrokerCertificationSuite.run(plan: CertificationPlan, *, outdir: Path) -> CertificationResult` | シナリオ群（Connectivity/FillShadow/RateLimit/Failover）を順序実行し、成功/失敗と証跡をまとめる。 | `plan.scenarios`（`List[CertificationScenario]`）、`metrics_sink`、`evidence_writer` | `plan.version`は`schema_version='broker.certification.plan.v1'`で固定。 |
+  | `CertificationScenario.execute(context: CertificationContext) -> ScenarioResult` | 個別シナリオ（`ping`, `place_reduce_only`, `failover_trigger`, `statement_reconcile`)の実行。 | `context`に`adapter`, `order_router`, `fill_shadow`, `rate_limit_window`を注入。 | 失敗時は`ScenarioResult.status='failed'`と`remediation_suggestion`を返す。 |
+  | `EvidenceWriter.attach(result: CertificationResult)` | 証跡（CLIログ/JSON/PNG）を`evidence/broker_certification/<run_id>/`へ保存し、`SecureShareService`へ公開メタデータを登録。 | `result.metrics`, `result.attachments` | 暗号化ZIP生成フラグ`encrypt=True`既定。 |
+- **シナリオ構成**:
+  1. `sandbox_connectivity`: `SandboxAdapter.ping()`→`fetch_positions()`→`fetch_balances()`を連続実行し、レイテンシ/エラーを測定（閾値: `latency_p95≤800ms`, 失敗0回）。
+  2. `reduce_only_dispatch`: Reduce-Onlyチケットを`OrderRouter`経由で送信し、Kill Switch=`SOFT_STOP`時に拒否されることを確認。FillShadowに`status=pending`記録→`FillReplay`で整合。
+  3. `rate_limit_burst`: `RateLimitWindow`を最大バーストで消費し、`queue_wait_ms`が`config.broker.slo.queue_warn_sec`を超えないことを検証。オーバー時は自動で`RetryPolicy`が発動し、`ScenarioResult`は`warning`扱いで`remediation_suggestion`を出力。
+  4. `failover_switch`: `BrokerApiMonitor`の`critical`イベントを模擬し、`EmergencyOrchestrator.api_failover`が`OrderRouter`停止→RunbookTODO生成→`ops_worklog`追記まで完了するか確認。
+  5. `statement_roundtrip` (M3+): サンドボックスFillログを擬似ステートメントへ変換し、`StatementReconciler`（§25）との突合が一致。
+- **結果評価**: `CertificationResult.overall_status`は`pass|pass_with_warning|fail`。`pass_with_warning`の場合、`CutoverChecklistService`が再実行条件をRunbookへ貼り付ける。
+
+#### 82.2 CutoverChecklistService (`src/release/cutover.py`)
+- **責務**: FR-60のリリースゲートと連携し、Broker API切替に必要なチェックリストを生成・追跡する。
+- **チェックリスト項目**:
+  | 項目ID | 説明 | データソース | 自動検証 |
+  | --- | --- | --- | --- |
+  | `API-01` | `BrokerCertificationSuite`実行完了 | `CertificationResult` | `status in {'pass','pass_with_warning'}` |
+  | `API-02` | `FillShadow` 24hドライラン完了 | `metrics/broker_shadow.jsonl` | `pending=0`, `alerts=0` |
+  | `API-03` | Rate Limitステージ調整 | `metrics/broker_rate_limit.jsonl` | `queue_warn_breach=0` |
+  | `API-04` | Runbook `RUN-BROKER-API-01/02`演習 | `reports/ops/runbook_drill/*.md` | `duration_min ≤ target`、Ops署名2名 |
+  | `API-05` | リスク開示再同意完了 | `RiskDisclosureEnforcer` | `status='active'`かつ`device_binding`再確認 |
+- **CLI**: `tradectl release cutover broker --profile paper`が`cutover_checklist_<profile>.md`を生成し、完了していない項目は`[ ]`で残す。`tradectl release cutover verify`が自動検証し、未達項目があればExit code 86で失敗。
+- **監査**: 完了時に`reports/audit/release/<version>_broker_cutover.md`を自動作成し、`SecureShareService`が暗号化ZIPを生成。`DocOps Orchestrator`がレビュー周期=60日でTODOを登録。
+
+#### 82.3 Telemetry・Evidence統合
+- `metrics/broker_certification.jsonl`: シナリオごとの成功/失敗、レイテンシ、エラー率を記録。`CertificationResult`保存時に追記し、`ops_readiness_score`（FR-63）へ寄与する係数を追加（例: 成功で+5点、再試行で-3点）。
+- `reports/validation_log/AC-06_broker_certification_<date>.md`: 自動テンプレート生成し、Scenario結果サマリ、Runbook参照、再試行予定日を記録。
+- `Ops Agenda`統合: `ScenarioResult.status='failed'`の項目があれば`ops.agenda.broker_certification_retry`を作成し、責任者/期限を割り当て。
+- `EvidenceWriter`は`FillShadow`, `BrokerApiMonitor`, `RateLimitWindow`のメトリクスを束ねた`summary_dashboard.html`を生成し、`SecureShareService`が署名付きURL（有効期限7日）で共有。
+
+#### 82.4 Feature Flag・Runbook・権限
+- Feature Flag: `config/feature_flags.yaml::brokers.certification_required`（既定`true`）。`false`に設定した場合、`BrokerCertificationSuite`は警告ログを出力しつつ即`pass`を返す（開発用途）。
+- Role制御: `AccessGovernanceService`が`role∈{'ops_manager','quant_lead'}`のみ`tradectl release cutover broker`を許可。`principal_id`と`device_id`は監査ログへ記録。
+- Runbook: `RUN-BROKER-API-03`（新設）でCutoverチェックリスト完了手順を詳細化。Section構成: 1) 事前準備, 2) Certification再実行, 3) Runbook演習, 4) Live切替サイン, 5) 事後レビュー。`DocOps Orchestrator`が改訂時にレビューを強制。
+- 緊急停止: 認定結果が`fail`のままFlag `brokers.api_enabled=true`でLive切替を試みた場合、`OrderRouter`が`OrderDispatchRejected(reason='certification_not_passed')`を返し、Kill Switchを`SOFT_STOP`に固定。
+
+#### 82.5 テスト計画・Codex Packet
+- **ユニット**: `tests/unit/test_broker_certification_suite.py`（シナリオ実行順序/失敗リトライ）、`tests/unit/test_cutover_checklist.py`（自動検証ロジック）。
+- **統合**: `tests/integration/test_broker_cutover.py`（Certification→CutoverChecklist→ReleaseGate統合）、`tests/integration/test_broker_certification_cli.py`（CLIコマンド/証跡生成）。
+- **CI**: `ci/broker-certification.yml`を追加し、`make broker-certification-smoke`（サンドボックスのみ）を実行。成果物をArtifact化しPRへサマリ投稿。
+- **Codex Packet案**:
+  | Packet ID | スコープ | 成果物 | テスト |
+  | --- | --- | --- | --- |
+  | `EP17-BROKER-P10` | `BrokerCertificationSuite`実装、シナリオDSL、EvidenceWriter | `src/brokers/certification.py`, `tests/unit/test_broker_certification_suite.py` | `pytest -k broker_certification_suite` |
+  | `EP17-BROKER-P11` | CutoverChecklist/CLI/ReleaseGate連携 | `src/release/cutover.py`, `src/interfaces/cli/release.py`, `tests/integration/test_broker_cutover.py` | `pytest -k broker_cutover`, `tradectl release cutover broker --dry-run` |
+  | `EP17-BROKER-P12` | Evidence/Telemetry/Runbook生成、自動コメント | `tools/broker_certification/report.py`, `docs/runbooks/RUN-BROKER-API-03.md`, `ci/broker-certification.yml` | `make broker-certification-smoke`, `make check-validation --category broker_certification` |
+- **受入条件**:
+  1. `tradectl broker certify --plan configs/certification/sandbox.yaml`が成功すると、`reports/validation_log/AC-06_broker_certification_<date>.md`と`evidence/broker_certification/<run_id>/`が生成され、`CutoverChecklist`が`API-01=done`へ更新される。
+  2. 24h FillShadowドライラン中に重大アラートが出た場合、CutoverChecklistが`API-02=blocked`を維持し、`ops.agenda.broker_shadow_followup`を作成。解除後に再検証すると`done`へ遷移する。
+  3. リリースゲート`tradectl release prepare --profile live`は、未完のCutover項目がある場合`ReleaseGateError(code='BROKER_CUTOVER_PENDING')`を発生させ、タグ作成を拒否する。
+
+### 83. ブローカーAPI段階的自動化ステージング & ヒューマン監督設計（FR-07/FR-39/FR-47/FR-58/FR-63, AC-03/AC-06/AC-34/AC-43, NFR-02/NFR-11/NFR-17, M3準備）
+
+API自動化の導入は一気通貫ではなく、ヒューマン監督とメトリクスに基づく段階的な解放が必要である。`AutonomyStageGuard`と`SupervisionConsole`を新設し、Reduce-Only→Partial Auto→Full Autoの三段階を`ops_readiness_score`や`CertificationResult`と連動させる。FR-47（Emergencyプロトコル）、FR-63（Opsレディネス）、FR-58（複数口座統合）と整合し、NFR-11（UXテレメトリ）/NFR-17（セキュリティ）の要件を満たす。
+
+#### 83.1 AutonomyStageGuard (`src/brokers/stage_guard.py`)
+- **ステージ定義**:
+  | ステージ | 概要 | 許可操作 | 遷移条件 |
+  | --- | --- | --- | --- |
+  | `manual_only` | 現行HITL。APIは`Simulation`イベントのみ | API注文不可。FillShadowは監視専用。 | 既定。`ops_readiness_score≥70`で`reduce_only`申請可能。 |
+  | `reduce_only` | Reduce-Only提案の自動送信を許可 | `OrderRouter`が`order_type=reduce_only`のみAPIへ送信。 | `BrokerCertificationSuite.pass`, `FillShadow.alerts=0 (24h)`, `RiskDisclosure`再同意。 |
+  | `partial_auto` | 事前承認済み戦略/サイズのみ自動送信 | `StrategyManifest.auto_whitelist=true`かつ`ticket.checklist.all_passed` | `ops_readiness_score≥80`, `Emergency drills on-time`, `ops_manager`＋`PO`承認。 |
+  | `full_auto` (M3+) | 新規提案を自動送信、Opsは監督 | `OrderRouter`全機能。Kill Switch/Board Modeは自動連動 | `partial_auto`で90日無事故、`broker_api.uptime≥99%`, `IncidentCount=0`。 |
+- **ロジック**: `AutonomyStageGuard.evaluate(context)`が`context.metrics`, `CertificationResult`, `ops_readiness_score`, `incident_log`を参照し遷移可否を判定。遷移時は`audit.autonomy_stage_changed`を記録し、Runbook`RUN-BROKER-API-03`のサイン欄に追記。
+- **CLI**: `tradectl broker stage status/set/history`. `status`は現在ステージと次遷移条件を表示。`set`は承認ワークフロー付き（`--request`→`--approve`）。
+- **安全措置**: ステージ降格（例:`partial_auto`→`manual_only`）は`EmergencyOrchestrator`または`ops_manager`が即時実施可能。降格後は再度`BrokerCertificationSuite`実行が必要。
+
+#### 83.2 SupervisionConsole (`src/interfaces/cli/supervision.py`, 将来GUI)
+- **表示内容**:
+  1. `AutonomyStage`: 現在のステージ、最終更新者、残タスク。
+  2. `HITL Oversight`: 直近N件の自動送信チケットと人間承認ログ、異常検知（`fill_delay`, `slippage`）。
+  3. `Ops Readiness`: `ops_readiness_score`の推移、未完チェックリスト、次レビュー日。
+  4. `Emergency Status`: `EmergencyOrchestrator`のアクティブプラン、`KillSwitchState`、Runbook TODOの進捗。
+  5. `Audit Trail`: `audit.autonomy_stage_changed`, `audit.broker_order_*`, `broker_api`アラートの時系列。
+- **インタラクション**: `tradectl supervision approve --ticket <id>`で自動送信候補を人間が承認/拒否するキューを提供。`partial_auto`段階では`auto_whitelist=false`の戦略は人間承認必須。
+- **テレメトリ**: `metrics/supervision.jsonl`に承認リードタイム、拒否率、手動介入の理由タグを記録。NFR-11のUX評価に利用。
+
+#### 83.3 Ops Readiness & Emergency連携
+- `AutonomyStageGuard`は`ops_readiness_score`（FR-63）と`Emergency Drill`履歴を監視し、スコアが閾値未満/ドリル遅延が発生すると即座にステージ降格を提案。`ops.agenda.autonomy_stage_review`TODOを生成。
+- `EmergencyOrchestrator`（§19）と連携し、`stage=partial_auto`以上では`api_failover`プランが常時アクティブ状態で準備される。演習が期限切れの場合、`AutonomyStageGuard`は自動的に`reduce_only`へ降格し、`SecureShareService`が監査用通知を送信。
+- `FillShadow`アラートが重大レベルで発生した場合も同様に`reduce_only`へ降格し、Runbook `RUN-RISK-01`と`RUN-BROKER-API-02`の該当ステップがSupervisionConsoleにハイライト表示される。
+
+#### 83.4 Feature Flag・セキュリティ制御
+- Feature Flag: `feature_flags.broker.autonomy_stage_enabled`（既定`false`）。ON時のみ`AutonomyStageGuard`が評価を行い、`OrderRouter`にフックする。`StageGuard`がOFFでも`BrokerCertificationSuite`の実行は可能。
+- 権限: ステージ昇格/降格は`role∈{'po','ops_manager'}`の二重承認。CLI `tradectl broker stage set --request partial_auto`は承認フローを生成し、`AccessGovernanceService`がレビュー期限（48h）を設定。期限超過で自動クローズ。
+- 監査ログ: `audit.autonomy_stage_request`, `audit.autonomy_stage_approved`, `audit.autonomy_stage_denied`. すべて`SecureShareService`で暗号化保存。
+- セッション固定: `device_binding`（§67）と連動し、承認操作は登録デバイス＋FIDOキーによる多要素認証を要求。`RiskDisclosureEnforcer`が最新承諾でない場合は操作を拒否。
+
+#### 83.5 テスト計画・Codex Packet
+- **ユニット**: `tests/unit/test_autonomy_stage_guard.py`（遷移条件/降格シナリオ）、`tests/unit/test_supervision_console.py`（表示項目/承認ワークフロー）。
+- **統合**: `tests/integration/test_broker_autonomy_flow.py`（Certification→StageGuard→OrderRouter→Emergency連携）、`tests/integration/test_supervision_cli.py`（承認キュー/Runbookリンク）。
+- **CI**: `ci/broker-autonomy.yml`で`make broker-autonomy-smoke`を実行。サンドボックスで`reduce_only`までを自動検証し、`partial_auto`はモック戦略でシミュレート。
+- **Codex Packet案**:
+  | Packet ID | スコープ | 成果物 | テスト |
+  | --- | --- | --- | --- |
+  | `EP17-BROKER-P13` | `AutonomyStageGuard`ロジック、監査ログ、CLI API | `src/brokers/stage_guard.py`, `src/interfaces/cli/broker_stage.py`, `tests/unit/test_autonomy_stage_guard.py` | `pytest -k broker_stage_guard` |
+  | `EP17-BROKER-P14` | `SupervisionConsole`UI/テレメトリ/承認キュー | `src/interfaces/cli/supervision.py`, `tests/integration/test_supervision_cli.py` | `pytest -k supervision_console`, `tradectl supervision status` |
+  | `EP17-BROKER-P15` | Emergency/Ops Readiness連携、CI/Runbook更新 | `src/emergency/planner.py`拡張, `src/ops/readiness.py`, `ci/broker-autonomy.yml`, `docs/runbooks/RUN-BROKER-API-03.md`追補 | `make broker-autonomy-smoke`, `pytest -k broker_autonomy_flow` |
+- **受入条件**:
+  1. `stage=reduce_only`で`OrderRouter`がReduce-Onlyチケットを自動送信し、`SupervisionConsole`に承認ログが表示される。`stage=manual_only`へ降格すると即座にAPI送信が停止し、監査ログが記録される。
+  2. `ops_readiness_score`が75未満へ低下すると`AutonomyStageGuard`が`partial_auto`→`reduce_only`降格を提案し、CLI `tradectl broker stage status`に未解決TODOとRunbookリンクが表示される。
+  3. `EmergencyOrchestrator.api_failover`発動中は`AutonomyStageGuard`が自動で`manual_only`へ降格し、復旧後に`BrokerCertificationSuite`再実行→承認ワークフロー完了まで再昇格できない。
+
+これらの節により、API自動化のローンチと監督体制が設計レベルで明確化され、Codexは安全に段階的自動化を実装できる。ヒューマン・トレーダーはSupervisionConsoleでリアルタイムに状況を把握でき、Ops/POはCutoverチェックリストとAutonomy Stageの両輪でリスクコントロールを行える。証跡とRunbookが密に連携することで、外部監査や将来の自動化拡張に耐える運用基盤を構築する。
+
