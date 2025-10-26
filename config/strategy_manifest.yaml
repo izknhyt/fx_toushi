@@ -1,0 +1,40 @@
+# config/strategy_manifest.yaml -- CONFIG-SCAFF-01 scaffold
+# 詳細設計 §3.5 / §4.4 (Strategy Engine & Config Governance) と Runbook STRAT-PROMOTE-01 を参照。
+# Schema: docs/schemas/strategy_manifest.schema.json （schema_version を更新する際は同スキーマと同期させる）。
+
+schema_version: 0  # TODO: docs/schemas/strategy_manifest.schema.json が整備されたら見直す
+manifest_name: "M1 Core Strategy Manifest (scaffold)"
+revision_tag: "DRAFT-PLACEHOLDER"
+last_reviewed_at: 2025-03-10T00:00:00Z
+notes: |
+  このファイルは Codex 実装着手前のダミー値です。戦略有効化/優先度/Feature Flag 変更時は
+  `docs/runbooks/STRAT-PROMOTE-01.md` および `reports/governance/strategy_board/` への記録を必須とします。
+  Runbook で定義された Validation Data Playbook 項目（AC-46 等）と突合してください。
+
+strategies:
+  m1_baseline_ma_rsi:
+    enabled: true
+    priority: 100
+    weight: 1.0
+    feature_flags:
+      determinism_enforced: true
+      guarded_board_required: false
+    datasets:
+      - id: "reports/data_manifest.json::m1_baseline_ma_rsi"
+        version: "2024-12-31"
+        validation_playbook_id: "AC-01"
+    governance:
+      ticket_id: "TICKET-PLACEHOLDER"
+      last_board_decision: 2025-02-28
+      reviewers:
+        - Quant Lead
+        - Ops Manager
+    parameters:
+      entry:
+        fast_ma_window: 20
+        slow_ma_window: 55
+        rsi_window: 14
+      sizing:
+        max_r_eff: 2.5
+        target_r_multiple: 1.2
+        reduce_only_on_guarded: true
