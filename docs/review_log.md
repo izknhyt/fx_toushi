@@ -69,3 +69,14 @@
 - Follow-up Packets: `CONFIG-SCAFF-01`（新規, 起票担当: Codex Liaison, 締切: 2025-03-13 JST EOD）
 - Ops Agenda Sync: Ops ManagerがOPS-2025-03-12-02へTODO追記済み
 - Next Review Gate: 2025-03-15 Codexスプリントキックオフで前提条件チェック（§0.6.9）を再実施
+
+### 2025-03-12 Detail Design Review (Strategy/Risk Alignment)
+- Reviewer: SE/Trader Lead（Codex Liaison立会い）
+- Scope: `detailed_design_fx_signal_tool_v1.md` v1.29草案（§0.6.8〜0.6.11, §3.5, §3.6, §7.x）、`docs/implementation_packets/`
+- Findings Summary:
+  - Strategy Plugin契約（Protocol/決定論シード）が暗黙的で、Codex実装時に署名不一致・乱数非決定論のリスクがある。§3.5.5を新設して`StrategyContext`/`StrategyMetadata`/ログ要件を明文化し、Implementation Packet `PKG-STRAT-IFACE-01`を起票。
+  - シグナル疑似コード（§3.5.2）が`ExecutionModel.apply`の入出力と乖離し、Spread/Market Snapshotを未取得のまま呼び出していた。API整合のため疑似コードを更新し、`ModeContext`/Spread状態の明示的受け渡しを追加。
+  - 週次レポート受入条件の証跡がRunbook/ログ/テンプレートに分散していた。§0.6.11/§7.6でCLIスナップショット・`signal_cycle_snapshot`ログ・`metrics/strategy_execution.jsonl`抽出を必須化。
+- Follow-up Packets: `PKG-STRAT-IFACE-01`（新規）, `DOC-RUNBOOK-ALIGN-02`（テンプレ更新）, Issue `OPS-58`（Codex Issueテンプレ追補）
+- Ops Agenda Sync: OPS-2025-03-13-01 に #7〜#9 の追跡項目を登録済み（Ops Manager）
+- Next Review Gate: 2025-03-19 週次Opsレビューでフォローアップ完了確認。未完の場合は`docs/change_requests/`へ正式エントリ化。
