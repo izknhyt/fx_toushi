@@ -1149,6 +1149,7 @@ def run_signal_cycle(bar: MarketBar, ctx: ModeContext) -> list[TicketProposal]:
 | `seed` | `int` | `ModeContext.deterministic_seed ^ strategy_metadata.seed_offset`で算出。 | 各プラグインが乱数を使用する場合に必須。 |
 
 - **StrategyPluginProtocol**（Codex実装が準拠すべきIF）
+- 実装パケット: `PKG-STRAT-IFACE-01`
 
 ```python
 from __future__ import annotations
@@ -1156,16 +1157,20 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import ClassVar, Iterable, Protocol
 
-class StrategyPluginProtocol(Protocol):
-    id: ClassVar[str]
-    metadata: StrategyMetadata
 
-    def required_warmup_bars(self) -> int: ...
-    def cooldown_bars(self) -> int: ...
-    def evaluate(self, context: StrategyContext) -> Iterable[RawSignal]: ...
+@dataclass(slots=True, frozen=True)
+class StrategyContext:
+    features: FeatureContext
+    regime: RegimeState
+    gate: GateState
+    account: AccountState
+    config: ConfigSnapshot
+    watchlist: frozenset[str]
+    clock: MarketClock
+    seed: int
 
 
-@dataclass(slots=True)
+@dataclass(slots=True, frozen=True)
 class StrategyMetadata:
     name: str
     version: str
@@ -1175,6 +1180,15 @@ class StrategyMetadata:
 
     def is_applicable(self, context: StrategyContext) -> bool:
         return self.required_features.issubset(context.features.available_keys)
+
+
+class StrategyPluginProtocol(Protocol):
+    id: ClassVar[str]
+    metadata: StrategyMetadata
+
+    def required_warmup_bars(self) -> int: ...
+    def cooldown_bars(self) -> int: ...
+    def evaluate(self, context: StrategyContext) -> Iterable[RawSignal]: ...
 ```
 
 - **FeatureContext利用例（StrategyPluginProtocol内）**

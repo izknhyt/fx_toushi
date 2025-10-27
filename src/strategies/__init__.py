@@ -1,9 +1,10 @@
 """Strategy plugin contracts and shared dataclasses."""
 
-from .base import Strategy, StrategyContext, StrategySignal
+from .base import Strategy, StrategyContext, StrategyMetadata, StrategyPluginProtocol
 
 __all__ = [
     "Strategy",
     "StrategyContext",
-    "StrategySignal",
+    "StrategyMetadata",
+    "StrategyPluginProtocol",
 ]
