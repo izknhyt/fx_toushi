@@ -24,6 +24,7 @@ linked_validation_playbook: reports/validation_log/templates/playbook_entry.md
 - [ ] `tradectl funding sync` 成功ログ保存
 - [ ] `tradectl funding status --json` 保存 (`funding_state.json`と整合)
 - [ ] Validation Data Playbookエントリ更新 (`reports/validation_log/AC-09_funding_<date>.md`)
+- [ ] `reports/funding/daily_hash_log.md` へハッシュと証跡リンクを追記
 
 ## 2. CLI証跡
 | コマンド | 実行者 | 実行日時 | 出力保存先 (`evidence/` 推奨) | 出力SHA256 |
