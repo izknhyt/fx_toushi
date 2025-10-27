@@ -10,7 +10,7 @@ coupling to concrete implementations.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, ClassVar, Iterable, Protocol, runtime_checkable
+from typing import Any, ClassVar, Iterable, Protocol, Sequence, runtime_checkable
 
 from src.execution import SpreadCooldownState
 
@@ -31,11 +31,62 @@ class RegimeState(Protocol):
     mode: str
 
 
+class NewsGateState(Protocol):
+    """News blackout status for the current symbol universe."""
+
+    blocked: bool
+    reason: str | None
+    release_ts: Any | None
+
+
+class CalendarGateState(Protocol):
+    """Calendar-derived restrictions including holiday windows."""
+
+    blocked: bool
+    holiday_block: bool
+    reason: str | None
+
+
+class SpreadGateState(Protocol):
+    """Spread-driven throttling state shared with strategies."""
+
+    state: SpreadCooldownState
+    reason: str | None
+    cooldown_eta: Any | None
+
+
+class MarketGateState(Protocol):
+    """Composite market gating decisions (news/calendar/spread)."""
+
+    news: NewsGateState
+    calendar: CalendarGateState
+    spread: SpreadGateState
+
+
+class RiskGateState(Protocol):
+    """Risk guardrails that affect order submission."""
+
+    reduce_only: bool
+    reduce_only_reason: str | None
+
+
+class HumanGateState(Protocol):
+    """Human-in-the-loop constraints required for ticket approval."""
+
+    double_entry_required: bool
+    required_roles: Sequence[str]
+    acknowledged_roles: Sequence[str]
+    ack_deadline: Any | None
+    manual_comment_required: bool
+    comment_min_length: int
+
+
 class GateState(Protocol):
     """Placeholder protocol for aggregated gate state."""
 
-    calendar_block: str
-    spread_cooldown: SpreadCooldownState
+    market: MarketGateState
+    risk: RiskGateState
+    human: HumanGateState
 
 
 class AccountState(Protocol):

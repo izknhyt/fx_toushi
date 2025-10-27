@@ -35,7 +35,7 @@
 - `FeatureContext.get_latest(symbol, feature, timeframe)` / `lookup(symbol, feature, timeframe)` をStrategy Pluginが利用するコード例を §3.5 に追加し、`FeatureLookupError`・`FeatureStaleError` をFail-Fastさせる運用を明文化する。
 - 指標キーとタイムフレームのマッピング表を §3.3.2 に追加し、Codex 実装者が `metadata.required_features` へ貼り付けるべき文字列を一覧化する。
 - dataclass 例: `FeatureFrameView`（`last_updated`, `values`, `latest`, `window`）と `FeatureContext`（`symbols`, `timeframes`, `available_keys`, `frame`, `lookup`, `get_latest`）を提示し、Codex が型シグネチャを迷わないようにする。
-- `StrategyContext.watchlist` を `frozenset[str]` で明文化し、Manifestの有効シンボル集合と `FeaturePipeline` からのフォールバック（`feature_frame.symbols`）を組み合わせて算出する手順、および `GateState` / `RegimeState` による除外ロジックを §3.5.2 に追記する。
+- `StrategyContext.watchlist` を `frozenset[str]` で明文化し、Manifestの有効シンボル集合と `FeaturePipeline` からのフォールバック（`feature_frame.symbols`）を組み合わせて算出する手順、および `GateState.market.*` / `GateState.risk.reduce_only` / `GateState.human.double_entry_required` / `RegimeState` による除外ロジックを §3.5.2 に追記する。
 
 ### 2.3 Codex Prompt用 StrategyContext 属性一覧（§3.5.5）
 - `StrategyContext` が公開するフィールド: `features`, `regime`, `gate`, `account`, `config`, `watchlist`, `clock`, `seed`。Codex プロンプトでは順序と名称を固定化し、`watchlist` を監視対象シンボル集合として参照すること。
