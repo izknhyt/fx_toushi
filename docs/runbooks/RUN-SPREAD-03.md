@@ -19,7 +19,7 @@
 - `data/spread_metrics.parquet`の最新スナップショットを取得し、ハッシュを控える。
 - `spread_provider_health.jsonl`と`reports/performance/spread/<date>.md`の直近記録を確認。
 - `docs/runbooks/RUN-RISK-01.md`と`docs/runbooks/OPS-READINESS-01.md`を参照できるよう準備。
-- `config/board_modes.yaml`を開き、`guarded`モードの`escalation_links`に本Runbookが含まれていることと`schema_version`が最新であることを確認。
+- `config/board_modes.yaml`を開き、`guarded`モードの`escalation_links`に本Runbookが含まれていることと`schema_version`が最新であることを確認。`docs/schemas/board_modes.schema.json`と`pytest -k config_schema_smoke`の結果を添付してレビューする。
 - `tradectl spread` CLIへのアクセス権があることを確認。
 
 ## 手順

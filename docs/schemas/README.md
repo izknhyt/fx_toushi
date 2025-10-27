@@ -11,6 +11,18 @@ materials stored here serve as the authoritative source for governance reviews a
   `AccountAggregatorService` (§51.1). Validates `accounts/<broker>/<account_id>.yaml` files.
 - `order_state.schema.json` – Order lifecycle and recovery plan contract consumed by
   `OrderStateStore` (§84.2) and broker CLI tooling.
+- `strategy_manifest.schema.json` – Strategy activation manifest aligning with §3.5/§4.4.1 and
+  Runbook STRAT-PROMOTE-01. Governs `config/strategy_manifest.yaml`.
+- `feature_pipeline.schema.json` – Feature/indicator enablement contract for §3.4〜§3.5. Validates
+  `config/feature_pipeline.yaml` prior to deterministic replay tests.
+- `board_modes.schema.json` – Board mode guard configuration shared by §2.5/§3.5 and Runbook
+  RUN-SPREAD-03. Validates `config/board_modes.yaml`.
+- `cfg.schema.json` – Mode profile configuration for SessionManager (§3.1/§4.4). Applies to
+  `config/profiles/*.yaml`.
+- `sla_threshold_profile.schema.json` – Data ingestion SLA thresholds (§4.4/§9.4.4). Applies to
+  `config/sla_thresholds/*.yaml`.
+- `gate_state.schema.json` – Operational gate snapshot contract (§4.2/§5.4). Used by
+  `schema/gate_state.sample.json` and snapshot validation in RUN-RISK-01.
 - `CHANGELOG.md` – Required update log whenever schema contracts evolve. Each PR touching the
   registry must append an entry summarising the change, linked to the relevant design/runbook
   context.

@@ -1,0 +1,88 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://fx-toushi.dev/schemas/gate_state.schema.json",
+  "title": "GateState",
+  "description": "Operational gate state snapshot per detailed design §4.2 and §5.4.",
+  "type": "object",
+  "required": [
+    "news_block",
+    "holiday_block",
+    "calendar_block",
+    "spread_cooldown",
+    "reduce_only"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "anyOf": [
+        {
+          "type": "integer",
+          "minimum": 0
+        },
+        {
+          "type": "string",
+          "pattern": "^[a-z0-9_.\\-]+$"
+        }
+      ]
+    },
+    "news_block": {
+      "type": "boolean"
+    },
+    "news_reason": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "news_release_ts": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "date-time"
+    },
+    "holiday_block": {
+      "type": "boolean"
+    },
+    "calendar_block": {
+      "type": "boolean"
+    },
+    "calendar_reason": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "spread_cooldown": {
+      "type": "string",
+      "enum": [
+        "normal",
+        "watch",
+        "cooldown",
+        "halt"
+      ]
+    },
+    "spread_reason": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "cooldown_eta": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "date-time"
+    },
+    "reduce_only": {
+      "type": "boolean"
+    },
+    "reduce_only_reason": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  }
+}

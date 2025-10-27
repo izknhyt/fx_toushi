@@ -8,15 +8,16 @@
 | --- | --- | --- | --- | --- |
 | `strategy_manifest.yaml` | `docs/schemas/strategy_manifest.schema.json` | 詳細設計 §3.5, §4.4.1 | STRAT-PROMOTE-01, `reports/validation_log/AC-46_*.md` | 戦略の有効化/優先度/データ要件。`schema_version`更新時はManifest検証テストを追加。 |
 | `feature_pipeline.yaml` | `docs/schemas/feature_pipeline.schema.json` | 詳細設計 §3.4〜§3.5 | STRAT-M1-VALIDATION, `reports/validation_log/AC-01_*.md`, `AC-07_*.md` | 指標ON/OFFと窓長。Guarded運用時のFlagもここで切替。 |
-| `board_modes.yaml` | `docs/schemas/board_modes.schema.json` | 詳細設計 §2.5, §3.5 | RUN-DATA-05, RUN-SPREAD-03, RUN-RISK-01 | BoardMode遷移時のエスカレーションリンクを集約。 |
+| `board_modes.yaml` | `docs/schemas/board_modes.schema.json` | 詳細設計 §2.5, §3.5 | RUN-DATA-05, RUN-SPREAD-03, RUN-RISK-01 | BoardMode遷移時のエスカレーションリンクを集約。`schema/gate_state.sample.json`と整合させる。 |
 | `profiles/backtest.yaml` | `docs/schemas/cfg.schema.json` | 詳細設計 §3.1, §4.4 | STRAT-M1-VALIDATION | バックテスト専用の最小構成。`ModeContext`再現用。 |
 | `profiles/paper.yaml` | `docs/schemas/cfg.schema.json` | 詳細設計 §3.1, §4.4 | RUN-DATA-05, RUN-HITL-01, `reports/validation_log/AC-45_*.md` | yfinance/dukascopyのSLA閾値とBoardMode既定値。 |
 | `profiles/live.yaml` | `docs/schemas/cfg.schema.json` | 詳細設計 §3.1, §4.4, §6.7 | RUN-RISK-01, RUN-SPREAD-03, STRAT-PROMOTE-01 | ブローカー接続前提のプレースホルダ。Kill Switch/BoardMode制御を明示。 |
 | `sla_thresholds/default.yaml`<br>`sla_thresholds/active.yaml` | `docs/schemas/sla_threshold_profile.schema.json` | 詳細設計 §3.1, §4.4, §9.4.4 | RUN-DATA-05, RUN-DATA-06, `reports/validation_log/AC-45_*.md` | データSLAターゲットの基準値と適用中値。Runbook承認ログと同期。 |
+| `schema/gate_state.sample.json` | `docs/schemas/gate_state.schema.json` | 詳細設計 §4.2, §5.4 | RUN-RISK-01, RUN-SPREAD-03 | GateStateスナップショットの雛形。Reduce-OnlyやSpreadクールダウンの表示テキストと同期。 |
 
 ## スモークテスト
 
-- `pytest -k config_schema_smoke` — JSON Schema による雛形検証（今後実装予定）。
+- `pytest -k config_schema_smoke` — JSON Schema による雛形検証。`strategy_manifest`/`feature_pipeline`/`board_modes`/`profiles/*`/`sla_thresholds/*`と`schema/gate_state.sample.json`を対象とする。
 - `pytest -k strategy_manifest` / `pytest -k strategy_registry` — Manifest と Registry の読み込みテスト（詳細設計 §4.4.1 推奨）。
 - `make sla-report` — SLA プロファイルと `metrics/data_ingestion_sla.jsonl` の整合確認（RUN-DATA-05 手順3参照）。
 
