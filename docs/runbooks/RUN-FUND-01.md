@@ -14,7 +14,7 @@ Paper/Paper+Live運用におけるスワップレートの正確性維持と監�
    ```console
    tradectl funding sync --shadow reports/funding/swap_rates_shadow.csv
    ```
-4. CLI出力を保存し、`funding_state.json`と`reports/validation_log/AC-09_funding_<date>.md`を更新する。
+4. CLI出力を保存し、`funding_state.json`と`reports/validation_log/AC-09_funding_<date>.md`を更新する。併せて`reports/funding/daily_hash_log.md`へ当日のハッシュ値・証跡リンクを追記する。
 5. POが`reports/validation_log/AC-09_funding_<date>.md`の「Daily Sign-off」にイニシャルを記入し、`docs/implementation_packets/<packet>/evidence/`へCLIログとハッシュ値を保管する。
 
 ## チェックポイント

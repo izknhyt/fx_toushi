@@ -1,0 +1,3 @@
+pair,base_currency,quote_currency,swap_long,swap_short,triple_day,rollover_time_utc,last_verified_at,data_source
+EURUSD,EUR,USD,-5.10,1.80,Wed,21:00,2025-03-01T06:00:00Z,dukascopy manual input
+USDJPY,USD,JPY,1.20,-4.50,Wed,21:00,2025-03-01T06:00:00Z,dukascopy manual input
