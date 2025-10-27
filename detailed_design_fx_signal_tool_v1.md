@@ -1015,6 +1015,7 @@ sequenceDiagram
     participant SE as StrategyEngine
     participant RM as RiskManager
     participant PS as PositionSizer
+    participant GA as GateAggregator
     participant TB as TicketBuilder
 
     WF->>FP: update(market_frame@5m)
@@ -1028,6 +1029,8 @@ sequenceDiagram
     RM-->>WF: RiskVettedSignal[]
     WF->>PS: size(RiskVettedSignal, AccountState)
     PS-->>WF: SizedSignal[]
+    WF->>GA: snapshot()
+    GA-->>WF: GateState
     WF->>TB: build(SizedSignal, ExecutionAdjustments, GateState)
     TB-->>WF: TicketProposal
 ```
@@ -1093,6 +1096,7 @@ def run_signal_cycle(bar: MarketBar, ctx: ModeContext) -> list[TicketProposal]:
     tickets: list[TicketProposal] = []
     for sized_sig in sized:
         symbol_gate = gate_state.market.per_symbol.get(sized_sig.symbol)
+        # `gate_state`はGateAggregator.snapshot()の結果で、必要に応じてシンボル単位スライスを抽出する
         tickets.append(
             TicketBuilder.build(
                 sized_sig,
@@ -1483,7 +1487,7 @@ Runbook references: RUN-FUND-01 (daily update), RUN-FUND-02 (degraded ops)
 ### 3.16 TicketBuilder (`src/ticket/builder.py`, `src/ticket/validator.py`, `src/ticket/checklist.py`)
 - **公開API**: `build(sized_signal, execution_adjustments, gate_state)`。
 - **処理**: 価格丸め→距離検証→TTL計算→Checklist生成（必須項目は下表参照）→`TicketProposal`組立。
-- **GateState受け渡し要件**: 呼び出し側は`gate_state.market.per_symbol.get(sized_signal.symbol)`で得られるシンボル専用スライスを第三引数として優先的に渡し、存在しない場合のみグローバル`GateState`を共有する。`TicketBuilder`は受領したスライスに基づき`reduce_only`/`halt`/`double_entry_required`/`comment_min_length`などの制約を反映し、グローバル・シンボル両方のブロックが同時に尊重されるようにマージする。GateStateオブジェクトは不変参照として扱い、`TicketBuilder`内部での更新は禁じる。
+- **GateState受け渡し要件**: 呼び出し側は`GateAggregator.snapshot()`で取得した`GateState`を必ず保持し、`gate_state.market.per_symbol.get(sized_signal.symbol)`で得られるシンボル専用スライスを第三引数として優先的に渡す。シンボルスライスが無い場合のみグローバル`GateState`を共有する。`TicketBuilder`は受領したスライスに基づき`reduce_only`/`halt`/`double_entry_required`/`comment_min_length`などの制約を反映し、グローバル・シンボル両方のブロックが同時に尊重されるようにマージする。GateStateオブジェクトは不変参照として扱い、`TicketBuilder`内部での更新は禁じる。Codex実装ではWorkflow/Backtest双方で同一スナップショットを共有し、チェックリスト生成・ブロック判定に決定論が保たれることをユニットテストで確認する。
 - **入力順序と表示統一**: `ChecklistBuilder.generate()`は`HumanErrorChecklist`を必ず `spread_window_clear`→`double_entry_confirmed`→`sl_tp_verified`→`lot_round_ok`→`price_decimals_ok`→`oco_ack_received`→`manual_comment_logged` の順で整列し、`label`/`field`をCLI表示（`tradectl board/ticket`) と監査ログ (`audit_writer`) の両方で同一の英字表記に固定する。CLIは番号付きリストを同順序で表示し、監査ログの`extras.checklist[].field`にも同じフィールド名が書き込まれる。`ack_deadline`が設定されている場合、CLIは対象行に`(deadline: <ISO8601>)`ラベルを併記し、監査ログにも`deadline_iso`を埋め込む。
 - **チェックリスト定義**: 下表の項目は全て`mandatory=true`で、検証ロジック/Runbook紐づけを固定する。`ChecklistBuilder`は順序崩れやラベル改変を検知した場合`ChecklistInvariantError`（新設予定の例外）を送出し、監査ログとCLI双方の整合を守る。`GateState.human`の`double_entry_required`/`required_roles`/`ack_deadline`/`comment_min_length`はChecklist入力へ直接伝播し、CLI・監査ログともに同値で記録される。
 
