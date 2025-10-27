@@ -1102,7 +1102,9 @@ def run_signal_cycle(bar: MarketBar, ctx: ModeContext) -> list[TicketProposal]:
 
 - `spread_state`は`dict[str, SpreadState]`で、キーはシグナル対象シンボル、値は§3.6「SpreadStateデータモデル」で定義したスナップショット。`SpreadMonitor.current_state()`が例外を送出した場合は、当該シンボルのシグナルをRejectし`ExecutionModel.apply`を呼び出さない。
 
-`StrategyManifestResolver.effective_symbols(...)`は`strategy_manifest.yaml`上で`enabled=True`かつ現在のBoard Modeで許可されたシンボルを列挙し、未指定の場合は`feature_frame.symbols`（`FeaturePipeline`が供給する実測シンボル集合）をフォールバックに用いる。両方の経路で得られた集合から`GateState`/`RegimeState`が遮断を宣言したシンボルを除外した結果を`StrategyContext.watchlist`へ渡すことで、後続コンポーネントが`strategy_ctx.watchlist`を参照すれば常にアクティブな監視対象のみを取得できる。
+`StrategyManifestResolver.effective_symbols(...)`は`strategy_manifest.yaml`上で`enabled=True`かつ現在のBoard Modeで許可されたシンボルを列挙し、未指定の場合は`feature_frame.symbols`（`FeaturePipeline`が供給する実測シンボル集合）をフォールバックに用いる。候補シンボルごとに`GateState.market.per_symbol.get(symbol)`を最優先で参照し、ニュース/カレンダーの個別ブロックが存在する場合は即座に除外する。個別指定が無い場合のみ`GateState.market.news`および`GateState.market.calendar`のグローバル遮断フラグを評価し、最後に`RegimeState`の停止条件を適用する。最終集合を`StrategyContext.watchlist`へ渡すことで、後続コンポーネントが`strategy_ctx.watchlist`を参照すれば常にアクティブな監視対象のみを取得できる。
+
+`GateAggregator.snapshot()`は`CalendarService`/`NewsService`/`SpreadMonitor`/`RiskManager`等からの部分スナップショットをマージし、`GateState.market.per_symbol`を含む完全な`GateState`を返却する。同じオブジェクトを`data/runtime/gate_state.json`や`snapshots/latest/gate_state.json`へシリアライズすることで、再起動時や監査証跡が常に最新スキーマ（§4.2）に一致することを保証する。
 
 #### 3.5.3 運用制約と計算式
 
@@ -1130,7 +1132,7 @@ def run_signal_cycle(bar: MarketBar, ctx: ModeContext) -> list[TicketProposal]:
 | データ欠損 | `FeaturePipeline`で`nan_policy`が発動し窓サイズ不足 | 該当シグナルを`plugin.skip(reason='feature_gap')`で棄却、`data.feature_gap`イベントを発火 | `logs/ops/data_gaps.log`、Runbook `RUN-DATA-06` |
 | 急変動（スプレッド拡大） | `SpreadMonitor`が`SpreadState.state`（§3.6）を`halt`へ遷移、または`SpreadState.percentile >= 0.95` | `gate_state.market.spread.state != "normal"`で全戦略抑止、`tradectl board --guarded`を推奨 | `health_state_transitions.jsonl`、Runbook `RUN-RISK-02` |
 | 急変動（価格ギャップ） | `RegimeDetector.volatility`が閾値超過、または`|bar.return|>config.execution.max_gap` | `ExecutionModel`が`expected_slippage`へギャップ分を上乗せし、許容超過でシグナル除外 | `logs/execution/gap_reject.log`、Runbook `RUN-RISK-03` |
-| 外部イベント遮断 | `CalendarService.is_blocked(symbol)`が真 | `StrategyEngine`が`gate_state.market.calendar.blocked`を検出して即時Reject | `calendar/block_events.jsonl`、Runbook `RUN-OPS-04` |
+| 外部イベント遮断 | `CalendarService.is_blocked(symbol)`が真 | `StrategyEngine`が`gate_state.market.per_symbol.get(symbol)?.calendar`またはグローバル`gate_state.market.calendar`を参照して即時Reject | `calendar/block_events.jsonl`、Runbook `RUN-OPS-04` |
 | 指標計算異常 | `IndicatorError`が発生しリトライ失敗 | `HealthMonitor.hard_stop('indicator')`→Kill Switchレビュー、`tradectl resync --since`で再計算 | `logs/errors/indicator.log`、Runbook `RUN-DATA-08` |
 | アカウント情報遅延 | `AccountService.refresh_state`が`stale_ts`を返却 | `RiskManager`が`account_stale`でReject、`health.raise('degraded','account_state_stale')` | `logs/account/stale.log`、Runbook `RUN-OPS-06` |
 
@@ -1142,7 +1144,7 @@ def run_signal_cycle(bar: MarketBar, ctx: ModeContext) -> list[TicketProposal]:
 | --- | --- | --- | --- |
 | `features` | `FeatureContext` | シンボル×タイムフレーム毎の指標ビュー。`lookup(symbol, feature, timeframe)`でアクセス。 | `FeaturePipeline.update()`が返した差分キャッシュ。 |
 | `regime` | `RegimeState` | ボラティリティ/トレンド判定。`mode ∈ {range, trend, spike}`。 | `RegimeDetector.update()`結果。 |
-| `gate` | `GateState` | `market`（ニュース/カレンダー/Spread）、`risk.reduce_only`、`human`（ダブルACK/コメント要件）のブロック状態。 | `GateAggregator.snapshot()`、Kill Switchを含む。 |
+| `gate` | `GateState` | `market`（ニュース/カレンダー/Spread、`per_symbol`オーバーライド）、`risk.reduce_only`、`human`（ダブルACK/コメント要件）のブロック状態。 | `GateAggregator.snapshot()`、Kill Switchを含む。 |
 | `account` | `AccountState` | エクイティ、利用可能証拠金、通貨バケット露出。`stale_ts`付き。 | `AccountService.refresh_state(ctx)`、Paperはシミュレーション口座。 |
 | `config` | `ConfigSnapshot` | `risk_policy`, `strategy_manifest`, `board_modes`等のハッシュ付き読み取り専用ビュー。 | `ConfigRegistry.snapshot()`、変更時は`cfg_hash`が更新。 |
 | `watchlist` | `frozenset[str]` | StrategyEngineが監視・評価対象とするシンボル集合。ManifestとFeaturePipelineの整合済み。 | `StrategyManifestResolver.effective_symbols(...)`、不足時は`feature_frame.symbols`から派生。 |
@@ -1422,14 +1424,14 @@ Runbook references: RUN-FUND-01 (daily update), RUN-FUND-02 (degraded ops)
 ### 3.13 CalendarService (`src/calendar/service.py`)
 - **公開API**: `update(now)`, `is_blocked(symbol)`, `reload()`。
 - **入力**: `calendar/high_impact_events.csv`, `calendar/holidays.csv`, `config.trading_timezone`。
-- **処理**: UTC→ローカル変換→重要度別に±15/30分ブロック。祝日/週末ロールオーバーで`GateState.market.calendar.holiday_block`を設定。解除時は`CalendarWindowCleared`。
+- **処理**: UTC→ローカル変換→重要度別に±15/30分ブロック。シンボル単位でアクティブなウィンドウを正規化し、`GateState.market.per_symbol[symbol].calendar`へ書き戻す。ウィンドウ未設定のシンボルにはグローバル`GateState.market.calendar`を適用し、祝日/週末ロールオーバーは`holiday_block=True`で上書きする。解除時は`CalendarWindowCleared`とともに該当シンボルのエントリを削除する。
 - **拡張**: M2で外部API同期（adapters）がイベント強度を自動更新。
 
 #### APIインターフェース一覧
 | API/関数 | 入力 | 処理 | 出力 | 異常系 |
 | --- | --- | --- | --- | --- |
-| `CalendarService.update(now)` | 現在時刻、カレンダーデータ、タイムゾーン設定 | 新規イベントロード→ローカル時刻変換→ブロックウィンドウ生成 | `CalendarSnapshot`（blocked_symbols, window) | データ欠損: `CalendarDataMissing` |
-| `CalendarService.is_blocked(symbol)` | シンボル、モード（news/holiday）、`now` | 現在ウィンドウを参照してブロック可否判定 | `bool`, `BlockReason` | キャッシュ未更新: `CalendarNotReadyError` |
+| `CalendarService.update(now)` | 現在時刻、カレンダーデータ、タイムゾーン設定 | 新規イベントロード→ローカル時刻変換→ブロックウィンドウ生成→`GateState.market.per_symbol`へ反映 | `CalendarSnapshot`（blocked_symbols, window, per_symbol_overrides) | データ欠損: `CalendarDataMissing` |
+| `CalendarService.is_blocked(symbol)` | シンボル、モード（news/holiday）、`now` | `GateState.market.per_symbol.get(symbol)`を優先し、無い場合はグローバル`GateState.market.calendar`/`GateState.market.news`で判定 | `bool`, `BlockReason` | キャッシュ未更新: `CalendarNotReadyError` |
 | `CalendarService.reload()` | 強制リロードフラグ、ファイルパス | CSV再読み込み→スキーマ検証→差分適用 | `ReloadResult` | スキーマ不正: `CalendarSchemaError` |
 | `CalendarAdapters.fetch_external(source)` | 外部API識別子、認証情報 | API呼出→イベント正規化→`CalendarService`へ反映 | `FetchedEvents` | API失敗: `CalendarFetchError` |
 
@@ -1813,10 +1815,17 @@ class SpreadGateState:
 
 
 @dataclass
+class GateBlockState:
+    news: Optional[NewsGateState] = None
+    calendar: Optional[CalendarGateState] = None
+
+
+@dataclass
 class MarketGateState:
     news: NewsGateState
     calendar: CalendarGateState
     spread: SpreadGateState
+    per_symbol: dict[str, GateBlockState]
 
 
 @dataclass
@@ -1843,7 +1852,7 @@ class GateState:
     schema_version: Optional[str] = None
 ```
 
-`market.calendar.blocked`は`CalendarService`が重要イベントの±指定ウィンドウに入ったシンボルへ設定し、`market.calendar.reason`にイベントIDやRunbook参照を保持する。祝日ロジックは`market.calendar.holiday_block`で独立して管理し、グローバルホリデーとシンボル個別の両方を表現できるようにする。Spreadガードは連続状態（`SpreadCooldownState`）で管理し、`market.spread.reason`に直近の判定根拠（例:`p95_exceeded`）を記録する。
+`market.per_symbol`はシンボルごとの遮断オーバーライドを保持し、`CalendarService`/`NewsService`がイベントウィンドウを検出した際に`{symbol: GateBlockState}`を生成する。既定値は空辞書で、エントリが存在するシンボルについては`GateBlockState.news`/`GateBlockState.calendar`がグローバルの`market.news`/`market.calendar`より優先され、ウィンドウの終了時に該当エントリを削除する。ニュース/カレンダーいずれか片方のみを持つエントリも許容し、未指定フィールドは`None`として扱う。グローバルフィールドは全市場停止やフォールバック用の既定値として機能し、`holiday_block=True`で祝日ロールオーバーを表現する。Spreadガードは連続状態（`SpreadCooldownState`）で管理し、`market.spread.reason`に直近の判定根拠（例:`p95_exceeded`）を記録する。
 
 ```python
 SpreadCooldownState = Literal["normal", "watch", "cooldown", "halt"]
@@ -1990,7 +1999,7 @@ FillStyle = Literal["ioc", "fok", "gtd"]
 ### 4.7 スナップショットファイル
 - `account_state.json`: `AccountState`シリアライズ。
 - `open_tickets.json`: 未失効チケット一覧（`ticket_id`, `expires_at`, `drift_guard`, `status`）。
-- `gate_state.json`: 最新`GateState`。
+- `gate_state.json`: 最新`GateState`（`market.per_symbol`を含むフルスナップショット）。
 - `health.json`: `HealthState`。
 - `cfg_hash.txt`, `data_hash.txt`, `last_bar_ts.txt`。
 - 整合性チェック: 再起動後に`cfg_hash`差異で`ConfigMismatch`、`data_hash`差異で`DataMismatch`。
