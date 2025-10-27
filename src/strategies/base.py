@@ -12,6 +12,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, ClassVar, Iterable, Protocol, runtime_checkable
 
+from src.execution import SpreadCooldownState
+
 
 class FeatureContext(Protocol):
     """Minimal contract for feature access used in strategy metadata checks."""
@@ -33,6 +35,7 @@ class GateState(Protocol):
     """Placeholder protocol for aggregated gate state."""
 
     calendar_block: str
+    spread_cooldown: SpreadCooldownState
 
 
 class AccountState(Protocol):
