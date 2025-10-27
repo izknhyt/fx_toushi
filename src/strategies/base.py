@@ -1,50 +1,154 @@
-"""Strategy engine base contracts.
+"""Strategy plugin contracts for deterministic signal generation.
 
-This module surfaces the interfaces that strategy plugins conform to so
-that Codex can reason about deterministic signal generation. The
-structures here intentionally avoid business logic and instead document
-expectations that downstream registries and pipelines will enforce.
+The dataclasses and protocols exported here codify the Strategy Plugin
+interface described in :mod:`detailed_design_fx_signal_tool_v1` §3.5.5
+(``PKG-STRAT-IFACE-01``).  They intentionally avoid business logic so
+that downstream registries and pipelines can enforce contracts without
+coupling to concrete implementations.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Mapping, Protocol, Sequence, runtime_checkable
+from dataclasses import dataclass, field
+from typing import Any, ClassVar, Iterable, Protocol, runtime_checkable
 
 
-@dataclass(slots=True)
+class FeatureContext(Protocol):
+    """Minimal contract for feature access used in strategy metadata checks."""
+
+    available_keys: frozenset[str]
+
+    def lookup(self, *, symbol: str, feature: str, timeframe: str) -> Any: ...
+
+    def get_latest(self, *, symbol: str, feature: str, timeframe: str) -> Any: ...
+
+
+class RegimeState(Protocol):
+    """Placeholder protocol for regime detector output."""
+
+    mode: str
+
+
+class GateState(Protocol):
+    """Placeholder protocol for aggregated gate state."""
+
+    calendar_block: str
+
+
+class AccountState(Protocol):
+    """Placeholder protocol for account metrics surfaced to strategies."""
+
+    equity: float
+
+
+class ConfigSnapshot(Protocol):
+    """Placeholder protocol for immutable configuration view."""
+
+    cfg_hash: str
+
+
+class MarketClock(Protocol):
+    """Placeholder protocol for deterministic clock information."""
+
+    now: Any
+    timeframe: str
+
+
+class RawSignal(Protocol):
+    """Placeholder protocol for raw strategy signals."""
+
+    strategy_id: str
+
+
+@dataclass(slots=True, frozen=True)
 class StrategyContext:
-    """Shared services handed to strategy plugins.
+    """Shared, immutable services handed to strategy plugins.
 
-    Context objects encapsulate feature frames, gate states, and data
-    accessors in a way that supports deterministic replay.
+    ``StrategyEngine`` constructs one context per evaluation cycle so
+    that plugins observe a deterministic snapshot of upstream state.  The
+    fields mirror the design contract and allow Codex prompts/tests to
+    reason about the strategy environment without relying on concrete
+    implementations.
     """
 
-    feature_frame: Mapping[str, float]
-    gate_state: Mapping[str, str]
-    metadata: Mapping[str, str]
+    features: FeatureContext
+    """Feature frame accessor populated by :class:`FeaturePipeline`."""
+
+    regime: RegimeState
+    """Regime detector snapshot (volatility/trend modes)."""
+
+    gate: GateState
+    """Aggregated gate state (calendar, spread, board mode blocks)."""
+
+    account: AccountState
+    """Account metrics such as equity, margin availability, and staleness."""
+
+    config: ConfigSnapshot
+    """Read-only configuration snapshot with change hashes for auditing."""
+
+    watchlist: frozenset[str]
+    """Effective set of symbols the strategy is allowed to monitor."""
+
+    clock: MarketClock
+    """Trading calendar context including ``now`` and ``timeframe``."""
+
+    seed: int
+    """Deterministic seed derived from mode context and strategy metadata."""
 
 
-@dataclass(slots=True)
-class StrategySignal:
-    """Normalized output of a strategy plugin.
+@dataclass(slots=True, frozen=True)
+class StrategyMetadata:
+    """Static metadata surfaced by strategy plugins."""
 
-    The signal structure is intentionally simple for M1. Additional
-    metrics (confidence, regime tags) will be attached under dedicated
-    feature flags in later milestones.
-    """
+    name: str
+    version: str
+    required_features: frozenset[str]
+    tags: frozenset[str] = field(default_factory=frozenset)
+    seed_offset: int = 0
 
-    symbol: str
-    action: str
-    score: float
+    def is_applicable(self, context: StrategyContext) -> bool:
+        """Return ``True`` when all required features are available."""
+
+        return self.required_features.issubset(context.features.available_keys)
 
 
 @runtime_checkable
-class Strategy(Protocol):
-    """Protocol that every strategy plugin must satisfy."""
+class StrategyPluginProtocol(Protocol):
+    """Protocol that every strategy plugin must satisfy.
 
-    name: str
-    required_features: Sequence[str]
+    The attributes and call signatures mirror the design contract so the
+    registry can validate plugins via :func:`isinstance` checks.
+    """
 
-    def generate(self, context: StrategyContext) -> Sequence[StrategySignal]:
-        """Produce one or more signals for the provided context."""
+    id: ClassVar[str]
+    metadata: StrategyMetadata
+
+    def required_warmup_bars(self) -> int:
+        """Return the minimum warm-up bars needed before evaluation."""
+
+    def cooldown_bars(self) -> int:
+        """Return the number of bars to skip after emitting a signal."""
+
+    def evaluate(self, context: StrategyContext) -> Iterable[RawSignal]:
+        """Evaluate the strategy for the supplied context."""
+
+
+# ---------------------------------------------------------------------------
+# Backwards compatibility
+# ---------------------------------------------------------------------------
+#
+# ``Strategy`` previously exposed a simplified protocol that returned a
+# bespoke ``StrategySignal`` dataclass.  The implementation packet
+# ``PKG-STRAT-IFACE-01`` superseded that contract in favour of
+# ``StrategyPluginProtocol``/``StrategyMetadata``.  The alias remains so
+# that legacy imports continue to resolve while downstream code migrates
+# to the new names.
+Strategy = StrategyPluginProtocol
+
+
+__all__ = [
+    "StrategyContext",
+    "StrategyMetadata",
+    "StrategyPluginProtocol",
+    "Strategy",
+]

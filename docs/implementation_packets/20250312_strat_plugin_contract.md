@@ -16,7 +16,7 @@
 ## 2. 変更サマリ
 | コンポーネント | 変更内容 | テスト指示 | Feature Flag |
 | --- | --- | --- | --- |
-| src/strategies/base.py | `StrategyPluginProtocol`/`StrategyMetadata` dataclass/`StrategyContext`型ヒントのスタブを追加。`Protocol`で`evaluate/required_warmup_bars/cooldown_bars`を宣言し、決定論シード伝播と`watchlist`導出をdocstringに明記。 | `pytest -k strategy_plugin_contract` | N/A |
+| src/strategies/base.py | `StrategyContext`（features/regime/gate/account/config/watchlist/clock/seed）と`StrategyMetadata`を`@dataclass(slots=True, frozen=True)`で定義し、`StrategyPluginProtocol`に`evaluate/required_warmup_bars/cooldown_bars`を明示。`Strategy`は後方互換エイリアスに変更。 | `pytest -k strategy_plugin_contract` | N/A |
 | src/strategies/registry.py | Manifestロード時にProtocol準拠検査・`StrategyRegistrationError(code='contract_violation')`のFail-Fast実装。 | `pytest -k strategy_registry` | N/A |
 | tests/unit/test_strategy_plugin_contract.py | Protocol準拠/seed決定論/ログ付与のスモークテストを追加。 | `pytest -k strategy_plugin_contract` | N/A |
 | docs/trader_signoff/PKG-STRAT-IFACE-01.md | CLIスナップショット/Runbookリンク/承認サイン欄を作成。 | `tradectl board --view strategy --save-snapshot ...` | N/A |
