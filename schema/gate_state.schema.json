@@ -5,11 +5,9 @@
   "description": "Operational gate state snapshot per detailed design §4.2 and §5.4.",
   "type": "object",
   "required": [
-    "news_block",
-    "holiday_block",
-    "calendar_block",
-    "spread_cooldown",
-    "reduce_only"
+    "market",
+    "risk",
+    "human"
   ],
   "additionalProperties": false,
   "properties": {
@@ -25,64 +23,156 @@
         }
       ]
     },
-    "news_block": {
-      "type": "boolean"
-    },
-    "news_reason": {
-      "type": [
-        "string",
-        "null"
-      ]
-    },
-    "news_release_ts": {
-      "type": [
-        "string",
-        "null"
+    "market": {
+      "type": "object",
+      "required": [
+        "news",
+        "calendar",
+        "spread"
       ],
-      "format": "date-time"
+      "additionalProperties": false,
+      "properties": {
+        "news": {
+          "type": "object",
+          "required": [
+            "blocked"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "blocked": {
+              "type": "boolean"
+            },
+            "reason": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "release_ts": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "format": "date-time"
+            }
+          }
+        },
+        "calendar": {
+          "type": "object",
+          "required": [
+            "blocked",
+            "holiday_block"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "blocked": {
+              "type": "boolean"
+            },
+            "holiday_block": {
+              "type": "boolean"
+            },
+            "reason": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        },
+        "spread": {
+          "type": "object",
+          "required": [
+            "state"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "state": {
+              "type": "string",
+              "enum": [
+                "normal",
+                "watch",
+                "cooldown",
+                "halt"
+              ]
+            },
+            "reason": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "cooldown_eta": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "format": "date-time"
+            }
+          }
+        }
+      }
     },
-    "holiday_block": {
-      "type": "boolean"
-    },
-    "calendar_block": {
-      "type": "boolean"
-    },
-    "calendar_reason": {
-      "type": [
-        "string",
-        "null"
-      ]
-    },
-    "spread_cooldown": {
-      "type": "string",
-      "enum": [
-        "normal",
-        "watch",
-        "cooldown",
-        "halt"
-      ]
-    },
-    "spread_reason": {
-      "type": [
-        "string",
-        "null"
-      ]
-    },
-    "cooldown_eta": {
-      "type": [
-        "string",
-        "null"
+    "risk": {
+      "type": "object",
+      "required": [
+        "reduce_only"
       ],
-      "format": "date-time"
+      "additionalProperties": false,
+      "properties": {
+        "reduce_only": {
+          "type": "boolean"
+        },
+        "reduce_only_reason": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
     },
-    "reduce_only": {
-      "type": "boolean"
-    },
-    "reduce_only_reason": {
-      "type": [
-        "string",
-        "null"
-      ]
+    "human": {
+      "type": "object",
+      "required": [
+        "double_entry_required",
+        "required_roles",
+        "acknowledged_roles",
+        "manual_comment_required",
+        "comment_min_length"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "double_entry_required": {
+          "type": "boolean"
+        },
+        "required_roles": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z0-9_]+$"
+          }
+        },
+        "acknowledged_roles": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z0-9_]+$"
+          }
+        },
+        "ack_deadline": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time"
+        },
+        "manual_comment_required": {
+          "type": "boolean"
+        },
+        "comment_min_length": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
     }
   }
 }

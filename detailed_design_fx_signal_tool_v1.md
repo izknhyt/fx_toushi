@@ -1,4 +1,4 @@
-# FXヒューマン・インザループ投資ツール 詳細設計書 v1.30
+# FXヒューマン・インザループ投資ツール 詳細設計書 v1.31
 
 ## 0. 文書情報
 - 作成日: 2025-02-20
@@ -9,6 +9,7 @@
 ### 0.1 改訂履歴
 | 版 | 日付 | 改訂概要 |
 | --- | --- | --- |
+| v1.31 | 2025-03-15 | GateStateを`market`/`risk`/`human`サブ構造体へ分割し、Humanダブルエントリーフィールドを定義。§3.16チェックリスト、§3.5.4例外表、GateStateスキーマ参照を更新。 |
 | v1.30 | 2025-03-14 | GateStateフィールドを再整理し、`calendar_block`/`spread_cooldown`命名に統一。§3.5.4例外表・Spreadクールダウン節・Reporter Feature Flag表記・Codexハンドオフチェックリストを更新し、監査用語と整合。レビュー履歴を追加。 |
 | v1.29 | 2025-03-12 | すご腕SEレビュー反映。§0.6.11を新設しレビュー結果/フォローアップを整理。§3.5にStrategy Plugin契約/コンテキスト仕様を追記し、シグナル疑似コードをExecutionModel/SpreadMonitorの実APIと整合。Codex向けチェックリストと監査リンクを更新。 |
 | v1.28 | 2025-03-10 | §87でSignal Streaming Gateway & Offline Sync設計（FR-12/FR-47, NFR-02/NFR-11/NFR-18, M3準備）を新設し、Shadow Session多重接続/バックプレッシャ/再送/オフラインキャッシュ設計、信頼性/レイテンシ指標、Validation Data Playbook/Runbook/Feature Flag/テスト運用を定義。 |
@@ -211,7 +212,7 @@
 1. `poetry install --no-root`が成功し、`python -m tradectl --help`（仮スタブ可）が0終了すること。
 2. `pytest -k smoke`が通る最小テストスイートを確立し、CIテンプレ（`ci/templates/python_smoke.yml`）に組み込むこと。
 3. `docs/review_log.md`に本レビュー反映、`docs/prompt_packages/`へPacket下書きを格納済みであること。
-4. Spread/Kill Switch等のリスク閾値ファイル（`config/risk_policy.yaml`など）が`schema/`定義と突合できる形で雛形化され、`GateState`スキーマ（`news_block`/`holiday_block`/`calendar_block`/`spread_cooldown`/`reduce_only`）と整合していること。
+4. Spread/Kill Switch等のリスク閾値ファイル（`config/risk_policy.yaml`など）が`schema/`定義と突合できる形で雛形化され、`GateState`スキーマ（`market.news.blocked`/`market.calendar.blocked`/`market.spread.state`/`risk.reduce_only`/`human.double_entry_required`）と整合していること。
 5. Codexへ渡すIssue/PRテンプレに§0.6.8の番号を引用し、未解決項目がある場合は「受入不可（前提未了）」ラベルを適用してから再依頼すること。
 
 #### 0.6.10 すご腕SEレビュー（2025-03-10）フォローアップ
@@ -1127,9 +1128,9 @@ def run_signal_cycle(bar: MarketBar, ctx: ModeContext) -> list[TicketProposal]:
 | ケース | トリガー条件 | フェイルセーフ動作 | Runbook/ログ |
 | --- | --- | --- | --- |
 | データ欠損 | `FeaturePipeline`で`nan_policy`が発動し窓サイズ不足 | 該当シグナルを`plugin.skip(reason='feature_gap')`で棄却、`data.feature_gap`イベントを発火 | `logs/ops/data_gaps.log`、Runbook `RUN-DATA-06` |
-| 急変動（スプレッド拡大） | `SpreadMonitor`が`SpreadState.state`（§3.6）を`halt`へ遷移、または`SpreadState.percentile >= 0.95` | `gate_state.spread_cooldown != "normal"`で全戦略抑止、`tradectl board --guarded`を推奨 | `health_state_transitions.jsonl`、Runbook `RUN-RISK-02` |
+| 急変動（スプレッド拡大） | `SpreadMonitor`が`SpreadState.state`（§3.6）を`halt`へ遷移、または`SpreadState.percentile >= 0.95` | `gate_state.market.spread.state != "normal"`で全戦略抑止、`tradectl board --guarded`を推奨 | `health_state_transitions.jsonl`、Runbook `RUN-RISK-02` |
 | 急変動（価格ギャップ） | `RegimeDetector.volatility`が閾値超過、または`|bar.return|>config.execution.max_gap` | `ExecutionModel`が`expected_slippage`へギャップ分を上乗せし、許容超過でシグナル除外 | `logs/execution/gap_reject.log`、Runbook `RUN-RISK-03` |
-| 外部イベント遮断 | `CalendarService.is_blocked(symbol)`が真 | `StrategyEngine`が`gate_state.calendar_block`を検出して即時Reject | `calendar/block_events.jsonl`、Runbook `RUN-OPS-04` |
+| 外部イベント遮断 | `CalendarService.is_blocked(symbol)`が真 | `StrategyEngine`が`gate_state.market.calendar.blocked`を検出して即時Reject | `calendar/block_events.jsonl`、Runbook `RUN-OPS-04` |
 | 指標計算異常 | `IndicatorError`が発生しリトライ失敗 | `HealthMonitor.hard_stop('indicator')`→Kill Switchレビュー、`tradectl resync --since`で再計算 | `logs/errors/indicator.log`、Runbook `RUN-DATA-08` |
 | アカウント情報遅延 | `AccountService.refresh_state`が`stale_ts`を返却 | `RiskManager`が`account_stale`でReject、`health.raise('degraded','account_state_stale')` | `logs/account/stale.log`、Runbook `RUN-OPS-06` |
 
@@ -1141,7 +1142,7 @@ def run_signal_cycle(bar: MarketBar, ctx: ModeContext) -> list[TicketProposal]:
 | --- | --- | --- | --- |
 | `features` | `FeatureContext` | シンボル×タイムフレーム毎の指標ビュー。`lookup(symbol, feature, timeframe)`でアクセス。 | `FeaturePipeline.update()`が返した差分キャッシュ。 |
 | `regime` | `RegimeState` | ボラティリティ/トレンド判定。`mode ∈ {range, trend, spike}`。 | `RegimeDetector.update()`結果。 |
-| `gate` | `GateState` | カレンダー/スプレッド/ニュース/Board Modeのブロック状態。 | `GateAggregator.snapshot()`、Kill Switchを含む。 |
+| `gate` | `GateState` | `market`（ニュース/カレンダー/Spread）、`risk.reduce_only`、`human`（ダブルACK/コメント要件）のブロック状態。 | `GateAggregator.snapshot()`、Kill Switchを含む。 |
 | `account` | `AccountState` | エクイティ、利用可能証拠金、通貨バケット露出。`stale_ts`付き。 | `AccountService.refresh_state(ctx)`、Paperはシミュレーション口座。 |
 | `config` | `ConfigSnapshot` | `risk_policy`, `strategy_manifest`, `board_modes`等のハッシュ付き読み取り専用ビュー。 | `ConfigRegistry.snapshot()`、変更時は`cfg_hash`が更新。 |
 | `watchlist` | `frozenset[str]` | StrategyEngineが監視・評価対象とするシンボル集合。ManifestとFeaturePipelineの整合済み。 | `StrategyManifestResolver.effective_symbols(...)`、不足時は`feature_frame.symbols`から派生。 |
@@ -1268,7 +1269,7 @@ FillStyle = Literal["ioc", "fok", "gtd"]
 - **アルゴリズム**:
   - **M1 Core**ではヒューマン遅延Δtと滑り補正を`execution_model.yaml`および`config.execution.*`に保持した平均値（例: `execution.human_delay_secs`, `execution.slippage_mean_pips`）で決定し、`MarketFrame`終値を基準に`expected_entry`と`expected_slippage`を算出する。Marketable Limit保護は`protection_pips`定数で指値/TTLを決定し、`ttl_seconds`は`execution.human_delay_secs + execution.ttl_buffer_sec`として決定論的に返す。
   - **M1.1以降**はヒューマン遅延を`distribution.human_delay`から抽出し、滑り補正をシンボル×レジーム毎のp10/p50/p90から補間する拡張に差し替える。
-  - SpreadMonitorはローリング分位で`SpreadCooldownState`を算出し、`gate_state.spread_cooldown`を更新。
+  - SpreadMonitorはローリング分位で`SpreadCooldownState`を算出し、`gate_state.market.spread.state`を更新。
 - **出力**: `ExecutionAdjustments`（expected_entry, expected_slippage, fill_style, ttl_seconds, drift_guard_R）のみを返却し、後段のPositionSizer/TicketBuilderが消費する。
 - Spread監視やガード判定が必要な場合は、呼び出し側が`SpreadMonitor.current_state()`を個別に参照し、戻り値に混在させない。
 - **M1 Core整合性**: `ExecutionAdjustments`の全フィールドを決定論的に供給し、Risk Manager/PositionSizer/Scoringが`expected_entry`/`ttl_seconds`を必須前提として参照できるようにする。M1.1で確率分布化する際も同じAPIシグネチャを維持する。
@@ -1286,7 +1287,7 @@ FillStyle = Literal["ioc", "fok", "gtd"]
 #### SpreadStateデータモデル
 | フィールド | 型 | 説明 | 備考 |
 | --- | --- | --- | --- |
-| `state` | `Literal["normal", "watch", "cooldown", "halt"]` | ゲート判定用の現在ステータス。 | GateStateの`spread_cooldown`と同一語彙を使用。 |
+| `state` | `Literal["normal", "watch", "cooldown", "halt"]` | ゲート判定用の現在ステータス。 | GateStateの`market.spread.state`と同一語彙を使用。 |
 | `spread_pips` | `Decimal` | 直近測定したスプレッド（pips）。 | `SpreadMetrics.latest_spread_pips`を反映。 |
 | `percentile` | `float` | ローリング分布内の位置（0.0〜1.0）。 | `SpreadMonitor`内部分位数から算出。 |
 | `threshold_pips` | `Decimal` | 遷移判定に用いた閾値。 | `config.execution.spread_thresholds`由来。 |
@@ -1315,7 +1316,7 @@ FillStyle = Literal["ioc", "fok", "gtd"]
 - **公開API**: `evaluate(ranked_signals, context)`, `kill_switch_state()`, `capture_snapshot()`。
 - **内部状態**: `CurrencyBucketExposure`（`{bucket, gross_R, net_R, position_count}`）、`CorrelationMatrix`（30日ローリング）、`RiskMetrics`（`r_eff`, `max_bucket`, `drawdown`, `margin_buffer`）。`capture_snapshot()`は`data/correlation/<YYYYMMDD>/risk_snapshot.parquet`へ書き出し、最新行を`data/correlation/latest.parquet`へハードリンクする。
 - **チェック順序**:
-  1. `GateState`（ニュース/祝日/Spread/ReduceOnly）。
+  1. `GateState`（`market.news`/`market.calendar`/`market.spread`/`risk.reduce_only`/`human`）。
   2. Kill Switchが`STOP`ならReject。
   3. `AccountState.running_pnl_daily/weeky`で閾値判定（日次-2.5%, 週次-5%）。
   4. `AccountExposureCache.rebuild()`で通貨バケット別エクスポージャを算出し、`config.correlation.bucket_limits`と比較。
@@ -1421,7 +1422,7 @@ Runbook references: RUN-FUND-01 (daily update), RUN-FUND-02 (degraded ops)
 ### 3.13 CalendarService (`src/calendar/service.py`)
 - **公開API**: `update(now)`, `is_blocked(symbol)`, `reload()`。
 - **入力**: `calendar/high_impact_events.csv`, `calendar/holidays.csv`, `config.trading_timezone`。
-- **処理**: UTC→ローカル変換→重要度別に±15/30分ブロック。祝日/週末ロールオーバーで`GateState.holiday_block`を設定。解除時は`CalendarWindowCleared`。
+- **処理**: UTC→ローカル変換→重要度別に±15/30分ブロック。祝日/週末ロールオーバーで`GateState.market.calendar.holiday_block`を設定。解除時は`CalendarWindowCleared`。
 - **拡張**: M2で外部API同期（adapters）がイベント強度を自動更新。
 
 #### APIインターフェース一覧
@@ -1477,18 +1478,18 @@ Runbook references: RUN-FUND-01 (daily update), RUN-FUND-02 (degraded ops)
 ### 3.16 TicketBuilder (`src/ticket/builder.py`, `src/ticket/validator.py`, `src/ticket/checklist.py`)
 - **公開API**: `build(sized_signal, execution_adjustments, gate_state)`。
 - **処理**: 価格丸め→距離検証→TTL計算→Checklist生成（必須項目は下表参照）→`TicketProposal`組立。
-- **入力順序と表示統一**: `ChecklistBuilder.generate()`は`HumanErrorChecklist`を必ず `spread_window_clear`→`double_entry_confirmed`→`sl_tp_verified`→`lot_round_ok`→`price_decimals_ok`→`oco_ack_received`→`manual_comment_logged` の順で整列し、`label`/`field`をCLI表示（`tradectl board/ticket`) と監査ログ (`audit_writer`) の両方で同一の英字表記に固定する。CLIは番号付きリストを同順序で表示し、監査ログの`extras.checklist[].field`にも同じフィールド名が書き込まれる。
-- **チェックリスト定義**: 下表の項目は全て`mandatory=true`で、検証ロジック/Runbook紐づけを固定する。`ChecklistBuilder`は順序崩れやラベル改変を検知した場合`ChecklistInvariantError`（新設予定の例外）を送出し、監査ログとCLI双方の整合を守る。
+- **入力順序と表示統一**: `ChecklistBuilder.generate()`は`HumanErrorChecklist`を必ず `spread_window_clear`→`double_entry_confirmed`→`sl_tp_verified`→`lot_round_ok`→`price_decimals_ok`→`oco_ack_received`→`manual_comment_logged` の順で整列し、`label`/`field`をCLI表示（`tradectl board/ticket`) と監査ログ (`audit_writer`) の両方で同一の英字表記に固定する。CLIは番号付きリストを同順序で表示し、監査ログの`extras.checklist[].field`にも同じフィールド名が書き込まれる。`ack_deadline`が設定されている場合、CLIは対象行に`(deadline: <ISO8601>)`ラベルを併記し、監査ログにも`deadline_iso`を埋め込む。
+- **チェックリスト定義**: 下表の項目は全て`mandatory=true`で、検証ロジック/Runbook紐づけを固定する。`ChecklistBuilder`は順序崩れやラベル改変を検知した場合`ChecklistInvariantError`（新設予定の例外）を送出し、監査ログとCLI双方の整合を守る。`GateState.human`の`double_entry_required`/`required_roles`/`ack_deadline`/`comment_min_length`はChecklist入力へ直接伝播し、CLI・監査ログともに同値で記録される。
 
 | フィールド名 (`checklist[].field`) | CLI表示ラベル | 必須 | 検証ルール | Runbook/検証スクリプト連携 |
 | --- | --- | --- | --- | --- |
 | `spread_window_clear` | `Spread & news window clear` | ✅ | `SpreadMonitor.latest()`が`gates.spread_max_pips`以下かつ`news_blackout.active=False`。Signal Board上のSpreadバッジと同期。 | `RUN-HITL-01` §1-2（Board確認）、`RUN-SPREAD-03`参照、AC-02補助 |
-| `double_entry_confirmed` | `Double-entry confirmed` | ✅ | 2名目承認者（`secondary_operator_id`）が`TicketBuilder.build()`に渡された`gate_state.human.double_entry_required=True`時にACKを記録。CLI `tradectl ticket approve --double-entry <user_id>`が`RUN-HITL-01`手順3-1/3-2で実行される。 | `RUN-HITL-01` §3 人的エラーチェックリスト、AC-10 `tradectl ticket checklist --id <ticket_id>` |
+| `double_entry_confirmed` | `Double-entry confirmed` | ✅ | 2名目承認者（`secondary_operator_id`）が`TicketBuilder.build()`に渡された`gate_state.human.double_entry_required=True`時にACKを記録。`required_roles`に列挙されたロールID全てが`acknowledged_roles`へ移るまでチケットは`pending`表示となる。CLI `tradectl ticket approve --double-entry <user_id>`が`RUN-HITL-01`手順3-1/3-2で実行される。 | `RUN-HITL-01` §3 人的エラーチェックリスト、AC-10 `tradectl ticket checklist --id <ticket_id>` |
 | `sl_tp_verified` | `SL/TP distances verified` | ✅ | `ticket.payload.tp_price`と`sl_price`が`SizedSignal`推奨値±`broker_rules.slop_pips`内。`tradectl ticket inspect`出力と突合する。 | `RUN-HITL-01` §2-2、AC-02/AC-10 `tradectl ticket inspect --id <ticket_id>` |
 | `lot_round_ok` | `Lot & quantity rounding OK` | ✅ | `TicketValidator.validate()`が`broker_rules.min_lot`/`lot_step`を満たす。`tradectl ticket check-size`によるバッチ検証を同期。 | `RUN-HITL-01` §4-1/§4-3、AC-10/AC-11スクリプト |
 | `price_decimals_ok` | `Price precision OK` | ✅ | `ticket.payload.entry_price`/`sl_price`/`tp_price`が`broker_rules.precision`桁と一致。 | `RUN-HITL-01` §4-2、AC-11 `tradectl ticket check-batch --csv` |
 | `oco_ack_received` | `OCO acknowledged` | ✅ | `EventBus`に`ticket.oco_ack`イベントが届き`latency_ms<=120000`。CLI `tradectl ticket monitor --watch 120`が結果を検証。 | `RUN-HITL-01` §2-3、AC-02スクリプト |
-| `manual_comment_logged` | `Manual comment recorded` | ✅ | `ticket.payload.manual_comment`が非空で、`tradectl ticket approve --comment`により`len(comment)>=12`を満たす。 | `RUN-HITL-01` §3-3、AC-10 `reports/validation_log/AC-10_<date>.md` 更新手順 |
+| `manual_comment_logged` | `Manual comment recorded` | ✅ | `ticket.payload.manual_comment`が非空で、`tradectl ticket approve --comment`により`len(comment)>=gate_state.human.comment_min_length`を満たす。`manual_comment_required=False`の場合のみ自動的に`ok`を初期化。 | `RUN-HITL-01` §3-3、AC-10 `reports/validation_log/AC-10_<date>.md` 更新手順 |
 
 - **レンダリング例**:
 
@@ -1791,27 +1792,66 @@ class AccountState:
 
 ```python
 @dataclass
-class GateState:
-    news_block: bool
-    news_reason: Optional[str]
-    news_release_ts: Optional[datetime]
+class NewsGateState:
+    blocked: bool
+    reason: Optional[str]
+    release_ts: Optional[datetime]
+
+
+@dataclass
+class CalendarGateState:
+    blocked: bool
     holiday_block: bool
-    calendar_block: bool
-    calendar_reason: Optional[str]
-    spread_cooldown: SpreadCooldownState
-    spread_reason: Optional[str]
+    reason: Optional[str]
+
+
+@dataclass
+class SpreadGateState:
+    state: SpreadCooldownState
+    reason: Optional[str]
+    cooldown_eta: Optional[datetime]
+
+
+@dataclass
+class MarketGateState:
+    news: NewsGateState
+    calendar: CalendarGateState
+    spread: SpreadGateState
+
+
+@dataclass
+class RiskGateState:
     reduce_only: bool
     reduce_only_reason: Optional[str]
+
+
+@dataclass
+class HumanGateState:
+    double_entry_required: bool
+    required_roles: list[str]
+    acknowledged_roles: list[str]
+    ack_deadline: Optional[datetime]
+    manual_comment_required: bool
+    comment_min_length: int
+
+
+@dataclass
+class GateState:
+    market: MarketGateState
+    risk: RiskGateState
+    human: HumanGateState
+    schema_version: Optional[str] = None
 ```
 
-`calendar_block`は`CalendarService`が重要イベントの±指定ウィンドウに入ったシンボルへ設定し、`calendar_reason`にイベントIDやRunbook参照を保持する。
-Spreadガードは連続状態（`SpreadCooldownState`）で管理し、`spread_reason`に直近の判定根拠（例:`p95_exceeded`）を記録する。
+`market.calendar.blocked`は`CalendarService`が重要イベントの±指定ウィンドウに入ったシンボルへ設定し、`market.calendar.reason`にイベントIDやRunbook参照を保持する。祝日ロジックは`market.calendar.holiday_block`で独立して管理し、グローバルホリデーとシンボル個別の両方を表現できるようにする。Spreadガードは連続状態（`SpreadCooldownState`）で管理し、`market.spread.reason`に直近の判定根拠（例:`p95_exceeded`）を記録する。
 
 ```python
 SpreadCooldownState = Literal["normal", "watch", "cooldown", "halt"]
 ```
 
-> **備考**: M1では`"watch"`/`"halt"`を未使用とし、`SpreadMonitor`（§5.4）と`GateState`の相互参照が型レベルで保証されるように`typing.Literal`で定義する。Codex実装では本エイリアスを`src/execution/spread.py`へ配置し、ユニットテスト`tests/unit/test_spread_monitor.py`で値域外を拒否する。
+> **備考**: M1では`"watch"`/`"halt"`を未使用とし、`SpreadMonitor`（§5.4）と`GateState.market.spread.state`の相互参照が型レベルで保証されるように`typing.Literal`で定義する。Codex実装では本エイリアスを`src/execution/spread.py`へ配置し、ユニットテスト`tests/unit/test_spread_monitor.py`で値域外を拒否する。
+
+`HumanGateState`はHITLチケット承認時の制約を保持する。`required_roles`は`double_entry_required=True`の場合に承認へ参加すべきロールIDを列挙し、`acknowledged_roles`は既にACK済みのロールを記録する。`manual_comment_required`/`comment_min_length`は`manual_comment_logged`チェックの閾値に利用し、`ack_deadline`はRunbook指定の締切をUTCで保持する。
 
 `HealthState`は`status`, `reasons: dict[str, str]`, `alerts: list[AlertSummary]`, `last_update`を持つ。
 
@@ -2012,7 +2052,7 @@ ModeController遷移: `BACKTEST ↔ PAPER ↔ LIVE`は`active_jobs=0`かつ未�
 
 ### 5.4 Spreadクールダウン判定
 1. `spread_pips > spread_max_pips`または分位超過で`SpreadCooldownState=cooldown`。
-2. `GateState.spread_cooldown in {'cooldown','halt'}`、解除時刻を`cooldown_eta`に保持。
+2. `GateState.market.spread.state in {'cooldown','halt'}`、解除時刻を`GateState.market.spread.cooldown_eta`に保持。
 3. Risk/Ticketは理由をバッジ表示し新規提案を抑止。
 4. 正常化バー数が`cooldown_release_bars`連続で満たされると解除。
 

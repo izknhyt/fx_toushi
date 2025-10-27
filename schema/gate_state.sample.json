@@ -1,14 +1,32 @@
 {
-  "schema_version": "gate.state.v1",
-  "news_block": true,
-  "news_reason": "high_impact_release",
-  "news_release_ts": "2025-03-14T12:25:00Z",
-  "holiday_block": false,
-  "calendar_block": true,
-  "calendar_reason": "tokyo_fix_protection",
-  "spread_cooldown": "cooldown",
-  "spread_reason": "p95_exceeded",
-  "cooldown_eta": "2025-03-14T12:45:00Z",
-  "reduce_only": true,
-  "reduce_only_reason": "ops_double_ack_pending"
+  "schema_version": "gate.state.v2",
+  "market": {
+    "news": {
+      "blocked": true,
+      "reason": "high_impact_release",
+      "release_ts": "2025-03-14T12:25:00Z"
+    },
+    "calendar": {
+      "blocked": true,
+      "holiday_block": false,
+      "reason": "tokyo_fix_protection"
+    },
+    "spread": {
+      "state": "cooldown",
+      "reason": "p95_exceeded",
+      "cooldown_eta": "2025-03-14T12:45:00Z"
+    }
+  },
+  "risk": {
+    "reduce_only": true,
+    "reduce_only_reason": "ops_double_ack_pending"
+  },
+  "human": {
+    "double_entry_required": true,
+    "required_roles": ["primary_operator", "secondary_operator"],
+    "acknowledged_roles": ["primary_operator"],
+    "ack_deadline": "2025-03-14T12:20:00Z",
+    "manual_comment_required": true,
+    "comment_min_length": 12
+  }
 }

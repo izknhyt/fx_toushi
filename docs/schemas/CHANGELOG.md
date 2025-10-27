@@ -1,5 +1,9 @@
 # Schema Registry Change Log
 
+## 2025-03-15
+- `gate_state.schema.json` を `market`/`risk`/`human` のネスト構造に更新し、ニュース/カレンダー/Spread/Reduce-Only/ダブルエントリー要件を個別プロパティへ分割。
+  `required_roles`・`acknowledged_roles`・`comment_min_length` を追記し、`schema/gate_state.sample.json` を v2 レイアウトへ更新した。
+
 ## 2025-03-14
 - Added configuration schema set for Codex scaffolds: `strategy_manifest`, `feature_pipeline`,
   `board_modes`, `cfg`, `sla_threshold_profile`, and the operational `gate_state` snapshot. These
