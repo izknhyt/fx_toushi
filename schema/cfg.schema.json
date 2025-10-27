@@ -1,0 +1,281 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://fx-toushi.dev/schemas/cfg.schema.json",
+  "title": "ModeProfileConfig",
+  "description": "Runtime profile configuration covering ModeContext inputs (detailed design §3.1/§4.4).",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "profile_id",
+    "mode",
+    "data_ingestion",
+    "timeframes",
+    "risk",
+    "gates",
+    "strategies",
+    "execution",
+    "spread",
+    "funding",
+    "correlation",
+    "scheduler"
+  ],
+  "additionalProperties": true,
+  "properties": {
+    "schema_version": {
+      "anyOf": [
+        {
+          "type": "integer",
+          "minimum": 0
+        },
+        {
+          "type": "string",
+          "pattern": "^[a-z0-9_.\\-]+$"
+        }
+      ]
+    },
+    "profile_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "metadata": {
+      "type": "object",
+      "properties": {
+        "description": {
+          "type": "string"
+        },
+        "runbook_refs": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "uniqueItems": true
+        }
+      },
+      "additionalProperties": true
+    },
+    "mode": {
+      "type": "string",
+      "enum": [
+        "backtest",
+        "paper",
+        "live"
+      ]
+    },
+    "data_ingestion": {
+      "type": "object",
+      "required": [
+        "provider"
+      ],
+      "properties": {
+        "provider": {
+          "type": "string",
+          "minLength": 1
+        },
+        "symbols": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "uniqueItems": true
+        },
+        "fallback_providers": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "uniqueItems": true
+        },
+        "poll_interval_sec": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "catch_up_enabled": {
+          "type": "boolean"
+        },
+        "manual_fallback_allowed": {
+          "type": "boolean"
+        },
+        "sla_threshold_profile": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "additionalProperties": true
+    },
+    "timeframes": {
+      "type": "object",
+      "required": [
+        "trigger",
+        "regime_ref"
+      ],
+      "properties": {
+        "trigger": {
+          "type": "string",
+          "pattern": "^[0-9]+(s|m|h|d)$"
+        },
+        "regime_ref": {
+          "type": "string",
+          "pattern": "^[0-9]+(s|m|h|d)$"
+        }
+      },
+      "additionalProperties": true
+    },
+    "risk": {
+      "type": "object",
+      "required": [
+        "policy_id"
+      ],
+      "properties": {
+        "policy_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "overrides": {
+          "type": "object",
+          "additionalProperties": true
+        }
+      },
+      "additionalProperties": true
+    },
+    "gates": {
+      "type": "object",
+      "required": [
+        "board_mode_default"
+      ],
+      "properties": {
+        "board_mode_default": {
+          "type": "string",
+          "enum": [
+            "normal",
+            "guarded",
+            "halted"
+          ]
+        },
+        "enable_news_block": {
+          "type": "boolean"
+        },
+        "require_double_ack_on_resume": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": true
+    },
+    "strategies": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "enabled"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "weight": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          },
+          "priority": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": true
+      }
+    },
+    "execution": {
+      "type": "object",
+      "properties": {
+        "slippage_bps": {
+          "type": "number",
+          "minimum": 0
+        },
+        "latency_simulation_ms": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": true
+    },
+    "spread": {
+      "type": "object",
+      "required": [
+        "source"
+      ],
+      "properties": {
+        "source": {
+          "type": "string",
+          "minLength": 1
+        },
+        "cooldown_minutes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "guard_threshold_pips": {
+          "type": "number",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": true
+    },
+    "funding": {
+      "type": "object",
+      "properties": {
+        "apply_swap": {
+          "type": "boolean"
+        },
+        "accrual_calendar": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "additionalProperties": true
+    },
+    "correlation": {
+      "type": "object",
+      "required": [
+        "dataset"
+      ],
+      "properties": {
+        "dataset": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "additionalProperties": true
+    },
+    "scheduler": {
+      "type": "object",
+      "required": [
+        "timezone",
+        "session_start",
+        "session_end"
+      ],
+      "properties": {
+        "timezone": {
+          "type": "string",
+          "minLength": 1
+        },
+        "session_start": {
+          "type": "string",
+          "pattern": "^[0-9]{2}:[0-9]{2}(\\+1)?$"
+        },
+        "session_end": {
+          "type": "string",
+          "pattern": "^[0-9]{2}:[0-9]{2}(\\+1)?$"
+        }
+      },
+      "additionalProperties": true
+    }
+  }
+}

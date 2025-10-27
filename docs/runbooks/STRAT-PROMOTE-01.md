@@ -53,6 +53,7 @@ docops:
 - `tradectl research checklist show --strategy <id> --to paper --json`で最新チェックリストを取得し、`status='fail'`項目を洗い出す。
 - `validation_playbook/AC46_promotion_gate.yaml`に前回レビューの証跡が格納されていることを確認し、未提出項目をOps AgendaでTODO化。
 - `RiskDisclosureEnforcer`の`consent_reference_id`が有効 (`tradectl compliance status --user <id>` など) であることを確認。
+- `config/strategy_manifest.yaml`が`docs/schemas/strategy_manifest.schema.json`および`pytest -k config_schema_smoke`で検証済みか確認し、差分レビュー時にテストログを添付する。
 - `ExperimentTrackerService`最新実行 (`reports/research/<strategy_id>/experiments/<run_id>.json`) を揃え、必要なノートブック/レポートを保存。
 
 ## 手順

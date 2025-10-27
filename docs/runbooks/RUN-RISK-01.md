@@ -19,6 +19,7 @@
 ## 事前準備
 - `risk_policy.yaml`と`ops_schedule.yaml`が最新コミットと一致していること。
 - `config/strategy_manifest.yaml`の`schema_version`と`strategies`節を確認し、停止予定の戦略が`enabled=false`で反映済みかをチェックする。
+- `schema/gate_state.sample.json`が`docs/schemas/gate_state.schema.json`および`pytest -k config_schema_smoke`で検証済みで、Reduce-Only理由やSpreadクールダウン文言が運用と一致していること。
 - `reports/audit/drawdown_guard/`と`reports/performance/paper/latency_stats.json`への書き込み権限を確認する。
 - Kill Switch解除権限を持つプロダクトオーナーがSlack/電話で即応できる体制。
 

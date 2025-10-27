@@ -5,7 +5,7 @@
 schema_version: 0  # TODO: docs/schemas/strategy_manifest.schema.json が整備されたら見直す
 manifest_name: "M1 Core Strategy Manifest (scaffold)"
 revision_tag: "DRAFT-PLACEHOLDER"
-last_reviewed_at: 2025-03-10T00:00:00Z
+last_reviewed_at: "2025-03-10T00:00:00Z"
 notes: |
   このファイルは Codex 実装着手前のダミー値です。戦略有効化/優先度/Feature Flag 変更時は
   `docs/runbooks/STRAT-PROMOTE-01.md` および `reports/governance/strategy_board/` への記録を必須とします。
@@ -25,7 +25,7 @@ strategies:
         validation_playbook_id: "AC-01"
     governance:
       ticket_id: "TICKET-PLACEHOLDER"
-      last_board_decision: 2025-02-28
+      last_board_decision: "2025-02-28"
       reviewers:
         - Quant Lead
         - Ops Manager
