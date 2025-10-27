@@ -1,0 +1,14 @@
+{
+  "schema_version": "gate.state.v1",
+  "news_block": true,
+  "news_reason": "high_impact_release",
+  "news_release_ts": "2025-03-14T12:25:00Z",
+  "holiday_block": false,
+  "calendar_block": true,
+  "calendar_reason": "tokyo_fix_protection",
+  "spread_cooldown": "cooldown",
+  "spread_reason": "p95_exceeded",
+  "cooldown_eta": "2025-03-14T12:45:00Z",
+  "reduce_only": true,
+  "reduce_only_reason": "ops_double_ack_pending"
+}

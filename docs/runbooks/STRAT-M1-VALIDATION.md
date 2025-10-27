@@ -20,7 +20,7 @@
 - `reports/research/m1_baseline/validation_<date>.md`の直近エントリを開き、前回承認時の指標・ハッシュを確認。
 - `tradectl` CLIが最新版であることを確認（`tradectl --version`）。
 - `reports/research/m1_baseline/metrics_<date>.json`に前回実行の`config_hash`と`dataset_hash`が残っているか確認。
-- `config/feature_pipeline.yaml`を参照し、使用するインジケータの`enabled`フラグと窓長が検証対象のハッシュと一致しているか確認。
+- `config/feature_pipeline.yaml`を参照し、使用するインジケータの`enabled`フラグと窓長が検証対象のハッシュと一致しているか確認。`docs/schemas/feature_pipeline.schema.json`と`pytest -k config_schema_smoke`でスキーマ整合を事前確認する。
 - Ops Managerとレビューボードメンバー（Quant Lead, Ops Manager, Compliance Advisor optional）がSlack/メールで即応できる状態。
 
 ## 手順

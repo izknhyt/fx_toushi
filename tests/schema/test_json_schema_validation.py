@@ -9,6 +9,15 @@ from jsonschema import Draft202012Validator, ValidationError
 pytestmark = pytest.mark.smoke
 
 
+def _build_validator(
+    load_json_schema: Callable[[str | Path], dict],
+    schema_path: str,
+) -> Draft202012Validator:
+    schema = load_json_schema(schema_path)
+    Draft202012Validator.check_schema(schema)
+    return Draft202012Validator(schema)
+
+
 def test_accounts_profile_accepts_valid_profile(
     load_json_schema: Callable[[str | Path], dict],
 ) -> None:
@@ -150,3 +159,90 @@ def test_recovery_plan_rejects_unknown_trigger_reason(
                 "recovery_plan": invalid_recovery_plan,
             }
         )
+
+
+@pytest.mark.config_schema_smoke
+def test_strategy_manifest_scaffold_is_valid(
+    load_json_schema: Callable[[str | Path], dict],
+    load_config: Callable[[str | Path], object],
+) -> None:
+    validator = _build_validator(
+        load_json_schema, "docs/schemas/strategy_manifest.schema.json"
+    )
+    manifest = load_config("config/strategy_manifest.yaml")
+
+    validator.validate(manifest)
+
+
+@pytest.mark.config_schema_smoke
+def test_feature_pipeline_scaffold_is_valid(
+    load_json_schema: Callable[[str | Path], dict],
+    load_config: Callable[[str | Path], object],
+) -> None:
+    validator = _build_validator(
+        load_json_schema, "docs/schemas/feature_pipeline.schema.json"
+    )
+    pipeline_cfg = load_config("config/feature_pipeline.yaml")
+
+    validator.validate(pipeline_cfg)
+
+
+@pytest.mark.config_schema_smoke
+def test_board_modes_scaffold_is_valid(
+    load_json_schema: Callable[[str | Path], dict],
+    load_config: Callable[[str | Path], object],
+) -> None:
+    validator = _build_validator(
+        load_json_schema, "docs/schemas/board_modes.schema.json"
+    )
+    board_modes = load_config("config/board_modes.yaml")
+
+    validator.validate(board_modes)
+
+
+@pytest.mark.config_schema_smoke
+@pytest.mark.parametrize(
+    "profile_name",
+    ["backtest", "paper", "live"],
+)
+def test_profiles_match_cfg_schema(
+    load_json_schema: Callable[[str | Path], dict],
+    load_config: Callable[[str | Path], object],
+    profile_name: str,
+) -> None:
+    validator = _build_validator(load_json_schema, "docs/schemas/cfg.schema.json")
+    profile = load_config(f"config/profiles/{profile_name}.yaml")
+
+    validator.validate(profile)
+
+
+@pytest.mark.config_schema_smoke
+@pytest.mark.parametrize(
+    "profile_path",
+    [
+        "config/sla_thresholds/default.yaml",
+        "config/sla_thresholds/active.yaml",
+    ],
+)
+def test_sla_threshold_profiles_are_valid(
+    load_json_schema: Callable[[str | Path], dict],
+    load_config: Callable[[str | Path], object],
+    profile_path: str,
+) -> None:
+    validator = _build_validator(
+        load_json_schema, "docs/schemas/sla_threshold_profile.schema.json"
+    )
+    profile = load_config(profile_path)
+
+    validator.validate(profile)
+
+
+@pytest.mark.config_schema_smoke
+def test_gate_state_sample_is_valid(
+    load_json_schema: Callable[[str | Path], dict],
+    load_config: Callable[[str | Path], object],
+) -> None:
+    validator = _build_validator(load_json_schema, "docs/schemas/gate_state.schema.json")
+    gate_state = load_config("schema/gate_state.sample.json")
+
+    validator.validate(gate_state)

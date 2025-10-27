@@ -1,0 +1,162 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://fx-toushi.dev/schemas/feature_pipeline.schema.json",
+  "title": "FeaturePipelineConfig",
+  "description": "Feature pipeline configuration derived from detailed design §3.4–§3.5.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "pipeline",
+    "indicators"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "anyOf": [
+        {
+          "type": "integer",
+          "minimum": 0
+        },
+        {
+          "type": "string",
+          "pattern": "^[a-z0-9_.\\-]+$"
+        }
+      ]
+    },
+    "pipeline": {
+      "type": "object",
+      "required": [
+        "default_timeframe_minutes",
+        "lookback_bars"
+      ],
+      "properties": {
+        "default_timeframe_minutes": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "lookback_bars": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "resample": {
+          "type": "object",
+          "required": [
+            "enabled"
+          ],
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "timeframes": {
+              "type": "array",
+              "items": {
+                "$ref": "#/definitions/timeframe"
+              },
+              "uniqueItems": true
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "indicators": {
+      "type": "object",
+      "minProperties": 1,
+      "patternProperties": {
+        "^[a-z0-9_][a-z0-9_\\-]*$": {
+          "type": "object",
+          "required": [
+            "enabled",
+            "timeframes"
+          ],
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "timeframes": {
+              "type": "array",
+              "minItems": 1,
+              "uniqueItems": true,
+              "items": {
+                "$ref": "#/definitions/timeframe"
+              }
+            },
+            "output_key": {
+              "type": "string",
+              "minLength": 1
+            },
+            "output_keys": {
+              "type": "object",
+              "minProperties": 1,
+              "additionalProperties": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "window": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "stddev": {
+              "type": "number",
+              "minimum": 0
+            },
+            "fast_period": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "slow_period": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "signal_period": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "derivative": {
+              "type": "string",
+              "enum": [
+                "first",
+                "second"
+              ]
+            }
+          },
+          "allOf": [
+            {
+              "anyOf": [
+                {
+                  "required": [
+                    "output_key"
+                  ]
+                },
+                {
+                  "required": [
+                    "output_keys"
+                  ]
+                }
+              ]
+            }
+          ],
+          "additionalProperties": true
+        }
+      },
+      "additionalProperties": false
+    },
+    "feature_flags": {
+      "type": "object",
+      "patternProperties": {
+        "^[a-z0-9_]+$": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "definitions": {
+    "timeframe": {
+      "type": "string",
+      "pattern": "^[0-9]+(s|m|h|d)$"
+    }
+  }
+}
