@@ -41,7 +41,7 @@
 - `StrategyContext` が公開するフィールド: `features`, `regime`, `gate`, `account`, `config`, `watchlist`, `clock`, `seed`。Codex プロンプトでは順序と名称を固定化し、`watchlist` を監視対象シンボル集合として参照すること。
 
 ### 2.4 GateState伝播（§3.5.2, §3.16）
-- `run_signal_cycle` 疑似コードでは`gate_state = GateAggregator.snapshot()`で取得したオブジェクトを`TicketBuilder.build`へ第三引数として渡す。`gate_state.market.per_symbol.get(sized_sig.symbol)`が存在する場合はそのスライスを優先し、なければグローバル`gate_state`を渡して`reduce_only`や`double_entry_required`などのフラグが失われないようにする。
+- `run_signal_cycle` 疑似コードでは`gate_state = GateAggregator.snapshot()`で取得したオブジェクトを保持し、`TicketBuilder.build(sized_signal, execution_adjustments, gate_state_or_slice)`へ第三引数として渡す。`gate_state.market.per_symbol.get(sized_sig.symbol)`が存在する場合はそのスライスを優先し、なければグローバル`gate_state`を渡して`reduce_only`や`double_entry_required`などのフラグが失われないようにする。Workflow/Backtestの双方が同一スナップショットを共有することで、シーケンス図 (§3.5.1) と疑似コード (§3.5.2) のGateState伝播が一致することを保証する。
 - `TicketBuilder` 実装では受け取った`GateState`のミュータブル更新を禁止し、シンボルスライスとグローバル制約を統合してChecklist生成・WARNバッジ付与・`TicketBlockedError`判定を行う。Codex実装ではユニットテスト`pytest -k "ticket_builder"`でGateStateの反映を検証すること。
 
 ## 3. チェックリスト
