@@ -1,0 +1,80 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://fx-toushi.dev/schemas/board_modes.schema.json",
+  "title": "BoardModes",
+  "description": "Signal Board mode guard configuration per detailed design §2.5/§3.5 and Runbook RUN-SPREAD-03.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "modes"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "anyOf": [
+        {
+          "type": "integer",
+          "minimum": 0
+        },
+        {
+          "type": "string",
+          "pattern": "^[a-z0-9_.\\-]+$"
+        }
+      ]
+    },
+    "modes": {
+      "type": "object",
+      "minProperties": 1,
+      "patternProperties": {
+        "^[a-z0-9_][a-z0-9_\\-]*$": {
+          "type": "object",
+          "required": [
+            "description",
+            "allow_new_signals",
+            "allow_reduce_only",
+            "manual_ack_required"
+          ],
+          "properties": {
+            "description": {
+              "type": "string",
+              "minLength": 1
+            },
+            "allow_new_signals": {
+              "type": "boolean"
+            },
+            "allow_reduce_only": {
+              "type": "boolean"
+            },
+            "manual_ack_required": {
+              "type": "boolean"
+            },
+            "escalation_links": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              },
+              "uniqueItems": true
+            },
+            "guardrails": {
+              "type": "object",
+              "properties": {
+                "degraded_reasons": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                  "pattern": "^[a-z0-9_.\\-]+$"
+                  },
+                  "uniqueItems": true
+                }
+              },
+              "additionalProperties": true
+            }
+          },
+          "additionalProperties": true
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

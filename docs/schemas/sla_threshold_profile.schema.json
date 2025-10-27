@@ -1,0 +1,78 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://fx-toushi.dev/schemas/sla_threshold_profile.schema.json",
+  "title": "SlaThresholdProfile",
+  "description": "Data ingestion SLA threshold definitions (detailed design §4.4, §9.4.4).",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "profile_id",
+    "provider_thresholds"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "anyOf": [
+        {
+          "type": "integer",
+          "minimum": 0
+        },
+        {
+          "type": "string",
+          "pattern": "^[a-z0-9_.\\-]+$"
+        }
+      ]
+    },
+    "profile_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "provider_thresholds": {
+      "type": "object",
+      "minProperties": 1,
+      "patternProperties": {
+        "^[a-z0-9_][a-z0-9_\\-]*$": {
+          "type": "object",
+          "properties": {
+            "fetch": {
+              "$ref": "#/definitions/latency_threshold"
+            },
+            "processing": {
+              "$ref": "#/definitions/latency_threshold"
+            }
+          },
+          "additionalProperties": true
+        }
+      },
+      "additionalProperties": false
+    },
+    "notes": {
+      "type": "string"
+    }
+  },
+  "definitions": {
+    "latency_threshold": {
+      "type": "object",
+      "required": [
+        "target_ms",
+        "warning_ms",
+        "critical_ms"
+      ],
+      "properties": {
+        "target_ms": {
+          "type": "number",
+          "minimum": 0
+        },
+        "warning_ms": {
+          "type": "number",
+          "minimum": 0
+        },
+        "critical_ms": {
+          "type": "number",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

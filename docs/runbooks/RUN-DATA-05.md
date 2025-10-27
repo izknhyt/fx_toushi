@@ -15,7 +15,7 @@
 - SLA未達（`make sla-report`結果）や手動CSV投入の判断を要するレビュー時。
 
 ## 手順
-1. `tradectl data health`で対象シンボルとプロバイダ、発生時刻、直近メトリクスを確認する。`metrics/data_ingestion_sla.jsonl`から前後30分のログを抽出し、`phase=fetch`/`phase=processing`それぞれの遅延を確認する。合わせて`config/sla_thresholds/active.yaml`（`schema_version`とRunbookリンクが`config/README.md`に記載されている雛形）を開き、現行プロファイルと閾値が一致しているかチェックする。
+1. `tradectl data health`で対象シンボルとプロバイダ、発生時刻、直近メトリクスを確認する。`metrics/data_ingestion_sla.jsonl`から前後30分のログを抽出し、`phase=fetch`/`phase=processing`それぞれの遅延を確認する。合わせて`config/sla_thresholds/active.yaml`（`schema_version`とRunbookリンクが`config/README.md`に記載されている雛形）を開き、`docs/schemas/sla_threshold_profile.schema.json`および`pytest -k config_schema_smoke`の検証結果が最新であることを確認した上で、現行プロファイルと閾値が一致しているかチェックする。
 2. **Signal Boardガード制御**: `tradectl status --detail`の`board_guard`セクション（またはボードヘッダの警告バナー）で`board_mode=guarded`かつ`reduce_only=true`になっていることを確認し、以下のシーケンスをチェックリストに沿って記録する。
    - データ鮮度検証: `metrics/data_ingestion_sla.jsonl`/`metrics/pipeline_latency.jsonl`の逸脱区間を突き合わせ、復旧まで新規提案停止の根拠を`reports/validation_log/AC-45_sla_<date>.md`に追記する。
    - Reduce-Only運用: 既存ポジションの縮小提案のみがSignal Boardで許可されていることを確認し、対応チケットID・判断理由を`reports/audit/reduce_only/<date>.md`へ記録する。
