@@ -165,7 +165,7 @@
 - **差分検証**: `git diff --stat`で対象ファイルが設計指定内に収まっているか確認する。想定外ファイル更新は即座に差戻し。`poetry lock`変更は明示的な承認を得る。
 - **静的チェック**: `ruff`, `mypy`（M1 optional）を`pre-commit`で実行。Codex出力に余計な`print`/`TODO`が含まれていないかを確認する。
 - **取引リスク**: Spread/Kill Switch関連の閾値が設計値から逸脱していないか、例外時にヒューマンへ十分な情報が届くかをレビューする。
-- **API契約**: `ExecutionModel.apply`の戻り値が`ExecutionAdjustments`単体であることを確認し、Spread状態や`SizedSignal`を返すような差分が紛れ込んでいないかチェックする（§3.6, PositionSizerが後段で消費）。
+- **API契約**: `ExecutionModel.apply`の戻り値が`ExecutionAdjustments`単体であることを確認し、Spread状態や`SizedSignal`を返すような差分が紛れ込んでいないかチェックする（§3.6, PositionSizerが後段で消費）。Diffレビューでは`return`文がタプル/辞書追加になっていないか、呼び出し側が複数値アンパックしていないかも確認する。
 - **ログ/監査**: `logger`メッセージはRunbook検索性の高いキーワード（例: `data_latency_fetch`, `kill_switch_manual_ack`）を含める。監査ログは`AuditRecord` schema準拠であること。
 - **テスト**: Codex出力に対して指定テストが実行されたことをCIログまたはローカル証跡で確認。未実行の場合は必ず差戻し。
 
@@ -1256,14 +1256,15 @@ FillStyle = Literal["ioc", "fok", "gtd"]
   - **M1 Core**ではヒューマン遅延Δtと滑り補正を`execution_model.yaml`および`config.execution.*`に保持した平均値（例: `execution.human_delay_secs`, `execution.slippage_mean_pips`）で決定し、`MarketFrame`終値を基準に`expected_entry`と`expected_slippage`を算出する。Marketable Limit保護は`protection_pips`定数で指値/TTLを決定し、`ttl_seconds`は`execution.human_delay_secs + execution.ttl_buffer_sec`として決定論的に返す。
   - **M1.1以降**はヒューマン遅延を`distribution.human_delay`から抽出し、滑り補正をシンボル×レジーム毎のp10/p50/p90から補間する拡張に差し替える。
   - SpreadMonitorはローリング分位で`SpreadCooldownState`を算出し、`gate_state.spread_cooldown`を更新。
-- **出力**: `ExecutionAdjustments`（expected_entry, expected_slippage, fill_style, ttl_seconds, drift_guard_R）。Spread状態は`SpreadMonitor.current_state()`で別途参照する。
+- **出力**: `ExecutionAdjustments`（expected_entry, expected_slippage, fill_style, ttl_seconds, drift_guard_R）のみを返却し、後段のPositionSizer/TicketBuilderが消費する。
+- Spread監視やガード判定が必要な場合は、呼び出し側が`SpreadMonitor.current_state()`を個別に参照し、戻り値に混在させない。
 - **M1 Core整合性**: `ExecutionAdjustments`の全フィールドを決定論的に供給し、Risk Manager/PositionSizer/Scoringが`expected_entry`/`ttl_seconds`を必須前提として参照できるようにする。M1.1で確率分布化する際も同じAPIシグネチャを維持する。
 - **エラーハンドリング**: Spreadデータ欠損で`SpreadDataDegraded`→`HealthMonitor.degraded`。Market snapshot不足は該当シグナルを拒否。
 
 #### APIインターフェース一覧
 | API/関数 | 入力 | 処理 | 出力 | 異常系 |
 | --- | --- | --- | --- | --- |
-| `ExecutionModel.apply(raw_signal, market_snapshot, spread_state, *, mode_context)` | `RawSignal`, 市場スナップショット（価格、ボラ指標）、Spread状態、実行設定、`ModeContext` | 遅延・滑り補正計算→TTL/保護幅決定→`ExecutionAdjustments`生成（モード別ログ/乱数シードを考慮） | `ExecutionAdjustments`（後段のPositionSizerが参照） | 市場データ欠落: `ExecutionModelInputError`。ブローカー制約違反: `ExecutionRuleViolation` |
+| `ExecutionModel.apply(raw_signal, market_snapshot, spread_state, *, mode_context)` | `RawSignal`, 市場スナップショット（価格、ボラ指標）、Spread状態、実行設定、`ModeContext` | 遅延・滑り補正計算→TTL/保護幅決定→`ExecutionAdjustments`生成（モード別ログ/乱数シードを考慮） | `ExecutionAdjustments`のみ（後段のPositionSizerが参照） | 市場データ欠落: `ExecutionModelInputError`。ブローカー制約違反: `ExecutionRuleViolation` |
 | `ExecutionModel.validate_config(config)` | `execution_model.yaml`, 許容範囲設定 | 設定スキーマ検証→危険値（遅延>90s等）を警告→監査記録 | `ValidationReport` | スキーマ不正: `ExecutionConfigError` |
 | `SpreadMonitor.update(spread_frame)` | `SpreadMetrics`（最新スプレッド、分位、時間）、閾値設定 | ローリング統計更新→`cooldown_state`遷移→EventBus通知 | `SpreadCooldownState` | データ欠落: `SpreadDataDegraded` |
 | `SpreadMonitor.current_state(symbols: Iterable[str] &#124; None)` | 監視対象シンボル（省略時は全シンボル） | 内部キャッシュから最新`SpreadState`辞書を構築し、`symbols`フィルタを適用 | `dict[str, SpreadState]` | 未初期化: `SpreadMonitorNotInitialized`。欠損シンボル: `SpreadMonitorNotFound` |
