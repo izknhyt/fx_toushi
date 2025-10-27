@@ -109,6 +109,64 @@
               "format": "date-time"
             }
           }
+        },
+        "per_symbol": {
+          "type": "object",
+          "description": "Symbol-specific gate blocks that override global news/calendar settings.",
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "news": {
+                "type": "object",
+                "required": [
+                  "blocked"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                  "blocked": {
+                    "type": "boolean"
+                  },
+                  "reason": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "release_ts": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "format": "date-time"
+                  }
+                }
+              },
+              "calendar": {
+                "type": "object",
+                "required": [
+                  "blocked",
+                  "holiday_block"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                  "blocked": {
+                    "type": "boolean"
+                  },
+                  "holiday_block": {
+                    "type": "boolean"
+                  },
+                  "reason": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  }
+                }
+              }
+            },
+            "minProperties": 1
+          }
         }
       }
     },
