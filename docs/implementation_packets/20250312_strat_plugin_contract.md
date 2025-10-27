@@ -40,6 +40,10 @@
 ### 2.3 Codex Prompt用 StrategyContext 属性一覧（§3.5.5）
 - `StrategyContext` が公開するフィールド: `features`, `regime`, `gate`, `account`, `config`, `watchlist`, `clock`, `seed`。Codex プロンプトでは順序と名称を固定化し、`watchlist` を監視対象シンボル集合として参照すること。
 
+### 2.4 GateState伝播（§3.5.2, §3.16）
+- `run_signal_cycle` 疑似コードでは`gate_state = GateAggregator.snapshot()`で取得したオブジェクトを`TicketBuilder.build`へ第三引数として渡す。`gate_state.market.per_symbol.get(sized_sig.symbol)`が存在する場合はそのスライスを優先し、なければグローバル`gate_state`を渡して`reduce_only`や`double_entry_required`などのフラグが失われないようにする。
+- `TicketBuilder` 実装では受け取った`GateState`のミュータブル更新を禁止し、シンボルスライスとグローバル制約を統合してChecklist生成・WARNバッジ付与・`TicketBlockedError`判定を行う。Codex実装ではユニットテスト`pytest -k "ticket_builder"`でGateStateの反映を検証すること。
+
 ## 3. チェックリスト
 - [ ] 設計整合: §3.5.5・§0.6.11と照合し、Protocol/ログ要件を満たす
 - [ ] テスト実行: `poetry run pytest -k "strategy_plugin_contract or strategy_registry"`
