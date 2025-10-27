@@ -195,15 +195,14 @@
 
 すご腕SE・トレーダー観点での初回レビューにより、現状のリポジトリと本詳細設計とのギャップを以下の通り整理した。Codexへ実装を依頼する前に、必ず是正またはチケット化する。
 
-| # | 指摘内容 | 影響 | 是正方針 / トラッキング先 |
+| # | 指摘内容 | 影響 | 是正状況（解決日 / Packet / ファイルパス） |
 | --- | --- | --- | --- |
-| 1 | `pyproject.toml`/`poetry.lock`が未配置で、§1.7・§3.22の依存管理方針と乖離。 | 依存解決が属人的になり、Codexが環境を再現できない。 | `docs/implementation_packets/`に`PKG-BOOT-01` Packetを起票し、Python 3.11・Lint/Testツールを明記した`pyproject.toml`を作成。`docs/development_style_and_linting.md`と整合を取る。 |
-| 2 | `src/`配下は`brokers/adapter.py`のみで、§1.3のディレクトリ構成に必要なパッケージ雛形が存在しない。 | Codexがクラス配置やインポート方針を誤解し、後続のPR差分が巨大化。 | `SRC-SCAFF-01` Packetで`src/app/__init__.py`等の空ファイルと`tests/unit/`雛形を生成し、`__all__`と型別Protocolを先に宣言。M1未スコープのディレクトリは`README.md`でスタブ理由を記載。 |
-| 3 | `tests/`は空で、§0.6.3の受入テスト名が未定義。 | Codexがテストを新設する際の命名/配置が分からず、CI整備に遅延。 | `TEST-SMOKE-01` Packetで`tests/unit/test_placeholder.py`（最小Smoke）と`tests/conftest.py`の骨組みを追加し、`pytest.ini`で`filterwarnings`/`markers`を宣言。 |
-| 4 | §79.1が`FieldMapping`/`RATE_LIMIT_SLA`を要求しているが、`src/brokers/adapter.py`は`EndpointSpec`のみ。 | ブローカー統合時にフィールド整合性テストが欠落し、HITL/Live移行のリスクが増大。 | `BROKER-META-01` Packetで`FieldMapping` dataclassと`RATE_LIMIT_SLA`辞書を追補し、`tests/unit/test_broker_adapter_contracts.py`から参照。既存`EndpointSpec`との整合を`docs/review_log.md`に記録。 |
-| 5 | `docs/review_log.md`に本レビュー結果の記録が未反映。 | 変更履歴と意思決定トレースが断絶し、AC-45/AC-51監査要件に抵触。 | 本レビュー完了後に`docs/review_log.md`へ日付・指摘・対応方針を追記し、重大項目は`logs/ops/review.log`へも転記。 |
-| 6 | `config/`配下の雛形（`risk_policy.yaml`/`strategy_manifest.yaml`/`board_modes.yaml`/`sla_thresholds/*.yaml`等）が存在せず、§4.4やRunbook参照と乖離。 | Codexが設定スキーマを前提に実装できず、テスト/CLIが即時失敗する。 | `CONFIG-SCAFF-01` Packetで空/ダミー値を含むYAML雛形と`config/README.md`を作成。`docs/schemas/`のJSON Schemaへリンクし、`pytest -k config_schema_smoke`で検証するスモークテストを追加。 |
-|   |   |   | ✅ 2025-03-13: `config/risk_policy.yaml` 雛形を追加し、Spread/Kill Switch主要閾値をコメント付きで配置。 |
+| 1 | `pyproject.toml`/`poetry.lock`が未配置で、§1.7・§3.22の依存管理方針と乖離。 | 依存解決が属人的になり、Codexが環境を再現できない。 | ✅ 2025-03-14 / `PKG-BOOT-01`: リポジトリ直下に`pyproject.toml`・`poetry.lock`を配置し、`ci/templates/python_smoke.yml`から`poetry install --no-root`を実行する前提を整備。 |
+| 2 | `src/`配下は`brokers/adapter.py`のみで、§1.3のディレクトリ構成に必要なパッケージ雛形が存在しない。 | Codexがクラス配置やインポート方針を誤解し、後続のPR差分が巨大化。 | ✅ 2025-03-14 / `SRC-SCAFF-01`: `src/__init__.py`と`src/app/__init__.py`、`src/core/__init__.py`、`src/infra/__init__.py`などを追加し、詳細設計準拠のパッケージスキャフォールドを構築。 |
+| 3 | `tests/`は空で、§0.6.3の受入テスト名が未定義。 | Codexがテストを新設する際の命名/配置が分からず、CI整備に遅延。 | ✅ 2025-03-14 / `TEST-SMOKE-01`: `tests/conftest.py`、`tests/smoke/test_feature_context_contract.py`、`tests/schema/test_json_schema_validation.py`を整備し、`pytest.ini`で`smoke`/`config_schema_smoke`マーカーを宣言。 |
+| 4 | §79.1が`FieldMapping`/`RATE_LIMIT_SLA`を要求しているが、`src/brokers/adapter.py`は`EndpointSpec`のみ。 | ブローカー統合時にフィールド整合性テストが欠落し、HITL/Live移行のリスクが増大。 | ⏳ 2025-03-14時点 / `BROKER-META-01`: `src/brokers/adapter.py`に`FieldMapping` dataclassと`RATE_LIMIT_SLA`定数を追加済み。想定テスト`tests/unit/test_broker_adapter_contracts.py`が未配置のため、検証ロジックの実装が残課題。 |
+| 5 | `docs/review_log.md`に本レビュー結果の記録が未反映。 | 変更履歴と意思決定トレースが断絶し、AC-45/AC-51監査要件に抵触。 | ✅ 2025-03-12 / Packet該当なし（Opsレビュー議事）: `docs/review_log.md`に2025-03-10/11/12レビューのサマリを追記済み。`logs/ops/review.log`は未整備のため、週次Opsレビューでフォローアップ継続。 |
+| 6 | `config/`配下の雛形（`risk_policy.yaml`/`strategy_manifest.yaml`/`board_modes.yaml`/`sla_thresholds/*.yaml`等）が存在せず、§4.4やRunbook参照と乖離。 | Codexが設定スキーマを前提に実装できず、テスト/CLIが即時失敗する。 | ✅ 2025-03-13 / `CONFIG-SCAFF-01`: `config/README.md`、`config/risk_policy.yaml`、`config/board_modes.yaml`、`config/strategy_manifest.yaml`、`config/feature_pipeline.yaml`、`config/profiles/{backtest,paper,live}.yaml`、`config/sla_thresholds/{README,default,active}.yaml`を整備し、`pytest -k config_schema_smoke`で検証可能な雛形を配置。 |
 
 上記是正策の進捗は週次Opsレビューで確認し、未完了項目は`OpsAgendaService`（§52.3）にTODOとして登録する。是正完了後、Codexへ渡すPacketには本表の該当番号を「前提条件」として明記すること。
 
