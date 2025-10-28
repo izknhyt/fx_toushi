@@ -214,6 +214,8 @@
 3. `docs/review_log.md`に本レビュー反映、`docs/prompt_packages/`へPacket下書きを格納済みであること。
 4. Spread/Kill Switch等のリスク閾値ファイル（`config/risk_policy.yaml`など）が`schema/`定義と突合できる形で雛形化され、`GateState`スキーマ（`market.news.blocked`/`market.calendar.blocked`/`market.spread.state`/`risk.reduce_only`/`human.double_entry_required`）と整合していること。
 5. Codexへ渡すIssue/PRテンプレに§0.6.8の番号を引用し、未解決項目がある場合は「受入不可（前提未了）」ラベルを適用してから再依頼すること。
+6. `ModeContext`のフィールド（§3.1 表）を初期化する`ModeContextFactory`/`ModeController`のスタブが揃い、`config/profiles/<mode>.yaml`→`ModeContext.profile`→`SessionManager.start()`の流れで`clock`/`data_feeds`/`execution_profile`/`account_gateway`が埋まることを単体テストまたはドキュメントで確認していること。
+7. `tradectl start --profile backtest`, `tradectl start --profile paper`, `tradectl start --profile live`（各モードはモック実装可）を手動/CIで実行し、`ModeContext`初期化ログ（`ctx.mode`, `ctx.profile.name`, `deterministic_seed`) が`logs/ops/session_start.log`に出力されること。終了時は`tradectl stop`→`SnapshotManager.persist()`までを含むテスト手順を`docs/validation/ModeContext_startup.md`に記録すること。
 
 #### 0.6.10 すご腕SEレビュー（2025-03-10）フォローアップ
 
@@ -649,6 +651,7 @@ M2以降で変更が見込まれる領域について、実装/運用負荷を�
 - **主要クラス**: `SessionManager`, `ModeController`, `SessionHandle`。
 - **公開API**: `start(profile, mode)`, `catch_up(from_ts=None)`, `shutdown(graceful=True)`, `status()`, `reset_kill_switch()`。
 - **状態管理**: `SessionState`に`mode`, `health`, `active_jobs`, `cfg_hash`, `last_bar_ts`を保持。`ModeController`は`ModeContext`（バックテスト: in-memory fill, Paper: 仮想 fills, Live: ユーザー入力CSV）を提供。
+- **ModeContext初期化**: `ModeContextFactory`が`profile`（`config/profiles/<name>.yaml`）、`clock`（Backtestは`ReplayClock`, Paper/Liveは`UtcMarketClock`）、`data_feeds`（`primary/fallback/manual_bundle`）、`execution_profile`（`execution_model.yaml`＋`profile.execution`差分）を組み立て、`deterministic_seed`を`profile.seed_base ^ session_id`で決定する。`account_gateway`/`audit_channel`はモード専用スタブ（Backtest=メモリ、Paper=シミュレーション、Live=実口座＋WORMログ）を注入し、SessionManagerは生成結果をWorkflow Orchestratorへ透過する。
 - **Catch-up**: `resync_queue`へ`BackfillJob`を投入し、欠損ウィンドウの長さと影響ティッカー数から`priority ∈ {critical, high, normal}`を決定して登録。主要4ペアで30分超欠損が発生した場合は自動的に`critical`を付与し、`provider_priority`を`{cache > dukascopy > yfinance}`へ強制切替する。処理中は`metrics/data_ingestion_sla.jsonl`へ`catch_up_lag_minutes`を追記し、30分超で`HealthMonitor.raise(level='critical', reason='data_latency_catch_up')`を発火。`BackfillJob`が連続3回失敗した場合は24時間ウィンドウを最大4時間単位に分割し直し、再投入前に`ManualCsvIngestionTask`へ手動CSV要求フラグを設定する。完了時は`ResyncCompleted(catch_up_elapsed_sec, recovered_symbols, failover_used)`イベントを発行し、Runbookチェックリストに承認者IDと代替ソース解除時刻を記録する（FR-16, AC-04）。
 - **エラーハンドリング**: 重大例外は`HealthMonitor.raise("hard_stop", reason)`を経由しKill Switchを`STOP`に遷移。`graceful=False`でshutdownした場合、再起動時に`soft_stop(manual_review)`から開始。
 - **設定依存**: `config.profile_<name>.yaml`と`cfg.schema.json`。Profile切替時は`cfg_hash`を再計算し監査ログへ出力。
@@ -668,6 +671,7 @@ M2以降で変更が見込まれる領域について、実装/運用負荷を�
 - **実装**: `asyncio`ベースで`AsyncIntervalJob`としてスケジュール。Catch-up時は`fast_forward`モードで順次処理し、途中で`HealthMonitor`ステータスをチェック。
 - **例外処理**: 各`PipelineStep`は`PipelineError`を投げ、オーケストレータが`HealthMonitor`へ通知。`retry_policy`を設定可能（既定は1回リトライ後soft_stop）。
 - **Backpressure**: `max_concurrent_steps`で同時実行数を制御し、過負荷時は`WorkflowLag`イベントを発生させKill Switchの判断材料とする。
+- **ModeContext連携**: `execute_cycle()`は`ctx.clock.next_bar_at()`でバー境界を判定し、`ctx.deterministic_seed`を`PipelineStep`へ渡してBacktest/Paper/Liveの決定論を維持する。`ctx.profile.pipeline.enabled_steps`でステップ有効化を切り替え、`ctx.execution_profile.telemetry_tags`をメトリクスへ付与してモード別SLAを区別する。`ctx.audit_channel.workflow`は周期ごとの実行ログを集約し、Snapshot再開時の差分検証に用いる。
 
 #### APIインターフェース一覧
 | API/関数 | 入力 | 処理 | 出力 | 異常系 |
@@ -793,6 +797,40 @@ M2以降で変更が見込まれる領域について、実装/運用負荷を�
 
 以下、主要サービスごとに公開API・入力/出力・主アルゴリズム・エラーハンドリング・設定項目を記載する。
 
+#### ModeContextデータ構造（共通）
+
+```python
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Literal
+
+
+@dataclass(slots=True, frozen=True)
+class ModeContext:
+    mode: Literal["backtest", "paper", "live"]
+    profile: ModeProfile
+    clock: MarketClock
+    deterministic_seed: int
+    data_feeds: DataFeedBundle
+    execution_profile: ExecutionProfile
+    account_gateway: AccountGateway
+    audit_channel: AuditChannel
+```
+
+| フィールド | 型 | 主な責務 | モード別挙動/備考 |
+| --- | --- | --- | --- |
+| `mode` | `Literal["backtest", "paper", "live"]` | 実行系の分岐キー。Snapshot/ログに埋め込み、Runbookの許可フローと突合する。 | Backtestは副作用を抑止し、Paper/LiveはExecutionModelへリアルタイム制約を伝搬。 |
+| `profile` | `ModeProfile` | `config/profiles/<name>.yaml`を解決した読み取り専用設定ビュー。Risk/Execution/Data各サービスへ派生値を提供。 | Backtest/Paperは`data.replay_source`や`execution.human_delay_secs`を上書き、Liveは実運用用APIキー/手動ACK設定を含む。 |
+| `clock` | `MarketClock` | `now()`/`timeframe`/`trading_calendar`を提供し、Workflow Orchestrator・Telemetryの基準時刻に使用。 | Backtestはリプレイ対象バー時刻を供給、Paper/LiveはリアルタイムUTC時計と祝日カレンダーを参照。 |
+| `deterministic_seed` | `int` | Strategy/Executionの疑似乱数を固定化し、Backtest/Paper/Liveで決定論を維持。 | Backtestはジョブ開始時に固定、Paper/Liveは`profile.seed_offset`と`clock.bar_index`で派生し毎バー再現可能。 |
+| `data_feeds` | `DataFeedBundle` | プライマリ/フォールバックのデータプロバイダ接続や手動CSV束をカプセル化。`DataIngestionService`が利用。 | BacktestはローカルParquet/シード再生、Paperはキャッシュ優先＋Paperレイテンシ計測、Liveは実プロバイダ資格情報とFailover設定を同梱。 |
+| `execution_profile` | `ExecutionProfile` | `execution_model.yaml`とレイテンシ分布、許容スリッページ、ボード制約をまとめた構造体。 | BacktestはFillシミュレータ用、Paperは遅延分布を半固定、Liveはブローカー仕様（IOC/GTD）と手動承認制約を含む。 |
+| `account_gateway` | `AccountGateway` | AccountServiceへ口座スナップショット/APIを提供し、Paper/Liveの残高差異を吸収。 | Backtestは仮想口座、Paperはシミュレータ、Liveはブローカー接続と手動CSV突合。 |
+| `audit_channel` | `AuditChannel` | Audit/EventBusへの書き込み先。CLI/Runbookと証跡を紐づける。 | BacktestはローカルJSONL、Paper/LiveはWORMストレージとOps承認ログへ反映。 |
+
+`ModeContextFactory`はプロファイル毎に上記フィールドを初期化し、SessionManager経由でWorkflow Orchestratorへ注入する。各サービスは本表を参照し、モード差分をコードから切り離す。
+
 ### 3.1 DataIngestionService (`src/data/service.py`)
 - **公開API**: `fetch_latest(symbols, timeframe)`, `backfill(symbols, timeframe, start, end)`, `warm_cache()`に加え、起動/停止時に`spawn_provider_workers()`/`drain_buffers()`を呼び出す。
 - **入力**: `MarketRequest`（symbol, timeframe, start, end, provider_priority）、`config.provider.*`、`config.ingestion.buffer_maxsize`、`config.ingestion.buffer_timeout_sec`。
@@ -804,6 +842,7 @@ M2以降で変更が見込まれる領域について、実装/運用負荷を�
 - **設定**: `config.cache.ttl_hours`, `config.provider.retry`, `config.provider.timeout_sec`, `config.ingestion.buffer_maxsize`, `config.ingestion.fetch_timeout_sec`, `config.ingestion.processing_timeout_sec`。
 - **遅延メトリクス**: `fetch_delay_sec = (queue_enqueue_ts - request_ts)`、`processing_delay_sec = (bar_ready_ts - queue_enqueue_ts)`を算出し、`metrics/data_ingestion_sla.jsonl`に`phase=fetch|processing`ラベルで記録。閾値（既定: fetch≤18秒、processing≤12秒）は`config.ingestion.sla.fetch_p95_sec`/`config.ingestion.sla.processing_p95_sec`で制御し、超過時は`HealthMonitor.raise('degraded','data_latency_fetch|process')`を行う。Prometheus Exporterでは`data_ingestion_delay_seconds{phase,symbol,provider}`として公開。
 - **Runbook連携**: 遅延アラート発生時はEventBusで`ingestion.latency_exceeded`を発火し、Runbook手順`RUN-DATA-05`（フォールバック調整）/`RUN-DATA-06`（手動補填）を通知。`FallbackRetryTask`/`ManualCsvIngestionTask`の完了を`tradectl data jobs --pending`で確認し、二重入力CSVは`tradectl benchmark validate-manual`の結果（ハッシュ一致・承認サイン）をRunbookチェックリストへ添付する。`make sla-report`出力（`reports/validation_log/AC-45_sla_<date>.md`）と合わせて`RUN-POST-03`に従い事後レビュー（原因/再発防止）を`logs/ops/review.log`へ追記する。
+- **ModeContext連携**: `ctx.data_feeds.primary`/`fallback`がプロバイダ優先度と資格情報を提供し、`ctx.profile.ingestion.rate_limits`でレート上限と手動CSV閾値を切り替える。`ctx.clock`は遅延算出の基準時刻を供給し、Backtestではリプレイ時刻、Paper/LiveではUTC実時刻を使用する。手動補填時は`ctx.audit_channel`に定義した`manual_ingestion`ストリームへハッシュとレビュアを記録し、Paper/Live移行時の証跡整合を担保する。
 
 #### 3.1.1 レート制限ステージ評価ワークフロー（M1 Core手動運用）
 1. **観測と記録**: Ops担当は`tradectl data status --providers yfinance --log-stage-eval`（自動テストでは`pytest -k data_status_cli`でカバレッジ）を実行し、直近60分の`429_rate`/`tokens_remaining`サマリを`metrics/rate_limit_window.jsonl`へ追記する。このとき`stage_eval`オブジェクト（`stage`, `decision=hold|promote|rollback`, `sample_window_min`, `429_rate`, `approver_stub`)とRunbook参照（`runbook_ref="RUN-DATA-05.step3"`）を必ず含める。
@@ -1182,6 +1221,8 @@ def run_signal_cycle(bar: MarketBar, ctx: ModeContext) -> list[TicketProposal]:
     return [t for t in tickets if t.is_actionable()]
 ```
 
+- **ModeContext利用**: `ctx.clock`はStrategyContextへ透過し、`ctx.deterministic_seed`と`StrategyMetadata.seed_offset`で`StrategyPlugin`の乱数源を固定化する。`ctx.profile.strategy.watchlist_max`は`StrategyManifestResolver`が参照する上限値、`AccountService.refresh_state(ctx)`が`ctx.account_gateway`経由でPaper/Live口座残高差異を吸収し、`ctx.audit_channel`の`signal_cycle`ストリームはSpread欠損やResync検知をモード別ログへ区分する。
+
 - `spread_state`は`dict[str, SpreadState]`で、キーはシグナル対象シンボル、値は§3.6「SpreadStateデータモデル」で定義したスナップショット。`SpreadMonitor.current_state()`が`SpreadMonitorNotInitialized`を送出した場合はフェイルセーフで全シグナルを空配列にして終了し、`SpreadMonitorNotFound`/`KeyError`/`None`を検知したシンボルは`signal.reject.spread_state_missing`（または`signal.reject.spread_state_none`）ログを残してRejectし`ExecutionModel.apply`を呼び出さない。
 - `ExecutionModel.apply`で`ExecutionModelInputError`がraiseされた場合も同様に`signal.reject.execution_input_error`ログを記録し、該当シグナルを除外して次のシグナル評価へ進む。
 - **Codex向けテスト要件（Spread Fail-Safe）**:
@@ -1379,6 +1420,7 @@ FillStyle = Literal["ioc", "fok", "gtd"]
 - Spread監視やガード判定が必要な場合は、呼び出し側が`SpreadMonitor.current_state()`を個別に参照し、戻り値に混在させない。
 - **M1 Core整合性**: `ExecutionAdjustments`の全フィールドを決定論的に供給し、Risk Manager/PositionSizer/Scoringが`expected_entry`/`ttl_seconds`を必須前提として参照できるようにする。M1.1で確率分布化する際も同じAPIシグネチャを維持する。
 - **エラーハンドリング**: Spreadデータ欠損で`SpreadDataDegraded`→`HealthMonitor.degraded`。Market snapshot不足は該当シグナルを拒否。
+- **ModeContext連携**: `ctx.execution_profile.latency_distribution`と`ctx.execution_profile.broker_rules`を参照して`ttl_seconds`/`fill_style`を決定し、`ctx.deterministic_seed`から生成した`rng`でPaper/Liveの遅延サンプルを固定化する。`ctx.clock.now()`は期待約定時刻のタイムスタンプ源、`ctx.profile.execution.slippage_overrides`はシンボル別スリッページ閾値を切り替える。生成した補正値とログは`ctx.audit_channel.execution`へ書き込み、Backtest再生とLive証跡で同一シードが復元できるようにする。
 
 #### APIインターフェース一覧
 | API/関数 | 入力 | 処理 | 出力 | 異常系 |
@@ -1571,6 +1613,7 @@ Runbook references: RUN-FUND-01 (daily update), RUN-FUND-02 (degraded ops)
 - **Resync手順**: `last_bar_ts`から現時刻までのバーを`fast_forward`処理し、チケットTTL/ドリフト再計算。期限切れは`TicketExpired`としてイベント化。
 - **遅延補正メトリクス**: Resync完了後に`resync_latency_sec = (resync_completed_ts - last_bar_ts)`を記録し、`resync_latency_ratio = resync_latency_sec / timeframe_sec`で評価。`ratio>24`の場合は`HealthMonitor.raise('degraded','resync_lag')`を行い、Runbookフォローアップを要求する。
 - **Runbook連携**: Resync開始時に`RUN-DATA-05`（手動再取得）ステップIDをEventBusへ通知し、完了後は`RUN-POST-03`に沿って事後レビュー（遅延原因、再発防止策、Kill Switch解除判断）を`logs/ops/review.log`へ追記。レビュー承認が完了するまで`HealthMonitor.ack`を保留する。M2+ではEmergency Orchestratorが`data_latency`シナリオを監視し、必要に応じてRunbookチェックリストを自動実行する。
+- **ModeContext連携**: `persist()`は`ctx.account_gateway`が持つ口座スナップショットや`ctx.data_feeds`の再開ポインタ、`ctx.execution_profile`のメタデータを含めてモード差分を`SnapshotModel`へ埋め込む。`restore()`は`ctx.profile`と`ctx.mode`を照合して`ModeContextFactory`を再生成し、Backtestでは`ctx.deterministic_seed`と`ctx.clock`のオフセットを復元する。Paper/Live復旧時は`ctx.audit_channel`の`snapshot`ストリームへ復旧開始/完了時刻と実行者を記録し、差分Resyncでは`ctx.profile.resync.max_parallel_jobs`を読み取ってCatch-up並列度を制御する。
 
 #### APIインターフェース一覧
 | API/関数 | 入力 | 処理 | 出力 | 異常系 |
