@@ -1248,7 +1248,7 @@ watchlist: frozenset[str] = StrategyManifestResolver.effective_symbols(
 
 - `effective_symbols()`は常に`frozenset[str]`を返すため、Codex実装では`set`への再変換を避け、StrategyContextへそのまま渡す。
 
-`GateAggregator.snapshot()`は`CalendarService`/`NewsService`/`SpreadMonitor`/`RiskManager`等からの部分スナップショットをマージし、`GateState.market.per_symbol`を含む完全な`GateState`を返却する。同じオブジェクトを`data/runtime/gate_state.json`や`snapshots/latest/gate_state.json`へシリアライズすることで、再起動時や監査証跡が常に最新スキーマ（§4.2）に一致することを保証する。
+`GateAggregator.snapshot()`は`CalendarService`/`NewsService`/`SpreadMonitor`/`RiskManager`等からの部分スナップショットをマージし、`GateState.market.per_symbol`を含む完全な`GateState`を返却する。Workflow Orchestratorはシグナルごとに`symbol_gate = gate_state.market.per_symbol.get(symbol)`を解決し、存在する場合は`symbol_gate.spread or gate_state.market.spread`を`ExecutionModel`と`TicketBuilder`へ伝搬させる。同じオブジェクトを`data/runtime/gate_state.json`や`snapshots/latest/gate_state.json`へシリアライズすることで、再起動時や監査証跡が常に最新スキーマ（§4.2）に一致することを保証する。
 
 #### 3.5.3 運用制約と計算式
 
@@ -1626,13 +1626,13 @@ Runbook references: RUN-FUND-01 (daily update), RUN-FUND-02 (degraded ops)
 ### 3.16 TicketBuilder (`src/ticket/builder.py`, `src/ticket/validator.py`, `src/ticket/checklist.py`)
 - **公開API**: `build(sized_signal, execution_adjustments, gate_state)`。
 - **処理**: 価格丸め→距離検証→TTL計算→Checklist生成（必須項目は下表参照）→`TicketProposal`組立。
-- **GateState受け渡し要件**: 呼び出し側は`GateAggregator.snapshot()`で取得した`GateState`を必ず保持し、`gate_state.market.per_symbol.get(sized_signal.symbol)`で得られるシンボル専用スライスを第三引数として優先的に渡す。シンボルスライスが無い場合のみグローバル`GateState`を共有する。`TicketBuilder`は受領したスライスに基づき`reduce_only`/`halt`/`double_entry_required`/`comment_min_length`などの制約を反映し、グローバル・シンボル両方のブロックが同時に尊重されるようにマージする。GateStateオブジェクトは不変参照として扱い、`TicketBuilder`内部での更新は禁じる。Codex実装ではWorkflow/Backtest双方で同一スナップショットを共有し、チェックリスト生成・ブロック判定に決定論が保たれることをユニットテストで確認する。
+- **GateState受け渡し要件**: 呼び出し側は`GateAggregator.snapshot()`で取得した`GateState`を必ず保持し、`gate_state.market.per_symbol.get(sized_signal.symbol)`で得られるシンボル専用スライスを第三引数として優先的に渡す。シンボルスライスが無い場合のみグローバル`GateState`を共有する。`TicketBuilder`は受領したスライスに基づき`reduce_only`/`halt`/`spread.state`/`double_entry_required`/`comment_min_length`などの制約を反映し、グローバル・シンボル両方のブロックが同時に尊重されるようにマージする。`spread_window_clear`検証は`(symbol_gate.spread or gate_state.market.spread)`を参照して判定し、Workflow→Ticketの情報連鎖を保証する。GateStateオブジェクトは不変参照として扱い、`TicketBuilder`内部での更新は禁じる。Codex実装ではWorkflow/Backtest双方で同一スナップショットを共有し、チェックリスト生成・ブロック判定に決定論が保たれることをユニットテストで確認する。
 - **入力順序と表示統一**: `ChecklistBuilder.generate()`は`HumanErrorChecklist`を必ず `spread_window_clear`→`double_entry_confirmed`→`sl_tp_verified`→`lot_round_ok`→`price_decimals_ok`→`oco_ack_received`→`manual_comment_logged` の順で整列し、`label`/`field`をCLI表示（`tradectl board/ticket`) と監査ログ (`audit_writer`) の両方で同一の英字表記に固定する。CLIは番号付きリストを同順序で表示し、監査ログの`extras.checklist[].field`にも同じフィールド名が書き込まれる。`ack_deadline`が設定されている場合、CLIは対象行に`(deadline: <ISO8601>)`ラベルを併記し、監査ログにも`deadline_iso`を埋め込む。
 - **チェックリスト定義**: 下表の項目は全て`mandatory=true`で、検証ロジック/Runbook紐づけを固定する。`ChecklistBuilder`は順序崩れやラベル改変を検知した場合`ChecklistInvariantError`（新設予定の例外）を送出し、監査ログとCLI双方の整合を守る。`GateState.human`の`double_entry_required`/`required_roles`/`ack_deadline`/`comment_min_length`はChecklist入力へ直接伝播し、CLI・監査ログともに同値で記録される。
 
 | フィールド名 (`checklist[].field`) | CLI表示ラベル | 必須 | 検証ルール | Runbook/検証スクリプト連携 |
 | --- | --- | --- | --- | --- |
-| `spread_window_clear` | `Spread & news window clear` | ✅ | `SpreadMonitor.latest()`が`gates.spread_max_pips`以下かつ`news_blackout.active=False`。Signal Board上のSpreadバッジと同期。 | `RUN-HITL-01` §1-2（Board確認）、`RUN-SPREAD-03`参照、AC-02補助 |
+| `spread_window_clear` | `Spread & news window clear` | ✅ | `SpreadMonitor.latest()`が`gates.spread_max_pips`以下かつ`news_blackout.active=False`。`(symbol_gate.spread or gate_state.market.spread)`が`state in {'normal','watch'}`の場合のみ`ok`となり、Signal Board上のSpreadバッジと同期。 | `RUN-HITL-01` §1-2（Board確認）、`RUN-SPREAD-03`参照、AC-02補助 |
 | `double_entry_confirmed` | `Double-entry confirmed` | ✅ | 2名目承認者（`secondary_operator_id`）が`TicketBuilder.build()`に渡された`gate_state.human.double_entry_required=True`時にACKを記録。`required_roles`に列挙されたロールID全てが`acknowledged_roles`へ移るまでチケットは`pending`表示となる。CLI `tradectl ticket approve --double-entry <user_id>`が`RUN-HITL-01`手順3-1/3-2で実行される。 | `RUN-HITL-01` §3 人的エラーチェックリスト、AC-10 `tradectl ticket checklist --id <ticket_id>` |
 | `sl_tp_verified` | `SL/TP distances verified` | ✅ | `ticket.payload.tp_price`と`sl_price`が`SizedSignal`推奨値±`broker_rules.slop_pips`内。`tradectl ticket inspect`出力と突合する。 | `RUN-HITL-01` §2-2、AC-02/AC-10 `tradectl ticket inspect --id <ticket_id>` |
 | `lot_round_ok` | `Lot & quantity rounding OK` | ✅ | `TicketValidator.validate()`が`broker_rules.min_lot`/`lot_step`を満たす。`tradectl ticket check-size`によるバッチ検証を同期。 | `RUN-HITL-01` §4-1/§4-3、AC-10/AC-11スクリプト |
@@ -1965,6 +1965,7 @@ class SpreadGateState:
 class GateBlockState:
     news: Optional[NewsGateState] = None
     calendar: Optional[CalendarGateState] = None
+    spread: Optional[SpreadGateState] = None
 
 
 @dataclass
@@ -1999,7 +2000,7 @@ class GateState:
     schema_version: Optional[str] = None
 ```
 
-`market.per_symbol`はシンボルごとの遮断オーバーライドを保持し、`CalendarService`/`NewsService`がイベントウィンドウを検出した際に`{symbol: GateBlockState}`を生成する。既定値は空辞書で、エントリが存在するシンボルについては`GateBlockState.news`/`GateBlockState.calendar`がグローバルの`market.news`/`market.calendar`より優先され、ウィンドウの終了時に該当エントリを削除する。ニュース/カレンダーいずれか片方のみを持つエントリも許容し、未指定フィールドは`None`として扱う。グローバルフィールドは全市場停止やフォールバック用の既定値として機能し、`holiday_block=True`で祝日ロールオーバーを表現する。Spreadガードは連続状態（`SpreadCooldownState`）で管理し、`market.spread.reason`に直近の判定根拠（例:`p95_exceeded`）を記録する。
+`market.per_symbol`はシンボルごとの遮断オーバーライドを保持し、`CalendarService`/`NewsService`/`SpreadMonitor`がイベントウィンドウやスプレッド異常を検出した際に`{symbol: GateBlockState}`を生成する。既定値は空辞書で、エントリが存在するシンボルについては`GateBlockState.news`/`GateBlockState.calendar`/`GateBlockState.spread`がグローバルの`market.news`/`market.calendar`/`market.spread`より優先され、ウィンドウやスプレッド冷却終了時に該当エントリを削除する。ニュース/カレンダー/スプレッドのいずれか一部のみを持つエントリも許容し、未指定フィールドは`None`として扱う。グローバルフィールドは全市場停止やフォールバック用の既定値として機能し、`holiday_block=True`で祝日ロールオーバーを表現する。Spreadガードは連続状態（`SpreadCooldownState`）で管理し、`market.spread.reason`および`per_symbol[symbol].spread.reason`に直近の判定根拠（例:`p95_exceeded`）を記録する。
 
 ```python
 SpreadCooldownState = Literal["normal", "watch", "cooldown", "halt"]

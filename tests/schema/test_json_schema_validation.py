@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from copy import deepcopy
 from pathlib import Path
 
 import pytest
@@ -246,3 +247,22 @@ def test_gate_state_sample_is_valid(
     gate_state = load_config("schema/gate_state.sample.json")
 
     validator.validate(gate_state)
+
+
+def test_gate_state_symbol_specific_spread_is_valid(
+    load_json_schema: Callable[[str | Path], dict],
+    load_config: Callable[[str | Path], object],
+) -> None:
+    validator = _build_validator(load_json_schema, "docs/schemas/gate_state.schema.json")
+    gate_state = load_config("schema/gate_state.sample.json")
+    gate_state_with_symbol_spread = deepcopy(gate_state)
+
+    gate_state_with_symbol_spread["market"]["per_symbol"]["EURUSD"] = {
+        "spread": {
+            "state": "halt",
+            "reason": "broker_quote_missing",
+            "cooldown_eta": "2025-03-14T12:50:00Z",
+        }
+    }
+
+    validator.validate(gate_state_with_symbol_spread)
