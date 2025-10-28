@@ -15,19 +15,18 @@ from typing import Any, Mapping, Protocol, runtime_checkable
 
 from typing_extensions import Literal
 
-EntryMode = Literal["market", "marketable_limit", "limit_requote", "halt"]
-"""Enumeration of strategy-requested entry modes.
+EntryMode = Literal["market", "marketable_limit", "limit_requote"]
+"""Enumeration of strategy-requested entry modes from the design contract."""
 
-The final system may extend this list (for example with ``"fok"`` or
-other venue specific hints) but the stub tracks the core values called
-out in the design documents.
-"""
-
-FillStyle = Literal["ioc", "gtd", "gfd"]
+FillStyle = Literal["ioc", "fok", "gtd"]
 """Abstract fill execution semantics surfaced to downstream components."""
 
 FillPolicy = Literal["ioc", "fok", "gtd", "day"]
-"""Policy hints consumed by the order router and ticket builder."""
+"""Policy hints consumed by the order router and ticket builder.
+
+``"fok"`` and ``"gtd"`` align with :data:`FillStyle` to carry venue specific
+semantics alongside the higher level execution hints.
+"""
 
 
 @dataclass(slots=True, frozen=True)
