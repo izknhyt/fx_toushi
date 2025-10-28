@@ -112,6 +112,7 @@
   ・リスク観点（スリッページ/レートリミット/ヒューマン手順）
   ・ログ/監査要件
 ```
+- CLIコマンドを変更・追加する場合は、対応する`src/interfaces/cli/*.py`スタブと関連テスト（Approvalスナップショット/スキーマ検証を含む）を更新する旨を明記し、Codexが差分を漏れなく実装できるようにする。
 - Codexへ送る冒頭メッセージで「スタイル/リンタは`docs/development_style_and_linting.md`に準拠」と明示し、差分レビュー時にも該当節を引用する。
 - プロンプトはGit管理（`docs/prompt_packages/<YYYYMMDD>_<feature>.md`）し、再利用時は差分管理する。
 - Codexへ渡すコード断片は**200行以内**に限定し、関連する`dataclass`/`Enum`の定義を先頭に含める。外部依存がある場合はスタブ/型定義を同梱する。
@@ -832,6 +833,24 @@ class ModeContext:
 | `audit_channel` | `AuditChannel` | Audit/EventBusへの書き込み先。CLI/Runbookと証跡を紐づける。 | BacktestはローカルJSONL、Paper/LiveはWORMストレージとOps承認ログへ反映。 |
 
 `ModeContextFactory`はプロファイル毎に上記フィールドを初期化し、SessionManager経由でWorkflow Orchestratorへ注入する。各サービスは本表を参照し、モード差分をコードから切り離す。
+
+### 3.0 tradectl CLIコマンド一覧（M1 Core）
+
+| コマンド | 主要オプション | 入出力 | 担当モジュール |
+| --- | --- | --- | --- |
+| `tradectl board` | `--filter`, `--view`, `--guarded/--normal`, `--json`(M1.1+) | `SessionManager`/`TicketBuilder`からの`GateState`・`TicketPayload`を読み込み、Richテーブル/ダイアグノスティクスを整形。 | `src/interfaces/cli/board.py::board`, `BoardRenderer` |
+| `tradectl ticket *` | `approve --id`, `reject --id`, `edit --field`, `list --status`, `--json`(将来) | `TicketValidator`/`AuditWriter`と連携し、`TicketAction`イベント・監査ログを出力。 | `src/interfaces/cli/tickets.py` |
+| `tradectl status` | `--verbose`, `--json`, `--ack`, `--kill-switch`, `--board` | `HealthMonitor`, `SnapshotManager`から状態を集約し、Ack/Kill Switch操作でイベント発火。 | `src/interfaces/cli/status.py::status` |
+| `tradectl resync` | `--since`, `--symbol`, `--force`, `--failover-report`, `--dry-run` | `SessionManager.catch_up`を呼び出し`ResyncCompleted`イベントとFailoverレポートを生成。 | `src/interfaces/cli/resync.py::resync` |
+| `tradectl preflight` | `--profile`, `--json`, `--ntp-check/--no-ntp`, `--smtp-check` | `scripts/preflight.sh`結果と設定値を突合し、`HealthMonitor`へDegraded通知。 | `src/interfaces/cli/preflight.py` |
+| `tradectl data *` | `status`, `failover`, `manual-template`, `validate-csv`, `jobs`, `manual-report`, `hash` 各種オプション | `DataIngestionService`/`ManualCsvIngestionTask`を操作し、ステージ評価やCSV検証ログを生成。 | `src/interfaces/cli/data.py` |
+| `tradectl spread` | `--symbol`, `--window`, `--percentile`, `--fail-on-gap`, `--export` | `SpreadMonitor`から分位統計を取得し、閾値逸脱時はExit code 121。 | `src/interfaces/cli/spread.py::inspect` |
+| `tradectl metrics report` | `--kind`, `--window`, `--mode`, `--out`, `--validate` | `metrics/*.jsonl`を読み込みMarkdown/JSON出力、スキーマ検証を実施。 | `src/interfaces/cli/metrics.py::report` |
+| `tradectl report *` | `weekly --profile/--since/--dry-run/--out`, `daily --date`(M1.1) | `Reporter`から週次/日次Markdownを生成し、`ManualCsvSummary`やRisk Disclosure状態を合成。 | `src/interfaces/cli/report.py` |
+| `tradectl benchmark *` | `ingest --provider/--file`, `compare --window/--mode/--export/--fail-on-gap`, `validate-manual --path` | ベンチマークCSV取込やKPI比較を実施し、欠損検出イベントとレポートを出力。 | `src/interfaces/cli/benchmark.py` |
+| `tradectl ops *` | `readiness --explain`, `agenda --date/--out`, `automation log --task/--before/--after` | `OpsReadinessService`/`OpsWorklog`を参照しスコア/アジェンダ/自動化ログを更新。 | `src/interfaces/cli/ops.py` |
+| `tradectl compliance *` | `status`, `ack --note/--user/--force`, `refresh` | `RiskDisclosureService`の状態を表示・更新し、`RiskDisclosureEvent`と監査証跡を管理。 | `src/interfaces/cli/compliance.py` |
+| `tradectl audit *` | `tail --since/--event/--json`, `export --type/--from/--to/--out` | `AuditWriter`ログを追跡し、Tail表示やエクスポートを生成。 | `src/interfaces/cli/audit.py` |
 
 ### 3.1 DataIngestionService (`src/data/service.py`)
 - **公開API**: `fetch_latest(symbols, timeframe)`, `backfill(symbols, timeframe, start, end)`, `warm_cache()`に加え、起動/停止時に`spawn_provider_workers()`/`drain_buffers()`を呼び出す。
@@ -3544,6 +3563,22 @@ CodexがCLI層を安全に実装・改修できるよう、`tradectl`コマン�
 - **主要引数**: CLIオプション（必須/任意/将来フラグ）。`--json`はM1で準備のみ。
 - **副作用**: EventBus発火、監査ログ、メトリクス追記、Runbook連携。
 - **テスト**: 必須`pytest`キーワードとApprovalテスト有無。CLIスナップショットは`tests/approval/cli/`で管理。
+
+| コマンド | 主要オプション | 入出力 | 担当モジュール |
+| --- | --- | --- | --- |
+| `tradectl board` | `--filter`, `--view`, `--guarded/--normal`, `--json`(M1.1+) | `SessionManager`/`TicketBuilder`からの`GateState`・`TicketPayload`を読み込み、Richテーブル/診断ビューを描画。 | `src/interfaces/cli/board.py::board`, `BoardRenderer` |
+| `tradectl ticket *` | `approve --id`, `reject --id`, `edit --field`, `list --status`, `--json`(将来) | `TicketValidator`と`AuditWriter`を同期呼び出し、`TicketAction`イベントと監査ログを生成。 | `src/interfaces/cli/tickets.py` |
+| `tradectl status` | `--verbose`, `--json`, `--ack`, `--kill-switch`, `--board` | `HealthMonitor`/`SnapshotManager`の状態を統合し、Ack・モード操作を反映。 | `src/interfaces/cli/status.py::status` |
+| `tradectl resync` | `--since`, `--symbol`, `--force`, `--failover-report`, `--dry-run` | `SessionManager.catch_up`を起動し、`ResyncCompleted`統計とFailoverレポートを出力。 | `src/interfaces/cli/resync.py::resync` |
+| `tradectl preflight` | `--profile`, `--json`, `--ntp-check/--no-ntp`, `--smtp-check` | `scripts/preflight.sh`の結果を取り込み、チェックリストとDegraded通知を生成。 | `src/interfaces/cli/preflight.py` |
+| `tradectl data *` | `status`, `failover`, `manual-template`, `validate-csv`, `jobs`, `manual-report`, `hash` | `DataIngestionService`/`ManualCsvIngestionTask`をオーケストレートし、ステージ評価ログやCSV検証結果を保存。 | `src/interfaces/cli/data.py` |
+| `tradectl spread` | `--symbol`, `--window`, `--percentile`, `--fail-on-gap`, `--export` | `SpreadMonitor`の分位統計をテーブル化し、閾値越えでExit code 121。 | `src/interfaces/cli/spread.py::inspect` |
+| `tradectl metrics report` | `--kind`, `--window`, `--mode`, `--out`, `--validate` | `metrics/*.jsonl`を解析し、Markdown/JSON＋スキーマ検証結果を出力。 | `src/interfaces/cli/metrics.py::report` |
+| `tradectl report *` | `weekly --profile/--since/--dry-run/--out`, `daily --date`(M1.1) | `Reporter`に委譲して週次/日次レポートを生成し、Evidenceを保存。 | `src/interfaces/cli/report.py` |
+| `tradectl benchmark *` | `ingest --provider/--file`, `compare --window/--mode/--export/--fail-on-gap`, `validate-manual --path` | ベンチマークデータの取込/比較/検証を実施し、`benchmark_gap`イベントを管理。 | `src/interfaces/cli/benchmark.py` |
+| `tradectl ops *` | `readiness --explain`, `agenda --date/--out`, `automation log --task/--before/--after` | `OpsReadinessService`とOpsログを照合し、スコア・アジェンダ・自動化効果を更新。 | `src/interfaces/cli/ops.py` |
+| `tradectl compliance *` | `status`, `ack --note/--user/--force`, `refresh` | `RiskDisclosureService`の状態管理と承諾イベントを調整。 | `src/interfaces/cli/compliance.py` |
+| `tradectl audit *` | `tail --since/--event/--json`, `export --type/--from/--to/--out` | `AuditWriter`ログのTail/エクスポート機能を提供し、証跡ファイルを作成。 | `src/interfaces/cli/audit.py` |
 
 ### 17.1 `tradectl board`
 - **実装位置**: `src/interfaces/cli/board.py::board`。
