@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from decimal import Decimal
-from typing import Any, Iterable, Mapping
+from typing import Any, Iterable
 
 import pytest
 
@@ -39,7 +39,7 @@ class DummySpreadMonitor:
     def update(self, spread_frame: Any) -> SpreadCooldownState:
         return self.cooldown_state
 
-    def current_state(self, *, symbols: Iterable[str] | None = None) -> Mapping[str, SpreadState]:
+    def current_state(self, *, symbols: Iterable[str] | None = None) -> dict[str, SpreadState]:
         if symbols is None:
             return self._state
         return {symbol: self._state[symbol] for symbol in symbols if symbol in self._state}
