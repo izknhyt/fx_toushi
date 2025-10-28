@@ -112,7 +112,7 @@
         },
         "per_symbol": {
           "type": "object",
-          "description": "Symbol-specific gate blocks that override global news/calendar settings.",
+          "description": "Symbol-specific gate blocks that override global news/calendar/spread settings.",
           "additionalProperties": {
             "type": "object",
             "additionalProperties": false,
@@ -161,6 +161,37 @@
                       "string",
                       "null"
                     ]
+                  }
+                }
+              },
+              "spread": {
+                "type": "object",
+                "required": [
+                  "state"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                  "state": {
+                    "type": "string",
+                    "enum": [
+                      "normal",
+                      "watch",
+                      "cooldown",
+                      "halt"
+                    ]
+                  },
+                  "reason": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "cooldown_eta": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "format": "date-time"
                   }
                 }
               }

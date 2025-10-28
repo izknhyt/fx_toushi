@@ -27,6 +27,11 @@
           "blocked": true,
           "holiday_block": false,
           "reason": "boj_rate_decision_window"
+        },
+        "spread": {
+          "state": "cooldown",
+          "reason": "symbol_specific_spike",
+          "cooldown_eta": "2025-03-14T12:38:00Z"
         }
       },
       "XAUUSD": {
@@ -34,6 +39,11 @@
           "blocked": true,
           "holiday_block": true,
           "reason": "us_good_friday"
+        },
+        "spread": {
+          "state": "watch",
+          "reason": "liquidity_thin_london_fix",
+          "cooldown_eta": null
         }
       }
     }
