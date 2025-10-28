@@ -1418,6 +1418,7 @@ FillStyle = Literal["ioc", "fok", "gtd"]
   - SpreadMonitorはローリング分位で`SpreadCooldownState`を算出し、`gate_state.market.spread.state`を更新。
 - **出力**: `ExecutionAdjustments`（expected_entry, expected_slippage, fill_style, ttl_seconds, drift_guard_R）のみを返却し、後段のPositionSizer/TicketBuilderが消費する。
 - Spread監視やガード判定が必要な場合は、呼び出し側が`SpreadMonitor.current_state()`を個別に参照し、戻り値に混在させない。
+- **データフロー**: `GateAggregator.snapshot()`は`SpreadMonitor.current_state(symbols=None)`を呼び出してGateStateへ`dict[str, SpreadState]`を埋め込み、CLI `tradectl board`は同スナップショット経由でSpreadチェックリスト表示を更新する。監査ログ（`TicketIssued`/`ticket.action`）および`AuditWriter`はGateStateに保持された`spread_state`をそのまま記録し、`SpreadSnapshot`はCLIツールチップ向けに`current_state(symbols=[symbol])`で得た値を整形するだけとする。
 - **M1 Core整合性**: `ExecutionAdjustments`の全フィールドを決定論的に供給し、Risk Manager/PositionSizer/Scoringが`expected_entry`/`ttl_seconds`を必須前提として参照できるようにする。M1.1で確率分布化する際も同じAPIシグネチャを維持する。
 - **エラーハンドリング**: Spreadデータ欠損で`SpreadDataDegraded`→`HealthMonitor.degraded`。Market snapshot不足は該当シグナルを拒否。
 - **ModeContext連携**: `ctx.execution_profile.latency_distribution`と`ctx.execution_profile.broker_rules`を参照して`ttl_seconds`/`fill_style`を決定し、`ctx.deterministic_seed`から生成した`rng`でPaper/Liveの遅延サンプルを固定化する。`ctx.clock.now()`は期待約定時刻のタイムスタンプ源、`ctx.profile.execution.slippage_overrides`はシンボル別スリッページ閾値を切り替える。生成した補正値とログは`ctx.audit_channel.execution`へ書き込み、Backtest再生とLive証跡で同一シードが復元できるようにする。
@@ -1428,7 +1429,7 @@ FillStyle = Literal["ioc", "fok", "gtd"]
 | `ExecutionModel.apply(raw_signal, market_snapshot, spread_state, *, mode_context)` | `RawSignal`, 市場スナップショット（価格、ボラ指標）、Spread状態、実行設定、`ModeContext` | 遅延・滑り補正計算→TTL/保護幅決定→`ExecutionAdjustments`生成（モード別ログ/乱数シードを考慮） | `ExecutionAdjustments`のみ（後段のPositionSizerが参照） | 市場データ欠落/`spread_state is None`/辞書未登録シンボル: `ExecutionModelInputError`（呼び出し側でFail-FastしRejectログを残す）。ブローカー制約違反: `ExecutionRuleViolation` |
 | `ExecutionModel.validate_config(config)` | `execution_model.yaml`, 許容範囲設定 | 設定スキーマ検証→危険値（遅延>90s等）を警告→監査記録 | `ValidationReport` | スキーマ不正: `ExecutionConfigError` |
 | `SpreadMonitor.update(spread_frame)` | `SpreadMetrics`（最新スプレッド、分位、時間）、閾値設定 | ローリング統計更新→`cooldown_state`遷移→EventBus通知 | `SpreadCooldownState` | データ欠落: `SpreadDataDegraded` |
-| `SpreadMonitor.current_state(symbols: Iterable[str] &#124; None)` | 監視対象シンボル（省略時は全シンボル） | 内部キャッシュから最新`SpreadState`辞書を構築し、`symbols`フィルタを適用 | `dict[str, SpreadState]` | 未初期化: `SpreadMonitorNotInitialized`（上流は全シグナルReject）。欠損シンボル: `SpreadMonitorNotFound`（該当シグナルをRejectし、`signal.reject.spread_state_missing`ログ必須） |
+| `SpreadMonitor.current_state(*, symbols: Iterable[str] &#124; None = None)` | 監視対象シンボル（省略時は全シンボル） | 内部キャッシュから最新`SpreadState`辞書を構築し、`symbols`フィルタを適用。戻り値はGateState/CLI/監査ログで共通利用する。 | `dict[str, SpreadState]` | 未初期化: `SpreadMonitorNotInitialized`（上流は全シグナルReject）。欠損シンボル: `SpreadMonitorNotFound`（該当シグナルをRejectし、`signal.reject.spread_state_missing`ログ必須） |
 | `SpreadMonitor.sample(symbol)` | シンボル、ウィンドウ長 | 現在状態と履歴サマリを返却 | `SpreadSample`（state, p95, p99, duration） | シンボル未登録: `SpreadMonitorNotFound` |
 
 #### SpreadStateデータモデル
@@ -1442,7 +1443,7 @@ FillStyle = Literal["ioc", "fok", "gtd"]
 | `last_updated` | `datetime` | 状態算出タイムスタンプ。 | `SpreadMetrics.ts`を転記。 |
 | `lookback_window_sec` | `int` | 分位計算に使用したローリング窓の秒数。 | メトリクス/監査で復元可能にする。 |
 
-`SpreadMonitor.current_state()`および監査ログ・イベント定義で参照する`spread_state`は上記`SpreadState`構造体の辞書（キーはシンボル、値は`SpreadState`）として扱う。
+`SpreadMonitor.current_state()`および監査ログ・イベント定義で参照する`spread_state`は上記`SpreadState`構造体の辞書（キーはシンボル、値は`SpreadState`）として扱う。`SpreadSnapshot`は単一シンボルの`SpreadState`とシンボル識別子を束ねた軽量ビューで、CLIツールチップやテレメトリ出力向けの簡易参照に利用する。
 
 ### 3.7 ScoringService (`src/scoring/basic.py`, `src/scoring/hybrid.py`, `src/scoring/stability.py`, `src/scoring/ranking.py`)
 - **公開API**: `rank(raw_signals, performance_stats, penalties)`。
@@ -1629,10 +1630,11 @@ Runbook references: RUN-FUND-01 (daily update), RUN-FUND-02 (degraded ops)
 - **GateState受け渡し要件**: 呼び出し側は`GateAggregator.snapshot()`で取得した`GateState`を必ず保持し、`gate_state.market.per_symbol.get(sized_signal.symbol)`で得られるシンボル専用スライスを第三引数として優先的に渡す。シンボルスライスが無い場合のみグローバル`GateState`を共有する。`TicketBuilder`は受領したスライスに基づき`reduce_only`/`halt`/`spread.state`/`double_entry_required`/`comment_min_length`などの制約を反映し、グローバル・シンボル両方のブロックが同時に尊重されるようにマージする。`spread_window_clear`検証は`(symbol_gate.spread or gate_state.market.spread)`を参照して判定し、Workflow→Ticketの情報連鎖を保証する。GateStateオブジェクトは不変参照として扱い、`TicketBuilder`内部での更新は禁じる。Codex実装ではWorkflow/Backtest双方で同一スナップショットを共有し、チェックリスト生成・ブロック判定に決定論が保たれることをユニットテストで確認する。
 - **入力順序と表示統一**: `ChecklistBuilder.generate()`は`HumanErrorChecklist`を必ず `spread_window_clear`→`double_entry_confirmed`→`sl_tp_verified`→`lot_round_ok`→`price_decimals_ok`→`oco_ack_received`→`manual_comment_logged` の順で整列し、`label`/`field`をCLI表示（`tradectl board/ticket`) と監査ログ (`audit_writer`) の両方で同一の英字表記に固定する。CLIは番号付きリストを同順序で表示し、監査ログの`extras.checklist[].field`にも同じフィールド名が書き込まれる。`ack_deadline`が設定されている場合、CLIは対象行に`(deadline: <ISO8601>)`ラベルを併記し、監査ログにも`deadline_iso`を埋め込む。
 - **チェックリスト定義**: 下表の項目は全て`mandatory=true`で、検証ロジック/Runbook紐づけを固定する。`ChecklistBuilder`は順序崩れやラベル改変を検知した場合`ChecklistInvariantError`（新設予定の例外）を送出し、監査ログとCLI双方の整合を守る。`GateState.human`の`double_entry_required`/`required_roles`/`ack_deadline`/`comment_min_length`はChecklist入力へ直接伝播し、CLI・監査ログともに同値で記録される。
+- **Spread状態の連鎖**: Workflow Orchestratorは`GateAggregator.snapshot()`で取得した`gate_state.market`に`SpreadMonitor.current_state(symbols=None)`の戻り値を保持し、`TicketBuilder`は`gate_state.market.per_symbol.get(sized_signal.symbol)`を優先、無い場合は`gate_state.market.spread`を参照してSpread判定を行う。CLI `tradectl board`/`ticket inspect`は同じGateStateからSpreadチェックリストを描画し、`AuditWriter`は`TicketIssued`および`ticket.action`イベントに`spread_state`をそのままエンコードして監査ログへ記録する。
 
 | フィールド名 (`checklist[].field`) | CLI表示ラベル | 必須 | 検証ルール | Runbook/検証スクリプト連携 |
 | --- | --- | --- | --- | --- |
-| `spread_window_clear` | `Spread & news window clear` | ✅ | `SpreadMonitor.latest()`が`gates.spread_max_pips`以下かつ`news_blackout.active=False`。`(symbol_gate.spread or gate_state.market.spread)`が`state in {'normal','watch'}`の場合のみ`ok`となり、Signal Board上のSpreadバッジと同期。 | `RUN-HITL-01` §1-2（Board確認）、`RUN-SPREAD-03`参照、AC-02補助 |
+| `spread_window_clear` | `Spread & news window clear` | ✅ | `SpreadMonitor.current_state(symbols=[sized_signal.symbol])`が`gates.spread_max_pips`以下かつ`news_blackout.active=False`。`(symbol_gate.spread or gate_state.market.spread)`が`state in {'normal','watch'}`の場合のみ`ok`となり、Signal Board上のSpreadバッジと同期。 | `RUN-HITL-01` §1-2（Board確認）、`RUN-SPREAD-03`参照、AC-02補助 |
 | `double_entry_confirmed` | `Double-entry confirmed` | ✅ | 2名目承認者（`secondary_operator_id`）が`TicketBuilder.build()`に渡された`gate_state.human.double_entry_required=True`時にACKを記録。`required_roles`に列挙されたロールID全てが`acknowledged_roles`へ移るまでチケットは`pending`表示となる。CLI `tradectl ticket approve --double-entry <user_id>`が`RUN-HITL-01`手順3-1/3-2で実行される。 | `RUN-HITL-01` §3 人的エラーチェックリスト、AC-10 `tradectl ticket checklist --id <ticket_id>` |
 | `sl_tp_verified` | `SL/TP distances verified` | ✅ | `ticket.payload.tp_price`と`sl_price`が`SizedSignal`推奨値±`broker_rules.slop_pips`内。`tradectl ticket inspect`出力と突合する。 | `RUN-HITL-01` §2-2、AC-02/AC-10 `tradectl ticket inspect --id <ticket_id>` |
 | `lot_round_ok` | `Lot & quantity rounding OK` | ✅ | `TicketValidator.validate()`が`broker_rules.min_lot`/`lot_step`を満たす。`tradectl ticket check-size`によるバッチ検証を同期。 | `RUN-HITL-01` §4-1/§4-3、AC-10/AC-11スクリプト |
