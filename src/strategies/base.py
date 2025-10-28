@@ -10,7 +10,7 @@ coupling to concrete implementations.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, ClassVar, Iterable, Protocol, Sequence, runtime_checkable
+from typing import Any, ClassVar, Iterable, Mapping, Protocol, Sequence, runtime_checkable
 
 from src.execution import SpreadCooldownState
 
@@ -55,12 +55,23 @@ class SpreadGateState(Protocol):
     cooldown_eta: Any | None
 
 
+class GateBlockState(Protocol):
+    """Per-symbol gate overrides projected from the global market view."""
+
+    news: NewsGateState | None
+    """Optional news blackout slice specific to a symbol."""
+
+    calendar: CalendarGateState | None
+    """Optional calendar blackout slice specific to a symbol."""
+
+
 class MarketGateState(Protocol):
     """Composite market gating decisions (news/calendar/spread)."""
 
     news: NewsGateState
     calendar: CalendarGateState
     spread: SpreadGateState
+    per_symbol: Mapping[str, GateBlockState]
 
 
 class RiskGateState(Protocol):
@@ -87,6 +98,7 @@ class GateState(Protocol):
     market: MarketGateState
     risk: RiskGateState
     human: HumanGateState
+    schema_version: str | None
 
 
 class AccountState(Protocol):
@@ -122,7 +134,10 @@ class StrategyContext:
     that plugins observe a deterministic snapshot of upstream state.  The
     fields mirror the design contract and allow Codex prompts/tests to
     reason about the strategy environment without relying on concrete
-    implementations.
+    implementations.  The gate state now exposes a ``per_symbol`` mapping
+    for slicing localized blocks (e.g. ``context.gate.market.per_symbol
+    ["USDJPY"].calendar``) as well as a ``schema_version`` string for
+    compatibility negotiation with downstream pipelines.
     """
 
     features: FeatureContext
@@ -132,7 +147,7 @@ class StrategyContext:
     """Regime detector snapshot (volatility/trend modes)."""
 
     gate: GateState
-    """Aggregated gate state (calendar, spread, board mode blocks)."""
+    """Aggregated gate state including per-symbol slices and schema metadata."""
 
     account: AccountState
     """Account metrics such as equity, margin availability, and staleness."""
