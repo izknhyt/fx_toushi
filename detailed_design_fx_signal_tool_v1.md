@@ -846,7 +846,7 @@ M2以降で変更が見込まれる領域について、実装/運用負荷を�
 #### APIインターフェース一覧
 | API/関数 | 入力 | 処理 | 出力 | 異常系 |
 | --- | --- | --- | --- | --- |
-| `FeaturePipeline.update(market_frame)` | 最新`MarketFrame`, 対象シンボル、再計算フラグ | 差分更新→各IndicatorSet計算→FeatureFrameマージ→キャッシュ更新 | 更新済み`FeatureFrame` | 指標計算エラー: `IndicatorError`。欠損多発: `FeatureInsufficientData` |
+| `FeaturePipeline.update(market_frame)` | 最新`MarketFrame`, 対象シンボル、再計算フラグ | 差分更新→各IndicatorSet計算→FeatureFrameマージ→キャッシュ更新 | 更新済み`FeatureContext` | 指標計算エラー: `IndicatorError`。欠損多発: `FeatureInsufficientData` |
 | `FeaturePipeline.rebuild_range(symbols, start, end)` | シンボル集合、再計算期間、再サンプリング設定 | 指定期間の履歴再ロード→全指標再計算→キャッシュ差し替え | `RebuildReport`（bars_processed, duration） | 期間不整合: `FeatureRebuildError` |
 | `FeaturePipeline.get_feature_frame(symbol)` | シンボル、必要指標一覧、タイムフレーム | Featureキャッシュ読み出し→整形→`FeatureContext`へ提供 | `FeatureFrameView` | 未生成: `FeatureNotReadyError` |
 | `FeaturePipeline.register_indicator(indicator)` | 指標プラグイン、依存列情報 | Indicatorセットへ登録→依存関係検証→初期化 | 登録結果、`indicator_id` | 依存不足: `IndicatorDependencyError` |
@@ -916,6 +916,30 @@ class FeatureContext:
 - `available_keys`のフォーマットは**機能名（英小文字+`_`区切り） + `_` + タイムフレーム略称**とする。タイムフレーム略称は`{"5m", "15m", "1h", "4h", "1d"}`を許容し、M1では`5m`/`1h`/`1d`のみを使用する。
 - `config/feature_pipeline.yaml`の`indicators.*.output_key`（単一列指標）および`indicators.*.output_keys`（複数列指標）が`pipeline.resample.timeframes`で宣言したタイムフレーム集合と直積され、`FeaturePipeline`は`<output_key>_<tf>`形式に正規化した集合を`FeatureContext.available_keys`へ登録する。例として`indicators.ema_fast`に`timeframes: ["5m"]`を指定すると`available_keys`へ`ema_fast_5m`が追加され、`macd_12_26_9.output_keys.histogram: macd_hist`と`timeframes: ["1h"]`を組み合わせると`macd_hist_1h`が生成される。
 - ボリンジャーバンドのような複数列指標では`output_keys`に`{"upper": "bb_upper", "middle": "bb_middle", "lower": "bb_lower"}`を設定し、各列がタイムフレーム別に`bb_upper_5m`等へ展開される。ManifestやStrategyPluginは展開後の文字列のみを参照し、基底の`output_key`名はFeaturePipeline内部の算出ラベルとして利用する。
+
+##### Codex実装向け呼び出し例（FeatureContext）
+
+```python
+from typing import Final
+
+market_frame = MarketFrame(symbol="USDJPY", timeframe="5m", bars=latest_bars)
+feature_ctx = FeaturePipeline.update(market_frame)
+
+# `FeaturePipeline.update()`は`FeatureContext`を返却し、StrategyEngineへ直接渡せる。
+ema_fast_latest: Final[float] = feature_ctx.get_latest("USDJPY", "ema_fast", "5m")
+bb_frame = feature_ctx.frame("USDJPY", "5m")
+rsi_window = bb_frame.window("rsi_14", length=14)
+```
+
+- `FeatureContext`は不変ビューであり、Codex実装は返却値をそのまま`StrategyContext.features`へ引き継ぐ。上記の通り、`get_latest`/`frame`/`window`でアクセスし、辞書/生DataFrameへ直接アクセスしない。
+
+##### テスト観点（FeatureContext契約）
+
+- `poetry run pytest -k "feature_context_contract"`で以下を検証する。
+  - `FeaturePipeline.update()`が常に`FeatureContext`を返し、`symbols`/`timeframes`/`available_keys`がManifest・設定ファイルと一致する。
+  - `FeatureContext.get_latest`がNaNや欠損を検知した際に`FeatureNaNError`を送出し、StrategyEngineがFail-Fastすること。
+  - `FeatureContext.frame(...).last_updated`が`config.feature.max_lag_sec`以内であること。
+
 
 ##### 指標キーと`metadata.required_features`指定一覧
 
@@ -1020,7 +1044,7 @@ sequenceDiagram
 
     WF->>FP: update(market_frame@5m)
     FP-->>WF: FeatureContext (5m/1h/1d)
-    WF->>RE: update(feature_frame)
+    WF->>RE: update(feature_ctx)
     RE-->>WF: RegimeState
     WF->>SE: run_all(StrategyContext)
     SE->>SE: plugin.evaluate(feature, regime, gate)
@@ -1039,18 +1063,18 @@ sequenceDiagram
 
 ```python
 def run_signal_cycle(bar: MarketBar, ctx: ModeContext) -> list[TicketProposal]:
-    feature_frame = FeaturePipeline.update(bar)
-    regime_state = RegimeDetector.update(feature_frame)
+    feature_ctx = FeaturePipeline.update(bar)
+    regime_state = RegimeDetector.update(feature_ctx)
     gate_state = GateAggregator.snapshot()
     config_snapshot = ConfigRegistry.snapshot()
     watchlist = StrategyManifestResolver.effective_symbols(
         manifest=config_snapshot.strategy_manifest,
-        feature_ctx=feature_frame,
+        feature_ctx=feature_ctx,
         gate_state=gate_state,
         regime_state=regime_state,
     )
     strategy_ctx = StrategyContext(
-        features=feature_frame.lookup_ctx(),
+        features=feature_ctx,
         regime=regime_state,
         gate=gate_state,
         account=AccountService.refresh_state(ctx),
@@ -1109,7 +1133,24 @@ def run_signal_cycle(bar: MarketBar, ctx: ModeContext) -> list[TicketProposal]:
 
 - `spread_state`は`dict[str, SpreadState]`で、キーはシグナル対象シンボル、値は§3.6「SpreadStateデータモデル」で定義したスナップショット。`SpreadMonitor.current_state()`が例外を送出した場合は、当該シンボルのシグナルをRejectし`ExecutionModel.apply`を呼び出さない。
 
-`StrategyManifestResolver.effective_symbols(...)`は`strategy_manifest.yaml`上で`enabled=True`かつ現在のBoard Modeで許可されたシンボルを列挙し、未指定の場合は`feature_frame.symbols`（`FeaturePipeline`が供給する実測シンボル集合）をフォールバックに用いる。候補シンボルごとに`GateState.market.per_symbol.get(symbol)`を最優先で参照し、ニュース/カレンダーの個別ブロックが存在する場合は即座に除外する。個別指定が無い場合のみ`GateState.market.news`および`GateState.market.calendar`のグローバル遮断フラグを評価し、最後に`RegimeState`の停止条件を適用する。最終集合を`StrategyContext.watchlist`へ渡すことで、後続コンポーネントが`strategy_ctx.watchlist`を参照すれば常にアクティブな監視対象のみを取得できる。
+`StrategyManifestResolver.effective_symbols(...)`は`strategy_manifest.yaml`上で`enabled=True`かつ現在のBoard Modeで許可されたシンボルを列挙し、未指定の場合は`feature_ctx.symbols`（`FeaturePipeline.update()`が返却した`FeatureContext`の集合）をフォールバックに用いる。候補シンボルごとに`GateState.market.per_symbol.get(symbol)`を最優先で参照し、ニュース/カレンダーの個別ブロックが存在する場合は即座に除外する。個別指定が無い場合のみ`GateState.market.news`および`GateState.market.calendar`のグローバル遮断フラグを評価し、最後に`RegimeState`の停止条件を適用する。最終集合を`StrategyContext.watchlist`へ渡すことで、後続コンポーネントが`strategy_ctx.watchlist`を参照すれば常にアクティブな監視対象のみを取得できる。
+
+- **引数の正式型**: `manifest: StrategyManifest`, `feature_ctx: FeatureContext`, `gate_state: GateState`, `regime_state: RegimeState`。
+- **戻り値**: `frozenset[str]`（監視対象シンボル集合）。
+
+##### Codex実装向け呼び出し例（StrategyManifestResolver）
+
+```python
+strategy_manifest = ConfigRegistry.snapshot().strategy_manifest
+watchlist: frozenset[str] = StrategyManifestResolver.effective_symbols(
+    manifest=strategy_manifest,
+    feature_ctx=feature_ctx,
+    gate_state=gate_state,
+    regime_state=regime_state,
+)
+```
+
+- `effective_symbols()`は常に`frozenset[str]`を返すため、Codex実装では`set`への再変換を避け、StrategyContextへそのまま渡す。
 
 `GateAggregator.snapshot()`は`CalendarService`/`NewsService`/`SpreadMonitor`/`RiskManager`等からの部分スナップショットをマージし、`GateState.market.per_symbol`を含む完全な`GateState`を返却する。同じオブジェクトを`data/runtime/gate_state.json`や`snapshots/latest/gate_state.json`へシリアライズすることで、再起動時や監査証跡が常に最新スキーマ（§4.2）に一致することを保証する。
 
@@ -1149,12 +1190,12 @@ def run_signal_cycle(bar: MarketBar, ctx: ModeContext) -> list[TicketProposal]:
 
 | フィールド | 型 | 説明 | 取得元/備考 |
 | --- | --- | --- | --- |
-| `features` | `FeatureContext` | シンボル×タイムフレーム毎の指標ビュー。`lookup(symbol, feature, timeframe)`でアクセス。 | `FeaturePipeline.update()`が返した差分キャッシュ。 |
+| `features` | `FeatureContext` | シンボル×タイムフレーム毎の指標ビュー。`lookup(symbol, feature, timeframe)`でアクセス。 | `FeaturePipeline.update()`が返した差分コンテキスト。 |
 | `regime` | `RegimeState` | ボラティリティ/トレンド判定。`mode ∈ {range, trend, spike}`。 | `RegimeDetector.update()`結果。 |
 | `gate` | `GateState` | `market`（ニュース/カレンダー/Spread、`per_symbol`オーバーライド）、`risk.reduce_only`、`human`（ダブルACK/コメント要件）のブロック状態。 | `GateAggregator.snapshot()`、Kill Switchを含む。 |
 | `account` | `AccountState` | エクイティ、利用可能証拠金、通貨バケット露出。`stale_ts`付き。 | `AccountService.refresh_state(ctx)`、Paperはシミュレーション口座。 |
 | `config` | `ConfigSnapshot` | `risk_policy`, `strategy_manifest`, `board_modes`等のハッシュ付き読み取り専用ビュー。 | `ConfigRegistry.snapshot()`、変更時は`cfg_hash`が更新。 |
-| `watchlist` | `frozenset[str]` | StrategyEngineが監視・評価対象とするシンボル集合。ManifestとFeaturePipelineの整合済み。 | `StrategyManifestResolver.effective_symbols(...)`、不足時は`feature_frame.symbols`から派生。 |
+| `watchlist` | `frozenset[str]` | StrategyEngineが監視・評価対象とするシンボル集合。ManifestとFeaturePipelineの整合済み。 | `StrategyManifestResolver.effective_symbols(...)`、不足時は`feature_ctx.symbols`から派生。 |
 | `clock` | `MarketClock` | `now`, `timeframe`, `trading_calendar`を保持。決定論シードに使用。 | `ModeContext.clock`を透過。 |
 | `seed` | `int` | `ModeContext.deterministic_seed ^ strategy_metadata.seed_offset`で算出。 | 各プラグインが乱数を使用する場合に必須。 |
 
@@ -1235,7 +1276,7 @@ class MaRsiPlugin(StrategyPluginProtocol):
 
 - `FeatureContext.available_keys`は`{"ema_fast_5m", "macd_signal_1h", ...}`のような`<feature>_<tf>`形式を返し、`StrategyMetadata.required_features`はこの文字列集合の部分集合でなければならない。
 - `strategy_manifest.yaml`の`strategies.<id>.required_features`も`FeatureContext.available_keys`と同じ集合を前提に列挙する。例えば`macd_signal_1h`を要求する戦略は、設定ファイル側で`macd_12_26_9.output_keys.signal: macd_signal`と`timeframes: ["1h"]`が有効化されていることを前提にする。FeaturePipelineが新たな`output_key`を追加した場合はManifestとテスト資産を同時更新し、Fail-Fastで不一致を検知する。
-- `StrategyContext.watchlist`は`StrategyManifestResolver.effective_symbols(...)`が返す`frozenset[str]`で、Manifestで`enabled=True`かつボードモード・戦略ガードにより許可されたシンボルを起点に構築する。Manifestがウォッチリストを省略する場合は`feature_frame.symbols`から導出し、Gate/Regimeが遮断したシンボルを除外した結果のみをStrategy Pluginへ渡す。
+- `StrategyContext.watchlist`は`StrategyManifestResolver.effective_symbols(...)`が返す`frozenset[str]`で、Manifestで`enabled=True`かつボードモード・戦略ガードにより許可されたシンボルを起点に構築する。Manifestがウォッチリストを省略する場合は`feature_ctx.symbols`から導出し、Gate/Regimeが遮断したシンボルを除外した結果のみをStrategy Pluginへ渡す。
 - `FeatureContext.lookup()`/`get_latest()`は対象キーが存在しない、または`FeatureFrameView.last_updated`が`config.feature.max_lag_sec`を超えている場合に`FeatureLookupError`または`FeatureStaleError`を送出し、StrategyEngineは`StrategyExecutionError(cause='feature_missing')`を発生させて当該プラグインの出力を棄却する。
 - **決定論/ログ要件**
   - `evaluate()`は`RawSignal`を返す際、`signal_id = f"{self.id}:{context.clock.bar_ts:%Y%m%d%H%M}:{hash_components}"`で生成し、`hash_components`には主要Featureキーと`seed`を含める。
