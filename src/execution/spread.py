@@ -5,7 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
-from typing import Any, Iterable, Mapping, Protocol, runtime_checkable
+from typing import Any, Iterable, Protocol, runtime_checkable
+from warnings import warn
 
 from typing_extensions import Literal
 
@@ -57,11 +58,25 @@ class SpreadMonitorProtocol(Protocol):
 
     def current_state(
         self, *, symbols: Iterable[str] | None = None
-    ) -> Mapping[str, SpreadState]:
+    ) -> dict[str, SpreadState]:
         """Return the canonical spread state mapping used by gate/audit flows."""
 
     def current_snapshot(self) -> SpreadSnapshot:
         """Return the latest per-symbol spread snapshot for observability hooks."""
+
+        warn(
+            "SpreadMonitorProtocol.current_snapshot() is deprecated; use current_state()",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+
+        state = self.current_state()
+        if not state:
+            msg = "SpreadMonitorProtocol.current_state() returned an empty mapping"
+            raise SpreadDataDegraded(msg)
+
+        symbol, spread_state = next(iter(state.items()))
+        return SpreadSnapshot(symbol=symbol, spread_state=spread_state)
 
 
 __all__ = [
