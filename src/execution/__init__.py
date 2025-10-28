@@ -20,6 +20,8 @@ from .reduce_only import ReduceOnlyAdvisorProtocol
 from .spread import (
     SpreadCooldownState,
     SpreadMonitorProtocol,
+    SpreadSnapshot,
+    SpreadState,
 )
 
 __all__ = [
@@ -32,4 +34,6 @@ __all__ = [
     "ReduceOnlyAdvisorProtocol",
     "SpreadCooldownState",
     "SpreadMonitorProtocol",
+    "SpreadSnapshot",
+    "SpreadState",
 ]
