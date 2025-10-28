@@ -1062,6 +1062,11 @@ sequenceDiagram
 #### 3.5.2 シグナル判定疑似コード
 
 ```python
+import logging
+from execution.model import ExecutionModelInputError
+from execution.spread import SpreadMonitorNotFound, SpreadMonitorNotInitialized
+
+
 def run_signal_cycle(bar: MarketBar, ctx: ModeContext) -> list[TicketProposal]:
     feature_ctx = FeaturePipeline.update(bar)
     regime_state = RegimeDetector.update(feature_ctx)
@@ -1086,7 +1091,23 @@ def run_signal_cycle(bar: MarketBar, ctx: ModeContext) -> list[TicketProposal]:
     performance_stats = PerformanceRepository.load(symbols=strategy_ctx.watchlist)
     penalties = PenaltyRegistry.snapshot(now=bar.ts)
     market_snapshot = MarketDataCache.snapshot(symbols=strategy_ctx.watchlist, timeframe=bar.timeframe)
-    spread_state = SpreadMonitor.current_state(symbols=strategy_ctx.watchlist)
+    logger = logging.getLogger("signal_cycle")
+    try:
+        spread_state = SpreadMonitor.current_state(symbols=strategy_ctx.watchlist)
+    except SpreadMonitorNotInitialized as exc:
+        logger.error(
+            "signal_cycle.spread_state_unavailable",
+            extra={"symbols": list(strategy_ctx.watchlist), "mode": ctx.mode},
+            exc_info=exc,
+        )
+        return []
+    except SpreadMonitorNotFound as exc:
+        logger.warning(
+            "signal_cycle.spread_state_symbol_not_found",
+            extra={"symbols": list(strategy_ctx.watchlist), "mode": ctx.mode},
+            exc_info=exc,
+        )
+        return []
     # spread_state: dict[str, SpreadState]（§3.6 SpreadStateデータモデル）。キーはシンボル。値は最新スナップショット。
 
     raw_signals: list[RawSignal] = []
@@ -1098,15 +1119,45 @@ def run_signal_cycle(bar: MarketBar, ctx: ModeContext) -> list[TicketProposal]:
     ranked = ScoringService.rank(raw_signals, performance_stats, penalties)
     risk_vetted = RiskManager.evaluate(ranked, strategy_ctx)
     execution_adjustments: dict[str, ExecutionAdjustments] = {}
+    eligible_signals: list[RiskVettedSignal] = []
     for sig in risk_vetted:
-        snapshot = market_snapshot[sig.symbol]
-        spread = spread_state.get(sig.symbol)
-        execution_adjustments[sig.signal_id] = ExecutionModel.apply(
-            sig,
-            market_snapshot=snapshot,
-            spread_state=spread,
-            mode_context=ctx,
-        )
+        try:
+            snapshot = market_snapshot[sig.symbol]
+        except KeyError:
+            logger.warning(
+                "signal.reject.market_snapshot_missing",
+                extra={"signal_id": sig.signal_id, "symbol": sig.symbol},
+            )
+            continue
+        try:
+            spread = spread_state[sig.symbol]
+        except KeyError as exc:
+            logger.warning(
+                "signal.reject.spread_state_missing",
+                extra={"signal_id": sig.signal_id, "symbol": sig.symbol},
+            )
+            continue
+        if spread is None:
+            logger.error(
+                "signal.reject.spread_state_none",
+                extra={"signal_id": sig.signal_id, "symbol": sig.symbol},
+            )
+            continue
+        try:
+            execution_adjustments[sig.signal_id] = ExecutionModel.apply(
+                sig,
+                market_snapshot=snapshot,
+                spread_state=spread,
+                mode_context=ctx,
+            )
+        except ExecutionModelInputError as exc:
+            logger.warning(
+                "signal.reject.execution_input_error",
+                extra={"signal_id": sig.signal_id, "symbol": sig.symbol},
+                exc_info=exc,
+            )
+            continue
+        eligible_signals.append(sig)
 
     sized = [
         PositionSizer.size(
@@ -1115,7 +1166,7 @@ def run_signal_cycle(bar: MarketBar, ctx: ModeContext) -> list[TicketProposal]:
             BrokerSpecs.load(),
             execution_adjustments[sig.signal_id],
         )
-        for sig in risk_vetted
+        for sig in eligible_signals
     ]
     tickets: list[TicketProposal] = []
     for sized_sig in sized:
@@ -1131,7 +1182,11 @@ def run_signal_cycle(bar: MarketBar, ctx: ModeContext) -> list[TicketProposal]:
     return [t for t in tickets if t.is_actionable()]
 ```
 
-- `spread_state`は`dict[str, SpreadState]`で、キーはシグナル対象シンボル、値は§3.6「SpreadStateデータモデル」で定義したスナップショット。`SpreadMonitor.current_state()`が例外を送出した場合は、当該シンボルのシグナルをRejectし`ExecutionModel.apply`を呼び出さない。
+- `spread_state`は`dict[str, SpreadState]`で、キーはシグナル対象シンボル、値は§3.6「SpreadStateデータモデル」で定義したスナップショット。`SpreadMonitor.current_state()`が`SpreadMonitorNotInitialized`を送出した場合はフェイルセーフで全シグナルを空配列にして終了し、`SpreadMonitorNotFound`/`KeyError`/`None`を検知したシンボルは`signal.reject.spread_state_missing`（または`signal.reject.spread_state_none`）ログを残してRejectし`ExecutionModel.apply`を呼び出さない。
+- `ExecutionModel.apply`で`ExecutionModelInputError`がraiseされた場合も同様に`signal.reject.execution_input_error`ログを記録し、該当シグナルを除外して次のシグナル評価へ進む。
+- **Codex向けテスト要件（Spread Fail-Safe）**:
+  - `tests/unit/test_spread_monitor.py::test_current_state_missing_symbol`で`SpreadMonitor.current_state(['GBPJPY'])`が`SpreadMonitorNotFound`をraiseし、`logger`が`signal_cycle.spread_state_symbol_not_found`を記録すること。
+  - `tests/unit/test_execution_model.py::test_apply_rejects_none_spread_state`で`ExecutionModel.apply(..., spread_state=None, ...)`が`ExecutionModelInputError`をraiseし、呼び出し元が`signal.reject.spread_state_none`ログとともにシグナルをRejectすること。
 
 `StrategyManifestResolver.effective_symbols(...)`は`strategy_manifest.yaml`上で`enabled=True`かつ現在のBoard Modeで許可されたシンボルを列挙し、未指定の場合は`feature_ctx.symbols`（`FeaturePipeline.update()`が返却した`FeatureContext`の集合）をフォールバックに用いる。候補シンボルごとに`GateState.market.per_symbol.get(symbol)`を最優先で参照し、ニュース/カレンダーの個別ブロックが存在する場合は即座に除外する。個別指定が無い場合のみ`GateState.market.news`および`GateState.market.calendar`のグローバル遮断フラグを評価し、最後に`RegimeState`の停止条件を適用する。最終集合を`StrategyContext.watchlist`へ渡すことで、後続コンポーネントが`strategy_ctx.watchlist`を参照すれば常にアクティブな監視対象のみを取得できる。
 
@@ -1328,10 +1383,10 @@ FillStyle = Literal["ioc", "fok", "gtd"]
 #### APIインターフェース一覧
 | API/関数 | 入力 | 処理 | 出力 | 異常系 |
 | --- | --- | --- | --- | --- |
-| `ExecutionModel.apply(raw_signal, market_snapshot, spread_state, *, mode_context)` | `RawSignal`, 市場スナップショット（価格、ボラ指標）、Spread状態、実行設定、`ModeContext` | 遅延・滑り補正計算→TTL/保護幅決定→`ExecutionAdjustments`生成（モード別ログ/乱数シードを考慮） | `ExecutionAdjustments`のみ（後段のPositionSizerが参照） | 市場データ欠落: `ExecutionModelInputError`。ブローカー制約違反: `ExecutionRuleViolation` |
+| `ExecutionModel.apply(raw_signal, market_snapshot, spread_state, *, mode_context)` | `RawSignal`, 市場スナップショット（価格、ボラ指標）、Spread状態、実行設定、`ModeContext` | 遅延・滑り補正計算→TTL/保護幅決定→`ExecutionAdjustments`生成（モード別ログ/乱数シードを考慮） | `ExecutionAdjustments`のみ（後段のPositionSizerが参照） | 市場データ欠落/`spread_state is None`/辞書未登録シンボル: `ExecutionModelInputError`（呼び出し側でFail-FastしRejectログを残す）。ブローカー制約違反: `ExecutionRuleViolation` |
 | `ExecutionModel.validate_config(config)` | `execution_model.yaml`, 許容範囲設定 | 設定スキーマ検証→危険値（遅延>90s等）を警告→監査記録 | `ValidationReport` | スキーマ不正: `ExecutionConfigError` |
 | `SpreadMonitor.update(spread_frame)` | `SpreadMetrics`（最新スプレッド、分位、時間）、閾値設定 | ローリング統計更新→`cooldown_state`遷移→EventBus通知 | `SpreadCooldownState` | データ欠落: `SpreadDataDegraded` |
-| `SpreadMonitor.current_state(symbols: Iterable[str] &#124; None)` | 監視対象シンボル（省略時は全シンボル） | 内部キャッシュから最新`SpreadState`辞書を構築し、`symbols`フィルタを適用 | `dict[str, SpreadState]` | 未初期化: `SpreadMonitorNotInitialized`。欠損シンボル: `SpreadMonitorNotFound` |
+| `SpreadMonitor.current_state(symbols: Iterable[str] &#124; None)` | 監視対象シンボル（省略時は全シンボル） | 内部キャッシュから最新`SpreadState`辞書を構築し、`symbols`フィルタを適用 | `dict[str, SpreadState]` | 未初期化: `SpreadMonitorNotInitialized`（上流は全シグナルReject）。欠損シンボル: `SpreadMonitorNotFound`（該当シグナルをRejectし、`signal.reject.spread_state_missing`ログ必須） |
 | `SpreadMonitor.sample(symbol)` | シンボル、ウィンドウ長 | 現在状態と履歴サマリを返却 | `SpreadSample`（state, p95, p99, duration） | シンボル未登録: `SpreadMonitorNotFound` |
 
 #### SpreadStateデータモデル
