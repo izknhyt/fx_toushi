@@ -1,0 +1,47 @@
+# ModeContext Startup Validation Template
+
+Codex実装物の受入時に、`ModeContext`初期化手順（詳細設計 §0.6.9, §3.1）を証跡化するためのテンプレート。各検証項目はCodex着手前チェックリスト (§0.6.9) の番号を`CHK-0.6.9-<n>`として参照し、レビュー記録やCodex Issue/PRコメントから相互リンクできるようにする。
+
+## 1. 実行マトリクス（CHK-0.6.9-7）
+`tradectl start` → `tradectl stop` のフローをモード別に記録し、`logs/ops/session_start.log` と Snapshot 永続化 (`SnapshotManager.persist()`) の証跡を残す。
+
+| Mode | Command | 事前条件 (関連 Runbook) | 期待するログシグネチャ | 証跡リンク | 検証結果 |
+| --- | --- | --- | --- | --- | --- |
+| backtest | `tradectl start --profile backtest`<br>`tradectl stop` | `config/profiles/backtest.yaml` 更新済み<br>`RUN-TIME-01`/`STRAT-M1-VALIDATION` | `ctx.mode=backtest`<br>`ctx.profile.name=backtest`<br>`deterministic_seed=<int>` | `logs/ops/session_start.log#L<line>`<br>`reports/validation_log/` | [ ] Pass<br>[ ] Fail |
+| paper | `tradectl start --profile paper`<br>`tradectl stop` | `config/profiles/paper.yaml` 更新済み<br>`RUN-PERF-01` | `ctx.mode=paper`<br>`ctx.profile.name=paper`<br>`deterministic_seed=<int>` |  | [ ] Pass<br>[ ] Fail |
+| live | `tradectl start --profile live`<br>`tradectl stop` | `config/profiles/live.yaml` 更新済み<br>`RUN-RISK-01`/`RUN-BROKER-API-02` | `ctx.mode=live`<br>`ctx.profile.name=live`<br>`deterministic_seed=<int>` |  | [ ] Pass<br>[ ] Fail |
+
+- **Snapshot確認**: 各モード終了後に `SnapshotManager.persist()` が呼び出され、`snapshots/latest/<mode>.json` が更新されたことを記録する（Evidence欄にファイルパスを追記）。
+- **CI/自動化**: CI上での実行は`CHK-0.6.9-2`のpytestスモークテストと紐付け、成功ジョブIDを Evidence欄に追記する。
+
+## 2. ModeContext フィールド初期化監査（CHK-0.6.9-6）
+`ModeContextFactory`/`ModeController`の初期化項目と `config/profiles/<mode>.yaml` のフィールド対応を確認する。
+
+| Mode | Field | 期待値・検証方法 | 証跡 (テスト or ドキュメント) | 備考 |
+| --- | --- | --- | --- | --- |
+| backtest | `clock` | `tests/unit/test_mode_context_factory.py::test_backtest_clock_initialization` |  |  |
+|  | `data_feeds` | `docs/schemas/mode_context.json` 整合性確認 |  |  |
+|  | `execution_profile` | `pytest -k "mode_context and backtest"` |  |  |
+|  | `account_gateway` | Runbook `RUN-ACCOUNT-02` 証跡 |  |  |
+| paper | `clock` |  |  |  |
+| ... | ... | ... | ... | ... |
+
+- フィールド検証は `ModeContext.profile` の値も含めて記録し、未検証の場合は備考欄に次アクションを記載する。
+- Codex Issue/PRチェックリストに `CHK-0.6.9-6` の完了状態を記載できるよう、証跡ファイル名を統一する（例: `validation/mode_context/2025-03-15_backtest.md`）。
+
+## 3. Codex着手前チェックリスト連携
+| Check ID | 詳細設計 §0.6.9 要件 | 証跡テンプレ位置 | Codexテンプレ参照 |
+| --- | --- | --- | --- |
+| CHK-0.6.9-1 | `poetry install --no-root` 成功 & `python -m tradectl --help` 0終了 | `reports/validation_log/templates/env_setup.md` (必要に応じ作成) | Codex Issueチェックリスト「環境前提」項 |
+| CHK-0.6.9-2 | `pytest -k smoke` スイートがCIテンプレに組み込み済み | `ci/templates/python_smoke.yml` 実行ログ | Codex PRチェックリスト「Tests」項 |
+| CHK-0.6.9-3 | レビュー記録/Prompt Packet 格納 | `docs/review_log.md`, `docs/prompt_packages/` | Codex Issueチェックリスト「Review Hand-off」項 |
+| CHK-0.6.9-4 | リスク閾値ファイル雛形とスキーマ整合 | `config/` サンプル & `docs/schemas/` | Codex Issueチェックリスト「Risk Controls」項 |
+| CHK-0.6.9-5 | Issue/PR テンプレに §0.6.8 番号を引用 | Codex Issue/PR テンプレート | Codex Issueチェックリスト「Checklist」項 |
+| CHK-0.6.9-6 | `ModeContext` フィールド初期化証跡 | 本テンプレ §2 | Codex PRチェックリスト「Mode Context」項 |
+| CHK-0.6.9-7 | `tradectl start --profile ...` ログ証跡 | 本テンプレ §1 | Codex PRチェックリスト「CLI Evidence」項 |
+
+- 新たに作成したエビデンスファイルは `docs/validation/` 以下に配置し、レビュー記録 (`docs/review_log.md`) から `CHK-0.6.9-<n>` へのリンクを張る。
+- Codex側テンプレート（Issue/PRチェックリスト）にチェックを付ける際は、Evidence欄のパス/コミットIDを記入してクロスリファレンスを維持する。
+
+## 4. 更新履歴
+- 2025-03-15: 初版作成（Codexハンドオフ監査用テンプレート）

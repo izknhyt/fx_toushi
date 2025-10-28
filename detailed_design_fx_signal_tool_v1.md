@@ -209,13 +209,15 @@
 
 #### 0.6.9 Codex着手前チェックリスト
 
-1. `poetry install --no-root`が成功し、`python -m tradectl --help`（仮スタブ可）が0終了すること。
-2. `pytest -k smoke`が通る最小テストスイートを確立し、CIテンプレ（`ci/templates/python_smoke.yml`）に組み込むこと。
-3. `docs/review_log.md`に本レビュー反映、`docs/prompt_packages/`へPacket下書きを格納済みであること。
-4. Spread/Kill Switch等のリスク閾値ファイル（`config/risk_policy.yaml`など）が`schema/`定義と突合できる形で雛形化され、`GateState`スキーマ（`market.news.blocked`/`market.calendar.blocked`/`market.spread.state`/`risk.reduce_only`/`human.double_entry_required`）と整合していること。
-5. Codexへ渡すIssue/PRテンプレに§0.6.8の番号を引用し、未解決項目がある場合は「受入不可（前提未了）」ラベルを適用してから再依頼すること。
-6. `ModeContext`のフィールド（§3.1 表）を初期化する`ModeContextFactory`/`ModeController`のスタブが揃い、`config/profiles/<mode>.yaml`→`ModeContext.profile`→`SessionManager.start()`の流れで`clock`/`data_feeds`/`execution_profile`/`account_gateway`が埋まることを単体テストまたはドキュメントで確認していること。
-7. `tradectl start --profile backtest`, `tradectl start --profile paper`, `tradectl start --profile live`（各モードはモック実装可）を手動/CIで実行し、`ModeContext`初期化ログ（`ctx.mode`, `ctx.profile.name`, `deterministic_seed`) が`logs/ops/session_start.log`に出力されること。終了時は`tradectl stop`→`SnapshotManager.persist()`までを含むテスト手順を`docs/validation/ModeContext_startup.md`に記録すること。
+各項目は`CHK-0.6.9-<番号>`として管理し、Opsアジェンダ（`docs/runbooks/daily_agenda/`）および検証テンプレート（`docs/validation/ModeContext_startup.md`）から相互参照する。Codex Issue/PRチェックリストには同じIDで追記し、証跡ファイルパスまたはCIジョブIDを記録すること。
+
+1. `poetry install --no-root`が成功し、`python -m tradectl --help`（仮スタブ可）が0終了すること（CHK-0.6.9-1）。
+2. `pytest -k smoke`が通る最小テストスイートを確立し、CIテンプレ（`ci/templates/python_smoke.yml`）に組み込むこと（CHK-0.6.9-2）。
+3. `docs/review_log.md`に本レビュー反映、`docs/prompt_packages/`へPacket下書きを格納済みであること（CHK-0.6.9-3）。週次レビューで参照するOps Agendaは`docs/runbooks/daily_agenda/TEMPLATE.md`を基に作成し、関連エントリからリンクする。
+4. Spread/Kill Switch等のリスク閾値ファイル（`config/risk_policy.yaml`など）が`schema/`定義と突合できる形で雛形化され、`GateState`スキーマ（`market.news.blocked`/`market.calendar.blocked`/`market.spread.state`/`risk.reduce_only`/`human.double_entry_required`）と整合していること（CHK-0.6.9-4）。
+5. Codexへ渡すIssue/PRテンプレに§0.6.8の番号を引用し、未解決項目がある場合は「受入不可（前提未了）」ラベルを適用してから再依頼すること（CHK-0.6.9-5）。
+6. `ModeContext`のフィールド（§3.1 表）を初期化する`ModeContextFactory`/`ModeController`のスタブが揃い、`config/profiles/<mode>.yaml`→`ModeContext.profile`→`SessionManager.start()`の流れで`clock`/`data_feeds`/`execution_profile`/`account_gateway`が埋まることを単体テストまたはドキュメントで確認していること（CHK-0.6.9-6）。証跡は `docs/validation/ModeContext_startup.md` §2 に記録する。
+7. `tradectl start --profile backtest`, `tradectl start --profile paper`, `tradectl start --profile live`（各モードはモック実装可）を手動/CIで実行し、`ModeContext`初期化ログ（`ctx.mode`, `ctx.profile.name`, `deterministic_seed`) が`logs/ops/session_start.log`に出力されること。終了時は`tradectl stop`→`SnapshotManager.persist()`までを含むテスト手順を`docs/validation/ModeContext_startup.md` §1に記録し、Ops Agendaの「ModeContext Startup Walkthrough」セクションから参照すること（CHK-0.6.9-7）。
 
 #### 0.6.10 すご腕SEレビュー（2025-03-10）フォローアップ
 

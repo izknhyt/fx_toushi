@@ -25,7 +25,7 @@
 - 次週ToDo (Ops Manager, due Mon 08:30 JST)
   - Priority Items: <必須>
   - Linked Runbooks: <RUN-PERF-01 / RUN-RISK-01 / others>
-  - Ops Agenda Export: docs/runbooks/daily_agenda/<YYYY-MM-DD>.md
+  - Ops Agenda Export: `docs/runbooks/daily_agenda/<YYYY-MM-DD>.md`（テンプレ: `docs/runbooks/daily_agenda/TEMPLATE.md`）
 - KPI Sign-off (Product Owner, due Mon 12:00 JST)
   - Decision: <approve / hold / escalate>
   - Notes: <optional>
@@ -39,9 +39,10 @@
 - 四半期: `### <YYYY-Q> Quarterly KPI Review`としてBacktest/SLA結果、SLAプロファイル更新状況、Runbookサイン記録を追記する。
 
 ## Opsアジェンダ連携
-1. Ops Managerは`tradectl ops agenda --date <YYYY-MM-DD>`を実行し、生成されたMarkdownを`docs/runbooks/daily_agenda/`へ保存する。
+1. Ops Managerは`tradectl ops agenda --date <YYYY-MM-DD>`を実行し、生成されたMarkdownを`docs/runbooks/daily_agenda/`へ保存する（テンプレ `TEMPLATE.md` を起点に`CHK-0.6.9-*`欄を更新）。
 2. 保存したファイルを上記テンプレートの「Ops Agenda Export」にリンクし、ToDo欄と整合させる。
-3. Agendaに未完了タスクがあれば次週ToDo欄へ転記し、完了済みタスクはOps Worklogへログする。
+3. Agendaの「ModeContext Startup Walkthrough」セクションで更新した証跡は`docs/validation/ModeContext_startup.md`の該当行へリンクし、次週レビュー時に`CHK-0.6.9-6/7`の状態を確認する。
+4. Agendaに未完了タスクがあれば次週ToDo欄へ転記し、完了済みタスクはOps Worklogへログする。
 
 ## 監査リンク
 - 週次コメント締切超過時は`reports/validation_log/AC-45_sla_<date>.md`に遅延理由を記録する。
