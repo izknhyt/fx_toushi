@@ -22,6 +22,10 @@ materials stored here serve as the authoritative source for governance reviews a
 - `sla_threshold_profile.schema.json` – Data ingestion SLA thresholds (§4.4/§9.4.4). Applies to
   `config/sla_thresholds/*.yaml`.
 - `gate_state.schema.json` – Operational gate snapshot contract (§4.2/§5.4)。`market.news/calendar/spread`、`risk.reduce_only`、`human.double_entry_required` 等のネスト構造を定義し、`schema/gate_state.sample.json` および RUN-RISK-01 のスナップショット検証で参照される。
+- `ops_config.schema.json` – Automation Effect Tracker thresholds/notification routing (§52.2).
+  Governs `config/ops.yaml` for CLI automation workflows.
+- `roles_config.schema.json` – CLI permission catalogue covering Ops/Research/Governance workflows
+  (§52/§57/§68). Governs `config/roles.yaml` and Access Registry consistency checks.
 - `CHANGELOG.md` – Required update log whenever schema contracts evolve. Each PR touching the
   registry must append an entry summarising the change, linked to the relevant design/runbook
   context.

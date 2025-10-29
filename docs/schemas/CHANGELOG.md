@@ -1,5 +1,11 @@
 # Schema Registry Change Log
 
+## 2025-03-16
+- Added `ops_config.schema.json` to codify AutomationEffectTracker thresholds/notifications and
+  `roles_config.schema.json` for CLI permission catalogues, aligning detailed design §52/§57/§68
+  with the new `config/ops.yaml` / `config/roles.yaml` scaffolds. Config smoke tests now validate
+  both scaffolds under `pytest -k config_schema_smoke`.
+
 ## 2025-03-15
 - `gate_state.schema.json` を `market`/`risk`/`human` のネスト構造に更新し、ニュース/カレンダー/Spread/Reduce-Only/ダブルエントリー要件を個別プロパティへ分割。
   `required_roles`・`acknowledged_roles`・`comment_min_length` を追記し、`schema/gate_state.sample.json` を v2 レイアウトへ更新した。

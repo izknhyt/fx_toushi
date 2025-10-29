@@ -1,0 +1,39 @@
+# config/ops.yaml -- Ops AutomationEffectTracker scaffold
+# 詳細設計 §52.2 (AutomationEffectTracker) と `tradectl ops automation` CLI 実装時の閾値管理に利用します。
+# Schema: docs/schemas/ops_config.schema.json （schema_version 更新時は JSON Schema / テストを同期）。
+
+schema_version: 1
+metadata:
+  description: "Automation Effect トラッキングと週次レビューの基本設定"
+  owner: ops-automation@codex.example
+  last_reviewed_at: "2025-03-01"
+  runbook_refs:
+    - RUN-OPS-LOG-01
+    - RUN-OPS-AGENDA-01
+automation_threshold_min: 30
+allowed_tasks:
+  - sla_review
+  - ops_agenda_generation
+  - incident_follow_up
+  - broker_certification
+  - automation_candidate_interview
+review_window_weeks: 6
+notify_channels:
+  effect_achieved:
+    - medium: slack
+      target: "#ops-automation"
+      escalation: false
+    - medium: email
+      target: ops-weekly-review@codex.example
+      escalation: false
+  policy_violation:
+    - medium: pagerduty
+      target: "PDOPS123"
+      escalation: true
+  review_digest:
+    - medium: slack
+      target: "#ops-review"
+      escalation: false
+    - medium: email
+      target: ops-managers@codex.example
+      escalation: false
