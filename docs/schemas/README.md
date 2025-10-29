@@ -19,6 +19,8 @@ materials stored here serve as the authoritative source for governance reviews a
   RUN-SPREAD-03. Validates `config/board_modes.yaml`.
 - `cfg.schema.json` – Mode profile configuration for SessionManager (§3.1/§4.4). Applies to
   `config/profiles/*.yaml`.
+- `human_gate_config.schema.json` – Human Gate / Reduce-Only advisor contract (§3.5.6/§5.12).
+  Validates `config/reduce_only.yaml` and governs comment/role overrides in `config/profiles/*.yaml`.
 - `sla_threshold_profile.schema.json` – Data ingestion SLA thresholds (§4.4/§9.4.4). Applies to
   `config/sla_thresholds/*.yaml`.
 - `gate_state.schema.json` – Operational gate snapshot contract (§4.2/§5.4)。`market.news/calendar/spread`、`risk.reduce_only`、`human.double_entry_required` 等のネスト構造を定義し、`schema/gate_state.sample.json` および RUN-RISK-01 のスナップショット検証で参照される。

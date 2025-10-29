@@ -1,5 +1,10 @@
 # Schema Registry Change Log
 
+## 2025-03-17
+- Added `human_gate_config.schema.json` to capture Human Gate double-ack roles, comment thresholds,
+  and Reduce-Only advisor weights per detailed design §3.5.6/§5.12. Updated `cfg.schema.json`
+  so profile `gates` may override required roles and comment lengths for mode-specific workflows.
+
 ## 2025-03-16
 - Added `ops_config.schema.json` to codify AutomationEffectTracker thresholds/notifications and
   `roles_config.schema.json` for CLI permission catalogues, aligning detailed design §52/§57/§68
