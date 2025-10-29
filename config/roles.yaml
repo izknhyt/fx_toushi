@@ -1,0 +1,147 @@
+# config/roles.yaml -- Access role mapping scaffold
+# 詳細設計 §52 / §57 / §68 に登場するCLIおよびガバナンスワークフローの権限集合を定義します。
+# Schema: docs/schemas/roles_config.schema.json。RunbookとValidation Playbookを参照しながら更新してください。
+
+schema_version: 1
+metadata:
+  description: "Ops / Research / Governance CLI における権限付与サンプル"
+  owner: access-admins@codex.example
+  last_reviewed_at: "2025-03-01"
+  runbook_refs:
+    - GOV-AUD-01
+    - STRAT-PROMOTE-01
+roles:
+  ops_automation_writers:
+    summary: "Automation Effect Tracker への登録と週次Opsレビューの担当者"
+    runbook_refs:
+      - RUN-DATA-05
+      - RUN-RISK-01
+    validation_refs:
+      - reports/validation_log/templates/weekly.md
+    members:
+      - principal_id: user:emi.ops
+        type: user
+        display_name: Emi Sato
+        status: active
+        notes: "Ops 当番リード。SLAレビュー担当。"
+      - principal_id: service:ops-automation-bot
+        type: service
+        display_name: Ops Automation Bot
+        status: active
+        expires_at: "2025-12-31"
+  ops_drill_organizers:
+    summary: "緊急対応・復旧訓練のプランニングと実行の責任者"
+    runbook_refs:
+      - OPS-READINESS-01
+      - RUN-RISK-01
+    validation_refs:
+      - reports/validation_log/templates/playbook_entry.md
+    members:
+      - principal_id: user:kazuo.ops
+        type: user
+        display_name: Kazuo Tanaka
+        status: active
+      - principal_id: user:amy.bc
+        type: user
+        display_name: Amy Brown
+        status: active
+        expires_at: "2025-09-30"
+        notes: "BCP 演習ファシリテータ（外部）"
+  research_stage_approvers:
+    summary: "Research Pipeline のステージ遷移に対する最終承認権者"
+    runbook_refs:
+      - STRAT-PROMOTE-01
+    validation_refs:
+      - reports/validation_log/templates/playbook_entry.md
+    members:
+      - principal_id: user:takashi.quant
+        type: user
+        display_name: Takashi Ito
+        status: active
+      - principal_id: user:maya.ops
+        type: user
+        display_name: Maya Singh
+        status: active
+  research_checklist_editors:
+    summary: "Promotion Checklist / Evidence の編集者"
+    runbook_refs:
+      - STRAT-PROMOTE-01
+    validation_refs:
+      - reports/validation_log/templates/playbook_entry.md
+    members:
+      - principal_id: user:lena.research
+        type: user
+        display_name: Lena Müller
+        status: active
+  research_notebook_runner:
+    summary: "Research Notebook CI/CD のトリガー権限"
+    runbook_refs:
+      - STRAT-STRESS-01
+    validation_refs:
+      - reports/validation_log/templates/weekly.md
+    members:
+      - principal_id: service:research-ci
+        type: service
+        display_name: Research CI Runner
+        status: active
+  strategy_board_force:
+    summary: "Strategy Board での強制決議 (--force) 承認者"
+    runbook_refs:
+      - STRAT-PROMOTE-01
+    validation_refs:
+      - reports/validation_log/templates/playbook_entry.md
+    members:
+      - principal_id: user:olivia.po
+        type: user
+        display_name: Olivia Chen
+        status: active
+        notes: "Product Owner"
+  lifecycle_override:
+    summary: "Lifecycle Gate の強制解除 (--force) 審査者"
+    runbook_refs:
+      - STRAT-PROMOTE-01
+      - RUN-RISK-01
+    validation_refs:
+      - reports/validation_log/templates/playbook_entry.md
+    members:
+      - principal_id: user:sebastian.risk
+        type: user
+        display_name: Sebastian García
+        status: active
+        notes: "Risk Manager"
+  ops_managers:
+    summary: "Ops 運用全般の承認者およびエスカレーション先"
+    runbook_refs:
+      - OPS-READINESS-01
+      - RUN-RISK-01
+    validation_refs:
+      - reports/weekly/templates/m1_core.md
+    members:
+      - principal_id: user:chihiro.ops
+        type: user
+        display_name: Chihiro Yamamoto
+        status: active
+        notes: "Ops Manager"
+  access_admins:
+    summary: "Access Registry への登録・権限レビューを実施"
+    runbook_refs:
+      - GOV-AUD-01
+    validation_refs:
+      - reports/validation_log/templates/playbook_entry.md
+    members:
+      - principal_id: user:andrew.platform
+        type: user
+        display_name: Andrew Miller
+        status: active
+  security_officers:
+    summary: "権限変更や強制オーバーライドのセカンドサイン"
+    runbook_refs:
+      - RUN-RISK-01
+    validation_refs:
+      - reports/validation_log/templates/playbook_entry.md
+    members:
+      - principal_id: user:sasha.security
+        type: user
+        display_name: Sasha Petrova
+        status: active
+        notes: "Security Officer"

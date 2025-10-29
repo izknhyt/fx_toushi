@@ -202,6 +202,32 @@ def test_board_modes_scaffold_is_valid(
 
 
 @pytest.mark.config_schema_smoke
+def test_ops_config_scaffold_is_valid(
+    load_json_schema: Callable[[str | Path], dict],
+    load_config: Callable[[str | Path], object],
+) -> None:
+    validator = _build_validator(
+        load_json_schema, "docs/schemas/ops_config.schema.json"
+    )
+    ops_config = load_config("config/ops.yaml")
+
+    validator.validate(ops_config)
+
+
+@pytest.mark.config_schema_smoke
+def test_roles_config_scaffold_is_valid(
+    load_json_schema: Callable[[str | Path], dict],
+    load_config: Callable[[str | Path], object],
+) -> None:
+    validator = _build_validator(
+        load_json_schema, "docs/schemas/roles_config.schema.json"
+    )
+    roles_config = load_config("config/roles.yaml")
+
+    validator.validate(roles_config)
+
+
+@pytest.mark.config_schema_smoke
 @pytest.mark.parametrize(
     "profile_name",
     ["backtest", "paper", "live"],

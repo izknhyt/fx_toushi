@@ -12,6 +12,8 @@
 | `profiles/backtest.yaml` | `docs/schemas/cfg.schema.json` | 詳細設計 §3.1, §4.4 | STRAT-M1-VALIDATION | バックテスト専用の最小構成。`ModeContext`再現用。 |
 | `profiles/paper.yaml` | `docs/schemas/cfg.schema.json` | 詳細設計 §3.1, §4.4 | RUN-DATA-05, RUN-HITL-01, `reports/validation_log/AC-45_*.md` | yfinance/dukascopyのSLA閾値とBoardMode既定値。 |
 | `profiles/live.yaml` | `docs/schemas/cfg.schema.json` | 詳細設計 §3.1, §4.4, §6.7 | RUN-RISK-01, RUN-SPREAD-03, STRAT-PROMOTE-01 | ブローカー接続前提のプレースホルダ。Kill Switch/BoardMode制御を明示。 |
+| `ops.yaml` | `docs/schemas/ops_config.schema.json` | 詳細設計 §52.2 | [RUN-DATA-05](../docs/runbooks/RUN-DATA-05.md), [RUN-RISK-01](../docs/runbooks/RUN-RISK-01.md), [`reports/validation_log/templates/weekly.md`](../reports/validation_log/templates/weekly.md) | Automation Effect Tracker の閾値/対象タスク/通知経路。週次レビューで`review_window_weeks`を見直し、Runbook記録と同期。 |
+| `roles.yaml` | `docs/schemas/roles_config.schema.json` | 詳細設計 §52, §57, §68 | [STRAT-PROMOTE-01](../docs/runbooks/STRAT-PROMOTE-01.md), [GOV-AUD-01](../docs/runbooks/GOV-AUD-01.md), [`reports/validation_log/templates/playbook_entry.md`](../reports/validation_log/templates/playbook_entry.md) | CLI権限とRunbookサインオフの責任者。ロール更新時はValidationログとサイン取得を必須化。 |
 | `swap_rates.csv` | ---（CSVテンプレート、`funding`系テストで検証予定） | 詳細設計 §3.12, §4.7, Runbook `RUN-FUND-01/02` | RUN-FUND-01, RUN-FUND-02, `reports/validation_log/templates/funding_daily.md` | 日次の手動更新対象。Shadow CSVとハッシュ照合する。 |
 | `sla_thresholds/default.yaml`<br>`sla_thresholds/active.yaml` | `docs/schemas/sla_threshold_profile.schema.json` | 詳細設計 §3.1, §4.4, §9.4.4 | RUN-DATA-05, RUN-DATA-06, `reports/validation_log/AC-45_*.md` | データSLAターゲットの基準値と適用中値。Runbook承認ログと同期。 |
 | `schema/gate_state.sample.json` | `docs/schemas/gate_state.schema.json` | 詳細設計 §4.2, §5.4 | RUN-RISK-01, RUN-SPREAD-03 | GateStateスナップショットの雛形。Reduce-OnlyやSpreadクールダウンの表示テキストと同期。 |
@@ -30,6 +32,17 @@
 2. Validation Data Playbook（要件定義 §8.2）の AC-01 / AC-07 / AC-45 行に、該当ファイルのコミットハッシュと承認者サインを記録します。
 3. `tradectl config diff --profile <name>` コマンド実装時の初期データとして本雛形を利用し、差分レビューで Runbook とスキーマの整合を
    確認します。
+
+### Ops / Roles 設定のメンテナンス
+
+- **`config/ops.yaml`** — Automation Effect Tracker の閾値や許可タスクは、週次Opsレビュー（[RUN-DATA-05](../docs/runbooks/RUN-DATA-05.md)）
+  とリスク報告（[RUN-RISK-01](../docs/runbooks/RUN-RISK-01.md)）のサインオフ後に更新します。`notify_channels`を変更した場合は
+  Validationログテンプレート（[`reports/validation_log/templates/weekly.md`](../reports/validation_log/templates/weekly.md)）で
+  通知証跡セクションを追記し、Automation EffectハイライトがRunbookに反映されているか確認してください。
+- **`config/roles.yaml`** — ロール追加/削除時は Strategy Board ガバナンス手順（[STRAT-PROMOTE-01](../docs/runbooks/STRAT-PROMOTE-01.md)）
+  と監査手順（[GOV-AUD-01](../docs/runbooks/GOV-AUD-01.md)）を参照し、Validation Data Playbook エントリ（[`reports/validation_log/templates/playbook_entry.md`](../reports/validation_log/templates/playbook_entry.md)）に
+  署名と根拠リンクを残します。`members[*].principal_id` を更新したら Access Registry 側の `register_principal` ワークフローが同期されているか
+  を確認し、変更理由を`notes`に記録してください。
 
 ## `swap_rates.csv` 手動更新ガイド
 
