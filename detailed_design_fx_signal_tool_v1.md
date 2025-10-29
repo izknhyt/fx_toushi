@@ -1412,6 +1412,21 @@ class MaRsiPlugin(StrategyPluginProtocol):
   - プラグイン停止時は`strategy_manifest.yaml`の`enabled=false`に加え、`StrategyMetadata.tags`へ`"disabled:<ticket_id>"`を付与し、CLIボードでグレー表示する。
   - 実装がProtocolに適合しない場合は`StrategyRegistrationError(code='contract_violation')`で起動時にFail-Fastし、Runbook `GOV-STRAT-01`の承認を経るまでリトライ禁止とする。
 
+#### 3.5.6 HumanGateState入力源
+
+`GateAggregator.snapshot()`は市場/リスク系スナップショットに加え、ヒューマン承認の状態を次の手順で合成する。`GateState.human`は常に`docs/schemas/gate_state.schema.json`と`schema/gate_state.sample.json`の構造を満たし、Workflow・TicketBuilder双方で同一JSONを共有する。
+
+1. **設定読み込み**: `ConfigRegistry.snapshot()`から`human_gate`セクションを抽出し、`config/reduce_only.yaml::double_ack_roles`（ダブルエントリー必須ロール集合）、`config/profiles/<mode>.yaml::gates.required_roles`（モード別上書き）、`config/profiles/<mode>.yaml::gates.comment_min_length`（最小文字数）をマージする。ボードモードに応じた手動コメント強制は`config/board_modes.yaml::modes[board_mode].manual_ack_required`を参照し、`manual_comment_required`および`comment_min_length`へ反映する。
+2. **SLA/締切算出**: `OpsAgendaService.peek_deadline(task="ticket_double_ack", ticket_id=<current>)`を呼び出し、戻り値が存在する場合は`ack_deadline`へセットする。TODOが存在しない場合は`config/sla_thresholds/<profile>.yaml::hitl.double_ack_minutes`（無ければ既定=15分）を`ticket.issued_at`へ加算したUTCを計算する。
+3. **ACKロール初期化**: `OpsWorklogService`と`AuditWriter`が保守する`ops_worklog.jsonl`/`logs/audit/ticket_actions_*.jsonl`から直近の`ticket.checklist.ack`イベントを再生し、`required_roles`に含まれるものだけを`acknowledged_roles`へ積み上げる。欠席中のロールは`OpsAgendaService`のシフトメタデータ（`metadata.on_call_roles`) を参照して除外し、Board再開時の誤認防止とする。
+4. **ACKイベント反映**: CLI `tradectl ticket approve --double-entry <user>`実行時に生成される`ticket.checklist.ack`イベントをEventBus購読し、`event.payload.role`が`required_roles`に一致したら`acknowledged_roles`へ追加する。全ロール揃った時点で`double_entry_required=False`へ遷移し、スナップショットを`snapshots/latest/gate_state.json`に再書き込み、Workflowへ即時反映する。
+
+> **例: 二重承認完了のシーケンス**
+> 1. 主担当が`tradectl ticket approve --double-entry secondary_operator`を実行し、CLIが`ticket.checklist.ack`（`field='double_entry_confirmed'`, `role='secondary_operator'`）をEventBusへpublishする。
+> 2. `AuditWriter`がイベントを`logs/audit/ticket_actions_<YYYYMMDD>.jsonl`へ記録し、同時に`OpsWorklogService.record(task='double_ack', duration_min=Runbook計測)`を呼び出す。
+> 3. `GateAggregator.on_event(ticket.checklist.ack)`が起動し、イベントから`ack_role`を抽出して`acknowledged_roles`へ追加、`ack_deadline`が過ぎていた場合は`OpsAgendaService.clear_deadline(...)`を通じてTODOを完了させる。
+> 4. 次サイクルの`GateAggregator.snapshot()`が更新済みの`HumanGateState`を返却し、TicketBuilderがチェックリスト`double_entry_confirmed`を`ok`へ遷移させる。
+
 ### 3.6 ExecutionModel & SpreadMonitor (`src/execution/model.py`, `src/execution/spread.py`)
 ```python
 EntryMode = Literal["market", "marketable_limit", "limit_requote"]
@@ -1692,6 +1707,11 @@ Checklist (mandatory items marked with *):
 ```
 
 - **監査**: `TicketIssued`イベントと`logs/audit/*.jsonl`へ書き込み。`cfg_hash`, `data_hash`, `hybrid_components`を添付し、各チェックリストACKで`ticket.checklist.ack`イベント（`event_key='ticket.checklist.<field>'`）を発行。ACKは`audit_id`（`AUD-<timestamp>-<ticket_id>`）で`audit_writer.append()`へ格納し、`ack_actor`, `ack_ts`, `cli_command`, `runbook_ref`を`extras.checklist`配下に保存する。
+- **ACKイベント連携タイムライン**:
+  1. `TicketBuilder`が`double_entry_required=True`のチケットを生成すると、Workflowは`GateState.human.required_roles`と`ack_deadline`をChecklistへ埋め込み、CLI表示と監査ログの初期値を揃える。
+  2. 承認者が`tradectl ticket approve --double-entry <role_id>`または`tradectl ticket approve --comment`を実行すると、CLIは`ticket.checklist.ack`イベントを`role`, `field`, `comment_length`, `ack_ts`付きでEventBusへpublishし、同時に`OpsWorklogService.record(task='double_ack', ...)`で所要時間を記録する。
+  3. `AuditWriter`がイベントを`logs/audit/ticket_actions_<date>.jsonl`へ追記し、`GateAggregator.on_event`が`acknowledged_roles`を更新する。全ロールのACK完了で`GateAggregator.snapshot()`が`double_entry_required=False`に遷移させ、最新`GateState`を`snapshots/latest/gate_state.json`へ反映する。
+  4. 次回Checklist描画時、Ticket CLIは更新済みの`GateState.human`を再読込し、`double_entry_confirmed`ステータスと`ack_deadline`ラベルを同期。Opsレビューでは`ops_worklog.jsonl`の該当行と監査イベントを突合することで、Gate状態の再構築が可能となる。
 - **エラーハンドリング**: バリデーションNGで`TicketValidationError`→SignalをReject。ユーザー編集時も同じバリデーションを実施。
 
 #### APIインターフェース一覧
@@ -2032,6 +2052,10 @@ SpreadCooldownState = Literal["normal", "watch", "cooldown", "halt"]
 > **備考**: M1では`"watch"`/`"halt"`を未使用とし、`SpreadMonitor`（§5.4）と`GateState.market.spread.state`の相互参照が型レベルで保証されるように`typing.Literal`で定義する。Codex実装では本エイリアスを`src/execution/spread.py`へ配置し、ユニットテスト`tests/unit/test_spread_monitor.py`で値域外を拒否する。
 
 `HumanGateState`はHITLチケット承認時の制約を保持する。`required_roles`は`double_entry_required=True`の場合に承認へ参加すべきロールIDを列挙し、`acknowledged_roles`は既にACK済みのロールを記録する。`manual_comment_required`/`comment_min_length`は`manual_comment_logged`チェックの閾値に利用し、`ack_deadline`はRunbook指定の締切をUTCで保持する。
+
+`GateAggregator.snapshot()`はこれらのフィールドを`config/reduce_only.yaml::double_ack_roles`および`config/profiles/<mode>.yaml::gates.*`から取得した設定値、`OpsAgendaService.peek_deadline('ticket_double_ack')`の戻り値、`ticket.checklist.ack`イベントのリプレイ結果を突合させて埋める。生成された`GateState`は`schema/gate_state.sample.json`と同じ構造/値域を満たしていなければならず、CIでは`docs/schemas/gate_state.schema.json`を用いたJSON Schema検証で逸脱を検知する。`acknowledged_roles`に存在しないロールのACKが監査ログに現れた場合はリプレイ時に除外し、構造的整合を保つ。
+
+将来拡張（M2+）として`OpsAgendaService`側に`ticket_double_ack.escalated`や`on_call_override.granted`といったイベントフックを追加する余地を残しており、スキーマは`schema_version='gate.state.v3'`へ更新した上で`human.extensions`（任意の`dict[str, Any]`）を追加する予定である。これにより、承認済みロールのシフト交代や代行者の登録といった高度な運用要件を段階的に取り込める。
 
 `HealthState`は`status`, `reasons: dict[str, str]`, `alerts: list[AlertSummary]`, `last_update`を持つ。
 
