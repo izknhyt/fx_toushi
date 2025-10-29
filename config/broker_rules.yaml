@@ -1,0 +1,149 @@
+schema_version: broker.rules.v1
+runbook_ref: docs/runbooks/RUN-HITL-01.md
+last_reviewed: "2025-03-10"
+notes:
+  - Placeholder guardrails. Replace with broker-confirmed specifications before live cutover.
+symbols:
+  USDJPY:
+    description: Placeholder rule set for USD/JPY spot FX.
+    pip_size: 0.01
+    contract_size: 100000
+    min_lot: 0.1
+    lot_step: 0.01
+    precision: 3
+    min_distance_pips:
+      entry: 2.0
+      stop_loss: 3.5
+      take_profit: 3.5
+    freeze_level_pips: 2.0
+    fifo_required: true
+    margin_mode: netting
+    allowed_time_windows:
+      - label: tokyo_core
+        days: [mon, tue, wed, thu, fri]
+        start: "00:00"
+        end: "09:00"
+        timezone: Asia/Tokyo
+      - label: ny_overlap
+        days: [mon, tue, wed, thu, fri]
+        start: "12:00"
+        end: "21:00"
+        timezone: America/New_York
+    runbook_links:
+      - docs/runbooks/RUN-HITL-01.md#lot_round_ok
+      - docs/runbooks/RUN-BROKER-API-02.md#RJ-04
+    notes:
+      - Replace with production contract size per broker reference sheet.
+      - Minimum distance placeholder derived from design baseline FR-38.
+    max_positions: 20
+    protect_pips: 1.5
+    allowed_order_types: [market, marketable_limit, stop]
+    swap_triple_day: wed
+    liquidity_tags: [major, low_latency]
+    metadata:
+      version: draft
+  EURUSD:
+    description: Placeholder rule set for EUR/USD spot FX.
+    pip_size: 0.0001
+    contract_size: 100000
+    min_lot: 0.01
+    lot_step: 0.01
+    precision: 5
+    min_distance_pips:
+      entry: 1.5
+      stop_loss: 2.0
+      take_profit: 2.0
+    freeze_level_pips: 1.0
+    fifo_required: true
+    margin_mode: netting
+    allowed_time_windows:
+      - label: london_core
+        days: [mon, tue, wed, thu, fri]
+        start: "07:00"
+        end: "16:00"
+        timezone: Europe/London
+      - label: ny_crossover
+        days: [mon, tue, wed, thu, fri]
+        start: "12:00"
+        end: "20:00"
+        timezone: America/New_York
+    runbook_links:
+      - docs/runbooks/RUN-HITL-01.md#sl_tp_verified
+      - docs/runbooks/RUN-BROKER-API-02.md#RJ-04
+    notes:
+      - Contract and stop levels to be confirmed with broker integration pack.
+    max_positions: 18
+    protect_pips: 1.2
+    allowed_order_types: [market, limit, stop]
+    swap_triple_day: wed
+    liquidity_tags: [major, euro_session]
+  GBPUSD:
+    description: Placeholder rule set for GBP/USD spot FX.
+    pip_size: 0.0001
+    contract_size: 100000
+    min_lot: 0.1
+    lot_step: 0.01
+    precision: 5
+    min_distance_pips:
+      entry: 2.5
+      stop_loss: 3.0
+      take_profit: 3.0
+    freeze_level_pips: 2.0
+    fifo_required: true
+    margin_mode: netting
+    allowed_time_windows:
+      - label: london_peak
+        days: [mon, tue, wed, thu, fri]
+        start: "08:00"
+        end: "17:00"
+        timezone: Europe/London
+      - label: us_morning
+        days: [mon, tue, wed, thu, fri]
+        start: "13:00"
+        end: "20:00"
+        timezone: America/New_York
+    runbook_links:
+      - docs/runbooks/RUN-HITL-01.md#lot_round_ok
+      - docs/runbooks/RUN-BROKER-API-02.md#RJ-04
+    notes:
+      - Validate freeze level and stop distances against broker production account.
+    max_positions: 16
+    protect_pips: 1.8
+    allowed_order_types: [market, marketable_limit, stop_limit]
+    swap_triple_day: wed
+    liquidity_tags: [major]
+  AUDJPY:
+    description: Placeholder rule set for AUD/JPY spot FX.
+    pip_size: 0.01
+    contract_size: 100000
+    min_lot: 0.1
+    lot_step: 0.01
+    precision: 3
+    min_distance_pips:
+      entry: 2.2
+      stop_loss: 3.2
+      take_profit: 3.2
+    freeze_level_pips: 2.5
+    fifo_required: false
+    margin_mode: hedging
+    allowed_time_windows:
+      - label: sydney_open
+        days: [mon, tue, wed, thu, fri]
+        start: "22:00"
+        end: "02:00"
+        timezone: Australia/Sydney
+      - label: tokyo_overlap
+        days: [mon, tue, wed, thu, fri]
+        start: "23:00"
+        end: "06:00"
+        timezone: Asia/Tokyo
+    runbook_links:
+      - docs/runbooks/RUN-HITL-01.md#lot_round_ok
+      - docs/runbooks/RUN-BROKER-API-02.md#RJ-04
+    notes:
+      - Hedging mode placeholder until broker account confirmation.
+    max_positions: 12
+    protect_pips: 1.6
+    allowed_order_types: [market, limit]
+    swap_triple_day: wed
+    liquidity_tags: [minor, asia_session]
