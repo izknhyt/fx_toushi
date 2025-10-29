@@ -1,30 +1,45 @@
-"""Smoke test scaffold for validating FeatureContext/Manifest feature contracts.
-
-This placeholder documents the expected assertions described in detailed design
-§3.3.2/§3.5.5. Once FeaturePipeline and StrategyManifest loaders are
-implemented, the test should:
-
-* Instantiate a FeatureContext (or fixture) and collect ``available_keys``.
-* Load ``strategy_manifest.yaml`` and gather each strategy's
-  ``metadata.required_features`` set.
-* Assert that every required feature is present in ``available_keys`` and
-  optionally that no orphaned features exist on either side.
-
-For the M1 scaffold this test is marked as ``smoke`` and skipped so that the CI
-workflow exercises the hook without failing.
-"""
+"""Smoke test validating FeatureContext ↔ strategy manifest contracts."""
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
+import yaml
+
+from src.features import FeaturePipeline
 
 pytestmark = pytest.mark.smoke
 
 
-@pytest.mark.skip(reason="Feature contract validation not implemented; scaffold only.")
+def _load_required_features(manifest_path: Path) -> frozenset[str]:
+    manifest = yaml.safe_load(manifest_path.read_text(encoding="utf-8"))
+    required: set[str] = set()
+    for strategy in manifest.get("strategies", {}).values():
+        if not strategy.get("enabled", False):
+            continue
+        metadata = strategy.get("metadata") or {}
+        required.update(metadata.get("required_features", ()))
+    return frozenset(required)
+
+
 def test_feature_context_available_keys_align_with_manifest() -> None:
-    """Placeholder for FeatureContext vs. Manifest contract verification."""
-    # The real implementation will compare FeatureContext.available_keys with
-    # strategy metadata declarations from strategy_manifest.yaml.
-    # See detailed_design_fx_signal_tool_v1.md §3.3.2/§3.5.5 for the contract.
-    raise NotImplementedError("Contract validation will be implemented in a future packet.")
+    """Ensure every required feature declared in the manifest exists upstream."""
+
+    pipeline = FeaturePipeline.from_config_file(Path("config/feature_pipeline.yaml"))
+    feature_ctx = pipeline.update(symbols=["USDJPY", "EURUSD"])
+
+    required_features = _load_required_features(Path("config/strategy_manifest.yaml"))
+    available = feature_ctx.available_keys
+
+    missing = sorted(required_features - available)
+    assert not missing, (
+        "Manifest requires features that are absent from the feature pipeline: "
+        + ", ".join(missing)
+    )
+
+    orphaned = sorted(available - required_features)
+    assert not orphaned, (
+        "Feature pipeline exposes unused features not declared in the manifest: "
+        + ", ".join(orphaned)
+    )

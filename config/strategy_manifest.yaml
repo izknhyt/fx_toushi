@@ -16,6 +16,16 @@ strategies:
     enabled: true
     priority: 100
     weight: 1.0
+    metadata:
+      name: "M1 Baseline MA/RSI"
+      version: "0.1.0"
+      required_features:
+        - sma_20_5m
+        - ema_fast_5m
+        - ema_slow_5m
+        - rsi_14_5m
+        - atr_14_1h
+        - ema55_slope_1h
     feature_flags:
       determinism_enforced: true
       guarded_board_required: false
