@@ -318,3 +318,22 @@ def test_gate_state_symbol_specific_spread_is_valid(
     }
 
     validator.validate(gate_state_with_symbol_spread)
+
+
+def test_gate_state_symbol_without_spread_slice_is_valid(
+    load_json_schema: Callable[[str | Path], dict],
+    load_config: Callable[[str | Path], object],
+) -> None:
+    validator = _build_validator(load_json_schema, "docs/schemas/gate_state.schema.json")
+    gate_state = load_config("schema/gate_state.sample.json")
+    gate_state_without_spread_slice = deepcopy(gate_state)
+
+    gate_state_without_spread_slice["market"]["per_symbol"]["EURUSD"] = {
+        "news": {
+            "blocked": True,
+            "reason": "eurusd_data_lag",
+            "release_ts": "2025-03-14T12:35:00Z",
+        }
+    }
+
+    validator.validate(gate_state_without_spread_slice)
