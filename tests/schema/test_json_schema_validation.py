@@ -228,6 +228,19 @@ def test_roles_config_scaffold_is_valid(
 
 
 @pytest.mark.config_schema_smoke
+def test_broker_rules_config_matches_schema(
+    load_json_schema: Callable[[str | Path], dict],
+    load_config: Callable[[str | Path], object],
+) -> None:
+    validator = _build_validator(
+        load_json_schema, "docs/schemas/broker_rules.schema.json"
+    )
+    broker_rules = load_config("config/broker_rules.yaml")
+
+    validator.validate(broker_rules)
+
+
+@pytest.mark.config_schema_smoke
 @pytest.mark.parametrize(
     "profile_name",
     ["backtest", "paper", "live"],
