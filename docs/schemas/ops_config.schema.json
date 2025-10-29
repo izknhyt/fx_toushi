@@ -1,0 +1,107 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://fx-toushi.dev/schemas/ops_config.schema.json",
+  "title": "OpsAutomationConfig",
+  "description": "Configuration contract for AutomationEffectTracker thresholds and notifications (detailed design §52.2).",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "automation_threshold_min",
+    "allowed_tasks",
+    "review_window_weeks",
+    "notify_channels"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "anyOf": [
+        {
+          "type": "integer",
+          "minimum": 0
+        },
+        {
+          "type": "string",
+          "pattern": "^[a-z0-9_.\\-]+$"
+        }
+      ]
+    },
+    "metadata": {
+      "type": "object",
+      "properties": {
+        "description": {
+          "type": "string"
+        },
+        "owner": {
+          "type": "string",
+          "minLength": 1
+        },
+        "last_reviewed_at": {
+          "type": "string",
+          "format": "date"
+        },
+        "runbook_refs": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "uniqueItems": true
+        }
+      },
+      "additionalProperties": true
+    },
+    "automation_threshold_min": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Minimum minutes saved per task to mark automation.effect_achieved"
+    },
+    "allowed_tasks": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^[a-z0-9_\\-]+$"
+      },
+      "minItems": 1,
+      "uniqueItems": true
+    },
+    "review_window_weeks": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Rolling window length for automation effect review"
+    },
+    "notify_channels": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "required": [
+            "medium",
+            "target"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "medium": {
+              "type": "string",
+              "enum": [
+                "slack",
+                "email",
+                "pagerduty",
+                "teams",
+                "webhook"
+              ]
+            },
+            "target": {
+              "type": "string",
+              "minLength": 1
+            },
+            "escalation": {
+              "type": "boolean"
+            }
+          }
+        }
+      }
+    }
+  }
+}
