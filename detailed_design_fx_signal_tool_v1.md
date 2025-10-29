@@ -147,6 +147,11 @@
   ・型未解決時は`mypy.ini`へ一時例外を追加し、Issueに削減予定日を記載
 ```
 
+- **GateAggregator向けテスト観点（Codex指示補足）**:
+  - Spread欠損検証: `SpreadMonitor.current_state`が特定シンボルを返さないケースをモックし、`GateAggregatorError(code='spread_state_missing')`でRejectされること。
+  - ACKリプレイ: `ticket.checklist.ack`イベントシーケンスを`on_event`へ適用し、`acknowledged_roles`が再構成されることと、重複ACKがWARNログのみで無害化されること。
+  - Snapshot再生成: `refresh_from_sources`→`persist_latest`の流れで`schema_version`が保持され、`GateState.validate(...)`に通ること。破損JSONを読み込んだ場合は`schema_mismatch`でFail Fastすること。
+
 ##### プロンプト運用の注意点
 - Codexへの再依頼時は「差分のみ」要求とともに、前回実装差分に対する評価（良かった点/懸念）を箇条書きで共有する。
 - 設計差異を議論する際は、該当セクション番号（例: §3.4.2）と新旧挙動を併記し、判断の根拠となるメトリクスやRunbook手順を明文化する。
@@ -559,6 +564,7 @@ tests/
 | DataIngestionService | データ取得・キャッシュ・フォールバック | FR-01, FR-02 | `data/service.py` |
 | StrategyEngine | プラグイン戦略実行 | FR-04 | `strategies/registry.py` |
 | ExecutionModel & SpreadMonitor | 滑り補正・ヒューマン遅延・Spread制御 | FR-27, FR-39, FR-41 | `execution/` |
+| GateAggregator | GateState統合・Snapshot永続化 | FR-05, FR-36, NFR-09 | `core/gate.py` |
 | RiskManager & HealthMonitor | リスク制限・Kill Switch | FR-05, FR-36, FR-22 | `risk/manager.py`, `core/health.py` |
 | RiskDisclosureService | リスク開示バナー/同意証跡 | FR-53, FR-54 (M1.1) | `compliance/risk_disclosure.py` |
 | TicketBuilder | HITLチケット構築・監査 | FR-07, FR-38 | `ticket/builder.py` |
@@ -1048,6 +1054,29 @@ rsi_window = bb_frame.window("rsi_14", length=14)
 | `RegimeDetector.configure(weights, thresholds)` | 指標重み、ボラ閾値、ヒステリシス設定 | コンフィグ検証→内部パラメータ更新→Audit記録 | 適用結果、旧値とのDiff | 検証失敗: `RegimeConfigError` |
 
 ### 3.5 StrategyEngine (`src/strategies/registry.py`)
+
+#### 3.5.0 GateAggregator
+
+| 実装パス | クラス/関数 | 主メソッド | 役割/補足 |
+| --- | --- | --- | --- |
+| `src/core/gate.py` | `GateAggregator` | `snapshot()`, `persist_latest(...)` | `GateState`をディープコピーで提供し、`snapshots/latest/gate_state.json`に永続化する。Schema Versionを維持しつつ、Workflow/Ticket/監査の全系で同一スナップショットを共有する。 |
+| `src/core/gate.py` | `GateAggregator` | `refresh_from_sources(calendar, news, spread, risk, human)` *(M1.1予定)* | `CalendarService.fetch_window(...)`や`SpreadMonitor.current_state(...)`など下位サービスから取得した部分状態をマージし、整合チェックとデフォルト補完を行う。欠損は`GateAggregatorError(code='partial_state_missing')`で検出する。 |
+| `src/core/gate.py` | `GateAggregator` | `on_event(event: DomainEvent)` *(予定)* | `ticket.checklist.ack`/`ops.agenda.cleared`等のイベントを適用し、ACKロールやOps期限を再計算する。イベント・リプレイ時には`schema/gate_state.schema.json`との整合を再評価する。 |
+| `src/core/gate.py` | `GateAggregator` | `update_{news|calendar|spread|risk|human}(...)`, `clear_symbol(...)` | サービス毎の部分スナップショットを受け取り、グローバル/シンボル粒度のブロック状態を整合的に更新する。Spread欠損時は当該シンボルの`GateBlockState.is_empty()`で自動削除する。 |
+
+- **依存サービスとI/O要件**:
+  - `CalendarService`（§3.13）: `get_active_blocks(now)`が`CalendarGateState`を返却。`refresh_from_sources`は`None`を許容し、欠損時はWARNログ＋`calendar_block=false`で復帰。APIエラー時は`CalendarServiceError`をラップした`GateAggregatorError(code='calendar_unavailable')`を送出する。
+  - `NewsService`（§3.14）: Breakingニュースを`NewsGateState`で取得。最新ヘッドラインの`event_id`が更新されない場合は前回値を維持し、JSON Schema整合（`docs/schemas/gate_state.schema.json`）を保証する。
+  - `SpreadMonitor`（§3.6）: `current_state(symbols=None)`から`dict[str, SpreadGateState]`を受け取る。欠損シンボルは`GateAggregatorError(code='spread_state_missing', symbol=...)`で即時検出し、Workflowは該当シグナルをRejectする。
+  - `RiskManager`（§5.3）: `get_gate_flags()`が`reduce_only`/`reason`を返す。通信失敗時は`RiskSnapshotUnavailable`を記録し、最後に成功した値へフォールバック。
+  - `OpsAgendaService`（§8.7）: `peek_deadline('ticket_double_ack')`でACK期限を読み出す。締切切れの場合は`on_event`で`clear_deadline(...)`を呼び出し、`AckDeadlineExpired`イベントを生成。
+
+- **エラーハンドリングとJSONスキーマ整合**:
+  - 全更新後は`GateState.validate(schema_path='docs/schemas/gate_state.schema.json')`を実行し、バリデーション失敗時は`GateAggregatorError(code='schema_mismatch')`で例外化する。
+  - Spread/ニュース/カレンダーの一部が`None`の場合でも`GateState.market.per_symbol[symbol]`構造は保持する。`GateBlockState.is_empty()`が`True`なら自動削除し、空辞書をJSON出力しない。
+  - イベントリプレイ時（`on_event`）は監査ログ（`logs/audit/ticket_actions_*.jsonl`）の順序を維持し、ACKロールが設定外の場合はWARNログ＋無視。`ACKReplayMismatch`はCIのリプレイテストで検知する。
+  - Snapshot再生成時（`refresh_from_sources`→`persist_latest`）は`GateState.schema_version`を必ず維持し、バージョン変更が必要な場合は`GateAggregator.migrate(version_from, version_to)`を明示的に呼び出す運用とする。
+
 - **公開API**: `run_all(strategy_context)`, `register_plugin`（デコレータ）
 - **入出力**: `StrategyContext`（FeatureContext, RegimeState, GateState, AccountState, Config）→`Iterable[RawSignal]`。
 - **プラグイン**: M1で`ma_rsi`, `donchian_breakout`。`metadata.required_features`でFeature不足を検知。`cooldown_bars`で連続エントリーを抑止。
