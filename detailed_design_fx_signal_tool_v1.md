@@ -1281,7 +1281,7 @@ watchlist: frozenset[str] = StrategyManifestResolver.effective_symbols(
 
 - `effective_symbols()`は常に`frozenset[str]`を返すため、Codex実装では`set`への再変換を避け、StrategyContextへそのまま渡す。
 
-`GateAggregator.snapshot()`は`CalendarService`/`NewsService`/`SpreadMonitor`/`RiskManager`等からの部分スナップショットをマージし、`GateState.market.per_symbol`を含む完全な`GateState`を返却する。Workflow Orchestratorはシグナルごとに`symbol_gate = gate_state.market.per_symbol.get(symbol)`を解決し、存在する場合は`symbol_gate.spread or gate_state.market.spread`を`ExecutionModel`と`TicketBuilder`へ伝搬させる。同じオブジェクトを`data/runtime/gate_state.json`や`snapshots/latest/gate_state.json`へシリアライズすることで、再起動時や監査証跡が常に最新スキーマ（§4.2）に一致することを保証する。
+`GateAggregator.snapshot()`は`CalendarService`/`NewsService`/`SpreadMonitor`/`RiskManager`等からの部分スナップショットをマージし、`GateState.market.per_symbol`を含む完全な`GateState`を返却する。`MarketGateState`生成時は必ず`per_symbol`へ明示的な`default_factory=dict`を指定し、Codexスタブ実装でも共有辞書を避ける。Workflow Orchestratorはシグナルごとに`symbol_gate = gate_state.market.per_symbol.get(symbol)`を解決し、存在する場合は`symbol_gate.spread or gate_state.market.spread`を`ExecutionModel`と`TicketBuilder`へ伝搬させる。同じオブジェクトを`data/runtime/gate_state.json`や`snapshots/latest/gate_state.json`へシリアライズすることで、再起動時や監査証跡が常に最新スキーマ（§4.2）に一致することを保証する。
 
 #### 3.5.3 運用制約と計算式
 
@@ -1979,6 +1979,9 @@ Checklist (mandatory items marked with *):
 
 ### 4.2 ステートオブジェクト
 ```python
+from dataclasses import dataclass, field
+
+
 @dataclass
 class AccountState:
     balance: float
@@ -2029,7 +2032,7 @@ class MarketGateState:
     news: NewsGateState
     calendar: CalendarGateState
     spread: SpreadGateState
-    per_symbol: dict[str, GateBlockState]
+    per_symbol: dict[str, GateBlockState] = field(default_factory=dict)
 
 
 @dataclass
@@ -2056,7 +2059,7 @@ class GateState:
     schema_version: Optional[str] = None
 ```
 
-`market.per_symbol`はシンボルごとの遮断オーバーライドを保持し、`CalendarService`/`NewsService`/`SpreadMonitor`がイベントウィンドウやスプレッド異常を検出した際に`{symbol: GateBlockState}`を生成する。既定値は空辞書で、エントリが存在するシンボルについては`GateBlockState.news`/`GateBlockState.calendar`/`GateBlockState.spread`がグローバルの`market.news`/`market.calendar`/`market.spread`より優先され、ウィンドウやスプレッド冷却終了時に該当エントリを削除する。ニュース/カレンダー/スプレッドのいずれか一部のみを持つエントリも許容し、未指定フィールドは`None`として扱う。グローバルフィールドは全市場停止やフォールバック用の既定値として機能し、`holiday_block=True`で祝日ロールオーバーを表現する。Spreadガードは連続状態（`SpreadCooldownState`）で管理し、`market.spread.reason`および`per_symbol[symbol].spread.reason`に直近の判定根拠（例:`p95_exceeded`）を記録する。
+`market.per_symbol`はシンボルごとの遮断オーバーライドを保持し、`CalendarService`/`NewsService`/`SpreadMonitor`がイベントウィンドウやスプレッド異常を検出した際に`{symbol: GateBlockState}`を生成する。既定値は`field(default_factory=dict)`で空辞書を返し、Codexスタブ実装でも共有辞書が発生しないことを保証する。エントリが存在するシンボルについては`GateBlockState.news`/`GateBlockState.calendar`/`GateBlockState.spread`がグローバルの`market.news`/`market.calendar`/`market.spread`より優先され、ウィンドウやスプレッド冷却終了時に該当エントリを削除する。ニュース/カレンダー/スプレッドのいずれか一部のみを持つエントリも許容し、未指定フィールドは`None`として扱う。グローバルフィールドは全市場停止やフォールバック用の既定値として機能し、`holiday_block=True`で祝日ロールオーバーを表現する。Spreadガードは連続状態（`SpreadCooldownState`）で管理し、`market.spread.reason`および`per_symbol[symbol].spread.reason`に直近の判定根拠（例:`p95_exceeded`）を記録する。`schema/gate_state.schema.json`と`schema/gate_state.sample.json`はいずれも`per_symbol`未指定時に空オブジェクトを期待しており、ここで定義したdefault_factoryと整合する。
 
 ```python
 SpreadCooldownState = Literal["normal", "watch", "cooldown", "halt"]
