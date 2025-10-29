@@ -202,6 +202,19 @@ def test_board_modes_scaffold_is_valid(
 
 
 @pytest.mark.config_schema_smoke
+def test_execution_model_scaffold_is_valid(
+    load_json_schema: Callable[[str | Path], dict],
+    load_config: Callable[[str | Path], object],
+) -> None:
+    validator = _build_validator(
+        load_json_schema, "docs/schemas/execution_model.schema.json"
+    )
+    execution_model = load_config("config/execution_model.yaml")
+
+    validator.validate(execution_model)
+
+
+@pytest.mark.config_schema_smoke
 def test_ops_config_scaffold_is_valid(
     load_json_schema: Callable[[str | Path], dict],
     load_config: Callable[[str | Path], object],

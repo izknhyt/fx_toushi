@@ -17,6 +17,9 @@ materials stored here serve as the authoritative source for governance reviews a
   `config/feature_pipeline.yaml` prior to deterministic replay tests.
 - `board_modes.schema.json` – Board mode guard configuration shared by §2.5/§3.5 and Runbook
   RUN-SPREAD-03. Validates `config/board_modes.yaml`.
+- `execution_model.schema.json` – Execution model contract capturing §3.6 defaults, human delay
+  distributions, entry-mode thresholds, and symbol/regime overrides (§4.4). Governs
+  `config/execution_model.yaml` and validation templates under Runbook RUN-HITL-01 / RUN-RISK-01.
 - `cfg.schema.json` – Mode profile configuration for SessionManager (§3.1/§4.4). Applies to
   `config/profiles/*.yaml`.
 - `human_gate_config.schema.json` – Human Gate / Reduce-Only advisor contract (§3.5.6/§5.12).
