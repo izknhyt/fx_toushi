@@ -1,10 +1,26 @@
-"""Strategy plugin contracts and shared dataclasses."""
+"""Strategy plugin contracts, manifest models, and execution registry."""
 
 from .base import Strategy, StrategyContext, StrategyMetadata, StrategyPluginProtocol
+from .registry import (
+    ManifestLoadError,
+    ManifestValidationError,
+    StrategyEngine,
+    StrategyExecutionError,
+    StrategyManifest,
+    StrategyRegistryError,
+    StrategyRegistrationError,
+)
 
 __all__ = [
     "Strategy",
     "StrategyContext",
     "StrategyMetadata",
     "StrategyPluginProtocol",
+    "StrategyEngine",
+    "StrategyManifest",
+    "StrategyRegistryError",
+    "StrategyRegistrationError",
+    "StrategyExecutionError",
+    "ManifestLoadError",
+    "ManifestValidationError",
 ]
