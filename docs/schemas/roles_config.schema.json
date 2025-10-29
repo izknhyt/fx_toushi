@@ -1,0 +1,148 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://fx-toushi.dev/schemas/roles_config.schema.json",
+  "title": "RolesConfig",
+  "description": "Role membership catalogue supporting CLI permission checks (detailed design §52/§57/§68).",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "roles"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "anyOf": [
+        {
+          "type": "integer",
+          "minimum": 0
+        },
+        {
+          "type": "string",
+          "pattern": "^[a-z0-9_.\\-]+$"
+        }
+      ]
+    },
+    "metadata": {
+      "type": "object",
+      "properties": {
+        "description": {
+          "type": "string"
+        },
+        "owner": {
+          "type": "string",
+          "minLength": 1
+        },
+        "last_reviewed_at": {
+          "type": "string",
+          "format": "date"
+        },
+        "runbook_refs": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "uniqueItems": true
+        }
+      },
+      "additionalProperties": true
+    },
+    "roles": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": {
+        "$ref": "#/definitions/roleDefinition"
+      }
+    }
+  },
+  "definitions": {
+    "roleDefinition": {
+      "type": "object",
+      "required": [
+        "summary",
+        "runbook_refs",
+        "validation_refs",
+        "members"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "summary": {
+          "type": "string",
+          "minLength": 1
+        },
+        "runbook_refs": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "uniqueItems": true
+        },
+        "validation_refs": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "uniqueItems": true
+        },
+        "members": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/definitions/member"
+          }
+        }
+      }
+    },
+    "member": {
+      "type": "object",
+      "required": [
+        "principal_id",
+        "type",
+        "status"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "principal_id": {
+          "type": "string",
+          "pattern": "^[a-z0-9_.:-]+$"
+        },
+        "type": {
+          "type": "string",
+          "enum": [
+            "user",
+            "service"
+          ]
+        },
+        "display_name": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "active",
+            "suspended",
+            "revoked"
+          ]
+        },
+        "expires_at": {
+          "anyOf": [
+            {
+              "type": "string",
+              "format": "date"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "notes": {
+          "type": "string"
+        }
+      }
+    }
+  }
+}
