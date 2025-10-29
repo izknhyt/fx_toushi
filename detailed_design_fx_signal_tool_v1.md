@@ -657,7 +657,7 @@ M2以降で変更が見込まれる領域について、実装/運用負荷を�
 - **ModeContext初期化**: `ModeContextFactory`が`profile`（`config/profiles/<name>.yaml`）、`clock`（Backtestは`ReplayClock`, Paper/Liveは`UtcMarketClock`）、`data_feeds`（`primary/fallback/manual_bundle`）、`execution_profile`（`execution_model.yaml`＋`profile.execution`差分）を組み立て、`deterministic_seed`を`profile.seed_base ^ session_id`で決定する。`account_gateway`/`audit_channel`はモード専用スタブ（Backtest=メモリ、Paper=シミュレーション、Live=実口座＋WORMログ）を注入し、SessionManagerは生成結果をWorkflow Orchestratorへ透過する。
 - **Catch-up**: `resync_queue`へ`BackfillJob`を投入し、欠損ウィンドウの長さと影響ティッカー数から`priority ∈ {critical, high, normal}`を決定して登録。主要4ペアで30分超欠損が発生した場合は自動的に`critical`を付与し、`provider_priority`を`{cache > dukascopy > yfinance}`へ強制切替する。処理中は`metrics/data_ingestion_sla.jsonl`へ`catch_up_lag_minutes`を追記し、30分超で`HealthMonitor.raise(level='critical', reason='data_latency_catch_up')`を発火。`BackfillJob`が連続3回失敗した場合は24時間ウィンドウを最大4時間単位に分割し直し、再投入前に`ManualCsvIngestionTask`へ手動CSV要求フラグを設定する。完了時は`ResyncCompleted(catch_up_elapsed_sec, recovered_symbols, failover_used)`イベントを発行し、Runbookチェックリストに承認者IDと代替ソース解除時刻を記録する（FR-16, AC-04）。
 - **エラーハンドリング**: 重大例外は`HealthMonitor.raise("hard_stop", reason)`を経由しKill Switchを`STOP`に遷移。`graceful=False`でshutdownした場合、再起動時に`soft_stop(manual_review)`から開始。
-- **設定依存**: `config.profile_<name>.yaml`と`cfg.schema.json`。Profile切替時は`cfg_hash`を再計算し監査ログへ出力。
+- **設定依存**: `config/profiles/<name>.yaml`と`cfg.schema.json`。Profile切替時は`cfg_hash`を再計算し監査ログへ出力。
 
 #### APIインターフェース一覧
 | API/関数 | 入力 | 処理 | 出力 | 異常系 |
