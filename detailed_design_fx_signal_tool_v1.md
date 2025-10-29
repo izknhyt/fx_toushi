@@ -751,6 +751,16 @@ M2以降で変更が見込まれる領域について、実装/運用負荷を�
   - `manual-report --date <YYYY-MM-DD> [--provider <name>] [--symbol <pair>] [--attach <path>]`: `ManualCsvReconciler.generate_report()`を呼び出し、`ManualCsvIngestionTask`のレビュー履歴と検証結果を集約したMarkdownを`reports/validation_log/manual_summary_<YYYYMMDD>.md`へ作成。Runbook `RUN-DATA-06.step6`のチェックボックスと、Opsワークロードログ（`ops_worklog.jsonl`）へ`{"task":"manual_fallback_review","duration_min":<入力値>}`を追記する。`--attach`で外部根拠ファイルを`reports/validation_log/attachments/`にコピーし、パスをレポート末尾に挿入する。
   - `hash --path <dir>`: 双子CSVのSHA256ダイジェストと、時刻/価格列の差分サマリを表示。`ManualCsvReconciler.compute_hash_pair()`を直接実行し、`ManualCsvIngestionTask`が参照する`manual_hash.json`を更新。`RUN-DATA-06.step3`完了時にCLIが`reports/validation_log/hash_audit_<provider>_<symbol>_<YYYYMMDD>.json`を保存し、Runbookチェックリストへ添付すべきファイルパスを標準出力へ明示する。
 - `tradectl ticket approve|reject|edit`: `TicketAction`イベントと監査ログ追記。`edit`は複数フィールド同時更新を許可し、バリデーションエラー時は差分と原因を表示。
+
+  | オプション | 必須/任意 | 条件・備考 |
+  | --- | --- | --- |
+  | `--id <ticket_id>` | 必須 | 承認対象チケット。監査ログ`extras.ticket_id`と一致させる。 |
+  | `--double-entry <user_id>` | 条件付き必須 | `gate_state.human.double_entry_required=True`時に二人目承認者を明示。実行時に`TicketChecklist.double_entry_confirmed`へ`ack_actor=<user_id>`が記録される。 |
+  | `--comment <text>` | 条件付き必須 | `gate_state.human.comment_min_length>0`または`manual_comment_required=True`のチケットで必須。CLIが最小文字数を検証し、監査ログ`extras.manual_comment`へ同値を格納。 |
+  | `--note <text>` | 任意 | Runbook参照や補足を残す。`AuditWriter`は`extras.notes[]`として保存し、`RUN-HITL-01`のチェックリスト転記に利用。 |
+  | `--ack-only` | 任意 | チェックリストACKのみを記録し、Execution送信を保留。ダブルエントリーやコメント確認を先行で記録する運用向け。 |
+  | `--runbook-ref <id>` | 任意 | Runbook手順との紐付け。監査ログ`extras.runbook_ref`へ転記し、チェックリスト証跡と突合する。 |
+
 - `tradectl status`: HealthState, Kill Switch, Snapshot Hash, SpreadCooldown, 未処理リスクフlagを表示。
 - `tradectl events tail`: event_type絞り込みと`--since`指定。
 - `tradectl export`, `tradectl resync`, `tradectl spread inspect`: 運用補助。`resync`は進行状況をProgress Bar表示。
@@ -759,7 +769,9 @@ M2以降で変更が見込まれる領域について、実装/運用負荷を�
 | API/関数 | 入力 | 処理 | 出力 | 異常系 |
 | --- | --- | --- | --- | --- |
 | `cli.board(filter, view, format, guard_toggle)` | フィルタ条件、表示テンプレ、出力形式、BoardMode切替フラグ | EventBus購読→Ticketレンダリング→リスク/Spreadバッジ合成→人間操作受付 | Richテーブル/JSON表示、承認コマンド、`degraded_ack.registered`リンク | EventBus接続失敗: `BoardStreamError`。承認時検証失敗: `TicketValidationError` |
-| `cli.ticket approve|reject|edit(ticket_id, payload)` | チケットID、操作ペイロード、承認者ID、コメント | TicketBuilder検証→`TicketAction`イベント送信→Audit書込→Board更新 | 操作結果サマリ、監査ID | `AuditWriteError`、`ConsentRequiredError`、入力不備: `TicketActionInvalid` |
+| `cli.ticket.approve(ticket_id, *, actor_id, double_entry_user=None, comment=None, note=None, ack_only=False, runbook_ref=None)` | `ticket_id`, `actor_id`, `double_entry_user`（`GateState.human.double_entry_required`時に必須）、`comment`（`comment_min_length`以上）、`note`、`ack_only`, `runbook_ref` | `TicketValidator`再実行→チェックリストACK更新→`TicketAction.approve`イベント生成→`AuditWriter.append(cli_command="tradectl ticket approve --id …")`→Board再描画 | `TicketActionResult`（`action_id`, `audit_id`, `checklist_status`, `submitted`） | `TicketActionInvalid`、`DoubleAckMissingError`、`ManualCommentMissingError`、`ConsentRequiredError`、`AuditWriteError` |
+| `cli.ticket.reject(ticket_id, *, actor_id, reason_code, note=None, comment=None, runbook_ref=None)` | `ticket_id`, `actor_id`, `reason_code`（Runbook定義と整合）、`note`, `comment`（任意メモ） | Ticket差分検証→`TicketAction.reject`イベント生成→監査記録→`TicketBuilder`へ再通知 | `TicketActionResult`（`action_id`, `audit_id`, `reopened`） | `TicketActionInvalid`、`AuditWriteError`、`ConsentRequiredError` |
+| `cli.ticket.edit(ticket_id, *, patch, note=None, runbook_ref=None)` | `ticket_id`, `patch`（`field=value`列挙）、`note`, `runbook_ref` | 差分適用→再バリデーション→`TicketAction.edit`イベント送信→Audit追記 | `TicketEditResult`（`action_id`, `audit_id`, `fields_updated`） | `TicketEditConflict`、`TicketActionInvalid`、`AuditWriteError` |
 | `cli.status(detail, ack_id)` | 詳細表示フラグ、承認ID | `SessionManager.status()`呼出→Health/Kill Switch整合→承認登録 | 状態表、未承認アラート一覧 | Kill Switch操作拒否: `KillSwitchOperationDenied`。承認ID不正: `AckNotFoundError` |
 | `cli.resync(from_ts, symbols, dry_run)` | 再同期開始時刻、対象シンボル、ドライラン | `SessionManager.catch_up()`キック→進捗UI表示→結果まとめ | `ResyncSummary`（lag, failover, warnings） | Catch-up失敗: `CatchUpFailed`。CLI割込み: `UserAbortError` |
 | `cli.data manual-template/validate/...` | サブコマンド別パラメータ、ファイルパス、プロバイダ | Manual CSVテンプレ生成・検証・ハッシュ算出→Runbook進捗記録 | ファイル出力、検証レポート、ハッシュJSON | 入力ディレクトリ不正: `ManualCsvPathError`。検証NG: `ManualCsvValidationError` |
@@ -1665,18 +1677,19 @@ Runbook references: RUN-FUND-01 (daily update), RUN-FUND-02 (degraded ops)
 - **処理**: 価格丸め→距離検証→TTL計算→Checklist生成（必須項目は下表参照）→`TicketProposal`組立。
 - **GateState受け渡し要件**: 呼び出し側は`GateAggregator.snapshot()`で取得した`GateState`を必ず保持し、`gate_state.market.per_symbol.get(sized_signal.symbol)`で得られるシンボル専用スライスを第三引数として優先的に渡す。シンボルスライスが無い場合のみグローバル`GateState`を共有する。`TicketBuilder`は受領したスライスに基づき`reduce_only`/`halt`/`spread.state`/`double_entry_required`/`comment_min_length`などの制約を反映し、グローバル・シンボル両方のブロックが同時に尊重されるようにマージする。`spread_window_clear`検証は`(symbol_gate.spread or gate_state.market.spread)`を参照して判定し、Workflow→Ticketの情報連鎖を保証する。GateStateオブジェクトは不変参照として扱い、`TicketBuilder`内部での更新は禁じる。Codex実装ではWorkflow/Backtest双方で同一スナップショットを共有し、チェックリスト生成・ブロック判定に決定論が保たれることをユニットテストで確認する。
 - **入力順序と表示統一**: `ChecklistBuilder.generate()`は`HumanErrorChecklist`を必ず `spread_window_clear`→`double_entry_confirmed`→`sl_tp_verified`→`lot_round_ok`→`price_decimals_ok`→`oco_ack_received`→`manual_comment_logged` の順で整列し、`label`/`field`をCLI表示（`tradectl board/ticket`) と監査ログ (`audit_writer`) の両方で同一の英字表記に固定する。CLIは番号付きリストを同順序で表示し、監査ログの`extras.checklist[].field`にも同じフィールド名が書き込まれる。`ack_deadline`が設定されている場合、CLIは対象行に`(deadline: <ISO8601>)`ラベルを併記し、監査ログにも`deadline_iso`を埋め込む。
+- **CLIパラメータ整合**: `tradectl ticket approve`で使用する`--id`/`--double-entry`/`--comment`/`--note`/`--ack-only`/`--runbook-ref`各オプションは`TicketAction`ペイロードの`ticket_id`、`double_entry_user`、`manual_comment`, `notes[]`, `ack_only`, `runbook_ref`と一対一対応する。CLIは受け取ったオプションをそのまま`ticket.checklist.ack`イベントと監査ログ`cli_command`へ引数順序固定で書き出し、チェックリスト項目と突合させる。
 - **チェックリスト定義**: 下表の項目は全て`mandatory=true`で、検証ロジック/Runbook紐づけを固定する。`ChecklistBuilder`は順序崩れやラベル改変を検知した場合`ChecklistInvariantError`（新設予定の例外）を送出し、監査ログとCLI双方の整合を守る。`GateState.human`の`double_entry_required`/`required_roles`/`ack_deadline`/`comment_min_length`はChecklist入力へ直接伝播し、CLI・監査ログともに同値で記録される。
 - **Spread状態の連鎖**: Workflow Orchestratorは`GateAggregator.snapshot()`で取得した`gate_state.market`に`SpreadMonitor.current_state(symbols=None)`の戻り値を保持し、`TicketBuilder`は`gate_state.market.per_symbol.get(sized_signal.symbol)`を優先、無い場合は`gate_state.market.spread`を参照してSpread判定を行う。CLI `tradectl board`/`ticket inspect`は同じGateStateからSpreadチェックリストを描画し、`AuditWriter`は`TicketIssued`および`ticket.action`イベントに`spread_state`をそのままエンコードして監査ログへ記録する。
 
 | フィールド名 (`checklist[].field`) | CLI表示ラベル | 必須 | 検証ルール | Runbook/検証スクリプト連携 |
 | --- | --- | --- | --- | --- |
 | `spread_window_clear` | `Spread & news window clear` | ✅ | `SpreadMonitor.current_state(symbols=[sized_signal.symbol])`が`gates.spread_max_pips`以下かつ`news_blackout.active=False`。`(symbol_gate.spread or gate_state.market.spread)`が`state in {'normal','watch'}`の場合のみ`ok`となり、Signal Board上のSpreadバッジと同期。 | `RUN-HITL-01` §1-2（Board確認）、`RUN-SPREAD-03`参照、AC-02補助 |
-| `double_entry_confirmed` | `Double-entry confirmed` | ✅ | 2名目承認者（`secondary_operator_id`）が`TicketBuilder.build()`に渡された`gate_state.human.double_entry_required=True`時にACKを記録。`required_roles`に列挙されたロールID全てが`acknowledged_roles`へ移るまでチケットは`pending`表示となる。CLI `tradectl ticket approve --double-entry <user_id>`が`RUN-HITL-01`手順3-1/3-2で実行される。 | `RUN-HITL-01` §3 人的エラーチェックリスト、AC-10 `tradectl ticket checklist --id <ticket_id>` |
+| `double_entry_confirmed` | `Double-entry confirmed` | ✅ | 2名目承認者（`secondary_operator_id`）が`TicketBuilder.build()`に渡された`gate_state.human.double_entry_required=True`時にACKを記録。`required_roles`に列挙されたロールID全てが`acknowledged_roles`へ移るまでチケットは`pending`表示となる。CLI `tradectl ticket approve --id <ticket_id> --double-entry <user_id>`が`RUN-HITL-01`手順3-1/3-2で実行される。 | `RUN-HITL-01` §3 人的エラーチェックリスト、AC-10 `tradectl ticket checklist --id <ticket_id>` |
 | `sl_tp_verified` | `SL/TP distances verified` | ✅ | `ticket.payload.tp_price`と`sl_price`が`SizedSignal`推奨値±`broker_rules.slop_pips`内。`tradectl ticket inspect`出力と突合する。 | `RUN-HITL-01` §2-2、AC-02/AC-10 `tradectl ticket inspect --id <ticket_id>` |
 | `lot_round_ok` | `Lot & quantity rounding OK` | ✅ | `TicketValidator.validate()`が`broker_rules.min_lot`/`lot_step`を満たす。`tradectl ticket check-size`によるバッチ検証を同期。 | `RUN-HITL-01` §4-1/§4-3、AC-10/AC-11スクリプト |
 | `price_decimals_ok` | `Price precision OK` | ✅ | `ticket.payload.entry_price`/`sl_price`/`tp_price`が`broker_rules.precision`桁と一致。 | `RUN-HITL-01` §4-2、AC-11 `tradectl ticket check-batch --csv` |
 | `oco_ack_received` | `OCO acknowledged` | ✅ | `EventBus`に`ticket.oco_ack`イベントが届き`latency_ms<=120000`。CLI `tradectl ticket monitor --watch 120`が結果を検証。 | `RUN-HITL-01` §2-3、AC-02スクリプト |
-| `manual_comment_logged` | `Manual comment recorded` | ✅ | `ticket.payload.manual_comment`が非空で、`tradectl ticket approve --comment`により`len(comment)>=gate_state.human.comment_min_length`を満たす。`manual_comment_required=False`の場合のみ自動的に`ok`を初期化。 | `RUN-HITL-01` §3-3、AC-10 `reports/validation_log/AC-10_<date>.md` 更新手順 |
+| `manual_comment_logged` | `Manual comment recorded` | ✅ | `ticket.payload.manual_comment`が非空で、`tradectl ticket approve --id <ticket_id> --comment <text>`により`len(comment)>=gate_state.human.comment_min_length`を満たす。`--note`はRunbook参照（任意）を添付し、`manual_comment_required=False`の場合のみ自動的に`ok`を初期化。 | `RUN-HITL-01` §3-3、AC-10 `reports/validation_log/AC-10_<date>.md` 更新手順 |
 
 - **レンダリング例**:
 
@@ -1706,10 +1719,10 @@ Checklist (mandatory items marked with *):
   7. * Manual comment recorded ........... [PENDING] – comment length >= 12 chars (AC-10)
 ```
 
-- **監査**: `TicketIssued`イベントと`logs/audit/*.jsonl`へ書き込み。`cfg_hash`, `data_hash`, `hybrid_components`を添付し、各チェックリストACKで`ticket.checklist.ack`イベント（`event_key='ticket.checklist.<field>'`）を発行。ACKは`audit_id`（`AUD-<timestamp>-<ticket_id>`）で`audit_writer.append()`へ格納し、`ack_actor`, `ack_ts`, `cli_command`, `runbook_ref`を`extras.checklist`配下に保存する。
+- **監査**: `TicketIssued`イベントと`logs/audit/*.jsonl`へ書き込み。`cfg_hash`, `data_hash`, `hybrid_components`を添付し、各チェックリストACKで`ticket.checklist.ack`イベント（`event_key='ticket.checklist.<field>'`）を発行。ACKは`audit_id`（`AUD-<timestamp>-<ticket_id>`）で`audit_writer.append()`へ格納し、`ack_actor`, `ack_ts`, `cli_command`, `runbook_ref`を`extras.checklist`配下に保存する。`cli_command`は実際のCLI呼び出し（例: `tradectl ticket approve --id TCK-... --double-entry OPS-2ND --comment "..." --note "RUN-HITL-01#step3"`）と一致させ、監査ログ側の`double_entry_user`/`manual_comment`フィールドと突合できるよう固定する。
 - **ACKイベント連携タイムライン**:
   1. `TicketBuilder`が`double_entry_required=True`のチケットを生成すると、Workflowは`GateState.human.required_roles`と`ack_deadline`をChecklistへ埋め込み、CLI表示と監査ログの初期値を揃える。
-  2. 承認者が`tradectl ticket approve --double-entry <role_id>`または`tradectl ticket approve --comment`を実行すると、CLIは`ticket.checklist.ack`イベントを`role`, `field`, `comment_length`, `ack_ts`付きでEventBusへpublishし、同時に`OpsWorklogService.record(task='double_ack', ...)`で所要時間を記録する。
+  2. 承認者が`tradectl ticket approve --id <ticket_id> --double-entry <role_id>`または`tradectl ticket approve --id <ticket_id> --comment "..." [--note "RUN-..."]`を実行すると、CLIは`ticket.checklist.ack`イベントを`role`, `field`, `comment_length`, `ack_ts`付きでEventBusへpublishし、同時に`OpsWorklogService.record(task='double_ack', ...)`で所要時間を記録する。監査ログの`cli_command`はこの呼び出し文字列を正規化した形（引数順序固定）で保存し、Runbook/Checklistとの照合を自動化する。
   3. `AuditWriter`がイベントを`logs/audit/ticket_actions_<date>.jsonl`へ追記し、`GateAggregator.on_event`が`acknowledged_roles`を更新する。全ロールのACK完了で`GateAggregator.snapshot()`が`double_entry_required=False`に遷移させ、最新`GateState`を`snapshots/latest/gate_state.json`へ反映する。
   4. 次回Checklist描画時、Ticket CLIは更新済みの`GateState.human`を再読込し、`double_entry_confirmed`ステータスと`ack_deadline`ラベルを同期。Opsレビューでは`ops_worklog.jsonl`の該当行と監査イベントを突合することで、Gate状態の再構築が可能となる。
 - **エラーハンドリング**: バリデーションNGで`TicketValidationError`→SignalをReject。ユーザー編集時も同じバリデーションを実施。
