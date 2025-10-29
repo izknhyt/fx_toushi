@@ -32,6 +32,14 @@ gates:
   enable_news_block: true
   require_double_ack_on_resume: true
   enforce_research_ticket: true
+  required_roles:
+    - primary_operator
+    - risk_officer
+    - secondary_operator
+    - governance_reviewer
+  manual_comment_required: true
+  comment_min_length: 64
+  comment_max_length: 500
 strategies:
   - id: m1_baseline_ma_rsi
     enabled: true
