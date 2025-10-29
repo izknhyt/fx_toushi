@@ -26,6 +26,12 @@ risk:
 gates:
   board_mode_default: normal
   enable_news_block: false
+  required_roles:
+    - primary_operator
+    - risk_officer
+    - secondary_operator
+  comment_min_length: 12
+  comment_max_length: 300
 strategies:
   - id: m1_baseline_ma_rsi
     enabled: true
