@@ -30,6 +30,12 @@ gates:
   board_mode_default: normal
   enable_news_block: true
   require_double_ack_on_resume: true
+  required_roles:
+    - primary_operator
+    - risk_officer
+    - secondary_operator
+  comment_min_length: 32
+  comment_max_length: 400
 strategies:
   - id: m1_baseline_ma_rsi
     enabled: true

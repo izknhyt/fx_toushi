@@ -1,0 +1,182 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://fx-toushi.dev/schemas/human_gate_config.schema.json",
+  "title": "HumanGateReduceOnlyConfig",
+  "description": "Human gate and reduce-only advisor settings derived from detailed design \u00a73.5.6/\u00a75.12.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "human_gate",
+    "reduce_only"
+  ],
+  "properties": {
+    "schema_version": {
+      "anyOf": [
+        {
+          "type": "integer",
+          "minimum": 0
+        },
+        {
+          "type": "string",
+          "pattern": "^[a-z0-9_.\\-]+$"
+        }
+      ]
+    },
+    "human_gate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "double_ack_roles",
+        "required_roles",
+        "manual_comment_required",
+        "comment_min_length",
+        "comment_max_length",
+        "ack_deadline_minutes_default"
+      ],
+      "properties": {
+        "double_ack_roles": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required_roles": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "manual_comment_required": {
+          "type": "boolean"
+        },
+        "comment_min_length": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 2000
+        },
+        "comment_max_length": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4000
+        },
+        "ack_deadline_minutes_default": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 120
+        },
+        "ticket_comment_hint": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "reduce_only": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "weights",
+        "max_reduce_per_step",
+        "target_r_eff",
+        "disable_symbols",
+        "board_banner_copy",
+        "ops_worklog_default_min"
+      ],
+      "properties": {
+        "weights": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "risk",
+            "correlation",
+            "margin",
+            "swap"
+          ],
+          "properties": {
+            "risk": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            "correlation": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            "margin": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            "swap": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            }
+          }
+        },
+        "max_reduce_per_step": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 1
+        },
+        "target_r_eff": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "disable_symbols": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Z]{6}$"
+          }
+        },
+        "board_banner_copy": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "title",
+            "body"
+          ],
+          "properties": {
+            "title": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 120
+            },
+            "body": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 600
+            },
+            "cta_label": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 80
+            },
+            "runbook_ref": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        },
+        "ops_worklog_default_min": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 240
+        },
+        "runbook_ref": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    }
+  }
+}
