@@ -1850,11 +1850,11 @@ Checklist (mandatory items marked with *):
 ### 3.22 依存ライブラリとバージョン管理
 - **パッケージ管理**: Poetry (Python 3.11)。`pyproject.toml`に厳格バージョンとハッシュ (`poetry.lock`) を保持し、`poetry install --no-root`を標準化。
 - **主要依存**:
-  - `pandas`, `numpy`, `pyarrow`, `pandas-ta` (データ/指標)
-  - `typer`, `rich` (CLI)
-  - `pydantic`, `jsonschema` (設定検証)
-  - `orjson`, `python-json-logger` (高速シリアライズ/ログ)
-  - `pytest`, `pytest-mock`, `pytest-approvaltests`, `hypothesis` (テスト)
+  - データ/指標: `pandas==2.3.3`, `numpy==2.2.6`, `pyarrow==22.0.0`, `pandas-ta==0.4.67b0`（Python>=3.12が必要なため、3.11環境ではスキップ/今後の3.12移行タスクで有効化）
+  - CLI: `typer==0.20.0`, `rich==14.2.0`
+  - 設定検証: `pydantic==2.12.3`, `jsonschema==4.25.1`
+  - 高速シリアライズ/ログ: `orjson==3.11.4`, `python-json-logger==4.0.0`
+  - テスト: `pytest==8.4.2`, `pytest-mock==3.15.1`, `pytest-approvaltests==0.2.4`, `hypothesis==6.142.4`
 - **アップグレード方針**: セマンティックバージョンに従い、パッチ更新は月次、マイナー更新は四半期、メジャー更新は専用スプリントで実施。`poetry update <package>`後に`pytest -m "m1 or m2plus"`とバックテスト回帰を必須化。
 - **互換性検証**: pandas/pyarrowなどABI影響のある依存は`tests/integration/test_data_pipeline.py`で再計算差異を確認。CLIは`pytest-approvaltests`で出力差分をチェック。
 - **CI/CD**: GitHub Actions（想定）で`poetry export --with dev`→`pip install --require-hashes`を実行。M1はローカルCI、M2でクラウドCI導入予定。
