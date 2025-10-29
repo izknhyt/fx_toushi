@@ -4,9 +4,24 @@ from __future__ import annotations
 
 import logging
 
+from src.ops import (
+    AutomationEffectTracker,
+    OpsAgendaService,
+    OpsDrillService,
+    OpsWorklogService,
+)
+
 logger = logging.getLogger(__name__)
 
-__all__ = ["readiness", "agenda", "automation_log"]
+__all__ = [
+    "readiness",
+    "agenda",
+    "automation_log",
+    "OpsWorklogService",
+    "AutomationEffectTracker",
+    "OpsAgendaService",
+    "OpsDrillService",
+]
 
 
 def readiness(*, explain: bool = False, period: str = "weekly") -> dict[str, object]:
