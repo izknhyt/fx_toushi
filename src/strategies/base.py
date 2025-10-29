@@ -64,6 +64,9 @@ class GateBlockState(Protocol):
     calendar: CalendarGateState | None
     """Optional calendar blackout slice specific to a symbol."""
 
+    spread: SpreadGateState | None
+    """Optional spread throttle slice specific to a symbol."""
+
 
 class MarketGateState(Protocol):
     """Composite market gating decisions (news/calendar/spread)."""
@@ -72,6 +75,7 @@ class MarketGateState(Protocol):
     calendar: CalendarGateState
     spread: SpreadGateState
     per_symbol: Mapping[str, GateBlockState]
+    """Symbol-keyed overrides that shadow global news/calendar/spread slices."""
 
 
 class RiskGateState(Protocol):
@@ -136,8 +140,9 @@ class StrategyContext:
     reason about the strategy environment without relying on concrete
     implementations.  The gate state now exposes a ``per_symbol`` mapping
     for slicing localized blocks (e.g. ``context.gate.market.per_symbol
-    ["USDJPY"].calendar``) as well as a ``schema_version`` string for
-    compatibility negotiation with downstream pipelines.
+    ["USDJPY"].calendar`` or ``context.gate.market.per_symbol["USDJPY"].spread``)
+    as well as a ``schema_version`` string for compatibility negotiation with
+    downstream pipelines.
     """
 
     features: FeatureContext
