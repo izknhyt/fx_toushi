@@ -163,6 +163,37 @@
                     ]
                   }
                 }
+              },
+              "spread": {
+                "type": "object",
+                "required": [
+                  "state"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                  "state": {
+                    "type": "string",
+                    "enum": [
+                      "normal",
+                      "watch",
+                      "cooldown",
+                      "halt"
+                    ]
+                  },
+                  "reason": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "cooldown_eta": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "format": "date-time"
+                  }
+                }
               }
             },
             "minProperties": 1
