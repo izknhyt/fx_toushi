@@ -2605,6 +2605,9 @@ HealthMonitor.ack()
 | UT-OPS-Stub-01 | Ops Readiness Stub | 単体 | `evaluate`/`explain`が`status="not_assessed"`を返すことを確認 | M1 Scope Guard | 戻り値が固定値、`HealthMonitor`やEventBusに通知しない |
 | UT-MR-Stub-01 | Model Risk Stub | 単体 | `scan_register`が空リストを返し、副作用が無いことを確認 | M1 Scope Guard | `[]`を返し、`model_risk.*`イベントが発火しない |
 | UT-REC-Stub-01 | Statement Reconciliation Stub | 単体 | `reconcile`が`status="not_available"`を返しファイルI/Oを行わないことを確認 | M1 Scope Guard | `StatementReconciliationResult.status == "not_available"`、ファイルアクセスがモック検証で0回 |
+| UT-PERF-Stub-01 | PerformanceRepository Stub | 単体 | `PerformanceRepository.load`が決定論的に空サマリを返し、副作用が無いことを確認 | M1 Scope Guard | `PerformanceSnapshot.series_hash == "noop"`、`reports/performance/`未参照、`PenaltyRegistry`呼び出しなし |
+| UT-PENALTY-Stub-01 | PenaltyRegistry Stub | 単体 | `PenaltyRegistry.snapshot`がダミー値（全シンボル0.0）を返し、Feature Flag無効時に早期returnすることを確認 | M1 Scope Guard | `PenaltySnapshot.penalties`が空dictまたは0.0固定、`metrics/penalty.jsonl`未アクセス |
+| IT-PERF-PENALTY-Stub-FF-01 | Performance/Penalty Flag | 統合 | `governance.enable_reports_scoring=false`で`PerformanceRepository`/`PenaltyRegistry`双方がスタブ化され、スコアリングがダミー値で継続することを確認 | M1 Scope Guard | スコア計算が`0.0`固定、`reports/performance/*.parquet`未アクセス、CLIログに`reports_scoring=stub`を記録 |
 | IT-GOV-Stub-FF-01 | Feature Flag Integration | 統合 | Feature Flag既定`False`でDIがスタブを注入しCLI/Workflowが`(M2+)`案内を表示することを確認 | M1 Scope Guard | `governance.enable_*`が`False`のとき、依存解決が`*Stub`型になり、CLIヘルプに`(M2+)`ラベルが出力される |
 
 - **M2+テスト**: Appendix G.1〜G.5に記載したシナリオ（FR-61/62/63/64, AC-49/51/53対応）は該当マイルストーン承認後に有効化する。
@@ -2666,6 +2669,29 @@ HealthMonitor.ack()
 - **監査/Runbook連携**
   - `reports/validation_log/templates/weekly.md`へ`signal_cycle_snapshot`/`strategy_execution_extract`欄を追加（`DOC-RUNBOOK-ALIGN-02`で管理）。
   - 監査チームは四半期レビュー時に`reports/weekly/evidence/`配下をサンプリングし、証跡欠損があれば`logs/ops/review.log`へ記録。欠損が連続2週以上の場合は`health.raise('degraded','weekly_report_evidence_missing')`を発火する。
+
+#### 7.7 PerformanceRepository & PenaltyRegistry 実装準備（レポート/スコアリング）
+
+- **実装予定パスと責務**
+  - `PerformanceRepository`は`src/persistence/performance_repository.py`に配置し、`reports/performance/`配下のParquetを読み出して`PerformanceSnapshot`（equity_curve, drawdown, turnover, slippageなどのシグナル指標サマリ）を返す。M1ではStrategyEngine内（§3.5.2疑似コード）の`PerformanceRepository.load(...)`呼び出しで利用し、Reporter週次レポート（§7.6）とスコアリング機構（将来§15.x予定）へ同一ハッシュ付きオブジェクトを供給する。
+  - `PenaltyRegistry`は`src/persistence/penalty_registry.py`に配置し、`metrics/penalty.jsonl`および`reports/performance/penalty/penalty_register.parquet`を最新タイムスタンプ順にマージして`PenaltySnapshot`（`per_symbol`, `per_strategy`, `metadata`）を返す。Kill Switchやスコアリングでの減点ロジックを集約し、ReporterはPenalty差分をレポート脚注へ表示する。
+- **データソースとスキーマ整合性**
+  - `reports/performance/*.parquet`は`docs/schemas/performance_snapshot.schema.json`（新設）で列構造を定義し、`poetry run schema-validate reports/performance --schema docs/schemas/performance_snapshot.schema.json`で整合性を検証する。列には`ts`, `mode`, `symbol`, `nav`, `pnl`, `drawdown_pct`, `turnover_pct`, `slippage_bps`を含める。
+  - `metrics/penalty.jsonl`は`docs/schemas/penalty_event.schema.json`で`event_ts`, `penalty_code`, `scope`, `value_bps`, `reason`, `approver`を定義。`PenaltyRegistry`はロード後に`reports/performance/penalty/penalty_register.parquet`と照合し、`schema_version`と`checksum`が一致するかを検証する。差分があればWARNログ`penalty_registry.out_of_sync`を発火し、Runbook `RUN-RISK-03`の整合性チェック手順へ誘導する。
+  - ファイル存在チェックは`pathlib.Path.exists()`で実施し、`PerformanceRepository`はモードごとに最新日付（`*_YYYYMMDD.parquet`）を優先。欠損時は`reports/performance/evidence/`から手動証跡を取得するようログへ案内する。
+- **戻り値構造**
+  - `PerformanceSnapshot`は`dataclass`で`series_hash: str`, `equity_curve: Mapping[str, list[EquityPoint]]`, `aggregate: PerformanceAggregate`, `last_updated: datetime`を保持する。`PerformanceAggregate`は`nav`, `pnl`, `return_pct`, `drawdown_pct`, `turnover_pct`, `slippage_bps`を含む。
+  - `PenaltySnapshot`は`dataclass`で`penalties: dict[str, PenaltyValue]`, `effective_at: datetime`, `source_files: list[Path]`, `checksum: str`を保持し、`PenaltyValue`は`bps: float`, `reason: str`, `expires_at: datetime | None`を含める。両スナップショットは`to_dict()`でシリアライズ可能な構造を提供し、ReporterやCLIでのJSON出力に再利用する。
+- **M1フォールバックポリシー**
+  - Feature Flag `reports.performance.enable`（`config/feature_flags.yaml`予定）と`reports.penalty.enable`を追加。Flagが`False`の場合、`PerformanceRepository.load`は`PerformanceSnapshot(series_hash="noop", aggregate=PerformanceAggregate.zero(), equity_curve={}, last_updated=None)`を返し、ファイルI/Oを行わない。`PenaltyRegistry.snapshot`は`PenaltySnapshot(penalties={}, effective_at=None, source_files=[], checksum="noop")`を返却する。
+  - Flagが`True`でもファイルが未配置の場合は`FallbackPolicy.M1`を適用し、WARNログとともにダミー値を返す（`aggregate.return_pct=0.0`, `penalties`全0）。Codexスタブはこのフォールバックを必須として実装し、後続マイルストーンで実データを差し込む際に差分が明確になるようにする。
+  - StrategyEngineは`PerformanceSnapshot.series_hash != "noop"`の場合のみスコアリング補正を適用し、ダミー時はログ`strategy.performance_snapshot.stub`を出力する。Penalty適用は`PenaltySnapshot.penalties`が空の場合スキップし、将来の実装が挿入されても挙動が変わらないようガードする。
+- **整合性チェックと運用手順**
+  - Opsレビューでは週次レポート生成前に`make check-performance-artifacts`（新設ターゲット）を実行し、Parquet/JSONLのスキーマ整合と最終更新日（24h以内）を検証する。コマンドは`reports/performance/manifest.yaml`（生成リスト）と照合し、欠損時は`RUN-PERF-01`で手動再集計を指示する。
+  - M1スタブ期間は`reports/performance/manifest.yaml`に`mode=paper/live`のエントリをコメントアウトしたテンプレを配置し、CIで`manifest`が空の場合でも成功するよう`allow_empty=true`を指定する。実データ投入時はコメント解除→`make check-performance-artifacts`で検証する。
+- **テスト観点/Validation計画反映**
+  - 上記テーブルへ`UT-PERF-Stub-01`/`UT-PENALTY-Stub-01`/`IT-PERF-PENALTY-Stub-FF-01`を追加済み。さらに`pytest -k performance_penalty_stub`を新規ターゲットとして登録し、決定論性（同一引数で同一ハッシュ）、空データ時挙動、Opsレビュー用証跡生成（ログ/manifest）を検証する。
+  - Validation Data Playbookには`validation_playbook/AC45_reports_scoring.yaml`を追加予定とし、`make check-validation --category reports_scoring`で`PerformanceSnapshot.series_hash`/`PenaltySnapshot.checksum`/証跡ファイル存在を検証する。スタブ期間は`status="stub"`を許容し、実装後に`status="active"`へ更新する。
 
 ## 8. 非機能要件への対応
 
