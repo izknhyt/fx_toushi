@@ -1,0 +1,216 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://codex.fx/docs/schemas/execution_model.schema.json",
+  "title": "Execution Model Configuration",
+  "description": "Baseline execution model thresholds, human delay distributions, and per-symbol overrides as described in detailed design §3.6/§4.4.",
+  "type": "object",
+  "required": ["schema_version", "defaults"],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "execution.model.v1"
+    },
+    "defaults": {
+      "$ref": "#/definitions/executionDefaults"
+    },
+    "symbols": {
+      "type": "object",
+      "description": "Symbol specific overrides keyed by instrument (e.g. EURUSD).",
+      "additionalProperties": {
+        "$ref": "#/definitions/symbolConfig"
+      }
+    }
+  },
+  "definitions": {
+    "delayStats": {
+      "type": "object",
+      "description": "Triangular distribution summary for operator delays (seconds).",
+      "required": ["min", "p50", "p95"],
+      "additionalProperties": false,
+      "properties": {
+        "min": {
+          "type": "number",
+          "minimum": 0
+        },
+        "p50": {
+          "type": "number",
+          "minimum": 0
+        },
+        "p95": {
+          "type": "number",
+          "minimum": 0
+        },
+        "seed_offset": {
+          "type": "integer",
+          "description": "Optional deterministic seed offset for tests.",
+          "minimum": 0
+        }
+      }
+    },
+    "delayByMode": {
+      "type": "object",
+      "description": "Mode keyed human delay distributions (backtest/paper/live).",
+      "minProperties": 1,
+      "properties": {
+        "backtest": {"$ref": "#/definitions/delayStats"},
+        "paper": {"$ref": "#/definitions/delayStats"},
+        "live": {"$ref": "#/definitions/delayStats"}
+      },
+      "additionalProperties": {"$ref": "#/definitions/delayStats"}
+    },
+    "slippageStats": {
+      "type": "object",
+      "description": "Distribution summary of projected slippage in pips.",
+      "required": ["p10", "p50", "p90"],
+      "additionalProperties": false,
+      "properties": {
+        "p10": {
+          "type": "number",
+          "minimum": 0
+        },
+        "p50": {
+          "type": "number",
+          "minimum": 0
+        },
+        "p90": {
+          "type": "number",
+          "minimum": 0
+        }
+      }
+    },
+    "slippageBuckets": {
+      "type": "object",
+      "description": "Named slippage distributions (base/volatile/etc.).",
+      "minProperties": 1,
+      "additionalProperties": {"$ref": "#/definitions/slippageStats"}
+    },
+    "ttlBuckets": {
+      "type": "object",
+      "description": "Named TTL projections keyed by operational path.",
+      "minProperties": 1,
+      "additionalProperties": {
+        "type": "integer",
+        "minimum": 0
+      }
+    },
+    "entryModeThreshold": {
+      "type": "object",
+      "description": "Thresholds and boolean flags that govern entry mode selection.",
+      "minProperties": 1,
+      "additionalProperties": false,
+      "properties": {
+        "max_spread_pips": {
+          "type": "number",
+          "minimum": 0
+        },
+        "min_spread_pips": {
+          "type": "number",
+          "minimum": 0
+        },
+        "max_slippage_pips": {
+          "type": "number",
+          "minimum": 0
+        },
+        "min_slippage_pips": {
+          "type": "number",
+          "minimum": 0
+        },
+        "max_delay_seconds": {
+          "type": "number",
+          "minimum": 0
+        },
+        "min_delay_seconds": {
+          "type": "number",
+          "minimum": 0
+        },
+        "ttl_buffer_seconds": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "allow_ioc": {
+          "type": "boolean"
+        },
+        "allow_fok": {
+          "type": "boolean"
+        },
+        "allow_day": {
+          "type": "boolean"
+        },
+        "fill_style": {
+          "type": "string",
+          "enum": ["ioc", "fok", "gtd"]
+        },
+        "notes": {
+          "type": "string"
+        }
+      }
+    },
+    "entryModeThresholds": {
+      "type": "object",
+      "description": "Complete entry mode threshold set for defaults.",
+      "required": ["market", "marketable_limit", "limit_requote"],
+      "properties": {
+        "market": {"$ref": "#/definitions/entryModeThreshold"},
+        "marketable_limit": {"$ref": "#/definitions/entryModeThreshold"},
+        "limit_requote": {"$ref": "#/definitions/entryModeThreshold"}
+      },
+      "additionalProperties": {"$ref": "#/definitions/entryModeThreshold"}
+    },
+    "entryModeOverrides": {
+      "type": "object",
+      "description": "Partial entry mode overrides applied per symbol/regime.",
+      "minProperties": 1,
+      "properties": {
+        "market": {"$ref": "#/definitions/entryModeThreshold"},
+        "marketable_limit": {"$ref": "#/definitions/entryModeThreshold"},
+        "limit_requote": {"$ref": "#/definitions/entryModeThreshold"}
+      },
+      "additionalProperties": {"$ref": "#/definitions/entryModeThreshold"}
+    },
+    "executionDefaults": {
+      "type": "object",
+      "description": "Global execution defaults before symbol/regime overrides are applied.",
+      "required": ["human_delay_seconds", "slippage_pips", "entry_modes"],
+      "additionalProperties": false,
+      "properties": {
+        "human_delay_seconds": {"$ref": "#/definitions/delayByMode"},
+        "slippage_pips": {"$ref": "#/definitions/slippageBuckets"},
+        "ttl_seconds": {"$ref": "#/definitions/ttlBuckets"},
+        "entry_modes": {"$ref": "#/definitions/entryModeThresholds"}
+      }
+    },
+    "regimeConfig": {
+      "type": "object",
+      "description": "Regime level overrides applied when a detector flags the regime.",
+      "additionalProperties": false,
+      "properties": {
+        "human_delay_seconds": {"$ref": "#/definitions/delayByMode"},
+        "slippage_pips": {"$ref": "#/definitions/slippageStats"},
+        "ttl_seconds": {"$ref": "#/definitions/ttlBuckets"},
+        "entry_modes": {"$ref": "#/definitions/entryModeOverrides"},
+        "notes": {
+          "type": "string"
+        }
+      }
+    },
+    "symbolConfig": {
+      "type": "object",
+      "description": "Symbol scoped execution configuration.",
+      "additionalProperties": false,
+      "properties": {
+        "human_delay_seconds": {"$ref": "#/definitions/delayByMode"},
+        "slippage_pips": {"$ref": "#/definitions/slippageBuckets"},
+        "ttl_seconds": {"$ref": "#/definitions/ttlBuckets"},
+        "entry_modes": {"$ref": "#/definitions/entryModeOverrides"},
+        "regimes": {
+          "type": "object",
+          "additionalProperties": {"$ref": "#/definitions/regimeConfig"}
+        },
+        "notes": {
+          "type": "string"
+        }
+      }
+    }
+  }
+}

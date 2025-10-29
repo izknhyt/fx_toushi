@@ -1,5 +1,10 @@
 # Schema Registry Change Log
 
+## 2025-03-18
+- Added `execution_model.schema.json` mirroring detailed design §3.6/§4.4 execution thresholds
+  (human delay, slippage, entry-mode gating) and scaffolded `config/execution_model.yaml`. Smoke
+  tests now validate the scaffold during `pytest -k config_schema_smoke`.
+
 ## 2025-03-17
 - Added `human_gate_config.schema.json` to capture Human Gate double-ack roles, comment thresholds,
   and Reduce-Only advisor weights per detailed design §3.5.6/§5.12. Updated `cfg.schema.json`
