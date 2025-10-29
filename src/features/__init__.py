@@ -1,3 +1,10 @@
 """Feature engineering pipelines and related utilities."""
 
-__all__: list[str] = []
+from .pipeline import FeatureContext, FeaturePipeline, IndicatorDefinition, RebuildReport
+
+__all__ = [
+    "FeatureContext",
+    "FeaturePipeline",
+    "IndicatorDefinition",
+    "RebuildReport",
+]
