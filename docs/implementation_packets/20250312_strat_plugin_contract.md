@@ -44,6 +44,13 @@
 - `run_signal_cycle` 疑似コードでは`gate_state = GateAggregator.snapshot()`で取得したオブジェクトを保持し、`TicketBuilder.build(sized_signal, execution_adjustments, gate_state_or_slice)`へ第三引数として渡す。`gate_state.market.per_symbol.get(sized_sig.symbol)`が存在する場合はそのスライスを優先し、なければグローバル`gate_state`を渡して`reduce_only`や`double_entry_required`などのフラグが失われないようにする。Workflow/Backtestの双方が同一スナップショットを共有することで、シーケンス図 (§3.5.1) と疑似コード (§3.5.2) のGateState伝播が一致することを保証する。
 - `TicketBuilder` 実装では受け取った`GateState`のミュータブル更新を禁止し、シンボルスライスとグローバル制約を統合してChecklist生成・WARNバッジ付与・`TicketBlockedError`判定を行う。Codex実装ではユニットテスト`pytest -k "ticket_builder"`でGateStateの反映を検証すること。
 
+### 2.5 StrategyManifestResolverテスト要件（§3.5.7）
+- `tests/unit/test_strategy_manifest_resolver.py::test_effective_symbols_respects_max_watchlist`で`config/profiles/<mode>.yaml::strategy.watchlist_max`を超えるManifestが`ManifestValidationError(code="watchlist_overflow")`をraiseすることを確認する。
+- `tests/unit/test_strategy_manifest_resolver.py::test_effective_symbols_prefers_per_symbol_gate`で`gate_state.market.per_symbol['GBPJPY'].halted=True`のとき該当シンボルが除外され、同時に`strategy_manifest.symbol_filtered`ログが出力されることをassertする。
+- `tests/unit/test_strategy_manifest_resolver.py::test_effective_symbols_guarded_board_mode`でBoardMode=`guarded`かつManifest `watchlist.allow_guarded=False`の戦略が空集合を返すこと、`allow_guarded=True`の戦略のみ`config/board_modes.yaml::modes.guarded.allowed_symbols`交差後に残ることを検証する。
+- `tests/unit/test_strategy_manifest_resolver.py::test_validate_watchlist_feature_gap`でFeaturePipelineに存在しないシンボル/Feature組み合わせが指定された場合に`ManifestValidationError(code="watchlist_missing_feature")`と`strategy_manifest.watchlist_feature_missing`ログが生成されることを確認する。
+- `tests/unit/test_strategy_manifest_resolver.py::test_resolve_context_watchlist_returns_frozenset`で`resolve_context_watchlist`が常に`frozenset[str]`を返却し、再評価でも同一インスタンスIDを返さない（コピー生成）ことを`id()`比較でチェックする。
+
 ## 3. チェックリスト
 - [ ] 設計整合: §3.5.5・§0.6.11と照合し、Protocol/ログ要件を満たす
 - [ ] テスト実行: `poetry run pytest -k "strategy_plugin_contract or strategy_registry"`

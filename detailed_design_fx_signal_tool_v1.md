@@ -1434,7 +1434,8 @@ class MaRsiPlugin(StrategyPluginProtocol):
 
 - `FeatureContext.available_keys`は`{"ema_fast_5m", "macd_signal_1h", ...}`のような`<feature>_<tf>`形式を返し、`StrategyMetadata.required_features`はこの文字列集合の部分集合でなければならない。
 - `strategy_manifest.yaml`の`strategies.<id>.required_features`も`FeatureContext.available_keys`と同じ集合を前提に列挙する。例えば`macd_signal_1h`を要求する戦略は、設定ファイル側で`macd_12_26_9.output_keys.signal: macd_signal`と`timeframes: ["1h"]`が有効化されていることを前提にする。FeaturePipelineが新たな`output_key`を追加した場合はManifestとテスト資産を同時更新し、Fail-Fastで不一致を検知する。
-- `StrategyContext.watchlist`は`StrategyManifestResolver.effective_symbols(...)`が返す`frozenset[str]`で、Manifestで`enabled=True`かつボードモード・戦略ガードにより許可されたシンボルを起点に構築する。Manifestがウォッチリストを省略する場合は`feature_ctx.symbols`から導出し、Gate/Regimeが遮断したシンボルを除外した結果のみをStrategy Pluginへ渡す。
+- `StrategyContext.watchlist`は`StrategyManifestResolver.effective_symbols(...)`が返す`frozenset[str]`で、Manifestで`enabled=True`かつボードモード・戦略ガードにより許可されたシンボルを起点に構築する。Manifestがウォッチリストを省略する場合は`feature_ctx.symbols`から導出し、Gate/Regimeが遮断したシンボルを除外した結果のみをStrategy Pluginへ渡す。返却集合は常に`frozenset[str]`で不変とし、疑似コード内での`set`変換やインプレース変更を禁止する（Board復旧時にGateState再適用で差分検出するため）。
+- `StrategyManifestResolver.effective_symbols`はBoardMode=`halted`の際に空集合を即返却し、`guarded`ではManifest `watchlist.allow_guarded=true`（未設定時はFalse）を持つ戦略のみが`config/board_modes.yaml::modes.guarded.allowed_symbols`に交差するシンボルを得られる。`GateState.market.per_symbol[symbol]`が`halted`/`kill_switch`の場合や`GateState.risk.reduce_only=True`のペアは除外される。
 - `FeatureContext.lookup()`/`get_latest()`は対象キーが存在しない、または`FeatureFrameView.last_updated`が`config.feature.max_lag_sec`を超えている場合に`FeatureLookupError`または`FeatureStaleError`を送出し、StrategyEngineは`StrategyExecutionError(cause='feature_missing')`を発生させて当該プラグインの出力を棄却する。
 - **決定論/ログ要件**
   - `evaluate()`は`RawSignal`を返す際、`signal_id = f"{self.id}:{context.clock.bar_ts:%Y%m%d%H%M}:{hash_components}"`で生成し、`hash_components`には主要Featureキーと`seed`を含める。
@@ -1467,6 +1468,20 @@ class MaRsiPlugin(StrategyPluginProtocol):
 > 2. `AuditWriter`がイベントを`logs/audit/ticket_actions_<YYYYMMDD>.jsonl`へ記録し、同時に`OpsWorklogService.record(task='double_ack', duration_min=Runbook計測)`を呼び出す。
 > 3. `GateAggregator.on_event(ticket.checklist.ack)`が起動し、イベントから`ack_role`を抽出して`acknowledged_roles`へ追加、`ack_deadline`が過ぎていた場合は`OpsAgendaService.clear_deadline(...)`を通じてTODOを完了させる。
 > 4. 次サイクルの`GateAggregator.snapshot()`が更新済みの`HumanGateState`を返却し、TicketBuilderがチェックリスト`double_entry_confirmed`を`ok`へ遷移させる。
+
+#### 3.5.7 StrategyManifestResolver (`src/strategies/manifest_resolver.py`)
+
+| 実装パス | 公開API | 概要 | 例外/ログ |
+| --- | --- | --- | --- |
+| `src/strategies/manifest_resolver.py` | `load_manifest(path: PathLike, *, schema="docs/schemas/strategy_manifest.schema.json") -> StrategyManifest` | YAMLを読み込み、Schema（§6.7 Config Governance, `docs/schemas/strategy_manifest.schema.json`）で検証して`StrategyManifest`へ変換する。 | `ManifestParseError`（YAML構文不備）、`ManifestValidationError(code="schema_mismatch")`（JSON Schema逸脱時）。ログキー: `strategy_manifest.load_failed`。 |
+| `src/strategies/manifest_resolver.py` | `validate_watchlist(manifest, feature_ctx, *, board_mode, max_symbols) -> None` | Manifest `strategies.<id>.watchlist`とFeaturePipelineのシンボル集合を比較し、過不足やBoardMode制約違反をFail-Fast。Runbook `GOV-STRAT-01`の承認チェックリストと連動する。 | `ManifestValidationError(code="watchlist_missing_feature")`（Feature不足）、`ManifestValidationError(code="watchlist_overflow")`（`max_symbols`超過）、WARNログ`strategy_manifest.watchlist_guarded_rejected`（BoardMode=guardedで許可外）。 |
+| `src/strategies/manifest_resolver.py` | `effective_symbols(manifest, feature_ctx, gate_state, regime_state, *, board_mode, max_symbols) -> frozenset[str]` | `enabled=True`戦略のウォッチリストをマージし、BoardMode/GateState/RegimeState/Feature整合を適用した最終集合を返却する。`StrategyContext.watchlist`の単一情報源。 | `StrategyManifestError(code="guard_block")`（BoardMode=`halted`で要求有り）、`StrategyManifestError(code="gate_block")`（GateState遮断）、`StrategyManifestError(code="regime_block")`。ログキー: `strategy_manifest.effective_symbols`（INFO）、`strategy_manifest.symbol_filtered`（DEBUG）。 |
+| `src/strategies/manifest_resolver.py` | `resolve_context_watchlist(context) -> frozenset[str]` | `StrategyContext`作成時に`effective_symbols`と`validate_watchlist`を統合実行し、決定論シードへ監視集合ハッシュを組み込む。 | `StrategyContextError(code="watchlist_unavailable")`。異常時は`logger.error("strategy_context.watchlist_resolve_failed", extra={...})`でRunbook `RUN-SIGNAL-02`参照を案内。 |
+
+- **BoardMode/GateState/RegimeState連携**: `effective_symbols`はBoardModeを最初に判定し、`halted`なら即`frozenset()`を返却、`guarded`の場合はManifest側の`watchlist.allow_guarded=True`と`config/board_modes.yaml::modes.guarded.allowed_symbols`の積集合のみを残す。次に`GateState.market.per_symbol`に個別ブロックが存在すれば優先適用し、存在しない場合に限りグローバルな`gate_state.market.calendar/news`を評価する。最後に`RegimeState.blocked_symbols`（§3.4）を差し引き、除外シンボルを`strategy_manifest.symbol_filtered`ログへ列挙する。
+- **Feature不足・Manifest不整合時の例外/ログ**: `validate_watchlist`は`feature_ctx.available_keys`に対応する`feature_ctx.symbols`を参照し、Manifestが定義したシンボルに必要なFeatureが無ければ`ManifestValidationError(code="watchlist_missing_feature")`を発生させる。同時に`logger.error("strategy_manifest.watchlist_feature_missing", extra={"strategy_id": ..., "symbol": ...})`を出力し、Runbook `GOV-STRAT-01`の「Feature差分是正」手順へ誘導する。マニフェストが`max_symbols`（`config/profiles/<mode>.yaml::strategy.watchlist_max`）を超過した場合は`ManifestValidationError(code="watchlist_overflow")`をraiseし、`RUN-SIGNAL-02`の「ウォッチリスト削減」ステップを参照させる。
+- **戻り値不変性**: すべての公開APIは`frozenset[str]`を返却し、呼び出し側がミュータブル操作を行わないことを想定する。StrategyEngine/Workflow疑似コードでは`frozenset`のまま保持し、ガベージ抑制と決定論シード（`hash(strategy_watchlist)`）の安定化を保証する。Codex実装レビューでは`return frozenset(symbols)`の表記があるか確認し、テスト`tests/unit/test_strategy_manifest_resolver.py::test_effective_symbols_returns_frozenset`で検証する。
+- **スキーマ/Runbookとの相互リンク**: Resolverは`docs/schemas/strategy_manifest.schema.json`（§6.7）、`docs/schemas/feature_pipeline.schema.json`（§3.4）、`docs/schemas/board_modes.schema.json`（§2.5）へ依存する。Schemaバージョンが更新された場合は`load_manifest`の`schema`引数を更新し、Runbook `GOV-STRAT-01`および`RUN-SIGNAL-02`のチェックリストに追記する（§6.7 Config Governance参照）。
 
 ### 3.6 ExecutionModel & SpreadMonitor (`src/execution/model.py`, `src/execution/spread.py`)
 ```python
