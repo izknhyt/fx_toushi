@@ -112,7 +112,7 @@
         },
         "per_symbol": {
           "type": "object",
-          "description": "Symbol-specific gate blocks that override global news/calendar settings.",
+          "description": "Symbol-specific gate blocks that override global news/calendar/spread settings.",
           "additionalProperties": {
             "type": "object",
             "additionalProperties": false,
