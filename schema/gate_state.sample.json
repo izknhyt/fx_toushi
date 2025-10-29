@@ -34,6 +34,13 @@
           "cooldown_eta": "2025-03-14T12:38:00Z"
         }
       },
+      "EURUSD": {
+        "spread": {
+          "state": "watch",
+          "reason": "frankfurt_session_widening",
+          "cooldown_eta": null
+        }
+      },
       "XAUUSD": {
         "calendar": {
           "blocked": true,
