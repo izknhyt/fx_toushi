@@ -2,6 +2,8 @@
 
 本書はFXヒューマン・インザループ投資ツールで採用する言語/フレームワークのスタイル規約とリンター設定を集約する。詳細設計書 (§0.6 Codex開発ハンドオフガイド) から参照され、Codex/開発者は本書に従って実装/レビュー/自動チェックを行う。
 
+> **Pythonランタイム**: CodexプロンプトとCIコンテナはいずれも **Python 3.12.x** を前提とする。ローカル開発者は`pyenv`や`asdf`等で同バージョンを用意し、Poetryの`python = "^3.12"`制約を満たすこと。
+
 ## 1. Pythonドメインロジック
 - **スタイル基準**: [PEP 8](https://peps.python.org/pep-0008/) と [PEP 484](https://peps.python.org/pep-0484/) の型ヒントを厳守し、公開APIは必ず型注釈を付与する。関数/メソッドにはOne-lineサマリ＋I/O/エラー記述を含むGoogleスタイルDocstringを付ける。
 - **アーキテクチャ指針**: サービス層 (`src/<domain>/*.py`) はPure Function志向で副作用をModeContextに閉じ込める。イベント/DTOは`dataclass(slots=True)`または`pydantic.BaseModel`で定義し、`schema_version`/`source`などのメタ情報を持たせる。
