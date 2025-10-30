@@ -10,6 +10,7 @@ from src.app.mode_context import (
     ExecutionProfile,
     MarketClock,
     ModeContextFactory,
+    ModeProfile,
 )
 from src.core.session import SessionConfig, create_session_context
 
@@ -31,6 +32,15 @@ def test_factory_produces_deterministic_mode_context(profile_name: str) -> None:
     assert isinstance(context_first.account_gateway, AccountGateway)
     assert context_first.audit_channel.profile_id == profile_name
     assert context_first.data_feeds.primary
+
+
+def test_factory_uses_session_identifier_in_seed() -> None:
+    factory = ModeContextFactory()
+
+    context_a = factory.create("backtest", session_id="session-0001")
+    context_b = factory.create("backtest", session_id="session-0002")
+
+    assert context_a.deterministic_seed != context_b.deterministic_seed
 
 
 def test_create_session_context_validates_config_alignment() -> None:
@@ -76,3 +86,23 @@ def test_create_session_context_validates_config_alignment() -> None:
             session_id="session-123",
             config=mismatched_profile,
         )
+
+
+def test_mode_profile_is_immutable_mapping_view() -> None:
+    factory = ModeContextFactory()
+    profile = factory.load_profile("backtest")
+
+    assert isinstance(profile, ModeProfile)
+    assert profile.metadata["description"].startswith("バックテスト")
+
+    with pytest.raises(TypeError):
+        profile.metadata["description"] = "mutated"
+
+    assert profile.strategies
+    first_strategy = profile.strategies[0]
+
+    with pytest.raises(TypeError):
+        first_strategy["enabled"] = False
+
+    with pytest.raises(TypeError):
+        profile.raw["metadata"] = {}
