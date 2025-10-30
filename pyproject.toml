@@ -7,7 +7,7 @@ readme = "README.md"
 packages = [{ include = "*", from = "src" }]
 
 [tool.poetry.dependencies]
-python = "^3.11"
+python = "^3.12"
 typer = "==0.20.0"
 rich = "==14.2.0"
 pydantic = "==2.12.3"
@@ -35,7 +35,7 @@ build-backend = "poetry.core.masonry.api"
 
 [tool.black]
 line-length = 100
-target-version = ["py311"]
+target-version = ["py312"]
 
 [tool.ruff]
 line-length = 100
@@ -58,7 +58,7 @@ known-first-party = [
 combine-as-imports = true
 
 [tool.mypy]
-python_version = "3.11"
+python_version = "3.12"
 strict = true
 pretty = true
 show_error_codes = true
