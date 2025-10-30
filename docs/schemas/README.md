@@ -22,6 +22,9 @@ materials stored here serve as the authoritative source for governance reviews a
   `config/execution_model.yaml` and validation templates under Runbook RUN-HITL-01 / RUN-RISK-01.
 - `cfg.schema.json` – Mode profile configuration for SessionManager (§3.1/§4.4). Applies to
   `config/profiles/*.yaml`.
+- `mode_context.schema.json` – Composite runtime context contract binding profile/clock/feed/execution/
+  account/audit/session structures (§3.1.0/§4.2.5). Validates `snapshots/latest/mode_context.json`
+  and ModeContextFactory outputs during startup validation.
 - `human_gate_config.schema.json` – Human Gate / Reduce-Only advisor contract (§3.5.6/§5.12).
   Validates `config/reduce_only.yaml` and governs comment/role overrides in `config/profiles/*.yaml`.
 - `sla_threshold_profile.schema.json` – Data ingestion SLA thresholds (§4.4/§9.4.4). Applies to
