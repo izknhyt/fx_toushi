@@ -52,7 +52,7 @@ def load_config(project_root: Path) -> Callable[[str | Path], Any]:
                 msg = "PyYAML is required to load YAML config files"
                 raise RuntimeError(msg)
             with path.open("r", encoding="utf-8") as handle:
-                return yaml.safe_load(handle)
+                return yaml.safe_load(handle.read())
 
         return path.read_text(encoding="utf-8")
 
