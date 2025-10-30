@@ -154,6 +154,15 @@ def _parse_scalar(token: str) -> Any:
     if lowered == "false":
         return False
 
+    if token.startswith("[") and token.endswith("]"):
+        inner = token[1:-1].strip()
+        if not inner:
+            return []
+        return [_parse_scalar(part.strip()) for part in inner.split(",")]
+
+    if token == "{}":
+        return {}
+
     if (token.startswith('"') and token.endswith('"')) or (
         token.startswith("'") and token.endswith("'")
     ):
