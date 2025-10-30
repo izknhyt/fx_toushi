@@ -852,6 +852,192 @@ class ModeContext:
 
 `ModeContextFactory`はプロファイル毎に上記フィールドを初期化し、SessionManager経由でWorkflow Orchestratorへ注入する。各サービスは本表を参照し、モード差分をコードから切り離す。
 
+#### 3.1.0 ModeContext構成要素データ構造
+
+##### ModeProfile
+
+| フィールド | 型 | 説明 | モード差分/備考 |
+| --- | --- | --- | --- |
+| `schema_version` | `str` | `cfg.schema.json`に定義されたリビジョン。 | ModeContextFactoryは`docs/schemas/mode_context.schema.json`と`cfg.schema.json`双方の互換性を検査し、ズレた場合は起動を中断する。 |
+| `profile_id` | `str` | CLI引数および監査ログに記録する一意識別子。 | Backtest/Paper/Liveで同一IDを再利用しないこと。 |
+| `mode` | `Literal["backtest", "paper", "live"]` | 実行モード宣言。 | `ModeContext.mode`と一致しない場合は即座に例外化。 |
+| `metadata.description` | `str` | Runbook/Validationログに出力する説明。 | Liveは監査向けに300字以上推奨。 |
+| `metadata.runbook_refs` | `list[str]` | 運用/監査手順の参照。 | Paper/Liveでは少なくともKill Switch関連Runbookを含める。 |
+| `metadata.tags` | `list[str]` | `mode=`, `release=`等のタグ。 | Backtestで`release`タグを利用し、最適化実行を識別。 |
+| `data_ingestion.provider` | `str` | 主要データソースID。 | Liveは有償API名を設定し、`credentials_ref`を参照。 |
+| `data_ingestion.symbols` | `list[str]` | 対象通貨ペア。 | Backtestは自由、Paper/LiveはRunbook指定セットと一致が必須。 |
+| `timeframes.trigger` | `str` (`^[0-9]+[mhd]$`) | ワークフロー基準タイムフレーム。 | Backtestでのみ`1m`等を許容。 |
+| `risk.policy_id` | `str` | `risk_policy.yaml`エントリ。 | Liveは`RiskDisclosure`とセットで監査。 |
+| `gates.board_mode_default` | `Literal['normal','guarded','halted']` | 起動時のBoardMode。 | Paper/Liveは`normal`以外の場合、承認ログ必須。 |
+| `gates.required_roles` | `list[str]` | ダブルエントリ必須ロール。 | Backtestは任意、Liveは`risk_officer`を含む。 |
+| `execution.slippage_bps` | `Decimal` | 擬似スリッページ閾値。 | Backtestは0許容、Paper/Liveは>0が必須。 |
+| `execution.human_delay_secs` | `int` | HITL承認の猶予秒。 | Backtestは0固定、Paper/LiveはRunbook整合。 |
+| `spread.cooldown_minutes` | `int` | Spread Guard冷却時間。 | Liveは15以上推奨、Backtestは0〜5。 |
+| `funding.apply_swap` | `bool` | スワップ計算の有無。 | Live必須、Backtest/Paperは任意。 |
+| `correlation.dataset` | `str` | 相関データセットパス。 | Backtestは`data/correlation/`配下を指す。 |
+| `scheduler.session_start` / `session_end` | `str` (HH:MM) | 日次セッション境界。 | Backtestは任意、LiveはJST想定。 |
+
+- **例外契約**:
+  - `ModeProfileValidationError(code='schema_version_mismatch')`: `schema_version`が`cfg.schema.json`と整合しない場合に`ModeContextFactory.load_profile()`が送出。
+  - `ModeProfileValidationError(code='mode_inconsistent')`: `profile.mode != ctx.mode`で`ModeController.attach()`が送出しKill Switchを`hard_stop(startup)`へ設定。
+  - `ModeProfileValidationError(code='runbook_refs_missing')`: Paper/Liveで`metadata.runbook_refs`が空の場合に`ModeContextFactory`が送出。
+
+##### MarketClock
+
+| フィールド | 型 | 説明 | モード差分/備考 |
+| --- | --- | --- | --- |
+| `name` | `Literal['UtcMarketClock','ReplayClock','SimulatedClock']` | 実装クラス識別。 | Backtestは`ReplayClock`、Paper/Liveは`UtcMarketClock`既定。 |
+| `timezone` | `str` (IANA) | システム基準タイムゾーン。 | Liveでは`UTC`固定、Paperは`UTC`または`Europe/London`。 |
+| `timeframe` | `str` (`^[0-9]+[mhd]$`) | バー整列間隔。 | Backtestで`1m`など細粒度可。 |
+| `trading_calendar.id` | `str` | カレンダーデータセットID。 | Liveでは`global_fx`を参照し祝日ブロックに連動。 |
+| `trading_calendar.region` | `str` | 主地域。 | `UTC`または`Asia/Tokyo`。 |
+| `trading_calendar.holidays` | `list[str]` (ISO8601日付) | 祝日一覧。 | Backfill時の欠損許容ウィンドウに利用。 |
+| `supports_halt_windows` | `bool` | Kill Switch/ニュース停止ウィンドウ対応。 | Backtestのみ`False`許容。 |
+| `sync_source` | `str` | NTPまたは市場ソース。 | Paper/Liveは`ntp.pool.org`等、Backtestはリプレイファイル。 |
+| `drift_tolerance_ms` | `int` | 許容ドリフト。 | Liveは500ms、Backtestは0。 |
+| `bar_alignment.interval_seconds` | `int` | バー開始周期。 | `timeframe`に一致しない場合は例外。 |
+| `bar_alignment.phase_offset_seconds` | `int` | バー開始オフセット。 | Backtestでのみ±300秒許容。 |
+
+- **例外契約**:
+  - `ClockInitializationError(code='calendar_missing')`: `trading_calendar`がロードできない場合に`MarketClock.bootstrap()`が送出。
+  - `ClockDriftExceeded(actual_ms, tolerance_ms)`: Paper/Liveで`drift_tolerance_ms`超過を検出した際に`ModeController.monitor_clock()`が送出し`health.suggest_guarded`を併発。
+  - `CalendarWindowError(code='misaligned_bar')`: `bar_alignment`が`timeframe`と一致せず整列できない場合に`ReplayClock.seek()`が送出。
+
+##### DataFeedBundle
+
+| フィールド | 型 | 説明 | モード差分/備考 |
+| --- | --- | --- | --- |
+| `primary.provider` | `str` | 主要データプロバイダ。 | Liveは有償API識別子、Backtestは`local_parquet`。 |
+| `primary.credentials_ref` | `str` | 秘密情報参照キー。 | Backtest/Paperは任意、Liveは必須。 |
+| `primary.channel` | `Literal['rest','websocket','file']` | 取得チャネル。 | Backtestは`file`、Paper/Liveは`rest`/`websocket`。 |
+| `fallback[]` | `list[DataFeedEndpoint]` | 優先度順フォールバック。 | Paper/Liveで少なくとも1件必須。 |
+| `manual_sources[]` | `list[ManualCsvDescriptor]` | 手動CSVテンプレート。 | Backtest省略可。 |
+| `ingestion_parallelism` | `int` | 同時フェッチWorker数。 | Backtestは2〜4、Liveは4以上。 |
+| `quality_guards.max_gap_minutes` | `int` | 欠損許容。 | Liveは15以内。 |
+| `quality_guards.stale_bar_threshold_minutes` | `int` | ステール検知閾値。 | Paper/LiveはTrigger→`HealthMonitor.degraded`連携。 |
+| `rate_limit_guard.stage` | `Literal['baseline','heightened','manual_only']` | レートリミット対応段階。 | Acceptable Degradation判定で使用。 |
+
+- **例外契約**:
+  - `DataFeedConfigurationError(code='primary_missing')`: `primary.provider`未指定時に`ModeContextFactory.build_feeds()`が送出。
+  - `CredentialLookupError(secret_id)`: `credentials_ref`がSecret管理に存在しない場合に`DataIngestionService.spawn_provider_workers()`が送出。
+  - `ManualFallbackNotReady(symbol, date)`: `manual_sources`に定義があるが双子CSVが揃わない場合に`ManualCsvIngestionTask`が送出。
+
+##### ExecutionProfile
+
+| フィールド | 型 | 説明 | モード差分/備考 |
+| --- | --- | --- | --- |
+| `model_id` | `str` | `execution_model.yaml`バージョン。 | Liveは署名付きID必須。 |
+| `allowed_entry_modes` | `set[EntryMode]` | 利用可能なエントリ種別。 | Backtestは3種全て、Liveは`limit_requote`必須。 |
+| `human_delay_secs` | `int` | 人的承認バッファ。 | Live: Runbook`RUN-HITL-01`と同期。 |
+| `latency_distribution_ms.{p50,p95,p99}` | `int` | Fill遅延統計。 | Paperで計測、Live閾値はPaper実績+バッファ。 |
+| `slippage_bps` | `Decimal` | 許容スリッページ。 | Backtest/Paperでシミュレーション、LiveでMax⩽5bps。 |
+| `max_orders_per_minute` | `int` | 取引レート制限。 | LiveでKill Switch連携。 |
+| `kill_switch_policies.reduce_only_on_soft_stop` | `bool` | `soft_stop`時にReduce-Only化。 | Paper/Liveは`True`必須。 |
+| `kill_switch_policies.require_double_ack` | `bool` | Kill Switch解除条件。 | Backtestは`False`可。 |
+| `staging.paper.stage_guard` | `Literal['manual_only','partial_auto','full_auto']` | StageGuard挙動。 | Backtestは任意、Liveは`partial_auto`以上禁止。 |
+
+- **例外契約**:
+  - `ExecutionProfileValidationError(code='unsupported_entry_mode')`: `allowed_entry_modes`に未知値がある場合に`ExecutionModel.configure()`が送出。
+  - `ExecutionProfileValidationError(code='latency_distribution_invalid')`: `{p50 < p95 < p99}`を満たさない場合に`ModeController.attach_execution()`が送出。
+  - `KillSwitchPolicyError(code='reduce_only_disabled')`: Liveで`reduce_only_on_soft_stop=False`の場合に`HealthMonitor.raise()`が送出し起動停止。
+
+##### AccountGateway
+
+| フィールド | 型 | 説明 | モード差分/備考 |
+| --- | --- | --- | --- |
+| `type` | `Literal['backtest_memory','paper_simulator','live_broker']` | 実装タイプ。 | Modeごとに既定値固定。 |
+| `account_profile_id` | `str` | `accounts_profile.schema.json`参照キー。 | Liveは監査口座ID。 |
+| `statement_export.path_glob` | `str` | 口座報告書の収集先。 | Paper/Liveで必須。 |
+| `statement_export.frequency` | `Literal['daily','weekly','intraday']` | 取得頻度。 | Backtest任意。 |
+| `balance_source` | `Literal['simulated','broker_api','manual_csv']` | 残高取得手段。 | Backtestは`simulated`固定。 |
+| `supports_margin` | `bool` | マージン取引対応。 | Paper/LiveでTrue。 |
+| `supports_swap` | `bool` | スワップ計算対応。 | LiveはTrue必須。 |
+| `latency_budget_ms` | `int` | API往復許容遅延。 | Liveは<=500ms。 |
+| `risk_buffer_pct` | `number` | マージン余力バッファ。 | Paper/Liveは0.05以上。 |
+
+- **例外契約**:
+  - `AccountGatewayUnavailable(code='provider_down')`: LiveでAPI疎通不可時に`AccountService.sync()`が送出。
+  - `AccountProfileNotFound(profile_id)`: `account_profile_id`が存在しない場合に`ModeContextFactory.build_account_gateway()`が送出。
+  - `StatementExportError(code='path_missing')`: `statement_export.path_glob`が実在しない場合に`AccountGateway.export_statements()`が送出。
+
+##### AuditChannel
+
+| フィールド | 型 | 説明 | モード差分/備考 |
+| --- | --- | --- | --- |
+| `stream` | `str` | EventBus/Auditで利用するストリーム名。 | `audit.mode.<mode>`を推奨。 |
+| `writer.path` | `str` | JSONL出力先。 | Backtestはローカル、Paper/LiveはWORM領域。 |
+| `writer.append_mode` | `Literal['jsonl','parquet']` | 書式。 | Liveは`jsonl`固定。 |
+| `retention_days` | `int` | ローカル保持日数。 | Liveは>=90。 |
+| `sync_targets` | `list[str]` | 二次保管先（S3等）。 | Liveは>=1必須。 |
+| `encryption.enabled` | `bool` | 転送時暗号化。 | Live必須、Backtest任意。 |
+| `encryption.key_alias` | `str` | KMSキー名。 | 暗号化有効時は必須。 |
+| `redaction_policy` | `Literal['default','pii_strict','none']` | マスキング方針。 | Paper/Liveは`default`以上。 |
+| `evidence_tags` | `list[str]` | 証跡検索用タグ。 | `mode=`, `region=`等を含める。 |
+
+- **例外契約**:
+  - `AuditWriteError(code='io_failure')`: ファイル書込失敗時に`AuditChannel.record()`が送出。
+  - `AuditRetentionMisconfigured(retention_days)`: Paper/Liveで保持期間<90日の場合に`AuditChannel.validate_retention()`が送出。
+  - `AuditSyncFailure(target)`: `sync_targets`への転送失敗時に`AuditReplicator.sync()`が送出し、`HealthMonitor.degraded(audit_sync)`へ連携。
+
+##### SessionState
+
+| フィールド | 型 | 説明 | モード差分/備考 |
+| --- | --- | --- | --- |
+| `mode` | `Literal['backtest','paper','live']` | 実行モード。 | `ModeContext.mode`と一致必須。 |
+| `health` | `Literal['ok','degraded','soft_stop','hard_stop']` | 現在のヘルス。 | `HealthMonitor`と双方向同期。 |
+| `board_mode` | `Literal['normal','guarded','halted']` | Board表示状態。 | Guarded時はRunbook証跡必須。 |
+| `kill_switch` | `Literal['RUNNING','STOP']` | Kill Switch。 | `STOP`時は手動解除のみ。 |
+| `active_jobs` | `list[str]` | 進行中ジョブID。 | Backfill/手動補填ジョブを含む。 |
+| `cfg_hash` | `str` (`^sha256:[0-9a-f]{64}$`) | Profileハッシュ。 | Snapshotと整合。 |
+| `last_bar_ts` | `str` (ISO8601) | 最新バータイムスタンプ。 | Backtestはリプレイ時刻、LiveはUTC実時刻。 |
+| `last_resync_at` | `str` (ISO8601) | 直近Resync完了時刻。 | Backtestでは`null`許容。 |
+| `snapshot_version` | `str` | スナップショットスキーマ。 | `snapshot.state.v1`等。 |
+
+- **例外契約**:
+  - `SessionNotInitializedError`: `SessionState`が欠落したまま`SessionManager.status()`が呼ばれた場合に送出。
+  - `SessionStateCorrupted(code='hash_mismatch')`: `cfg_hash`がSnapshotと一致しない場合に`SnapshotManager.restore()`が送出。
+  - `SnapshotVersionMismatch(expected, actual)`: `snapshot_version`が対応外の場合に`SessionManager.restore()`が送出。
+
+##### SessionHandle
+
+| フィールド | 型 | 説明 | モード差分/備考 |
+| --- | --- | --- | --- |
+| `session_id` | `str` | 起動毎の一意ID（`session-<date>-<seq>`）。 | 監査ログキー。 |
+| `profile_id` | `str` | 利用プロファイル。 | `ModeProfile.profile_id`と一致必須。 |
+| `mode` | `Literal['backtest','paper','live']` | 実行モード。 | ModeContextと一致。 |
+| `started_at` | `str` (ISO8601) | 起動時刻。 | Liveは監査で必須。 |
+| `cfg_hash` | `str` | 起動時設定ハッシュ。 | `SessionState.cfg_hash`と一致。 |
+| `clock_snapshot_ts` | `str` (ISO8601) | 起動時の`clock.now()`結果。 | Backtestはリプレイ開始時刻。 |
+| `event_stream_id` | `str` | EventBusストリームキー。 | `ops.session.<mode>.<date>`形式。 |
+
+- **例外契約**:
+  - `SessionHandleExpired(session_id)`: 停止済みハンドルを再利用した場合に`SessionManager.start()`が送出。
+  - `SessionHandleMismatch(expected_mode)`: CLI引数とハンドルのモードが異なる場合に`ModeController.attach()`が送出。
+  - `SessionHandleRevoked(session_id)`: Kill Switch`hard_stop`後に旧ハンドル操作が行われた場合に`SessionManager.shutdown()`が送出。
+
+##### BackfillJob
+
+| フィールド | 型 | 説明 | モード差分/備考 |
+| --- | --- | --- | --- |
+| `job_id` | `str` | `bf-<YYYYMMDD>-<seq>`形式。 | 監査ログで証跡紐付け。 |
+| `mode` | `Literal['backtest','paper','live']` | 実行モード。 | ModeContextと一致。 |
+| `symbols` | `list[str]` | 対象シンボル。 | Liveは主要4ペアに限定。 |
+| `timeframe` | `str` (`^[0-9]+[mhd]$`) | バックフィル対象TF。 | Backtestで複数並列可。 |
+| `start_ts` / `end_ts` | `str` (ISO8601) | 欠損ウィンドウ。 | `start_ts < end_ts`必須。 |
+| `priority` | `Literal['critical','high','normal','low']` | 実行優先度。 | 30分超欠損で自動`critical`。 |
+| `provider` | `str` | 利用プロバイダ。 | Manual CSV時は`manual_csv`。 |
+| `status` | `Literal['queued','running','completed','failed','cancelled']` | 現在状態。 | `failed`は再投入トリガ。 |
+| `retry_count` | `int` | 再試行回数。 | 3回超でRunbook`RUN-DATA-06`発火。 |
+| `requested_by` | `str` | CLIまたはサービス名。 | 監査用。 |
+| `created_at` | `str` (ISO8601) | 登録時刻。 | 監査用。 |
+| `last_heartbeat` | `str` (ISO8601) | 最新進捗。 | Backtest任意、Live必須。 |
+| `notes` | `str` | Ops補足。 | 任意。 |
+
+- **例外契約**:
+  - `BackfillJobRejected(code='window_too_large')`: 24時間を超える要求で`SessionManager.catch_up()`が送出。
+  - `BackfillWindowInvalid(start, end)`: `start_ts >= end_ts`の場合に`BackfillScheduler.enqueue()`が送出。
+  - `BackfillJobTimeout(job_id)`: `last_heartbeat`が15分超更新されない場合に`CatchUpMonitor`が送出し、Kill Switch`soft_stop(data_latency)`を提案。
+
 ### 3.0 tradectl CLIコマンド一覧（M1 Core）
 
 | コマンド | 主要オプション | 入出力 | 担当モジュール |
@@ -2118,6 +2304,24 @@ SpreadCooldownState = Literal["normal", "watch", "cooldown", "halt"]
 将来拡張（M2+）として`OpsAgendaService`側に`ticket_double_ack.escalated`や`on_call_override.granted`といったイベントフックを追加する余地を残しており、スキーマは`schema_version='gate.state.v3'`へ更新した上で`human.extensions`（任意の`dict[str, Any]`）を追加する予定である。これにより、承認済みロールのシフト交代や代行者の登録といった高度な運用要件を段階的に取り込める。
 
 `HealthState`は`status`, `reasons: dict[str, str]`, `alerts: list[AlertSummary]`, `last_update`を持つ。
+
+#### 4.2.5 ModeContextサポートモデル
+
+| モデル | 主フィールド例 | バリデーション/例外 | スキーマ/テスト |
+| --- | --- | --- | --- |
+| `ModeProfile` | `schema_version`, `profile_id`, `mode`, `data_ingestion.*`, `execution.human_delay_secs`, `gates.required_roles` | `ModeProfileValidationError`, `cfg.schema.json`との整合性チェック（§3.1.0） | `docs/schemas/mode_context.schema.json` `#/definitions/ModeProfile`、`pytest -k json_schema_validation::test_mode_context_contract_accepts_valid_payload` |
+| `MarketClock` | `name`, `timezone`, `timeframe`, `trading_calendar.*`, `drift_tolerance_ms` | `ClockInitializationError`, `ClockDriftExceeded` | `docs/schemas/mode_context.schema.json` `#/definitions/MarketClock` |
+| `DataFeedBundle` | `primary.provider`, `fallback[]`, `manual_sources[]`, `quality_guards.*`, `rate_limit_guard.stage` | `DataFeedConfigurationError`, `CredentialLookupError`, `ManualFallbackNotReady` | 同上 |
+| `ExecutionProfile` | `model_id`, `allowed_entry_modes`, `latency_distribution_ms`, `kill_switch_policies.*` | `ExecutionProfileValidationError`, `KillSwitchPolicyError` | 同上 |
+| `AccountGateway` | `type`, `account_profile_id`, `statement_export.*`, `latency_budget_ms`, `risk_buffer_pct` | `AccountGatewayUnavailable`, `AccountProfileNotFound`, `StatementExportError` | 同上 |
+| `AuditChannel` | `stream`, `writer.path`, `retention_days`, `sync_targets`, `encryption.*` | `AuditWriteError`, `AuditRetentionMisconfigured`, `AuditSyncFailure` | 同上 |
+| `SessionState` | `mode`, `health`, `board_mode`, `kill_switch`, `cfg_hash`, `last_bar_ts`, `snapshot_version` | `SessionNotInitializedError`, `SessionStateCorrupted`, `SnapshotVersionMismatch` | 同上 |
+| `SessionHandle` | `session_id`, `profile_id`, `mode`, `started_at`, `cfg_hash`, `event_stream_id` | `SessionHandleExpired`, `SessionHandleMismatch`, `SessionHandleRevoked` | 同上 |
+| `BackfillJob` | `job_id`, `symbols`, `timeframe`, `start_ts`, `end_ts`, `priority`, `status`, `last_heartbeat` | `BackfillJobRejected`, `BackfillWindowInvalid`, `BackfillJobTimeout` | 同上 |
+
+- `ModeContext`本体は`docs/schemas/mode_context.schema.json`のトップレベルで`schema_version='mode.context.v1'`を要求し、SessionManager起動時に`Draft202012Validator`で検証する。シリアライズ結果は`snapshots/latest/mode_context.json`へ保存し、再起動時に同スキーマで再検証する。
+- 例外列は§3.1.0の契約に対応しており、各構造体の`validate()`実装および`ModeContextFactory`が同じコードで送出する。例外コードは監査ログ`logs/audit/mode_context_validation.jsonl`に保存し、`docs/validation/ModeContext_startup.md` §2の証跡表から参照する。
+- JSON Schema追加に伴い`tests/schema/test_json_schema_validation.py`へ正/誤ケースを実装し、`pytest -k json_schema_validation`でCI検証すること。Codexは新規プロファイル/Sessionテスト追加時に同スキーマを参照する。
 
 ### 4.3 シグナル/チケットパイプライン
 ```python

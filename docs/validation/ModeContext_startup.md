@@ -19,12 +19,20 @@ Codex実装物の受入時に、`ModeContext`初期化手順（詳細設計 §0.
 
 | Mode | Field | 期待値・検証方法 | 証跡 (テスト or ドキュメント) | 備考 |
 | --- | --- | --- | --- | --- |
-| backtest | `clock` | `tests/unit/test_mode_context_factory.py::test_backtest_clock_initialization` |  |  |
-|  | `data_feeds` | `docs/schemas/mode_context.json` 整合性確認 |  |  |
-|  | `execution_profile` | `pytest -k "mode_context and backtest"` |  |  |
-|  | `account_gateway` | Runbook `RUN-ACCOUNT-02` 証跡 |  |  |
-| paper | `clock` |  |  |  |
-| ... | ... | ... | ... | ... |
+| backtest | `clock` | `tests/unit/test_mode_context_factory.py::test_backtest_clock_initialization`で`MarketClock.name='ReplayClock'`を確認。 | テストログ、`docs/schemas/mode_context.schema.json#/definitions/MarketClock`検証結果 | `drift_tolerance_ms=0`かつ`supports_halt_windows=false`をassert |
+|  | `data_feeds` | `pytest -k json_schema_validation::test_mode_context_contract_accepts_valid_payload` で`DataFeedBundle.primary.channel='file'`を確認。 | JSON Schema検証ログ (`mode_context.schema.json`) | `manual_sources`省略許容を確認 |
+|  | `execution_profile` | `tests/unit/test_mode_context_factory.py::test_backtest_execution_profile_defaults`で`allowed_entry_modes`全列挙を確認。 | テストログ、`docs/schemas/mode_context.schema.json#/definitions/ExecutionProfile` | `kill_switch_policies.reduce_only_on_soft_stop`はFalse許容 |
+|  | `account_gateway` | Runbook `RUN-ACCOUNT-02` Step 2 のメモ + `pytest -k json_schema_validation::test_mode_context_contract_accepts_valid_payload` | Runbookリンク、Schemaセクション`#/definitions/AccountGateway` | `type='backtest_memory'` |
+| paper | `clock` | `tests/unit/test_mode_context_factory.py::test_paper_clock_initialization`で`UtcMarketClock`と`drift_tolerance_ms<=500`を検証。 | テストログ | `supports_halt_windows=true` |
+|  | `data_feeds` | `pytest -k json_schema_validation::test_mode_context_contract_accepts_valid_payload` で`fallback`/`manual_sources`必須確認。 | Schemaログ | RateLimitステージ=`baseline` |
+|  | `execution_profile` | `tests/unit/test_mode_context_factory.py::test_paper_execution_profile_latency_shape`で`latency_distribution_ms`を検証。 | テストログ | `kill_switch_policies.reduce_only_on_soft_stop`=True |
+|  | `account_gateway` | `pytest -k json_schema_validation::test_mode_context_contract_accepts_valid_payload` で`type='paper_simulator'`と`statement_export.frequency='daily'`を検証。 | Schemaログ | |
+| live | `clock` | `tests/unit/test_mode_context_factory.py::test_live_clock_initialization`（要作成）で`timezone='UTC'`と祝日配列を検証。 | テストログ | `drift_tolerance_ms<=500` |
+|  | `data_feeds` | `pytest -k json_schema_validation::test_mode_context_contract_accepts_valid_payload` で`primary.credentials_ref`必須を検証。 | Schemaログ | `manual_sources`定義あり |
+|  | `execution_profile` | `tests/unit/test_mode_context_factory.py::test_live_execution_profile_requires_reduce_only`（要作成）で`allowed_entry_modes`とKill Switch設定を確認。 | テストログ | `allowed_entry_modes`に`limit_requote`必須 |
+|  | `account_gateway` | Runbook `RUN-ACCOUNT-02` + `pytest -k json_schema_validation::test_mode_context_contract_accepts_valid_payload` で`type='live_broker'`と`supports_swap=True`を確認。 | Runbookリンク、Schemaログ | |
+
+- 監査観点: `session_state`/`session_handle`/`active_backfill_jobs`は`docs/schemas/mode_context.schema.json`の該当定義で検証し、`tests/schema/test_json_schema_validation.py::test_mode_context_contract_rejects_invalid_payload`で必須項目欠落時の挙動を確認する。証跡は`reports/validation_log/mode_context_<date>.md`に貼付し、Runbook `STRAT-M1-VALIDATION` の`CHK-0.6.9-6`チェックを更新する。
 
 - フィールド検証は `ModeContext.profile` の値も含めて記録し、未検証の場合は備考欄に次アクションを記載する。
 - Codex Issue/PRチェックリストに `CHK-0.6.9-6` の完了状態を記載できるよう、証跡ファイル名を統一する（例: `validation/mode_context/2025-03-15_backtest.md`）。
