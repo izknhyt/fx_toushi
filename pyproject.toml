@@ -4,7 +4,7 @@ version = "0.1.0"
 description = ""
 authors = ["Codex <codex@openai.com>"]
 readme = "README.md"
-packages = [{ include = "brokers", from = "src" }]
+packages = [{ include = "*", from = "src" }]
 
 [tool.poetry.dependencies]
 python = "^3.11"
