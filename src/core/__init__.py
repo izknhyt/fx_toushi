@@ -13,7 +13,12 @@ from .gate import (
     SpreadGateState,
     SpreadState,
 )
-from .session import SessionConfig, SessionContext, SessionManager
+from .session import (
+    SessionConfig,
+    SessionContext,
+    SessionManager,
+    create_session_context,
+)
 from .snapshot import (
     HashComparisonReport,
     SnapshotError,
@@ -45,6 +50,7 @@ __all__ = [
     "SessionConfig",
     "SessionContext",
     "SessionManager",
+    "create_session_context",
     "HashComparisonReport",
     "SnapshotError",
     "SnapshotManager",
