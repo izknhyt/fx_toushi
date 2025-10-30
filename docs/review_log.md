@@ -83,3 +83,13 @@
 - Follow-up Packets: `PKG-STRAT-IFACE-01`（新規）, `DOC-RUNBOOK-ALIGN-02`（テンプレ更新）, Issue `OPS-58`（Codex Issueテンプレ追補）
 - Ops Agenda Sync: OPS-2025-03-13-01 に #7〜#9 の追跡項目を登録済み（Ops Manager）
 - Next Review Gate: 2025-03-19 週次Opsレビューでフォローアップ完了確認。未完の場合は`docs/change_requests/`へ正式エントリ化。
+
+### 2025-03-15 M1 Test Coverage Kick-off
+- Reviewer: Ops Manager / Codex Liaison
+- Scope: `tests/README.md` M1 必須 `pytest -k` 行、詳細設計 §3.0〜§3.5・§4.4・§6.7・§15.2・§16.5
+- Actions:
+  - `PKG-CONFIG-SCHEMA-01`, `PKG-DATA-STATUS-01`, `PKG-STRAT-DETERMINISM-01`, `PKG-FEATURE-CONTEXT-01`, `PKG-STRAT-MANIFEST-01`, `PKG-STRAT-REGISTRY-01`, `PKG-TICKET-BUILDER-01`, `PKG-JSON-SCHEMA-01` を起票。各Packetは `docs/implementation_packets/` 配下に格納し、対応する `pytest -k` プレースホルダーを `xfail(strict=True)` で追加。
+  - 既存Packet `PKG-STRAT-IFACE-01` の進捗表を更新し、`tests/README.md` と実装状況を同期。
+  - Ops Agenda `docs/runbooks/daily_agenda/2025-03-15.md` を作成し、上記Packetリンクと `tests/README.md` 行番号を紐付け。
+- Ops Agenda Sync: `docs/runbooks/daily_agenda/2025-03-15.md`
+- Next Review Gate: 2025-03-18 週次Opsレビューで各Packetのテスト実装着手状況を確認。
