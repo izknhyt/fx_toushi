@@ -34,8 +34,10 @@ Codex実装物の受入時に、`ModeContext`初期化手順（詳細設計 §0.
 
 | Component | 検証項目 | 期待する証跡 | 証跡リンク | 検証結果 |
 | --- | --- | --- | --- | --- |
+| EventBus | インターフェース初期化 (scaffold) | `tests/unit/core/test_event_bus_snapshot_scaffold.py::test_event_bus_publish_placeholder` 実行結果 |  | [ ] Pass<br>[ ] Fail |
 | EventBus | `EventBusConfig` パラメータ適用 (`queue_maxsize`, `backpressure_policy`, `metrics_path`) | `config/event_bus.yaml` / `logs/events/YYYYMMDD.jsonl` 初期化ログ |  | [ ] Pass<br>[ ] Fail |
 |  | バックプレッシャ設定の証跡 (`QueueDepthHigh`, `DroppedEventWarning`) | `metrics/event_bus_queue.jsonl` / `logs/events/*.jsonl` |  | [ ] Pass<br>[ ] Fail |
+| SnapshotManager | インターフェース初期化 (scaffold) | `tests/unit/core/test_event_bus_snapshot_scaffold.py::test_snapshot_manager_persist_placeholder` 実行結果 |  | [ ] Pass<br>[ ] Fail |
 | SnapshotManager | アトミック保存ハンドオフ (`SnapshotManager.persist`) | `snapshots/latest/<mode>.json` 更新ログ / `audit` 記録 |  | [ ] Pass<br>[ ] Fail |
 |  | 復旧パス確認 (`SnapshotManager.restore`) | `snapshots/latest/event_bus_state.json` / `RUN-DR-04` 証跡 |  | [ ] Pass<br>[ ] Fail |
 |  | ハッシュ比較 (`compare_hash`) 証跡 | `reports/validation_log/snapshot_hash_<date>.md` |  | [ ] Pass<br>[ ] Fail |
