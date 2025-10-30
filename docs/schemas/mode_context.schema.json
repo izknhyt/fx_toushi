@@ -1,0 +1,872 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://fx-toushi.dev/schemas/mode_context.schema.json",
+  "title": "ModeContext",
+  "description": "ModeContext composite object describing profile, clock, feeds, execution, account, audit, and session scaffolding per detailed design §3.1/§4.2.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "mode",
+    "profile",
+    "clock",
+    "deterministic_seed",
+    "data_feeds",
+    "execution_profile",
+    "account_gateway",
+    "audit_channel"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "mode.context.v1"
+    },
+    "mode": {
+      "type": "string",
+      "enum": ["backtest", "paper", "live"]
+    },
+    "profile": {
+      "$ref": "#/definitions/ModeProfile"
+    },
+    "clock": {
+      "$ref": "#/definitions/MarketClock"
+    },
+    "deterministic_seed": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "data_feeds": {
+      "$ref": "#/definitions/DataFeedBundle"
+    },
+    "execution_profile": {
+      "$ref": "#/definitions/ExecutionProfile"
+    },
+    "account_gateway": {
+      "$ref": "#/definitions/AccountGateway"
+    },
+    "audit_channel": {
+      "$ref": "#/definitions/AuditChannel"
+    },
+    "session_state": {
+      "$ref": "#/definitions/SessionState"
+    },
+    "session_handle": {
+      "$ref": "#/definitions/SessionHandle"
+    },
+    "active_backfill_jobs": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/BackfillJob"
+      },
+      "default": []
+    }
+  },
+  "definitions": {
+    "ModeProfile": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": [
+        "schema_version",
+        "profile_id",
+        "mode",
+        "metadata",
+        "data_ingestion",
+        "timeframes",
+        "risk",
+        "gates",
+        "strategies",
+        "execution",
+        "spread",
+        "funding",
+        "correlation",
+        "scheduler"
+      ],
+      "properties": {
+        "schema_version": {
+          "type": ["string", "integer"],
+          "description": "Profile configuration revision (mirrors cfg.schema.json)."
+        },
+        "profile_id": {
+          "type": "string",
+          "pattern": "^[a-z0-9_-]+$"
+        },
+        "mode": {
+          "type": "string",
+          "enum": ["backtest", "paper", "live"]
+        },
+        "metadata": {
+          "type": "object",
+          "required": ["description", "runbook_refs"],
+          "additionalProperties": true,
+          "properties": {
+            "description": {
+              "type": "string",
+              "minLength": 1
+            },
+            "runbook_refs": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              },
+              "minItems": 1,
+              "uniqueItems": true
+            },
+            "tags": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^[-a-z0-9_=:.]+$"
+              },
+              "uniqueItems": true
+            }
+          }
+        },
+        "data_ingestion": {
+          "type": "object",
+          "required": ["provider", "symbols"],
+          "additionalProperties": true,
+          "properties": {
+            "provider": {
+              "type": "string",
+              "minLength": 1
+            },
+            "symbols": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^[A-Z]{3,6}$"
+              },
+              "minItems": 1,
+              "uniqueItems": true
+            },
+            "catch_up_enabled": {
+              "type": "boolean"
+            },
+            "manual_fallback_allowed": {
+              "type": "boolean"
+            }
+          }
+        },
+        "timeframes": {
+          "type": "object",
+          "required": ["trigger", "regime_ref"],
+          "additionalProperties": true,
+          "properties": {
+            "trigger": {
+              "type": "string",
+              "pattern": "^[0-9]+[mhd]$"
+            },
+            "regime_ref": {
+              "type": "string",
+              "pattern": "^[0-9]+[mhd]$"
+            }
+          }
+        },
+        "risk": {
+          "type": "object",
+          "required": ["policy_id", "overrides"],
+          "additionalProperties": true,
+          "properties": {
+            "policy_id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "overrides": {
+              "type": "object"
+            }
+          }
+        },
+        "gates": {
+          "type": "object",
+          "required": [
+            "board_mode_default",
+            "enable_news_block",
+            "required_roles",
+            "comment_min_length",
+            "comment_max_length"
+          ],
+          "additionalProperties": true,
+          "properties": {
+            "board_mode_default": {
+              "type": "string",
+              "enum": ["normal", "guarded", "halted"]
+            },
+            "enable_news_block": {
+              "type": "boolean"
+            },
+            "required_roles": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^[a-z0-9_]+$"
+              },
+              "minItems": 0,
+              "uniqueItems": true
+            },
+            "comment_min_length": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "comment_max_length": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        },
+        "strategies": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": ["id", "enabled", "weight"],
+            "additionalProperties": true,
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^[a-z0-9_-]+$"
+              },
+              "enabled": {
+                "type": "boolean"
+              },
+              "weight": {
+                "type": "number"
+              }
+            }
+          }
+        },
+        "execution": {
+          "type": "object",
+          "required": [
+            "slippage_bps",
+            "latency_simulation_ms"
+          ],
+          "additionalProperties": true,
+          "properties": {
+            "slippage_bps": {
+              "type": "number"
+            },
+            "latency_simulation_ms": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "human_delay_secs": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        },
+        "spread": {
+          "type": "object",
+          "required": ["source", "cooldown_minutes"],
+          "additionalProperties": true,
+          "properties": {
+            "source": {
+              "type": "string",
+              "minLength": 1
+            },
+            "cooldown_minutes": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        },
+        "funding": {
+          "type": "object",
+          "required": ["apply_swap"],
+          "additionalProperties": true,
+          "properties": {
+            "apply_swap": {
+              "type": "boolean"
+            }
+          }
+        },
+        "correlation": {
+          "type": "object",
+          "required": ["dataset"],
+          "additionalProperties": true,
+          "properties": {
+            "dataset": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        },
+        "scheduler": {
+          "type": "object",
+          "required": ["timezone", "session_start", "session_end"],
+          "additionalProperties": true,
+          "properties": {
+            "timezone": {
+              "type": "string",
+              "pattern": "^[A-Za-z_/]+$"
+            },
+            "session_start": {
+              "type": "string",
+              "pattern": "^[0-2][0-9]:[0-5][0-9]([+]1)?$"
+            },
+            "session_end": {
+              "type": "string",
+              "pattern": "^[0-2][0-9]:[0-5][0-9]([+]1)?$"
+            }
+          }
+        }
+      }
+    },
+    "MarketClock": {
+      "type": "object",
+      "required": [
+        "name",
+        "timezone",
+        "timeframe",
+        "trading_calendar",
+        "supports_halt_windows",
+        "sync_source",
+        "drift_tolerance_ms",
+        "bar_alignment"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string",
+          "enum": ["UtcMarketClock", "ReplayClock", "SimulatedClock"]
+        },
+        "timezone": {
+          "type": "string",
+          "pattern": "^[A-Za-z_/]+$"
+        },
+        "timeframe": {
+          "type": "string",
+          "pattern": "^[0-9]+[mhd]$"
+        },
+        "trading_calendar": {
+          "type": "object",
+          "required": ["id", "region"],
+          "additionalProperties": true,
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "region": {
+              "type": "string",
+              "minLength": 1
+            },
+            "holidays": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "format": "date"
+              },
+              "uniqueItems": true
+            }
+          }
+        },
+        "supports_halt_windows": {
+          "type": "boolean"
+        },
+        "sync_source": {
+          "type": "string",
+          "minLength": 1
+        },
+        "drift_tolerance_ms": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "bar_alignment": {
+          "type": "object",
+          "required": ["interval_seconds", "phase_offset_seconds"],
+          "additionalProperties": false,
+          "properties": {
+            "interval_seconds": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "phase_offset_seconds": {
+              "type": "integer",
+              "minimum": -3600,
+              "maximum": 3600
+            }
+          }
+        }
+      }
+    },
+    "DataFeedBundle": {
+      "type": "object",
+      "required": ["primary", "ingestion_parallelism", "quality_guards", "rate_limit_guard"],
+      "additionalProperties": true,
+      "properties": {
+        "primary": {
+          "$ref": "#/definitions/DataFeedEndpoint"
+        },
+        "fallback": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/DataFeedEndpoint"
+          }
+        },
+        "manual_sources": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/ManualCsvDescriptor"
+          },
+          "uniqueItems": true
+        },
+        "ingestion_parallelism": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "quality_guards": {
+          "type": "object",
+          "required": ["max_gap_minutes", "stale_bar_threshold_minutes"],
+          "additionalProperties": true,
+          "properties": {
+            "max_gap_minutes": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "stale_bar_threshold_minutes": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        },
+        "rate_limit_guard": {
+          "type": "object",
+          "required": ["stage"],
+          "additionalProperties": true,
+          "properties": {
+            "stage": {
+              "type": "string",
+              "enum": ["baseline", "heightened", "manual_only"]
+            }
+          }
+        }
+      }
+    },
+    "DataFeedEndpoint": {
+      "type": "object",
+      "required": ["provider", "channel"],
+      "additionalProperties": true,
+      "properties": {
+        "provider": {
+          "type": "string",
+          "minLength": 1
+        },
+        "channel": {
+          "type": "string",
+          "enum": ["rest", "websocket", "file"]
+        },
+        "credentials_ref": {
+          "type": "string",
+          "minLength": 1
+        },
+        "rate_limit_per_min": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "ManualCsvDescriptor": {
+      "type": "object",
+      "required": ["template_path", "runbook_ref"],
+      "additionalProperties": true,
+      "properties": {
+        "template_path": {
+          "type": "string",
+          "minLength": 1
+        },
+        "runbook_ref": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "ExecutionProfile": {
+      "type": "object",
+      "required": [
+        "model_id",
+        "allowed_entry_modes",
+        "human_delay_secs",
+        "latency_distribution_ms",
+        "slippage_bps",
+        "max_orders_per_minute",
+        "kill_switch_policies"
+      ],
+      "additionalProperties": true,
+      "properties": {
+        "model_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "allowed_entry_modes": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": ["market", "marketable_limit", "limit_requote"]
+          },
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "human_delay_secs": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "latency_distribution_ms": {
+          "type": "object",
+          "required": ["p50", "p95", "p99"],
+          "additionalProperties": false,
+          "properties": {
+            "p50": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "p95": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "p99": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        },
+        "slippage_bps": {
+          "type": "number"
+        },
+        "max_orders_per_minute": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "kill_switch_policies": {
+          "type": "object",
+          "required": [
+            "reduce_only_on_soft_stop",
+            "require_double_ack"
+          ],
+          "additionalProperties": true,
+          "properties": {
+            "reduce_only_on_soft_stop": {
+              "type": "boolean"
+            },
+            "require_double_ack": {
+              "type": "boolean"
+            }
+          }
+        },
+        "staging": {
+          "type": "object",
+          "additionalProperties": true
+        }
+      }
+    },
+    "AccountGateway": {
+      "type": "object",
+      "required": [
+        "type",
+        "account_profile_id",
+        "statement_export",
+        "balance_source",
+        "supports_margin",
+        "supports_swap",
+        "latency_budget_ms",
+        "risk_buffer_pct"
+      ],
+      "additionalProperties": true,
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": ["backtest_memory", "paper_simulator", "live_broker"]
+        },
+        "account_profile_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "statement_export": {
+          "type": "object",
+          "required": ["path_glob", "frequency"],
+          "additionalProperties": true,
+          "properties": {
+            "path_glob": {
+              "type": "string",
+              "minLength": 1
+            },
+            "frequency": {
+              "type": "string",
+              "enum": ["daily", "weekly", "intraday"]
+            }
+          }
+        },
+        "balance_source": {
+          "type": "string",
+          "enum": ["simulated", "broker_api", "manual_csv"]
+        },
+        "supports_margin": {
+          "type": "boolean"
+        },
+        "supports_swap": {
+          "type": "boolean"
+        },
+        "latency_budget_ms": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "risk_buffer_pct": {
+          "type": "number",
+          "minimum": 0
+        }
+      }
+    },
+    "AuditChannel": {
+      "type": "object",
+      "required": [
+        "stream",
+        "writer",
+        "retention_days",
+        "sync_targets",
+        "encryption",
+        "redaction_policy",
+        "evidence_tags"
+      ],
+      "additionalProperties": true,
+      "properties": {
+        "stream": {
+          "type": "string",
+          "minLength": 1
+        },
+        "writer": {
+          "type": "object",
+          "required": ["path", "append_mode"],
+          "additionalProperties": true,
+          "properties": {
+            "path": {
+              "type": "string",
+              "minLength": 1
+            },
+            "append_mode": {
+              "type": "string",
+              "enum": ["jsonl", "parquet"]
+            }
+          }
+        },
+        "retention_days": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "sync_targets": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "uniqueItems": true
+        },
+        "encryption": {
+          "type": "object",
+          "required": ["enabled"],
+          "additionalProperties": true,
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "key_alias": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        },
+        "redaction_policy": {
+          "type": "string",
+          "enum": ["default", "pii_strict", "none"]
+        },
+        "evidence_tags": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[-a-z0-9_=:.]+$"
+          },
+          "uniqueItems": true
+        }
+      }
+    },
+    "SessionState": {
+      "type": "object",
+      "required": [
+        "mode",
+        "health",
+        "board_mode",
+        "kill_switch",
+        "active_jobs",
+        "cfg_hash",
+        "last_bar_ts",
+        "snapshot_version"
+      ],
+      "additionalProperties": true,
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": ["backtest", "paper", "live"]
+        },
+        "health": {
+          "type": "string",
+          "enum": ["ok", "degraded", "soft_stop", "hard_stop"]
+        },
+        "board_mode": {
+          "type": "string",
+          "enum": ["normal", "guarded", "halted"]
+        },
+        "kill_switch": {
+          "type": "string",
+          "enum": ["RUNNING", "STOP"]
+        },
+        "active_jobs": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "uniqueItems": true
+        },
+        "cfg_hash": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$"
+        },
+        "last_bar_ts": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "last_resync_at": {
+          "type": ["string", "null"],
+          "format": "date-time"
+        },
+        "snapshot_version": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "SessionHandle": {
+      "type": "object",
+      "required": [
+        "session_id",
+        "profile_id",
+        "mode",
+        "started_at",
+        "cfg_hash",
+        "clock_snapshot_ts",
+        "event_stream_id"
+      ],
+      "additionalProperties": true,
+      "properties": {
+        "session_id": {
+          "type": "string",
+          "pattern": "^[a-z0-9-]+$"
+        },
+        "profile_id": {
+          "type": "string",
+          "pattern": "^[a-z0-9_-]+$"
+        },
+        "mode": {
+          "type": "string",
+          "enum": ["backtest", "paper", "live"]
+        },
+        "started_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "cfg_hash": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$"
+        },
+        "clock_snapshot_ts": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "event_stream_id": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "BackfillJob": {
+      "type": "object",
+      "required": [
+        "job_id",
+        "mode",
+        "symbols",
+        "timeframe",
+        "start_ts",
+        "end_ts",
+        "priority",
+        "provider",
+        "status",
+        "retry_count",
+        "requested_by",
+        "created_at"
+      ],
+      "additionalProperties": true,
+      "properties": {
+        "job_id": {
+          "type": "string",
+          "pattern": "^bf-[0-9]{8}-[0-9A-Za-z]+$"
+        },
+        "mode": {
+          "type": "string",
+          "enum": ["backtest", "paper", "live"]
+        },
+        "symbols": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Z]{3,6}$"
+          },
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "timeframe": {
+          "type": "string",
+          "pattern": "^[0-9]+[mhd]$"
+        },
+        "start_ts": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "end_ts": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "priority": {
+          "type": "string",
+          "enum": ["critical", "high", "normal", "low"]
+        },
+        "provider": {
+          "type": "string",
+          "minLength": 1
+        },
+        "status": {
+          "type": "string",
+          "enum": ["queued", "running", "completed", "failed", "cancelled"]
+        },
+        "retry_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "requested_by": {
+          "type": "string",
+          "minLength": 1
+        },
+        "created_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "last_heartbeat": {
+          "type": ["string", "null"],
+          "format": "date-time"
+        },
+        "notes": {
+          "type": "string"
+        }
+      }
+    }
+  }
+}

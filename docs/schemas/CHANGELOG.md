@@ -1,6 +1,10 @@
 # Schema Registry Change Log
 
 ## 2025-03-18
+- Added `mode_context.schema.json` capturing ModeContext composite structures (ModeProfile, MarketClock,
+  DataFeedBundle, ExecutionProfile, AccountGateway, AuditChannel, SessionState/Handle, BackfillJob) per
+  detailed design §3.1.0/§4.2.5. Startup validation templates now reference the schema and
+  `pytest -k json_schema_validation` includes positive/negative coverage for the contract.
 - Added `execution_model.schema.json` mirroring detailed design §3.6/§4.4 execution thresholds
   (human delay, slippage, entry-mode gating) and scaffolded `config/execution_model.yaml`. Smoke
   tests now validate the scaffold during `pytest -k config_schema_smoke`.
