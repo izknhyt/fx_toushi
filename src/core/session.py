@@ -12,6 +12,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Optional, Protocol, runtime_checkable
 
+from src.app.mode_context import ModeContext, ModeContextFactory
+
 
 @dataclass(slots=True)
 class SessionConfig:
@@ -26,6 +28,8 @@ class SessionConfig:
     mode: str
     telemetry_enabled: bool = True
     snapshot_path: Optional[str] = None
+    profile_name: Optional[str] = None
+    mode_factory: Optional[ModeContextFactory] = None
 
 
 @dataclass(slots=True)
@@ -40,6 +44,7 @@ class SessionContext:
     session_id: str
     mode: str
     feature_flags: Optional[dict[str, bool]] = None
+    mode_context: Optional[ModeContext] = None
 
 
 @runtime_checkable
@@ -52,6 +57,7 @@ class SessionManager(Protocol):
     """
 
     config: SessionConfig
+    mode_factory: Optional[ModeContextFactory]
 
     def start(self, context: SessionContext) -> None:
         """Begin a session with the supplied context."""
@@ -61,3 +67,40 @@ class SessionManager(Protocol):
 
     def request_snapshot(self) -> Optional[str]:
         """Return a snapshot identifier if persistence should occur."""
+
+
+def create_session_context(
+    *,
+    profile_name: str,
+    session_id: str,
+    config: SessionConfig | None = None,
+    factory: ModeContextFactory | None = None,
+    feature_flags: Optional[dict[str, bool]] = None,
+) -> SessionContext:
+    """Create a :class:`SessionContext` populated with a :class:`ModeContext`.
+
+    The helper wires a :class:`ModeContextFactory` into the lightweight
+    session scaffolding so that ``tradectl start --profile ...`` scripts can
+    exercise deterministic profile bootstraps during validation runs.
+    """
+
+    effective_factory = factory or (config.mode_factory if config else None) or ModeContextFactory()
+    mode_context = effective_factory.create(profile_name, session_id=session_id)
+
+    if config is not None:
+        if config.profile_name is not None and config.profile_name != profile_name:
+            raise ValueError(
+                f"SessionConfig.profile_name={config.profile_name!r} does not match requested profile {profile_name!r}"
+            )
+        if config.mode != mode_context.mode:
+            raise ValueError(
+                "SessionConfig.mode must align with the profile mode ("
+                f"expected {mode_context.mode!r}, found {config.mode!r})"
+            )
+
+    return SessionContext(
+        session_id=session_id,
+        mode=mode_context.mode if config is None else config.mode,
+        feature_flags=feature_flags,
+        mode_context=mode_context,
+    )
