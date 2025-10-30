@@ -7,6 +7,7 @@
 - **アーキテクチャ指針**: サービス層 (`src/<domain>/*.py`) はPure Function志向で副作用をModeContextに閉じ込める。イベント/DTOは`dataclass(slots=True)`または`pydantic.BaseModel`で定義し、`schema_version`/`source`などのメタ情報を持たせる。
 - **例外処理**: ドメイン例外は`src/core/exceptions.py`に集約し、CLI層では`typer.Exit(code=...)`へマッピング。再試行/フォールバックは`Tenacity`ではなく専用リトライユーティリティ（M2+予定）導入まで`with backoff_logic(...)`ヘルパを利用する。
 - **フォーマッタ**: `black` 23.12+ を使用し、`line-length=100` を上限とする。複数行リテラルは括弧で折り返し、文字列補間は `f"..."` を優先する。
+- **パッケージング**: Poetry の `[tool.poetry]` セクションでは `packages = [{ include = "*", from = "src" }]` を設定し、`src/` 直下に配置された全てのファーストパーティモジュール (`core`, `features`, `interfaces` など) を自動配布対象とする。
 - **静的解析**: `mypy` は `--strict` を基本とし、暫定例外は `mypy.ini` の `[[tool.mypy.overrides]]` にコメント付きで登録する。型未解決を`# type: ignore`で回避する場合は理由をDocstringに記載する。
 
 ### 1.1 Ruff設定
