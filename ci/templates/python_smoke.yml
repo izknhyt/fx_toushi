@@ -1,7 +1,7 @@
 # Template: Python smoke test workflow for FX Toushi
 # Runs the lightweight schema/config validation suite referenced in detailed_design §0.6.9.
 parameters:
-  pythonVersion: '3.11'
+  pythonVersion: '3.12'
   displayName: 'python-smoke'
 
 jobs:
