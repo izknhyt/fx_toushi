@@ -28,6 +28,17 @@ Codex実装物の受入時に、`ModeContext`初期化手順（詳細設計 §0.
 
 - フィールド検証は `ModeContext.profile` の値も含めて記録し、未検証の場合は備考欄に次アクションを記載する。
 - Codex Issue/PRチェックリストに `CHK-0.6.9-6` の完了状態を記載できるよう、証跡ファイル名を統一する（例: `validation/mode_context/2025-03-15_backtest.md`）。
+- `EventBus`/`SnapshotManager` 初期化の検証結果は以下のチェックリストで追跡する。
+
+### 2.1 EventBus / SnapshotManager 初期化証跡（CHK-0.6.9-8）
+
+| Component | 検証項目 | 期待する証跡 | 証跡リンク | 検証結果 |
+| --- | --- | --- | --- | --- |
+| EventBus | `EventBusConfig` パラメータ適用 (`queue_maxsize`, `backpressure_policy`, `metrics_path`) | `config/event_bus.yaml` / `logs/events/YYYYMMDD.jsonl` 初期化ログ |  | [ ] Pass<br>[ ] Fail |
+|  | バックプレッシャ設定の証跡 (`QueueDepthHigh`, `DroppedEventWarning`) | `metrics/event_bus_queue.jsonl` / `logs/events/*.jsonl` |  | [ ] Pass<br>[ ] Fail |
+| SnapshotManager | アトミック保存ハンドオフ (`SnapshotManager.persist`) | `snapshots/latest/<mode>.json` 更新ログ / `audit` 記録 |  | [ ] Pass<br>[ ] Fail |
+|  | 復旧パス確認 (`SnapshotManager.restore`) | `snapshots/latest/event_bus_state.json` / `RUN-DR-04` 証跡 |  | [ ] Pass<br>[ ] Fail |
+|  | ハッシュ比較 (`compare_hash`) 証跡 | `reports/validation_log/snapshot_hash_<date>.md` |  | [ ] Pass<br>[ ] Fail |
 
 ## 3. Codex着手前チェックリスト連携
 | Check ID | 詳細設計 §0.6.9 要件 | 証跡テンプレ位置 | Codexテンプレ参照 |
