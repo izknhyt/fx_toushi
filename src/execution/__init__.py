@@ -9,9 +9,12 @@ surface while the concrete implementations are developed.
 from __future__ import annotations
 
 from .model import (
+    DeterministicExecutionModel,
     EntryMode,
     ExecutionAdjustments,
+    ExecutionModelInputError,
     ExecutionModelProtocol,
+    ExecutionRuleViolation,
     FillPolicy,
     FillStyle,
 )
@@ -25,9 +28,12 @@ from .spread import (
 )
 
 __all__ = [
+    "DeterministicExecutionModel",
     "EntryMode",
     "ExecutionAdjustments",
     "ExecutionModelProtocol",
+    "ExecutionModelInputError",
+    "ExecutionRuleViolation",
     "FillPolicy",
     "FillStyle",
     "OrderRouterProtocol",
