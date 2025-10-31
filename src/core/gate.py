@@ -13,8 +13,11 @@ from dataclasses import dataclass, field
 from datetime import datetime
 import json
 from pathlib import Path
-from typing import Any, Dict, Literal, Mapping, MutableMapping, Sequence
+from typing import TYPE_CHECKING, Any, Dict, Literal, Mapping, MutableMapping, Sequence
 import copy
+
+if TYPE_CHECKING:
+    from src.risk.manager import RiskAssessment
 
 SpreadState = Literal["normal", "watch", "cooldown", "halt"]
 SchemaVersion = int | str
@@ -183,6 +186,8 @@ class MarketGateState:
 class RiskGateState:
     reduce_only: bool
     reduce_only_reason: str | None = None
+    kill_switch_recommendation: str | None = None
+    kill_switch_reason: str | None = None
 
     @classmethod
     def default(cls) -> "RiskGateState":
@@ -192,6 +197,8 @@ class RiskGateState:
         return {
             "reduce_only": self.reduce_only,
             "reduce_only_reason": self.reduce_only_reason,
+            "kill_switch_recommendation": self.kill_switch_recommendation,
+            "kill_switch_reason": self.kill_switch_reason,
         }
 
     @classmethod
@@ -199,6 +206,8 @@ class RiskGateState:
         return cls(
             reduce_only=bool(data["reduce_only"]),
             reduce_only_reason=data.get("reduce_only_reason"),
+            kill_switch_recommendation=data.get("kill_switch_recommendation"),
+            kill_switch_reason=data.get("kill_switch_reason"),
         )
 
 
@@ -353,12 +362,21 @@ class GateAggregator:
         *,
         reduce_only: bool | object = _UNSET,
         reduce_only_reason: str | None | object = _UNSET,
+        kill_switch_recommendation: str | None | object = _UNSET,
+        kill_switch_reason: str | None | object = _UNSET,
     ) -> None:
         state = self._state.risk
         if reduce_only is not self._UNSET:
             state.reduce_only = bool(reduce_only)  # type: ignore[arg-type]
         if reduce_only_reason is not self._UNSET:
             state.reduce_only_reason = reduce_only_reason  # type: ignore[assignment]
+        if kill_switch_recommendation is not self._UNSET:
+            state.kill_switch_recommendation = kill_switch_recommendation  # type: ignore[assignment]
+        if kill_switch_reason is not self._UNSET:
+            state.kill_switch_reason = kill_switch_reason  # type: ignore[assignment]
+
+    def apply_risk_assessment(self, assessment: "RiskAssessment") -> None:
+        self._state.risk = copy.deepcopy(assessment.risk_state)
 
     def update_human(
         self,
