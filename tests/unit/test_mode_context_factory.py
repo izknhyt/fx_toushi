@@ -4,15 +4,16 @@ from __future__ import annotations
 
 import pytest
 
-from src.app.mode_context import (
+from src.core.session import (
     AccountGateway,
     DataFeedBundle,
     ExecutionProfile,
     MarketClock,
     ModeContextFactory,
     ModeProfile,
+    SessionConfig,
+    create_session_context,
 )
-from src.core.session import SessionConfig, create_session_context
 
 
 @pytest.mark.parametrize("profile_name", ["backtest", "paper", "live"])
