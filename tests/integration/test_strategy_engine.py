@@ -4,13 +4,16 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterable
+from types import SimpleNamespace
 
 import pytest
 
 from src.core.gate import GateBlockState, GateState, NewsGateState, SpreadGateState
 from src.features.pipeline import FeaturePipeline
+from src.execution import DeterministicExecutionModel
 from src.strategies.base import StrategyMetadata, StrategyPluginProtocol
 from src.strategies.registry import ManifestValidationError, StrategyEngine
+from yaml import safe_load
 
 
 @dataclass(slots=True)
@@ -157,3 +160,31 @@ def test_strategy_determinism_engine(project_root: Path, feature_pipeline: Featu
 
     with pytest.raises(ManifestValidationError):
         manifest.validate_feature_contract({"nonexistent_feature"})
+
+
+def test_execution_model_spread_transition_badges(project_root: Path) -> None:
+    config_path = project_root / "config" / "execution_model.yaml"
+    config = safe_load(config_path.read_text(encoding="utf-8"))
+    model = DeterministicExecutionModel(config)
+
+    mode_context = SimpleNamespace(mode="backtest", deterministic_seed=20250315)
+    signal = SimpleNamespace(symbol="EURUSD", entry_mode=None, price=1.0942)
+    market_snapshot = {"mid": 1.0942, "spread_pips": 0.6}
+
+    normal = model.apply(signal, market_snapshot, spread_state=SimpleNamespace(state="normal"), mode_context=mode_context)
+    watch = model.apply(signal, market_snapshot, spread_state=SimpleNamespace(state="watch"), mode_context=mode_context)
+    cooldown = model.apply(signal, market_snapshot, spread_state=SimpleNamespace(state="cooldown"), mode_context=mode_context)
+
+    assert normal.mode_label == "Marketable Limit"
+    assert watch.mode_label == "Market (IOC)"
+    assert cooldown.mode_label == "Limit (Requote)"
+
+    assert watch.ttl_seconds < normal.ttl_seconds < cooldown.ttl_seconds
+
+    repeat_watch = model.apply(
+        signal,
+        market_snapshot,
+        spread_state=SimpleNamespace(state="watch"),
+        mode_context=mode_context,
+    )
+    assert repeat_watch == watch
