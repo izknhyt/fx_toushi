@@ -20,5 +20,13 @@ def test_status_returns_health_and_kill_switch_snapshot() -> None:
     payload = status(monitor=monitor, gate_state=gate_state)
 
     assert payload["health"]["status"] == "degraded"
-    assert payload["kill_switch"] == {"suggestion": "soft_stop", "reason": "weekly_drawdown"}
+    assert payload["kill_switch"] == {
+        "suggestion": "soft_stop",
+        "reason": "weekly_drawdown",
+        "requested_transition": None,
+    }
     assert payload["risk"]["reduce_only"] is False
+    banner = payload["ops"]["banner"]
+    assert banner is not None
+    assert banner["kind"] == "acceptable_degradation"
+    assert banner["runbook"] == "docs/runbooks/RUN-DATA-05.md"

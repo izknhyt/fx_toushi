@@ -1,8 +1,8 @@
 # RUN-DATA-05: データ遅延インシデント対応手順
 
 > **ACカバレッジ**: AC-04, AC-45  
-> **Runbook版数**: v1.2
-> **最終更新日**: 2025-03-09
+> **Runbook版数**: v1.3
+> **最終更新日**: 2025-03-22
 > **最終更新者**: Ops Manager (Doc Maintainer)
 
 ## 目的
@@ -22,6 +22,25 @@
    - Reduce-Only運用: 既存ポジションの縮小提案のみがSignal Boardで許可されていることを確認し、対応チケットID・判断理由を`reports/audit/reduce_only/<date>.md`へ記録する。
    - 復旧確認: Runbook `docs/runbooks/RUN-DATA-06.md`の補完状況とCatch-upログを参照し、`catch_up_lag_minutes<30`になるまで新規提案が再開されないようにする。
    - 提案再開: 上記3項目が完了した後にのみ解除判定に進むこと、`degraded_ack`イベントはこのステップの完了時に1回だけ発行することを明記する。
+   - CLI確認ログ: `tradectl status --json` で `ops.banner.kind="acceptable_degradation"`、`ops.banner.runbook="docs/runbooks/RUN-DATA-05.md"`、`ops.actions.ack.status="queued"` であることを保存する。以下のような出力をOps Evidenceに貼付する。
+
+     ```console
+     $ tradectl status --json
+     {
+       "ops": {
+         "banner": {
+           "kind": "acceptable_degradation",
+           "reduce_only": true,
+           "runbook": "docs/runbooks/RUN-DATA-05.md"
+         },
+         "actions": {
+           "ack": {"status": "queued"},
+           "kill_switch": {"status": "idle"}
+         }
+       },
+       "snapshots": {"status": "unavailable", "base_path": "snapshots"}
+     }
+     ```
 3. `tradectl data switch --to <provider>`または`tradectl data failover --to cache`で代替ソースへ切り替え、`FallbackRetryTask`のステータスを`tradectl data jobs --pending`で確認する。結果を`reports/audit/rates/<date>.md`に追記し、`reports/validation_log/AC-45_sla_<date>.md`へリンクを残す。
 4. フォールバック後も欠損が続く場合は`tradectl data jobs enqueue --task manual_csv --symbol <symbol>`を準備し、必要な双子CSVを`data/manual_fallback/<provider>/<symbol>/<YYYYMMDD>/fallback_<provider>_<symbol>_<tf>_<YYYYMMDD>_{op,review}.csv`として配置する。手動モード移行時はRunbook `docs/runbooks/RUN-DATA-06.md`のチェックリストも参照する。
 5. 原因分析としてネットワーク状態・APIレスポンス・利用規約制約を確認し、`reports/audit/license/`および`reports/quality/<date>.md`に記録する。処理遅延が原因の場合は`ProviderParseWorker`/`DataQualityGuard`のログを添付する。
