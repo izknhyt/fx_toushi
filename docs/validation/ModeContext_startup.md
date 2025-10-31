@@ -13,6 +13,7 @@ Codex実装物の受入時に、`ModeContext`初期化手順（詳細設計 §0.
 | paper | `tradectl start --profile paper`<br>`tradectl stop` | `config/profiles/paper.yaml` 更新済み<br>`RUN-PERF-01` | `ctx.mode=paper`<br>`ctx.profile.name=paper`<br>`deterministic_seed=<int>` | `logs/sessions/session-<id>.log#L<line>` | [ ] Pass<br>[ ] Fail |
 | live | `tradectl start --profile live`<br>`tradectl stop` | `config/profiles/live.yaml` 更新済み<br>`RUN-RISK-01`/`RUN-BROKER-API-02` | `ctx.mode=live`<br>`ctx.profile.name=live`<br>`deterministic_seed=<int>` | `logs/sessions/session-<id>.log#L<line>` | [ ] Pass<br>[ ] Fail |
 
+- **DefaultSessionManagerログ/スナップショット配置**: `src/core/session.py::DefaultSessionManager` は起動時に `logs/sessions/<session_id>.log` を生成し、モード別スナップショットを `snapshots/sessions/<mode>/<session_id>.json` に書き出す。Ops点検では `docs/runbooks/daily_agenda/TEMPLATE.md#2-modecontext-startup-walkthrough-chk-0-6-9-6-7` から本表の該当行へリンクし、ログ/スナップショット両方のパスを確認する。
 - **Snapshot確認**: 各モード終了後に `SnapshotManager.persist()` が呼び出され、`snapshots/sessions/<mode>/<session_id>.json` が更新されたことを記録する（Evidence欄にファイルパスを追記）。
 - **CI/自動化**: CI上での実行は`CHK-0.6.9-2`のpytestスモークテストと紐付け、成功ジョブIDを Evidence欄に追記する。
 

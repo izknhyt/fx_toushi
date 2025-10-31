@@ -25,6 +25,7 @@ class WorkflowContext:
 
     session: SessionContext
     step_sequence: tuple[str, ...]
+    planned_steps: tuple[str, ...] = ()
 
 
 @dataclass(slots=True)
@@ -105,6 +106,13 @@ class PipelineWorkflow:
         """Execute steps in registration order, supporting early termination."""
 
         executed: list[str] = []
+        planned = tuple(step.name for step in self._steps)
+
+        try:
+            if not context.planned_steps:
+                context.planned_steps = planned
+        except AttributeError:
+            pass
 
         for index, step in enumerate(self._steps):
             executed.append(step.name)
@@ -116,7 +124,7 @@ class PipelineWorkflow:
             try:
                 context = step.execute(context)
             except StopIteration:
-                remaining = tuple(candidate.name for candidate in self._steps[index + 1 :])
+                remaining = planned[index + 1 :]
                 return WorkflowResult(completed=False, next_steps=remaining)
 
         try:

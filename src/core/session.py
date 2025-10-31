@@ -479,7 +479,11 @@ class DefaultSessionManager:
 
         from .workflow import WorkflowContext  # Imported lazily to avoid circular dependency
 
-        workflow_context = WorkflowContext(session=context, step_sequence=())
+        workflow_context = WorkflowContext(
+            session=context,
+            step_sequence=(),
+            planned_steps=plan,
+        )
         result = self.workflow.run(workflow_context)
 
         self._active_context = context
