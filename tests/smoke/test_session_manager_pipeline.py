@@ -48,6 +48,7 @@ def test_backtest_session_executes_dummy_pipeline(tmp_path: Path) -> None:
     assert manager.last_plan == ("dummy",)
     assert manager.last_workflow_context is not None
     assert manager.last_workflow_context.step_sequence == ("dummy",)
+    assert manager.last_workflow_context.planned_steps == ("dummy",)
 
     manager.stop()
     assert manager.request_snapshot() is None
