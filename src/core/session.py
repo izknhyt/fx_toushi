@@ -358,6 +358,18 @@ class SessionManager(Protocol):
     def request_snapshot(self) -> Optional[str]:
         """Return a snapshot identifier if persistence should occur."""
 
+    def catch_up(
+        self,
+        *,
+        since: str | None = None,
+        symbols: Sequence[str] | None = None,
+        force: bool = False,
+        failover_report: bool = False,
+        dry_run: bool = False,
+        attachments: Sequence[str] | None = None,
+    ) -> Mapping[str, Any] | None:
+        """Replay missing market data windows and summarise the resync."""
+
 
 def create_session_context(
     *,
@@ -505,3 +517,17 @@ class DefaultSessionManager:
         if self._active_context is None or self._snapshot_path is None:
             return None
         return str(self._snapshot_path)
+
+    def catch_up(
+        self,
+        *,
+        since: str | None = None,
+        symbols: Sequence[str] | None = None,
+        force: bool = False,
+        failover_report: bool = False,
+        dry_run: bool = False,
+        attachments: Sequence[str] | None = None,
+    ) -> Mapping[str, Any] | None:
+        """Resynchronise historical data (not implemented for the scaffold)."""
+
+        raise NotImplementedError("SessionManager.catch_up is pending Codex implementation.")
