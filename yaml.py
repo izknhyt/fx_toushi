@@ -12,7 +12,9 @@ class _Line:
     content: str
 
 
-def safe_load(text: str) -> Any:
+def safe_load(text: str | Any) -> Any:
+    if hasattr(text, "read"):
+        text = text.read()
     lines = _tokenise(text)
     if not lines:
         return None
@@ -33,7 +35,7 @@ def _strip_comment(line: str) -> str:
                 quote_char = char
             elif quote_char == char:
                 in_quote = False
-        if char == "#" and not in_quote:
+        if char == "#" and not in_quote and (not result or result[-1].isspace()):
             break
         result.append(char)
     return "".join(result).rstrip()
