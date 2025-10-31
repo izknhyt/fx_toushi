@@ -3923,24 +3923,46 @@ CodexがCLI層を安全に実装・改修できるよう、`tradectl`コマン�
 
 ### 17.3 `tradectl status`
 - **実装位置**: `src/interfaces/cli/status.py::status`。
-- **主要引数**: `--verbose`, `--json`, `--ack <alert_id>`, `--kill-switch {running,stop}`(手動操作), `--board {normal,guarded,halted}`。
-- **副作用**:
-  - `--ack`時に`HealthMonitor.ack`を呼び監査ログへ`alert_acknowledged`記録。
-  - `--kill-switch`/`--board`で`KillSwitchChanged`/`BoardModeChanged`イベントを発火。
-- **出力**: 主要セクション（Mode/Health/KillSwitch, GateState, Pending Alerts, Snapshot hash, Manual CSV pending）。`--json`は`json.dumps(status.dict())`で返却。
-- **テスト**: `pytest -k status_cli`, `pytest -k health_state_transitions`。
-- **Runbook**: `RUN-TIME-01`（起動前チェック）と`RUN-RISK-02`（Kill Switch）にCLI出力例を添付。
+- **主要引数**: `--verbose`, `--json`, `--ack <reference>`, `--kill-switch <state>`, `--board <operation>`。
+- **集約内容**:
+  - `HealthMonitor.snapshot()` → `health.status`/`reasons[]`/`kill_switch`推奨をシリアライズ。
+  - `GateState.to_dict()` → `gate.market`/`gate.human`/`risk`情報をJSON化。
+  - `SnapshotManager.restore()` を安全に呼び出し、未実装時は `snapshots.status=unavailable` で通知。
+  - Acceptable Degradation 条件 (`health.status ∈ {degraded,soft_stop,hard_stop}` または `risk.reduce_only=True`) では `ops.banner.kind=acceptable_degradation` を表示し Runbook 参照 (`runbook` キー) を添付。
+- **操作フック**: `ack` / `kill_switch` / `board` 引数は即時実行ではなく `ops.actions` にキュー状態を記録し、後続のCodex実装でイベント発火ロジックを差し替えられるようにする。
+- **出力例**:
+  ```console
+  $ tradectl status --json
+  {
+    "health": {"status": "degraded", "reasons": [...]},
+    "risk": {"reduce_only": true, "kill_switch_recommendation": "soft_stop", ...},
+    "snapshots": {"status": "unavailable", "base_path": "snapshots"},
+    "ops": {
+      "banner": {
+        "kind": "acceptable_degradation",
+        "runbook": "docs/runbooks/RUN-DATA-05.md",
+        "reduce_only": true
+      },
+      "actions": {"ack": {"status": "queued"}, "kill_switch": {"status": "idle"}}
+    }
+  }
+  ```
+- **テスト**: `pytest tests/unit/test_cli_status.py`, `pytest -k "smoke and feature_context_contract"` でバナー構造を検証。
+- **Runbook連携**: `RUN-DATA-05` Acceptable Degradation 手順に JSON 出力例を引用し、Ops チェックリストが参照できるようにする。
 
 ### 17.4 `tradectl resync`
 - **実装位置**: `src/interfaces/cli/resync.py::resync`。
-- **主要引数**: `--since <ISO8601|relative>`, `--symbol <pair>[, ...]`, `--force`, `--failover-report`, `--dry-run`。
-- **副作用**:
-  - `SessionManager.catch_up`呼出し→`ResyncRequested`/`ResyncCompleted`イベント。
-  - `--failover-report`でFailover履歴をRich Table表示し`reports/validation_log/resync_<ts>.md`保存。
-  - `metrics/data_ingestion_sla.jsonl`へ`resync_latency_sec`を追記。
-- **エラー**: Catch-up未実行時はExit code 112 (`manual_csv_required`)。
-- **テスト**: `pytest -k resync_cli`, `pytest -k data_pipeline`(統合)。Approval: `tests/approval/cli/resync_failover.approved.txt`。
-- **Runbook**: `RUN-DATA-05`/`RUN-DATA-06`で使用。`--dry-run`はRunbook手順のシミュレーション用。
+- **主要引数**: `--since <ISO8601|relative>`, `--symbol <pair>` (複数指定可), `--force`, `--failover-report`, `--dry-run`, `--verbose`, `--json`。
+- **進捗表示**: Rich `Progress` で "Catch-up in progress" スピナーを表示し、`--json` 指定時は非表示。
+- **Session連携**: `SessionManager.catch_up(...)` を呼び出し、戻り値（辞書想定）を `summary` フィールドに保存。未配線の場合は `status=unavailable` とエラー文言を返す。
+- **エラー処理**: `NotImplementedError` を捕捉して `status=unimplemented`、その他例外はログへ記録し `status=error` を返す。Console には Rich `Panel` でバナーを表示。
+- **出力例**:
+  ```console
+  $ tradectl resync --since "2024-03-15T00:00:00Z" --symbol USDJPY --json
+  {"status": "unavailable", "since": "2024-03-15T00:00:00Z", "symbols": ["USDJPY"], ...}
+  ```
+- **テスト**: `pytest tests/smoke/test_feature_context_contract.py::test_status_payload_exposes_acceptable_degradation_banner` が `SessionManager.catch_up` 呼び出し有無に依存しない戻り値構造を監視。
+- **Runbook連携**: `RUN-DATA-05`/`RUN-DATA-06` に進捗表示スクリーンショットと `status` キーの意味付けを記載。Failover レポート連携は Codex 実装時に `summary` へ差し替え予定。
 
 ### 17.5 `tradectl preflight`
 - **実装位置**: `src/interfaces/cli/preflight.py`（M1 Coreで骨組み）。
