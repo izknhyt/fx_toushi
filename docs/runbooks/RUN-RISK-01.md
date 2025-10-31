@@ -1,9 +1,11 @@
 # RUN-RISK-01: Kill Switch・リスク監視運用手順
 
-> **ACカバレッジ**: AC-03, AC-09  
+> **ACカバレッジ**: AC-03, AC-09
 > **Runbook版数**: v1.1
 > **最終更新日**: 2025-03-09
 > **最終更新者**: Risk Manager (Doc Maintainer)
+> **関連CLI**: `tradectl status`, `tradectl kill-switch engage`, `tradectl kill-switch release`
+> **イベントログ**: `logs/events/risk.assessment.jsonl`, `logs/risk/kill_switch_events.jsonl`
 
 ## 目的
 - 日次-2.5% / 週次-5%のドローダウン閾値到達時にKill Switchを確実に発火させ、再開には所定の承認手続きを強制する。
@@ -13,7 +15,7 @@
 
 ## 適用範囲・トリガー
 - 日次モーニングチェック（Ops Managerが実施）。
-- `HealthMonitor`が`soft_stop`/`kill_switch`ステータスへ遷移したとき。
+- `HealthMonitor`が`soft_stop`/`kill_switch`ステータスへ遷移したとき（`tradectl status`で推奨Kill Switchを確認）。
 - `tradectl diagnostics risk`が閾値逸脱を検出したとき、またはAC-03/AC-09の受け入れテストを実行するとき。
 
 ## 事前準備

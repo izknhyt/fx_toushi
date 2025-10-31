@@ -2,6 +2,8 @@
 
 Codex実装物の受入時に、`ModeContext`初期化手順（詳細設計 §0.6.9, §3.1）を証跡化するためのテンプレート。各検証項目はCodex着手前チェックリスト (§0.6.9) の番号を`CHK-0.6.9-<n>`として参照し、レビュー記録やCodex Issue/PRコメントから相互リンクできるようにする。
 
+- **Runbook連携**: Kill SwitchおよびReduce-Only判定の証跡は `docs/runbooks/RUN-RISK-01.md` を参照し、`tradectl status` で確認した`logs/events/risk.assessment.jsonl`のイベントIDをEvidence欄に記録する。
+
 - **データ取得API参照**: DataIngestionServiceのスキャフォールドは`src/data/service.py`、プロバイダスタブは`src/data/providers/`配下に配置し、Manual CSV検証ログは`src/data/quality.py::DataQualityGuard.record_manual_csv_hash_verification`を介して`metrics/`へ追記する。
 
 ## 1. 実行マトリクス（CHK-0.6.9-7）
