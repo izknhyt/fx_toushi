@@ -11,6 +11,7 @@ from src.core.gate import (
     NewsGateState,
     SpreadGateState,
 )
+from src.risk.manager import RiskManager, RiskSnapshot
 
 
 def test_spread_monitor_update_creates_symbol_override(tmp_path) -> None:
@@ -105,3 +106,35 @@ def test_news_service_updates_symbol_and_global_state() -> None:
     aggregator.update_news(per_symbol={"GBPUSD": None})
     cleared = aggregator.snapshot()
     assert "GBPUSD" not in cleared.market.per_symbol or cleared.market.per_symbol["GBPUSD"].news is None
+
+
+def test_risk_manager_reduce_only_merges_into_gate_state() -> None:
+    manager = RiskManager(r_eff_soft_stop=1.5, r_eff_hard_stop=3.0)
+    aggregator = GateAggregator()
+
+    soft_assessment = manager.evaluate(
+        RiskSnapshot(
+            daily_drawdown_pct=1.0,
+            weekly_drawdown_pct=1.0,
+            exposure_r_eff=2.0,
+        )
+    )
+    aggregator.apply_risk_assessment(soft_assessment)
+
+    state = aggregator.snapshot()
+    assert state.risk.reduce_only is True
+    assert state.risk.reduce_only_reason == "r_eff_soft_stop"
+    assert state.risk.kill_switch_recommendation is None
+
+    hard_assessment = manager.evaluate(
+        RiskSnapshot(
+            daily_drawdown_pct=1.0,
+            weekly_drawdown_pct=6.0,
+            exposure_r_eff=1.0,
+        )
+    )
+    aggregator.apply_risk_assessment(hard_assessment)
+    updated = aggregator.snapshot()
+    assert updated.risk.reduce_only is False
+    assert updated.risk.kill_switch_recommendation == "soft_stop"
+    assert updated.risk.kill_switch_reason == "weekly_drawdown"
