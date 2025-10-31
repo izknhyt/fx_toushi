@@ -11,7 +11,9 @@ future packets.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Mapping, Protocol, runtime_checkable
+import random
+from types import MappingProxyType
+from typing import Any, Mapping, Protocol, runtime_checkable, cast
 
 from typing_extensions import Literal
 
@@ -74,6 +76,10 @@ class ExecutionRuleViolation(ExecutionError):
     """Raised when a signal violates execution guardrails."""
 
 
+class ExecutionModelInputError(ExecutionError):
+    """Raised when required inputs for the execution model are missing."""
+
+
 @runtime_checkable
 class ExecutionModelProtocol(Protocol):
     """Protocol describing the public API of the execution model."""
@@ -95,13 +101,298 @@ class ExecutionModelProtocol(Protocol):
         """Return the simulated human delay in seconds for deterministic tests."""
 
 
+class DeterministicExecutionModel(ExecutionModelProtocol):
+    """Deterministic baseline execution model used across test scaffolding.
+
+    The implementation intentionally keeps the logic straightforward while
+    mirroring the configuration knobs surfaced in ``execution_model.yaml``.
+    It translates spread states into entry mode badges/TTL targets and applies
+    human delay sampling using :class:`ModeContext` deterministic seeds so that
+    Backtest/Paper/Live runs share identical outcomes.
+    """
+
+    _MODE_LABELS: Mapping[str, str] = MappingProxyType(
+        {
+            "market": "Market (IOC)",
+            "marketable_limit": "Marketable Limit",
+            "limit_requote": "Limit (Requote)",
+        }
+    )
+
+    _SPREAD_TTL_BUCKET: Mapping[str, str] = MappingProxyType(
+        {
+            "normal": "base",
+            "watch": "fast_path",
+            "cooldown": "slow_path",
+        }
+    )
+
+    def __init__(self, config: Mapping[str, Any]) -> None:
+        self._config = config
+        self._delay_stats_cache: dict[int, Mapping[str, float]] = {}
+        self.validate_config(config)
+
+    # ------------------------------------------------------------------
+    # public API
+    def apply(
+        self,
+        signal: Any,
+        market_snapshot: Mapping[str, Any],
+        *,
+        spread_state: Any,
+        mode_context: Mapping[str, Any] | Any | None = None,
+    ) -> ExecutionAdjustments:
+        state = self._resolve_spread_state(spread_state)
+        if state == "halt":
+            raise ExecutionRuleViolation("Spread halt prohibits order routing")
+        if state is None:
+            raise ExecutionModelInputError("Spread state is required for execution")
+
+        mode = self._extract_value(mode_context, "mode", default="backtest")
+        deterministic_seed = int(self._extract_value(mode_context, "deterministic_seed", default=0))
+        symbol = getattr(signal, "symbol", None)
+
+        entry_mode = self._resolve_entry_mode(signal, state)
+        mode_label = self._MODE_LABELS.get(entry_mode, entry_mode)
+        entry_config = self._lookup_entry_mode(entry_mode)
+        fill_style, fill_policy = self._resolve_fill_style(entry_config)
+
+        delay_stats = self._resolve_delay_stats(mode=mode, symbol=symbol)
+        seed_offset = int(delay_stats.get("seed_offset", 0))
+        delay_seed = deterministic_seed ^ seed_offset
+        self._delay_stats_cache[delay_seed] = delay_stats
+        try:
+            human_delay = self.apply_human_delay(seed=delay_seed)
+        finally:
+            self._delay_stats_cache.pop(delay_seed, None)
+
+        ttl_bucket_key = self._SPREAD_TTL_BUCKET.get(state, "base")
+        ttl_buffer = self._resolve_ttl_buffer(ttl_bucket_key)
+        ttl_seconds = int(round(ttl_buffer + human_delay))
+
+        expected_entry = self._resolve_expected_entry(signal, market_snapshot)
+        expected_slippage = self._resolve_expected_slippage(state)
+
+        return ExecutionAdjustments(
+            expected_entry=expected_entry,
+            expected_slippage=expected_slippage,
+            ttl_seconds=ttl_seconds,
+            fill_style=fill_style,
+            fill_policy=fill_policy,
+            mode_label=mode_label,
+        )
+
+    def validate_config(self, config: Mapping[str, Any]) -> None:
+        if not isinstance(config, Mapping):
+            raise ExecutionConfigError("Execution model config must be a mapping")
+
+        schema_version = config.get("schema_version")
+        if schema_version != "execution.model.v1":
+            raise ExecutionConfigError(
+                "Execution model config must declare schema_version 'execution.model.v1'"
+            )
+
+        defaults = config.get("defaults")
+        if not isinstance(defaults, Mapping):
+            raise ExecutionConfigError("Execution model config missing defaults mapping")
+
+        delay_defaults = defaults.get("human_delay_seconds")
+        if not isinstance(delay_defaults, Mapping):
+            raise ExecutionConfigError("defaults.human_delay_seconds must be provided")
+        for mode_key in ("backtest", "paper", "live"):
+            stats = delay_defaults.get(mode_key)
+            if not isinstance(stats, Mapping):
+                raise ExecutionConfigError(f"human_delay_seconds missing '{mode_key}' distribution")
+            self._validate_delay_stats(stats, context=f"human_delay_seconds.{mode_key}")
+
+        ttl_defaults = defaults.get("ttl_seconds")
+        if not isinstance(ttl_defaults, Mapping):
+            raise ExecutionConfigError("defaults.ttl_seconds must be provided")
+        for required_bucket in ("base", "fast_path", "slow_path"):
+            value = ttl_defaults.get(required_bucket)
+            if not isinstance(value, (int, float)):
+                raise ExecutionConfigError(
+                    f"ttl_seconds bucket '{required_bucket}' must be a numeric value"
+                )
+            if value < 0:
+                raise ExecutionConfigError("ttl_seconds buckets must be non-negative")
+
+        entry_defaults = defaults.get("entry_modes")
+        if not isinstance(entry_defaults, Mapping):
+            raise ExecutionConfigError("defaults.entry_modes must be provided")
+        for entry_mode in ("market", "marketable_limit", "limit_requote"):
+            if entry_mode not in entry_defaults:
+                raise ExecutionConfigError(
+                    f"entry_modes missing required configuration for '{entry_mode}'"
+                )
+
+    def apply_human_delay(self, *, seed: int) -> float:
+        stats = self._delay_stats_cache.get(seed)
+        if stats is None:
+            defaults = self._config.get("defaults", {})
+            delay_defaults = {}
+            if isinstance(defaults, Mapping):
+                delay_defaults = defaults.get("human_delay_seconds", {})
+            stats = delay_defaults.get("backtest", {})
+        minimum = float(stats.get("min", 0.0))
+        mode = float(stats.get("p50", minimum))
+        maximum = float(stats.get("p95", max(mode, minimum)))
+        if maximum < minimum:
+            maximum = minimum
+        rng = random.Random(seed)
+        return rng.triangular(minimum, maximum, mode)
+
+    # ------------------------------------------------------------------
+    # helpers
+    def _extract_value(self, source: Mapping[str, Any] | Any | None, key: str, *, default: Any) -> Any:
+        if source is None:
+            return default
+        if isinstance(source, Mapping):
+            return source.get(key, default)
+        return getattr(source, key, default)
+
+    def _resolve_spread_state(self, spread_state: Any) -> str | None:
+        if spread_state is None:
+            return None
+        if isinstance(spread_state, Mapping):
+            value = spread_state.get("state")
+        else:
+            value = getattr(spread_state, "state", spread_state)
+        if value is None:
+            return None
+        return str(value)
+
+    def _resolve_entry_mode(self, signal: Any, spread_state: str) -> str:
+        default_mode = getattr(signal, "entry_mode", None) or "marketable_limit"
+        entry_mode = str(default_mode)
+        if spread_state == "watch":
+            return "market"
+        if spread_state == "cooldown":
+            return "limit_requote"
+        return entry_mode
+
+    def _lookup_entry_mode(self, entry_mode: str) -> Mapping[str, Any]:
+        defaults = self._config.get("defaults", {})
+        if isinstance(defaults, Mapping):
+            entry_modes = defaults.get("entry_modes", {})
+            if isinstance(entry_modes, Mapping):
+                config = entry_modes.get(entry_mode)
+                if isinstance(config, Mapping):
+                    return config
+        raise ExecutionConfigError(f"Entry mode '{entry_mode}' not configured")
+
+    def _resolve_fill_style(self, entry_config: Mapping[str, Any]) -> tuple[FillStyle, FillPolicy | None]:
+        fill_style = entry_config.get("fill_style")
+        if fill_style not in {"ioc", "fok", "gtd"}:
+            if entry_config.get("allow_ioc"):
+                fill_style = "ioc"
+            elif entry_config.get("allow_fok"):
+                fill_style = "fok"
+            else:
+                fill_style = "gtd"
+        fill_policy: FillPolicy | None
+        if fill_style == "gtd" and entry_config.get("allow_day"):
+            fill_policy = "day"
+        else:
+            fill_policy = cast(FillPolicy, fill_style) if fill_style in {"ioc", "fok", "gtd"} else None
+        return cast(FillStyle, fill_style), fill_policy
+
+    def _resolve_delay_stats(self, *, mode: str, symbol: Any) -> Mapping[str, float]:
+        defaults = self._config.get("defaults", {})
+        delay_defaults = {}
+        if isinstance(defaults, Mapping):
+            delay_defaults = defaults.get("human_delay_seconds", {})
+        stats: Mapping[str, float] | None = None
+        if isinstance(symbol, str):
+            symbol_overrides = self._config.get("symbols", {})
+            if isinstance(symbol_overrides, Mapping):
+                symbol_config = symbol_overrides.get(symbol)
+                if isinstance(symbol_config, Mapping):
+                    symbol_delay = symbol_config.get("human_delay_seconds")
+                    if isinstance(symbol_delay, Mapping):
+                        stats = symbol_delay.get(mode)
+        if stats is None and isinstance(delay_defaults, Mapping):
+            stats = delay_defaults.get(mode)
+        if not isinstance(stats, Mapping):
+            raise ExecutionConfigError(f"Human delay distribution missing for mode '{mode}'")
+        return stats
+
+    def _resolve_ttl_buffer(self, bucket: str) -> float:
+        defaults = self._config.get("defaults", {})
+        ttl_defaults = {}
+        if isinstance(defaults, Mapping):
+            ttl_defaults = defaults.get("ttl_seconds", {})
+        if isinstance(ttl_defaults, Mapping) and bucket in ttl_defaults:
+            value = ttl_defaults[bucket]
+        else:
+            value = ttl_defaults.get("base", 0)
+        return float(value)
+
+    def _resolve_expected_entry(self, signal: Any, market_snapshot: Mapping[str, Any]) -> float | None:
+        for attribute in ("expected_entry", "entry_price", "price", "mid"):
+            value = getattr(signal, attribute, None)
+            if value is not None:
+                return float(value)
+        for key in ("expected_entry", "entry_price", "price", "mid"):
+            value = market_snapshot.get(key)
+            if value is not None:
+                return float(value)
+        return None
+
+    def _resolve_expected_slippage(self, spread_state: str) -> float | None:
+        defaults = self._config.get("defaults", {})
+        if not isinstance(defaults, Mapping):
+            return None
+        slippage_defaults = defaults.get("slippage_pips")
+        if not isinstance(slippage_defaults, Mapping):
+            return None
+        if spread_state == "watch":
+            bucket_name = "volatile"
+            percentile = "p90"
+        elif spread_state == "cooldown":
+            bucket_name = "base"
+            percentile = "p90"
+        else:
+            bucket_name = "base"
+            percentile = "p50"
+        bucket = slippage_defaults.get(bucket_name)
+        if not isinstance(bucket, Mapping):
+            bucket = next((cfg for cfg in slippage_defaults.values() if isinstance(cfg, Mapping)), None)
+        if not bucket:
+            return None
+        value = bucket.get(percentile)
+        if value is None:
+            fallback = bucket.get("p50")
+            if fallback is None:
+                return None
+            value = fallback
+        return float(value)
+
+    def _validate_delay_stats(self, stats: Mapping[str, Any], *, context: str) -> None:
+        for key in ("min", "p50", "p95"):
+            value = stats.get(key)
+            if not isinstance(value, (int, float)):
+                raise ExecutionConfigError(f"{context} must define numeric '{key}'")
+            if value < 0:
+                raise ExecutionConfigError(f"{context}.{key} must be non-negative")
+        minimum = float(stats["min"])
+        median = float(stats["p50"])
+        tail = float(stats["p95"])
+        if not (minimum <= median <= tail):
+            raise ExecutionConfigError(
+                f"{context} must satisfy min <= p50 <= p95 (got {minimum}, {median}, {tail})"
+            )
+
+
 __all__ = [
     "EntryMode",
     "ExecutionAdjustments",
     "ExecutionError",
     "ExecutionConfigError",
+    "ExecutionModelInputError",
     "ExecutionModelProtocol",
     "ExecutionRuleViolation",
+    "DeterministicExecutionModel",
     "FillPolicy",
     "FillStyle",
 ]

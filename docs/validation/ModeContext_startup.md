@@ -18,6 +18,7 @@ Codex実装物の受入時に、`ModeContext`初期化手順（詳細設計 §0.
 - **CI/自動化**: CI上での実行は`CHK-0.6.9-2`のpytestスモークテストと紐付け、成功ジョブIDを Evidence欄に追記する。
 
 - **Opsチェックリスト連携**: `docs/runbooks/daily_agenda/TEMPLATE.md#2-modecontext-startup-walkthrough-chk-0-6-9-6-7` に同じログ/スナップショットパスを記載し、日次点検から本表の該当行へリンクできるようにする。
+- **ExecutionModel決定論の確認**: `src/execution/model.py::DeterministicExecutionModel` は `ModeContext.deterministic_seed` を使用してヒューマン遅延をサンプリングする。Backtest/Paper/Live で同一 Seed を与えた場合に TTL/バッジが一致することを `tests/integration/test_strategy_engine.py::test_execution_model_spread_transition_badges` の結果で証跡化し、ログには使用した Seed と Spread 状態を追記する。
 
 ## 2. ModeContext フィールド初期化監査（CHK-0.6.9-6）
 `ModeContextFactory`/`ModeController`の初期化項目と `config/profiles/<mode>.yaml` のフィールド対応を確認する。
