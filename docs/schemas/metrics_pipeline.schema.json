@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://fx-toushi.dev/schemas/metrics_pipeline.schema.json",
+  "title": "PipelineStepElapsedMetric",
+  "description": "MetricsWriter record for pipeline_step_elapsed_ms per detailed design §16.4.",
+  "type": "object",
+  "required": ["ts", "metric", "value", "labels", "schema_version"],
+  "additionalProperties": false,
+  "properties": {
+    "ts": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "metric": {
+      "type": "string",
+      "const": "pipeline_step_elapsed_ms"
+    },
+    "schema_version": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$"
+    },
+    "value": {
+      "type": "number",
+      "minimum": 0
+    },
+    "labels": {
+      "type": "object",
+      "required": ["step", "board_mode"],
+      "additionalProperties": true,
+      "properties": {
+        "step": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9_.:-]+$"
+        },
+        "board_mode": {
+          "type": "string",
+          "enum": ["normal", "guarded", "halted"]
+        }
+      }
+    }
+  }
+}
