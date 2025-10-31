@@ -18,6 +18,7 @@
 | --- | --- | --- | --- |
 | tests/cli/test_data_status_cli.py | `pytest.mark.data_status_cli`でxfailするCLIワークフロー雛形を追加。ステージ評価ログ検証の期待値をコメント化。 | `pytest -k "data_status_cli"` | N/A |
 | docs/implementation_packets/20250315_data_status_cli.md | 本Packet作成。設計参照・Runbookリンクを整理。 | N/A | N/A |
+| docs/validation/ModeContext_startup.md<br>docs/runbooks/RUN-DATA-05.md<br>docs/runbooks/RUN-DATA-06.md | DataIngestionService/APIスタブの配置 (`src/data/service.py`, `src/data/providers/`, `src/data/quality.py`) を参照ノートとして追加。 | N/A | N/A |
 
 ## 3. チェックリスト
 - [ ] 設計整合: detailed_design_fx_signal_tool_v1.md §3.0, §3.1.1 を確認

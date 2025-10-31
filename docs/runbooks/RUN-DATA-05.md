@@ -16,6 +16,7 @@
 
 ## 手順
 1. `tradectl data health`で対象シンボルとプロバイダ、発生時刻、直近メトリクスを確認する。`metrics/data_ingestion_sla.jsonl`から前後30分のログを抽出し、`phase=fetch`/`phase=processing`それぞれの遅延を確認する。合わせて`config/sla_thresholds/active.yaml`（`schema_version`とRunbookリンクが`config/README.md`に記載されている雛形）を開き、`docs/schemas/sla_threshold_profile.schema.json`および`pytest -k config_schema_smoke`の検証結果が最新であることを確認した上で、現行プロファイルと閾値が一致しているかチェックする。
+   - **実装参照**: DataIngestionServiceの公開APIは`src/data/service.py`、各プロバイダスタブは`src/data/providers/`配下に集約。Manual CSV監査ログは`src/data/quality.py::DataQualityGuard.record_manual_csv_hash_verification`で`metrics/data_ingestion_manual.jsonl`（仮）へ出力するため、開発へのエスカレーション時は該当モジュールを参照する。
 2. **Signal Boardガード制御**: `tradectl status --detail`の`board_guard`セクション（またはボードヘッダの警告バナー）で`board_mode=guarded`かつ`reduce_only=true`になっていることを確認し、以下のシーケンスをチェックリストに沿って記録する。
    - データ鮮度検証: `metrics/data_ingestion_sla.jsonl`/`metrics/pipeline_latency.jsonl`の逸脱区間を突き合わせ、復旧まで新規提案停止の根拠を`reports/validation_log/AC-45_sla_<date>.md`に追記する。
    - Reduce-Only運用: 既存ポジションの縮小提案のみがSignal Boardで許可されていることを確認し、対応チケットID・判断理由を`reports/audit/reduce_only/<date>.md`へ記録する。
