@@ -5,16 +5,18 @@ Codex実装物の受入時に、`ModeContext`初期化手順（詳細設計 §0.
 - **データ取得API参照**: DataIngestionServiceのスキャフォールドは`src/data/service.py`、プロバイダスタブは`src/data/providers/`配下に配置し、Manual CSV検証ログは`src/data/quality.py::DataQualityGuard.record_manual_csv_hash_verification`を介して`metrics/`へ追記する。
 
 ## 1. 実行マトリクス（CHK-0.6.9-7）
-`tradectl start` → `tradectl stop` のフローをモード別に記録し、`logs/ops/session_start.log` と Snapshot 永続化 (`SnapshotManager.persist()`) の証跡を残す。
+`tradectl start` → `tradectl stop` のフローをモード別に記録し、`logs/sessions/<session_id>.log` と Snapshot 永続化 (`SnapshotManager.persist()`) の証跡を残す。
 
 | Mode | Command | 事前条件 (関連 Runbook) | 期待するログシグネチャ | 証跡リンク | 検証結果 |
 | --- | --- | --- | --- | --- | --- |
-| backtest | `tradectl start --profile backtest`<br>`tradectl stop` | `config/profiles/backtest.yaml` 更新済み<br>`RUN-TIME-01`/`STRAT-M1-VALIDATION` | `ctx.mode=backtest`<br>`ctx.profile.name=backtest`<br>`deterministic_seed=<int>` | `logs/ops/session_start.log#L<line>`<br>`reports/validation_log/` | [ ] Pass<br>[ ] Fail |
-| paper | `tradectl start --profile paper`<br>`tradectl stop` | `config/profiles/paper.yaml` 更新済み<br>`RUN-PERF-01` | `ctx.mode=paper`<br>`ctx.profile.name=paper`<br>`deterministic_seed=<int>` |  | [ ] Pass<br>[ ] Fail |
-| live | `tradectl start --profile live`<br>`tradectl stop` | `config/profiles/live.yaml` 更新済み<br>`RUN-RISK-01`/`RUN-BROKER-API-02` | `ctx.mode=live`<br>`ctx.profile.name=live`<br>`deterministic_seed=<int>` |  | [ ] Pass<br>[ ] Fail |
+| backtest | `tradectl start --profile backtest`<br>`tradectl stop` | `config/profiles/backtest.yaml` 更新済み<br>`RUN-TIME-01`/`STRAT-M1-VALIDATION` | `ctx.mode=backtest`<br>`ctx.profile.name=backtest`<br>`deterministic_seed=<int>` | `logs/sessions/session-<id>.log#L<line>`<br>`reports/validation_log/` | [ ] Pass<br>[ ] Fail |
+| paper | `tradectl start --profile paper`<br>`tradectl stop` | `config/profiles/paper.yaml` 更新済み<br>`RUN-PERF-01` | `ctx.mode=paper`<br>`ctx.profile.name=paper`<br>`deterministic_seed=<int>` | `logs/sessions/session-<id>.log#L<line>` | [ ] Pass<br>[ ] Fail |
+| live | `tradectl start --profile live`<br>`tradectl stop` | `config/profiles/live.yaml` 更新済み<br>`RUN-RISK-01`/`RUN-BROKER-API-02` | `ctx.mode=live`<br>`ctx.profile.name=live`<br>`deterministic_seed=<int>` | `logs/sessions/session-<id>.log#L<line>` | [ ] Pass<br>[ ] Fail |
 
-- **Snapshot確認**: 各モード終了後に `SnapshotManager.persist()` が呼び出され、`snapshots/latest/<mode>.json` が更新されたことを記録する（Evidence欄にファイルパスを追記）。
+- **Snapshot確認**: 各モード終了後に `SnapshotManager.persist()` が呼び出され、`snapshots/sessions/<mode>/<session_id>.json` が更新されたことを記録する（Evidence欄にファイルパスを追記）。
 - **CI/自動化**: CI上での実行は`CHK-0.6.9-2`のpytestスモークテストと紐付け、成功ジョブIDを Evidence欄に追記する。
+
+- **Opsチェックリスト連携**: `docs/runbooks/daily_agenda/TEMPLATE.md#2-modecontext-startup-walkthrough-chk-0-6-9-6-7` に同じログ/スナップショットパスを記載し、日次点検から本表の該当行へリンクできるようにする。
 
 ## 2. ModeContext フィールド初期化監査（CHK-0.6.9-6）
 `ModeContextFactory`/`ModeController`の初期化項目と `config/profiles/<mode>.yaml` のフィールド対応を確認する。
