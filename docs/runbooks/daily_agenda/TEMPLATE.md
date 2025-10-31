@@ -19,11 +19,11 @@
 | Mode | Step | Command / Evidence | Expected Output | Status | Notes |
 | --- | --- | --- | --- | --- | --- |
 | backtest | Start | `tradectl start --profile backtest` | `ctx.mode=backtest`, `ctx.profile.name=backtest`, deterministic seed logged | [ ] Pass [ ] Hold [ ] Fail | Link: docs/validation/ModeContext_startup.md#1-実行マトリクス |
-|  | Stop & Snapshot | `tradectl stop` / `snapshots/latest/backtest.json` | `SnapshotManager.persist()` log entry |  |  |
-| paper | Start |  |  |  |  |
-| paper | Stop & Snapshot |  |  |  |  |
-| live | Start |  |  |  |  |
-| live | Stop & Snapshot |  |  |  |  |
+|  | Stop & Snapshot | `tradectl stop` / `snapshots/sessions/backtest/session-<id>.json` | `SnapshotManager.persist()` log entry |  |  |
+| paper | Start | `tradectl start --profile paper` | `ctx.mode=paper`, `ctx.profile.name=paper`, deterministic seed logged |  |  |
+| paper | Stop & Snapshot | `tradectl stop` / `snapshots/sessions/paper/session-<id>.json` | `SnapshotManager.persist()` log entry |  |  |
+| live | Start | `tradectl start --profile live` | `ctx.mode=live`, `ctx.profile.name=live`, deterministic seed logged |  |  |
+| live | Stop & Snapshot | `tradectl stop` / `snapshots/sessions/live/session-<id>.json` | `SnapshotManager.persist()` log entry |  |  |
 
 > 詳細なログ・テスト結果は `docs/validation/ModeContext_startup.md` に追記し、Evidence欄には該当行へのリンクを記載する。
 

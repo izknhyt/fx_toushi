@@ -223,7 +223,7 @@
 4. Spread/Kill Switch等のリスク閾値ファイル（`config/risk_policy.yaml`など）が`schema/`定義と突合できる形で雛形化され、`GateState`スキーマ（`market.news.blocked`/`market.calendar.blocked`/`market.spread.state`/`risk.reduce_only`/`human.double_entry_required`）と整合していること（CHK-0.6.9-4）。
 5. Codexへ渡すIssue/PRテンプレに§0.6.8の番号を引用し、未解決項目がある場合は「受入不可（前提未了）」ラベルを適用してから再依頼すること（CHK-0.6.9-5）。
 6. `ModeContext`のフィールド（§3.1 表）を初期化する`ModeContextFactory`/`ModeController`のスタブが揃い、`config/profiles/<mode>.yaml`→`ModeContext.profile`→`SessionManager.start()`の流れで`clock`/`data_feeds`/`execution_profile`/`account_gateway`が埋まることを単体テストまたはドキュメントで確認していること（CHK-0.6.9-6）。証跡は `docs/validation/ModeContext_startup.md` §2 に記録する。
-7. `tradectl start --profile backtest`, `tradectl start --profile paper`, `tradectl start --profile live`（各モードはモック実装可）を手動/CIで実行し、`ModeContext`初期化ログ（`ctx.mode`, `ctx.profile.name`, `deterministic_seed`) が`logs/ops/session_start.log`に出力されること。終了時は`tradectl stop`→`SnapshotManager.persist()`までを含むテスト手順を`docs/validation/ModeContext_startup.md` §1に記録し、Ops Agendaの「ModeContext Startup Walkthrough」セクションから参照すること（CHK-0.6.9-7）。
+7. `tradectl start --profile backtest`, `tradectl start --profile paper`, `tradectl start --profile live`（各モードはモック実装可）を手動/CIで実行し、`ModeContext`初期化ログ（`ctx.mode`, `ctx.profile.name`, `deterministic_seed`) が`logs/sessions/<session_id>.log`に出力されること。終了時は`tradectl stop`→`SnapshotManager.persist()`までを含むテスト手順を`docs/validation/ModeContext_startup.md` §1に記録し、Ops Agendaの「ModeContext Startup Walkthrough」セクションから参照すること（CHK-0.6.9-7）。
 
 #### 0.6.10 すご腕SEレビュー（2025-03-10）フォローアップ
 

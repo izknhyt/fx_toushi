@@ -9,7 +9,7 @@ operate independently while sharing a common execution context.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Iterable, Protocol, runtime_checkable
+from typing import Callable, Iterable, Protocol, runtime_checkable
 
 from .session import SessionContext
 
@@ -70,3 +70,58 @@ class WorkflowOrchestrator(Protocol):
 
     def run(self, context: WorkflowContext) -> WorkflowResult:
         """Execute the registered workflow and report the outcome."""
+
+
+@dataclass(slots=True)
+class PipelineStep:
+    """Procedural step definition managed by :class:`PipelineWorkflow`."""
+
+    name: str
+    handler: Callable[[WorkflowContext], WorkflowContext]
+
+    def execute(self, context: WorkflowContext) -> WorkflowContext:
+        return self.handler(context)
+
+
+class PipelineWorkflow:
+    """Simple workflow orchestrator executing steps sequentially."""
+
+    def __init__(self) -> None:
+        self._steps: list[WorkflowStep] = []
+
+    def register(self, step: WorkflowStep) -> None:
+        """Add a workflow step, ensuring the name remains unique."""
+
+        if any(existing.name == step.name for existing in self._steps):
+            raise ValueError(f"Workflow step {step.name!r} already registered")
+        self._steps.append(step)
+
+    def plan(self) -> Iterable[str]:
+        """Return the ordered list of registered step names."""
+
+        return tuple(step.name for step in self._steps)
+
+    def run(self, context: WorkflowContext) -> WorkflowResult:
+        """Execute steps in registration order, supporting early termination."""
+
+        executed: list[str] = []
+
+        for index, step in enumerate(self._steps):
+            executed.append(step.name)
+            try:
+                context.step_sequence = tuple(executed)
+            except AttributeError:
+                pass
+
+            try:
+                context = step.execute(context)
+            except StopIteration:
+                remaining = tuple(candidate.name for candidate in self._steps[index + 1 :])
+                return WorkflowResult(completed=False, next_steps=remaining)
+
+        try:
+            context.step_sequence = tuple(executed)
+        except AttributeError:
+            pass
+
+        return WorkflowResult(completed=True, next_steps=())
