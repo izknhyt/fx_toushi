@@ -1,0 +1,66 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://fx-toushi.dev/schemas/risk_disclosure_state.schema.json",
+  "title": "RiskDisclosureState",
+  "description": "Risk disclosure consent state snapshot stored in data/compliance per detailed design §3.30.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "status",
+    "version",
+    "document_hash",
+    "grace_window_hours"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "pattern": "^risk_disclosure_state\\.v[0-9]+$"
+    },
+    "status": {
+      "type": "string",
+      "enum": ["accepted", "pending", "warning", "expired"]
+    },
+    "version": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9_.-]+$"
+    },
+    "document_hash": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "accepted_at": {
+      "type": ["string", "null"],
+      "format": "date-time"
+    },
+    "expires_at": {
+      "type": ["string", "null"],
+      "format": "date-time"
+    },
+    "ack_user": {
+      "type": ["string", "null"],
+      "minLength": 1
+    },
+    "ack_source": {
+      "type": ["string", "null"],
+      "enum": ["manual", "cli", "import", null]
+    },
+    "consent_reference_id": {
+      "type": ["string", "null"],
+      "pattern": "^[0-9a-fA-F-]{36}$"
+    },
+    "device_fingerprint": {
+      "type": ["string", "null"],
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "last_prompted_at": {
+      "type": ["string", "null"],
+      "format": "date-time"
+    },
+    "grace_window_hours": {
+      "type": "integer",
+      "minimum": 0
+    }
+  }
+}

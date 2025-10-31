@@ -1,0 +1,128 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://fx-toushi.dev/schemas/event_resync_completed.schema.json",
+  "title": "ResyncCompletedEvent",
+  "description": "Domain event payload for resync completion per detailed design §16.1/§16.2 (SessionManager.catch_up).",
+  "type": "object",
+  "required": [
+    "event",
+    "ts",
+    "source",
+    "schema_version",
+    "id",
+    "payload"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "event": {
+      "type": "string",
+      "const": "resync.completed"
+    },
+    "ts": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "source": {
+      "type": "string",
+      "enum": [
+        "core",
+        "data",
+        "strategy",
+        "execution",
+        "risk",
+        "ticket",
+        "reporter",
+        "infra",
+        "ops",
+        "governance"
+      ]
+    },
+    "schema_version": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$"
+    },
+    "id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "correlation_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_.:-]+$"
+    },
+    "payload": {
+      "type": "object",
+      "description": "Resync statistics and hashes emitted at the end of SessionManager.catch_up().",
+      "required": [
+        "catch_up_elapsed_sec",
+        "recovered_symbols",
+        "failover_used",
+        "manual_csv_required",
+        "data_hash",
+        "cfg_hash"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "catch_up_elapsed_sec": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "recovered_symbols": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "uniqueItems": true
+        },
+        "failover_used": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "uniqueItems": true
+        },
+        "manual_csv_required": {
+          "type": "boolean"
+        },
+        "data_hash": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$"
+        },
+        "cfg_hash": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$"
+        }
+      }
+    },
+    "context": {
+      "type": "object",
+      "description": "Operational context included in event logs for downstream validation.",
+      "required": [
+        "mode",
+        "board_mode",
+        "cfg_hash",
+        "data_hash"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": ["backtest", "paper", "live"]
+        },
+        "board_mode": {
+          "type": "string",
+          "enum": ["normal", "guarded", "halted"]
+        },
+        "cfg_hash": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$"
+        },
+        "data_hash": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$"
+        }
+      }
+    }
+  }
+}
