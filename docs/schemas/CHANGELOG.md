@@ -1,5 +1,11 @@
 # Schema Registry Change Log
 
+## 2025-03-19
+- Added `event_resync_completed.schema.json` capturing the resync.completed domain event (SessionManager.catch_up) per detailed design §16.1/§16.2, including context hashes for downstream replay validation.
+- Added `audit_ticket_action.schema.json` to formalise ticket.action audit records with SpreadState snapshots and consent delta metadata as required by detailed design §3.6/§3.20/§16.3.
+- Added `metrics_pipeline.schema.json` defining the `pipeline_step_elapsed_ms` metrics contract with board_mode labels per detailed design §16.4 and CLI `tradectl metrics report --validate`.
+- Added `risk_disclosure_state.schema.json` documenting the compliance consent state structure (status, grace window, device binding) for `tradectl compliance status` validation per detailed design §3.30.
+
 ## 2025-03-18
 - Added `mode_context.schema.json` capturing ModeContext composite structures (ModeProfile, MarketClock,
   DataFeedBundle, ExecutionProfile, AccountGateway, AuditChannel, SessionState/Handle, BackfillJob) per

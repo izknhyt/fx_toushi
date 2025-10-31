@@ -163,6 +163,239 @@ def test_recovery_plan_rejects_unknown_trigger_reason(
         )
 
 
+def test_resync_completed_event_accepts_valid_payload(
+    load_json_schema: Callable[[str | Path], dict],
+) -> None:
+    validator = _build_validator(
+        load_json_schema, "docs/schemas/event_resync_completed.schema.json"
+    )
+
+    event = {
+        "event": "resync.completed",
+        "ts": "2025-03-08T12:45:00Z",
+        "source": "core",
+        "schema_version": "1.0.0",
+        "id": "3f64b198-5f6f-4f34-8fd4-a8f4d3d6d111",
+        "correlation_id": "resync.batch.20250308",
+        "payload": {
+            "catch_up_elapsed_sec": 420,
+            "recovered_symbols": ["EURUSD", "USDJPY"],
+            "failover_used": ["dukascopy"],
+            "manual_csv_required": False,
+            "data_hash": "sha256:7f3b9d3a0e5f6b8c4d2a1e6f7c8b9d3a0e5f6b8c4d2a1e6f7c8b9d3a0e5f6b8c",
+            "cfg_hash": "sha256:2a1e6f7c8b9d3a0e5f6b8c4d2a1e6f7c8b9d3a0e5f6b8c4d2a1e6f7c8b9d3a0e",
+        },
+        "context": {
+            "mode": "paper",
+            "board_mode": "guarded",
+            "cfg_hash": "sha256:2a1e6f7c8b9d3a0e5f6b8c4d2a1e6f7c8b9d3a0e5f6b8c4d2a1e6f7c8b9d3a0e",
+            "data_hash": "sha256:7f3b9d3a0e5f6b8c4d2a1e6f7c8b9d3a0e5f6b8c4d2a1e6f7c8b9d3a0e5f6b8c",
+        },
+    }
+
+    validator.validate(event)
+
+
+def test_resync_completed_event_rejects_missing_hash(
+    load_json_schema: Callable[[str | Path], dict],
+) -> None:
+    validator = _build_validator(
+        load_json_schema, "docs/schemas/event_resync_completed.schema.json"
+    )
+
+    invalid = {
+        "event": "resync.completed",
+        "ts": "2025-03-08T12:45:00Z",
+        "source": "core",
+        "schema_version": "1.0.0",
+        "id": "3f64b198-5f6f-4f34-8fd4-a8f4d3d6d111",
+        "payload": {
+            "catch_up_elapsed_sec": 420,
+            "recovered_symbols": ["EURUSD"],
+            "failover_used": [],
+            "manual_csv_required": False,
+            "cfg_hash": "sha256:2a1e6f7c8b9d3a0e5f6b8c4d2a1e6f7c8b9d3a0e5f6b8c4d2a1e6f7c8b9d3a0e",
+        },
+    }
+
+    with pytest.raises(ValidationError):
+        validator.validate(invalid)
+
+
+def test_audit_ticket_action_accepts_valid_record(
+    load_json_schema: Callable[[str | Path], dict],
+) -> None:
+    validator = _build_validator(
+        load_json_schema, "docs/schemas/audit_ticket_action.schema.json"
+    )
+
+    record = {
+        "schema_version": "ticket.action.v1",
+        "ts": "2025-03-08T12:50:30Z",
+        "record_type": "ticket.action",
+        "ticket_id": "TCK-20250308-001",
+        "action": "approve",
+        "actor": "ops_manager",
+        "consent_reference_id": "018f96d8-1c2b-7def-8abc-1a2b3c4d5e6f",
+        "board_mode": "guarded",
+        "spread_state": {
+            "EURUSD": {
+                "state": "normal",
+                "spread_pips": 0.6,
+                "percentile": 0.42,
+                "threshold_pips": 1.2,
+                "cooldown_eta": None,
+                "last_updated": "2025-03-08T12:50:00Z",
+                "lookback_window_sec": 900,
+                "reason": None,
+            }
+        },
+        "health_state": "degraded",
+        "cfg_hash": "sha256:9c3dbe9b6f7a21c4d5e68f9a3c7d2e1f6b8c4d2a1e6f7c8b9d3a0e5f6b8c4d2a",
+        "data_hash": "sha256:5f6b8c4d2a1e6f7c8b9d3a0e5f6b8c4d2a1e6f7c8b9d3a0e5f6b8c4d2a1e6f7c",
+        "delta": {
+            "before": {"status": "pending"},
+            "after": {"status": "approved"},
+            "diff": {"status": "approved"},
+            "decision": "approve",
+            "document_hash": "sha256:4d2a1e6f7c8b9d3a0e5f6b8c4d2a1e6f7c8b9d3a0e5f6b8c4d2a1e6f7c8b9d3a",
+            "consent_version": "2.3.1",
+            "expires_at": "2025-06-01T00:00:00Z",
+            "ack_user": "risk_lead",
+            "ack_evidence": "reports/compliance/ack/2025-03-08.pdf",
+        },
+        "notes": "Approved after verifying spread cooldown resolved.",
+        "extras": {"cli_command": "tradectl ticket approve --id TCK-20250308-001"},
+    }
+
+    validator.validate(record)
+
+
+def test_audit_ticket_action_rejects_missing_delta_fields(
+    load_json_schema: Callable[[str | Path], dict],
+) -> None:
+    validator = _build_validator(
+        load_json_schema, "docs/schemas/audit_ticket_action.schema.json"
+    )
+
+    invalid = {
+        "ts": "2025-03-08T12:50:30Z",
+        "record_type": "ticket.action",
+        "ticket_id": "TCK-20250308-002",
+        "action": "reject",
+        "actor": "ops_manager",
+        "board_mode": "guarded",
+        "spread_state": {
+            "USDJPY": {
+                "state": "watch",
+                "spread_pips": 1.4,
+                "percentile": 0.78,
+                "threshold_pips": 1.5,
+                "cooldown_eta": "2025-03-08T13:00:00Z",
+                "last_updated": "2025-03-08T12:48:00Z",
+                "lookback_window_sec": 900,
+            }
+        },
+        "health_state": "degraded",
+        "cfg_hash": "sha256:1e6f7c8b9d3a0e5f6b8c4d2a1e6f7c8b9d3a0e5f6b8c4d2a1e6f7c8b9d3a0e5f",
+        "data_hash": "sha256:7c8b9d3a0e5f6b8c4d2a1e6f7c8b9d3a0e5f6b8c4d2a1e6f7c8b9d3a0e5f6b8c",
+        "delta": {
+            "before": {"status": "pending"},
+            "after": {"status": "rejected"},
+            "diff": {"status": "rejected"},
+            "decision": "reject",
+            "consent_version": "2.3.1",
+            "expires_at": "2025-06-01T00:00:00Z",
+            "ack_user": "ops_manager",
+            "ack_evidence": "reports/compliance/ack/2025-03-08.pdf",
+        },
+    }
+
+    with pytest.raises(ValidationError):
+        validator.validate(invalid)
+
+
+def test_metrics_pipeline_accepts_valid_record(
+    load_json_schema: Callable[[str | Path], dict],
+) -> None:
+    validator = _build_validator(
+        load_json_schema, "docs/schemas/metrics_pipeline.schema.json"
+    )
+
+    record = {
+        "ts": "2025-03-08T12:30:00Z",
+        "metric": "pipeline_step_elapsed_ms",
+        "schema_version": "1.0.0",
+        "value": 128.5,
+        "labels": {"step": "feature_engineering", "board_mode": "normal"},
+    }
+
+    validator.validate(record)
+
+
+def test_metrics_pipeline_rejects_negative_value(
+    load_json_schema: Callable[[str | Path], dict],
+) -> None:
+    validator = _build_validator(
+        load_json_schema, "docs/schemas/metrics_pipeline.schema.json"
+    )
+
+    invalid = {
+        "ts": "2025-03-08T12:30:00Z",
+        "metric": "pipeline_step_elapsed_ms",
+        "schema_version": "1.0.0",
+        "value": -5.0,
+        "labels": {"step": "signal_render", "board_mode": "normal"},
+    }
+
+    with pytest.raises(ValidationError):
+        validator.validate(invalid)
+
+
+def test_risk_disclosure_state_accepts_valid_state(
+    load_json_schema: Callable[[str | Path], dict],
+) -> None:
+    validator = _build_validator(
+        load_json_schema, "docs/schemas/risk_disclosure_state.schema.json"
+    )
+
+    state = {
+        "schema_version": "risk_disclosure_state.v2",
+        "status": "accepted",
+        "version": "2025.03",
+        "document_hash": "sha256:8c4d2a1e6f7c8b9d3a0e5f6b8c4d2a1e6f7c8b9d3a0e5f6b8c4d2a1e6f7c8ba1",
+        "accepted_at": "2025-03-01T00:00:00Z",
+        "expires_at": "2025-06-01T00:00:00Z",
+        "ack_user": "ops_manager",
+        "ack_source": "cli",
+        "consent_reference_id": "018f96d8-1c2b-7def-8abc-1a2b3c4d5e6f",
+        "device_fingerprint": "a" * 64,
+        "last_prompted_at": "2025-03-01T00:05:00Z",
+        "grace_window_hours": 72,
+    }
+
+    validator.validate(state)
+
+
+def test_risk_disclosure_state_rejects_invalid_status(
+    load_json_schema: Callable[[str | Path], dict],
+) -> None:
+    validator = _build_validator(
+        load_json_schema, "docs/schemas/risk_disclosure_state.schema.json"
+    )
+
+    invalid = {
+        "schema_version": "risk_disclosure_state.v2",
+        "status": "inactive",
+        "version": "2025.03",
+        "document_hash": "sha256:8c4d2a1e6f7c8b9d3a0e5f6b8c4d2a1e6f7c8b9d3a0e5f6b8c4d2a1e6f7c8ba1",
+        "grace_window_hours": 72,
+    }
+
+    with pytest.raises(ValidationError):
+        validator.validate(invalid)
+
+
 @pytest.mark.config_schema_smoke
 def test_strategy_manifest_scaffold_is_valid(
     load_json_schema: Callable[[str | Path], dict],
