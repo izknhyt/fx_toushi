@@ -1,0 +1,186 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://fx-toushi.dev/schemas/audit_ticket_action.schema.json",
+  "title": "TicketActionAuditRecord",
+  "description": "AuditWriter ticket.action record schema per detailed design §3.6/§3.20/§16.3.",
+  "type": "object",
+  "required": [
+    "ts",
+    "record_type",
+    "ticket_id",
+    "action",
+    "actor",
+    "board_mode",
+    "spread_state",
+    "health_state",
+    "cfg_hash",
+    "data_hash",
+    "delta"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "description": "Version tag for the audit record layout (e.g. ticket.action.v1).",
+      "pattern": "^ticket\\.action\\.v[0-9]+$"
+    },
+    "ts": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "record_type": {
+      "type": "string",
+      "const": "ticket.action"
+    },
+    "ticket_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "action": {
+      "type": "string",
+      "enum": ["approve", "reject", "edit", "expire"]
+    },
+    "actor": {
+      "type": "string",
+      "minLength": 1
+    },
+    "consent_reference_id": {
+      "type": ["string", "null"],
+      "pattern": "^[0-9a-fA-F-]{36}$"
+    },
+    "board_mode": {
+      "type": "string",
+      "enum": ["normal", "guarded", "halted"]
+    },
+    "spread_state": {
+      "type": "object",
+      "description": "Snapshot of SpreadState per symbol captured at action time.",
+      "minProperties": 1,
+      "additionalProperties": {
+        "$ref": "#/definitions/SpreadState"
+      }
+    },
+    "health_state": {
+      "type": "string",
+      "enum": ["ok", "degraded", "soft_stop", "hard_stop"]
+    },
+    "cfg_hash": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "data_hash": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "delta": {
+      "type": "object",
+      "description": "Before/after diff with consent metadata required by compliance export.",
+      "required": [
+        "before",
+        "after",
+        "diff",
+        "decision",
+        "document_hash",
+        "consent_version",
+        "expires_at",
+        "ack_user",
+        "ack_evidence"
+      ],
+      "additionalProperties": true,
+      "properties": {
+        "before": {
+          "type": "object"
+        },
+        "after": {
+          "type": "object"
+        },
+        "diff": {
+          "type": "object"
+        },
+        "decision": {
+          "type": "string",
+          "enum": ["approve", "reject", "edit", "expire"]
+        },
+        "document_hash": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$"
+        },
+        "consent_version": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_.-]+$"
+        },
+        "expires_at": {
+          "type": ["string", "null"],
+          "format": "date-time"
+        },
+        "ack_user": {
+          "type": ["string", "null"],
+          "minLength": 1
+        },
+        "ack_evidence": {
+          "type": ["string", "null"],
+          "minLength": 1
+        }
+      }
+    },
+    "notes": {
+      "type": "string",
+      "maxLength": 1024
+    },
+    "extras": {
+      "type": "object",
+      "description": "Optional auxiliary metadata such as checklist acknowledgements or CLI command.",
+      "additionalProperties": true
+    }
+  },
+  "definitions": {
+    "SpreadState": {
+      "type": "object",
+      "required": [
+        "state",
+        "spread_pips",
+        "percentile",
+        "threshold_pips",
+        "cooldown_eta",
+        "last_updated",
+        "lookback_window_sec"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "state": {
+          "type": "string",
+          "enum": ["normal", "watch", "cooldown", "halt"]
+        },
+        "spread_pips": {
+          "type": "number",
+          "minimum": 0
+        },
+        "percentile": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "threshold_pips": {
+          "type": "number",
+          "minimum": 0
+        },
+        "cooldown_eta": {
+          "type": ["string", "null"],
+          "format": "date-time"
+        },
+        "last_updated": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "lookback_window_sec": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "reason": {
+          "type": ["string", "null"],
+          "description": "Optional human readable reason captured by SpreadMonitor."
+        }
+      }
+    }
+  }
+}
