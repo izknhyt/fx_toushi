@@ -29,6 +29,9 @@ black = "==23.12.1"
 ruff = "==0.14.2"
 mypy = "==1.18.2"
 
+[tool.poetry.scripts]
+tradectl = "src.interfaces.cli.main:main"
+
 [build-system]
 requires = ["poetry-core>=2.0.0,<3.0.0"]
 build-backend = "poetry.core.masonry.api"

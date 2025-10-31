@@ -7,7 +7,10 @@ from pathlib import Path
 import pytest
 import yaml
 
+from src.core.gate import GateState
+from src.core.health import HealthMonitor
 from src.features import FeaturePipeline
+from src.interfaces.cli.status import status
 
 pytestmark = pytest.mark.smoke
 
@@ -43,3 +46,23 @@ def test_feature_context_available_keys_align_with_manifest() -> None:
         "Feature pipeline exposes unused features not declared in the manifest: "
         + ", ".join(orphaned)
     )
+
+
+def test_status_payload_exposes_acceptable_degradation_banner() -> None:
+    """Verify the CLI payload exposes the Acceptable Degradation banner contract."""
+
+    monitor = HealthMonitor()
+    monitor.raise_condition("warning", "data_latency_catch_up")
+    monitor.suggest_guarded(reason="data_latency_catch_up", runbook="docs/runbooks/RUN-DATA-05.md")
+
+    gate = GateState()
+    gate.risk.reduce_only = True
+
+    payload = status(monitor=monitor, gate_state=gate)
+
+    banner = payload["ops"]["banner"]
+    assert banner is not None
+    assert banner["kind"] == "acceptable_degradation"
+    assert banner["reduce_only"] is True
+    assert banner["runbook"] == "docs/runbooks/RUN-DATA-05.md"
+    assert payload["snapshots"]["status"] in {"unavailable", "missing", "ok", "error"}
