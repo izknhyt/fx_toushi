@@ -75,6 +75,7 @@ class EventBus:
         self._queue: asyncio.Queue[Any] = asyncio.Queue(maxsize=config.queue_maxsize)
         self._pressure_samples: list[QueuePressureSample] = []
         self._dropped_events: int = 0
+        config.metrics_path.parent.mkdir(parents=True, exist_ok=True)
 
     async def publish(
         self,

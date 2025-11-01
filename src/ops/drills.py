@@ -150,6 +150,8 @@ class OpsDrillService:
         self._scenarios_catalog = scenarios_catalog
         self._plans_log = plans_log
         self._executions_log = executions_log
+        self._plans_log.parent.mkdir(parents=True, exist_ok=True)
+        self._executions_log.parent.mkdir(parents=True, exist_ok=True)
 
     def register_scenario(self, scenario: DrillScenario) -> DrillScenario:
         """Persist *scenario* to ``drill_scenarios.yaml`` and emit audit events."""
