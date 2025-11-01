@@ -138,6 +138,11 @@ class DrillOutcome:
 class OpsDrillService:
     """Service responsible for drill scenario registration and orchestration."""
 
+    # TODO(gpt-ops): When implementing drill completion, emit a report using
+    # ``docs/templates/drill_report.md`` (see ``docs/templates/README.md`` for
+    # usage guidance) so that Codex implementations can produce consistent
+    # evidence packages.
+
     def __init__(
         self,
         *,
