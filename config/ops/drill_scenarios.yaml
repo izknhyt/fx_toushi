@@ -1,0 +1,19 @@
+# Ops drill scenario catalog template.
+# Aligns with detailed_design_fx_signal_tool_v1.md §53 (Ops Drill Orchestrator) and basic_design_fx_signal_tool_v1.md §202 to keep schema expectations consistent with design.
+schema_version: 0
+maintained_by: ops_drill_organizers  # config/roles.yaml::ops_drill_organizers と同期すること。
+last_reviewed_at: 2025-02-28  # YYYY-MM-DD。レビュー後に更新。
+scenarios:
+  - scenario_id: example_data_latency_failover
+    title: "Example: Data latency failover run-through"
+    runbook_refs:
+      - RUN-DATA-05
+      - RUN-OPS-AGENDA-01
+    validation_playbook_ids:
+      - AC-45
+    trigger: >-
+      TODO: Document the condition that requires this drill (e.g., sustained SLA breach).
+    expected_duration_min: 45
+    impact_tags:
+      - data-quality
+      - readiness
