@@ -1,0 +1,155 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://fx-toushi.dev/schemas/scoring_config.schema.json",
+  "title": "ScoringConfig",
+  "description": "Configuration surface for ScoringService weights, drift guard, and diagnostics per detailed design §4.4.4.",
+  "type": "object",
+  "required": [
+    "version",
+    "weights",
+    "drift_penalty",
+    "volatility_cap",
+    "diagnostics"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "version": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "weights": {
+      "type": "object",
+      "description": "Relative weights for scoring components. Values should sum to <= 1.0 and be reviewed during RUN-SCORE-01.",
+      "required": [
+        "expected_r",
+        "pf_all",
+        "drawdown_penalty",
+        "spread_penalty"
+      ],
+      "properties": {
+        "expected_r": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "pf_all": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "drawdown_penalty": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "spread_penalty": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        }
+      },
+      "additionalProperties": {
+        "type": "number",
+        "minimum": 0,
+        "maximum": 1
+      }
+    },
+    "drift_penalty": {
+      "type": "object",
+      "required": [
+        "max_pf_drift",
+        "kappa"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "max_pf_drift": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "kappa": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        }
+      }
+    },
+    "volatility_cap": {
+      "type": "object",
+      "required": [
+        "max_expected_r",
+        "regime_weights"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "max_expected_r": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 10
+        },
+        "regime_weights": {
+          "type": "object",
+          "required": [
+            "trend",
+            "range",
+            "spike"
+          ],
+          "properties": {
+            "trend": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 2
+            },
+            "range": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 2
+            },
+            "spike": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 2
+            }
+          },
+          "additionalProperties": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 2
+          }
+        }
+      }
+    },
+    "diagnostics": {
+      "type": "object",
+      "required": [
+        "report_path",
+        "alert_delta_pf",
+        "alert_latency_p75"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "report_path": {
+          "type": "string",
+          "minLength": 1
+        },
+        "alert_delta_pf": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "alert_latency_p75": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 600
+        }
+      }
+    },
+    "notes": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    }
+  }
+}

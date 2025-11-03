@@ -1,0 +1,126 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://fx-toushi.dev/schemas/ops_readiness.schema.json",
+  "title": "OpsReadinessConfig",
+  "description": "Ops readiness score configuration covering weight allocation, evidence paths, and governance thresholds per detailed design §4.4.6.",
+  "type": "object",
+  "required": [
+    "version",
+    "weights",
+    "evidence_paths",
+    "thresholds",
+    "runbook_refs"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "version": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "weights": {
+      "type": "object",
+      "required": [
+        "backup_integrity",
+        "runbook_updates",
+        "drills_completed",
+        "incident_followup"
+      ],
+      "additionalProperties": {
+        "type": "number",
+        "minimum": 0,
+        "maximum": 1
+      },
+      "properties": {
+        "backup_integrity": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "runbook_updates": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "drills_completed": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "incident_followup": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        }
+      }
+    },
+    "evidence_paths": {
+      "type": "object",
+      "required": [
+        "backups",
+        "runbooks",
+        "incidents",
+        "agenda"
+      ],
+      "additionalProperties": {
+        "type": "string",
+        "minLength": 1
+      },
+      "properties": {
+        "backups": {
+          "type": "string",
+          "minLength": 1
+        },
+        "runbooks": {
+          "type": "string",
+          "minLength": 1
+        },
+        "incidents": {
+          "type": "string",
+          "minLength": 1
+        },
+        "agenda": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "thresholds": {
+      "type": "object",
+      "required": [
+        "min_score",
+        "warn_score"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "min_score": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "warn_score": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100
+        }
+      }
+    },
+    "runbook_refs": {
+      "type": "object",
+      "required": [
+        "review",
+        "escalation"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "review": {
+          "type": "string",
+          "pattern": "^[A-Z0-9\\-]+(#[A-Za-z0-9_\\-]+)?$"
+        },
+        "escalation": {
+          "type": "string",
+          "pattern": "^[A-Z0-9\\-]+(#[A-Za-z0-9_\\-]+)?$"
+        }
+      }
+    }
+  }
+}

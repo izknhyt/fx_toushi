@@ -248,6 +248,111 @@
 
 - **アクションアイテム**: 各フォローアップは週次Opsレビューで進捗確認し、完了時に`docs/review_log.md`へ「Closed #7」の追記を行う。未完了の場合は`docs/change_requests/`に正式化してからCodex依頼を保留する。
 
+#### 0.6.12 Configスキャフォールト & Schema整合チェック
+- **目的**: Codexが即座にテストを実行できるよう、必須設定ファイルの雛形と検証コマンドを標準化する。
+- **必須雛形**（`CONFIG-SCAFF-01`パケットで配布）
+  - `config/scoring.yaml`（`weights`, `max_pf_drift`, `volatility_cap`, `diagnostics`セクション）
+  - `config/risk_live_guard.yaml`（§4.4.3準拠の閾値/ウィンドウ設定）
+  - `config/scoreboard.yaml`（付録G.1用の`alpha_threshold`, `decay_threshold`, `watchlist_rules`）
+  - `config/ops_readiness.yaml`（証跡パス/重み/Runbook参照）
+  - 既存の`config/risk_policy.yaml`, `config/strategy_manifest.yaml`, `config/feature_pipeline.yaml`とともに`config/README.md`へ一覧化し、各ファイルのスキーマIDとRunbookリンクを記載する。
+- **スキーマ検証コマンド**
+
+```bash
+poetry run schema-validate config --schema docs/schemas/config_bundle.schema.json
+poetry run schema-validate config/scoring.yaml --schema docs/schemas/scoring_config.schema.json
+poetry run schema-validate config/risk_live_guard.yaml --schema docs/schemas/risk_live_guard.schema.json
+poetry run schema-validate config/scoreboard.yaml --schema docs/schemas/scoreboard.schema.json
+poetry run schema-validate config/ops_readiness.yaml --schema docs/schemas/ops_readiness.schema.json
+```
+
+- **初期化ツール**: `make config-init`（`tools/scripts/config_init.py`）で雛形をコピーし、各ファイルに`TODO:`コメントで調整ポイント（例: `alpha_threshold`, `latency_alert_threshold_sec`）を明示する。Runbook `CONFIG-SCAFF-01`へステップバイステップ手順を追加する。
+- **レビュー要件**: 設定変更を含むPRは`pytest -k config_schema_smoke`と上記`schema-validate`ログ添付を必須とし、§0.6.11のPRチェックリストへ「Configスキーマ検証ログ」項目を追記する。
+
+#### 4.4.4 `config/scoring.yaml`
+- **用途**: ScoringService（§3.7）、Strategy Scoreboard（付録G.1）、`tradectl scoring diagnostics`（§6.5）で共通利用する係数と閾値を管理。
+- **構成例**:
+  ```yaml
+  version: 1
+  weights:
+    expected_r: 0.55
+    pf_all: 0.35
+    drawdown_penalty: 0.07
+    spread_penalty: 0.03
+  drift_penalty:
+    max_pf_drift: 0.10
+    kappa: 0.35
+  volatility_cap:
+    max_expected_r: 2.5
+    regime_weights:
+      trend: 1.0
+      range: 0.85
+      spike: 0.65
+  diagnostics:
+    report_path: reports/diagnostics
+    alert_delta_pf: 0.15
+    alert_latency_p75: 150
+  ```
+- **検証**: `poetry run schema-validate config/scoring.yaml --schema docs/schemas/scoring_config.schema.json`。係数合計やPF drift上限をチェックし、変更時はRunbook `RUN-SCORE-01`で承認を得る。
+
+#### 4.4.5 `config/scoreboard.yaml`
+- **用途**: Strategy Scoreboard Service（付録G.1）とReporter週次サマリにおける`alpha_score`/`decay_score`閾値・重みの定義。
+- **構成例**:
+  ```yaml
+  version: 1
+  thresholds:
+    alpha: 75
+    decay: 35
+    watchlist_cooldown_weeks: 4
+  weights:
+    profit_factor: 0.35
+    sharpe: 0.30
+    stability_index: 0.20
+    regime_fit: 0.15
+  runbook_refs:
+    watchlist: RUN-GOV-BOARD-01
+    escalation: RUN-RISK-07
+  ```
+- **検証**: `poetry run schema-validate config/scoreboard.yaml --schema docs/schemas/scoreboard.schema.json`。閾値が`0〜100`、重み合計が1.0以内であることをCIで確認する。
+
+#### 4.4.6 `config/ops_readiness.yaml`
+- **用途**: Ops Readiness評価（§3.27, §5.12, 付録G.3）の重み・証跡パス・Runbookリンクを保持。
+- **構成例**:
+  ```yaml
+  version: 1
+  weights:
+    backup_integrity: 0.30
+    runbook_updates: 0.20
+    drills_completed: 0.30
+    incident_followup: 0.20
+  evidence_paths:
+    backups: reports/drill/backup_integrity.md
+    runbooks: docs/runbooks/
+    incidents: docs/incident_reports/
+    agenda: docs/runbooks/daily_agenda/
+  thresholds:
+    min_score: 80
+    warn_score: 85
+  runbook_refs:
+    review: OPS-READINESS-01
+    escalation: RUN-RISK-07
+  ```
+- **検証**: `poetry run schema-validate config/ops_readiness.yaml --schema docs/schemas/ops_readiness.schema.json`。`make check-ops-readiness`（新設予定）がEvidenceファイルの存在と更新時刻を検証し、Opsレビューでは`ops_worklog`へ結果を記録する。
+
+#### 4.4.7 `config/README.md`
+- **目的**: 雛形一覧・スキーマID・Runbook参照・調整責任者をまとめ、初期セットアップ手順（`make config-init && poetry run schema-validate config --schema docs/schemas/config_bundle.schema.json`）を明記する。PRチェックリストに添付すべき証跡（スキーマ検証ログ、設定diff、Runbook更新）を案内する。
+- **管理表**:
+  | ファイル | 主な設定項目 | JSON Schema | Runbook | 管理責任者 |
+  | --- | --- | --- | --- | --- |
+  | `config/scoring.yaml` | スコア係数、PFドリフト閾値、ボラ上限、診断設定 | `docs/schemas/scoring_config.schema.json` | `RUN-SCORE-01` | Quant Lead |
+  | `config/scoreboard.yaml` | α/Decay閾値、重み、ウォッチリスト制御 | `docs/schemas/scoreboard.schema.json` | `RUN-GOV-BOARD-01`, `RUN-RISK-07` | Product Owner |
+  | `config/risk_live_guard.yaml` | Live Guardウィンドウ/閾値/通知設定 | `docs/schemas/risk_live_guard.schema.json` | `RUN-RISK-07` | Risk Manager |
+  | `config/ops_readiness.yaml` | Ops評価重み、証跡パス、閾値 | `docs/schemas/ops_readiness.schema.json` | `OPS-READINESS-01` | Ops Manager |
+  | `config/risk_policy.yaml` | 損失閾値、Kill Switch基準、バケット設定 | `docs/schemas/risk_policy.schema.json` | `RUN-RISK-01` | Risk Manager |
+  | `config/feature_pipeline.yaml` | 指標ON/OFF、窓長、出力キー | `docs/schemas/feature_pipeline.schema.json` | `RUN-DATA-05` | Quant Lead |
+  | `config/strategy_manifest.yaml` | 戦略有効化、優先度、重み、Flags | `docs/schemas/strategy_manifest.schema.json` | `GOV-STRAT-01` | Product Owner |
+  | `config/sla_thresholds/*.yaml` | データ遅延/Spread SLA閾値 | `docs/schemas/sla_thresholds.schema.json` | `RUN-DATA-05`, `RUN-DATA-06` | Ops Manager |
+
 ### 0.7 M1 Core機能トレーサビリティ表
 
 | 機能 | 要件定義参照 | 基本設計参照 | 入力データ | 出力/副作用 | 稼働条件 | 外部API/サービス依存 | 要確認事項 |
@@ -1266,6 +1371,14 @@ rsi_window = bb_frame.window("rsi_14", length=14)
 - **公開API**: `run_all(strategy_context)`, `register_plugin`（デコレータ）
 - **入出力**: `StrategyContext`（FeatureContext, RegimeState, GateState, AccountState, Config）→`Iterable[RawSignal]`。
 - **プラグイン**: M1で`ma_rsi`, `donchian_breakout`。`metadata.required_features`でFeature不足を検知。`cooldown_bars`で連続エントリーを抑止。
+- **戦略多様化ロードマップ（SE/Trader合議）**:
+  | フェーズ | 追加戦略 | 目的 | 依存データ/機能 | 成功基準 |
+  | --- | --- | --- | --- | --- |
+  | Sprint-Alpha+2 | `momentum_pullback_m5` | トレンドフォロー寄りの加速局面を捕捉し、PF≥1.35を狙う | `feature_pipeline.yaml`にADX/ROCバンド追加、`latency_profiles.fx_major_high_liquidity` | Backtest PF≥1.40、OOS PF≥1.20、`drawdown_pct≤12%` |
+  | Sprint-Alpha+3 | `asia_range_fade_m15` | 東京時間のレンジ逆張りで分散化 | `data/research/raw/sgd_cross/*.parquet`、`CalendarService`祝日精度 | OOS Sharpe≥1.05、HitRate≥55%、Spread Watch発生時の提案抑止率≥95% |
+  | Sprint-1 | `news_reversal_scalp_m1`（Feature FlagデフォルトOFF） | 重大ニュース後のリバーサル捕捉。短期だが高RR | `NewsService`低遅延ヘッドライン、`ExecutionLatencyModel` p95補正、`risk_policy.yaml::scalp_limits` | PaperトライアルでPF≥1.25、ライブ検証（週次）でR_eff<1.8を維持 |
+  | Sprint-2 | `carry_filter_daily`（長期） | 週次/日次のキャリー調整でドローダウン耐性向上 | `funding_curve.parquet`, `macro_calendar.yaml`, `PositionSizer`週次リバランス | Walk-forward収益率年換算≥12%、MaxDD≤8%、Sharpe≥1.0 |
+  - 各戦略は`strategy_manifest.yaml`でFeature Flagを持ち、`GOV-STRAT-01`に沿って承認・リリース。`StrategyRegistry.active_plugins()`はManifest順序とFeature Flagに基づき決定する。
 - **安全性**: 戦略から返却されたシグナルは`SignalSchema`で検証。レジーム不一致やGateStateブロック時は自動Reject。
 - **コンフィグ責務整理（合意事項）**:
   | ファイル | 一元管理する項目 | 備考 |
@@ -1352,6 +1465,7 @@ sequenceDiagram
 import logging
 from execution.model import ExecutionModelInputError
 from execution.spread import SpreadMonitorNotFound, SpreadMonitorNotInitialized
+from execution.latency import ExecutionLatencyModel, LatencyQuantile
 
 
 def run_signal_cycle(bar: MarketBar, ctx: ModeContext) -> list[TicketProposal]:
@@ -1431,11 +1545,20 @@ def run_signal_cycle(bar: MarketBar, ctx: ModeContext) -> list[TicketProposal]:
             )
             continue
         try:
+            latency_profile = ExecutionLatencyModel.sample(
+                mode=ctx.mode,
+                symbol=sig.symbol,
+                regime=strategy_ctx.regime.mode,
+                trade_size=sig.quantity,
+                seed=ctx.deterministic_seed,
+            )
             execution_adjustments[sig.signal_id] = ExecutionModel.apply(
                 sig,
                 market_snapshot=snapshot,
                 spread_state=spread,
                 mode_context=ctx,
+                latency_profile=latency_profile,
+                quantile=LatencyQuantile.P75,
             )
         except ExecutionModelInputError as exc:
             logger.warning(
@@ -1473,6 +1596,10 @@ def run_signal_cycle(bar: MarketBar, ctx: ModeContext) -> list[TicketProposal]:
 
 - `spread_state`は`dict[str, SpreadState]`で、キーはシグナル対象シンボル、値は§3.6「SpreadStateデータモデル」で定義したスナップショット。`SpreadMonitor.current_state()`が`SpreadMonitorNotInitialized`を送出した場合はフェイルセーフで全シグナルを空配列にして終了し、`SpreadMonitorNotFound`/`KeyError`/`None`を検知したシンボルは`signal.reject.spread_state_missing`（または`signal.reject.spread_state_none`）ログを残してRejectし`ExecutionModel.apply`を呼び出さない。
 - `ExecutionModel.apply`で`ExecutionModelInputError`がraiseされた場合も同様に`signal.reject.execution_input_error`ログを記録し、該当シグナルを除外して次のシグナル評価へ進む。
+- **ExecutionLatencyModel**: `ExecutionLatencyModel.sample(...)`はモード×シンボル×レジーム×数量で条件付けされたトレーダーレイテンシ/約定遅延分布（`latency_profile.p50|p75|p90`）を返し、`ExecutionModel.apply(..., latency_profile, quantile)`が`ttl_seconds`と`expected_slippage`に反映する。分布は`reports/performance/live_fill_stats.parquet`から週次で再推定し、Backtest専用のモンテカルロ（デフォルト512サンプル）でも同一APIを利用する。
+- **Codex向けテスト要件（Latency & Slippageモンテカルロ）**:
+  - `tests/unit/test_execution_latency_model.py::test_sample_reproducible_with_seed`で`ExecutionLatencyModel.sample(..., seed)`が決定論的に同一`latency_profile`を返すこと。
+  - `tests/integration/test_execution_model_latency.py::test_apply_p75_quantile_adjustments`で`ExecutionModel.apply(..., quantile=LatencyQuantile.P75)`が`expected_slippage`/`ttl_seconds`にp75補正を適用し、`LatencyQuantile.P95`指定時は更に厳格になること。
 - **Codex向けテスト要件（Spread Fail-Safe）**:
   - `tests/unit/test_spread_monitor.py::test_current_state_missing_symbol`で`SpreadMonitor.current_state(['GBPJPY'])`が`SpreadMonitorNotFound`をraiseし、`logger`が`signal_cycle.spread_state_symbol_not_found`を記録すること。
   - `tests/unit/test_execution_model.py::test_apply_rejects_none_spread_state`で`ExecutionModel.apply(..., spread_state=None, ...)`が`ExecutionModelInputError`をraiseし、呼び出し元が`signal.reject.spread_state_none`ログとともにシグナルをRejectすること。
@@ -1505,9 +1632,9 @@ watchlist: frozenset[str] = StrategyManifestResolver.effective_symbols(
   - cost_R = (cost_pips * pip_value) / stop_distance_quote、ここで stop_distance_quote = |entry - stop|。
   - `ScoringService`は`spread_penalty = cost_R`、`RiskManager`は`cost_pips`を`RiskMetrics`へ記録する。
 - **スリッページ補正**
-  - slippage_pips(t) = mu_slip(symbol, regime) + k * sigma_slip （M1は k=0 で平均値固定）。
-  - 実効約定価格: P_eff = P_close(t) + direction * (0.5 * spread_pips + slippage_pips) * pip_size。
-  - `ExecutionModel`は`expected_slippage`として返却し、`TicketBuilder`がTTL・指値幅を設定。
+  - slippage_pips(t, q) = μ_slip(symbol, regime, session) + z(q) · σ_slip(symbol, regime, session)、ここで`z(q)`は分位`q`の正規化係数（例: p75→0.674、p95→1.645）。分布は`ExecutionLatencyModel`のMonte Carlo結果から推定し、`μ/σ`は週次で再推定する。
+  - 実効約定価格: `P_eff = P_close(t) + direction * (0.5 * spread_pips + slippage_pips(t, q)) * pip_size`。
+  - `ExecutionModel`は`expected_slippage`として`slippage_pips(t, q)`を返却し、`TicketBuilder`がTTL・指値幅・バッファを設定。`q`は`LatencyQuantile`指定（既定p75）で切り替える。
 - **最大ポジションサイズ**
   - lot_risk = (equity * r_per_trade) / (ATR_pips * pip_value)。
   - lot_bucket = bucket_limit_currency / stop_distance_pips。
@@ -1689,23 +1816,29 @@ FillStyle = Literal["ioc", "fok", "gtd"]
 
 <!-- Audit expects the literal strings above for RUN-HITL-01 and Validation Log AC-02. -->
 - **公開API**: `ExecutionModel.apply(raw_signal, market_snapshot, spread_state, *, mode_context)`, `SpreadMonitor.update(spread_frame)`, `SpreadMonitor.current_state(symbols: Iterable[str] &#124; None = None)`。
-- **入力**: `execution_model.yaml`, `SpreadMetrics`, `RegimeState`, `config.execution.*`。
+- **入力**: `execution_model.yaml`, `execution_latency.yaml`（サンプル分布/フィット結果）、`SpreadMetrics`, `RegimeState`, `config.execution.*`。
 - **アルゴリズム**:
-  - **M1 Core**ではヒューマン遅延Δtと滑り補正を`execution_model.yaml`および`config.execution.*`に保持した平均値（例: `execution.human_delay_secs`, `execution.slippage_mean_pips`）で決定し、`MarketFrame`終値を基準に`expected_entry`と`expected_slippage`を算出する。Marketable Limit保護は`protection_pips`定数で指値/TTLを決定し、`ttl_seconds`は`execution.human_delay_secs + execution.ttl_buffer_sec`として決定論的に返す。
-  - **M1.1以降**はヒューマン遅延を`distribution.human_delay`から抽出し、滑り補正をシンボル×レジーム毎のp10/p50/p90から補間する拡張に差し替える。
-  - SpreadMonitorはローリング分位で`SpreadCooldownState`を算出し、`gate_state.market.spread.state`を更新。
+  - **M1 Core**では`ExecutionLatencyModel.sample(...)`がモード×シンボル×レジーム×発注数量で条件付けされた遅延/スリッページ分布（`p50/p75/p90/p95`）を生成し、`ExecutionModel.apply`は指定分位（デフォルトp75）で`ttl_seconds`と`expected_slippage`を決定する。Monte Carlo（既定512サンプル）を併用して`expected_entry`周辺の価格ドリフトを補正し、結果は`execution_adjustments.latency_source='monte_carlo_v2'`として監査に記録する。
+  - 分布パラメータは`execution_model.yaml::latency_profiles`および`slippage_profiles`で管理し、`reports/performance/live_fill_stats.parquet`から週次再推定されたパラメータを`poetry run exec-model recalibrate --from reports/performance/live_fill_stats.parquet`で反映する。再推定後は`docs/runbooks/RUN-EXEC-02.md`の承認サインを添付して`cfg_hash`を更新する。
+  - SpreadMonitorはローリング分位で`SpreadCooldownState`を算出し、`gate_state.market.spread.state`を更新。Monte Carlo結果が`spread.guard_override`閾値を超える場合は`ExecutionModel.apply`が`ExecutionRuleViolation('slippage_p95_exceeded')`を返し、上流でReduce-Onlyへ遷移する。
+- **再キャリブレーションパイプライン**:
+  - CLI `tradectl execution recalibrate --from reports/performance/live_fill_stats.parquet --window 30d --out config/execution_model.calib.yaml`が最新ライブfills（`actual_fill_imported`イベント）を集計し、シンボル×レジーム×セッション別の遅延・スリッページ分布を再推定する。
+  - キャリブレーション結果は`execution_model.calib.yaml`として保存し、起動時に`ExecutionLatencyModel`が`latency_profiles`へマージする。p95遅延が`config.execution.latency_alert_threshold_sec`を超えた場合は`execution.latency_alert`イベントを発火し、Health Monitorへ`reason='execution_latency_drift'`を通知する。
+  - CIジョブ`poetry run exec-model validate --config execution_model.calib.yaml`でモーメントとサンプル数（>=100）を検証し、失敗時は`CalibrationValidationError`をraiseして既存パラメータを維持する。
 - **出力**: `ExecutionAdjustments`（expected_entry, expected_slippage, fill_style, ttl_seconds, drift_guard_R）のみを返却し、後段のPositionSizer/TicketBuilderが消費する。
 - Spread監視やガード判定が必要な場合は、呼び出し側が`SpreadMonitor.current_state()`を個別に参照し、戻り値に混在させない。
 - **データフロー**: `GateAggregator.snapshot()`は`SpreadMonitor.current_state(symbols=None)`を呼び出してGateStateへ`dict[str, SpreadState]`を埋め込み、CLI `tradectl board`は同スナップショット経由でSpreadチェックリスト表示を更新する。監査ログ（`TicketIssued`/`ticket.action`）および`AuditWriter`はGateStateに保持された`spread_state`をそのまま記録し、`SpreadSnapshot`はCLIツールチップ向けに`current_state(symbols=[symbol])`で得た値を整形するだけとする。
 - **M1 Core整合性**: `ExecutionAdjustments`の全フィールドを決定論的に供給し、Risk Manager/PositionSizer/Scoringが`expected_entry`/`ttl_seconds`を必須前提として参照できるようにする。M1.1で確率分布化する際も同じAPIシグネチャを維持する。
 - **エラーハンドリング**: Spreadデータ欠損で`SpreadDataDegraded`→`HealthMonitor.degraded`。Market snapshot不足は該当シグナルを拒否。
 - **ModeContext連携**: `ctx.execution_profile.latency_distribution`と`ctx.execution_profile.broker_rules`を参照して`ttl_seconds`/`fill_style`を決定し、`ctx.deterministic_seed`から生成した`rng`でPaper/Liveの遅延サンプルを固定化する。`ctx.clock.now()`は期待約定時刻のタイムスタンプ源、`ctx.profile.execution.slippage_overrides`はシンボル別スリッページ閾値を切り替える。生成した補正値とログは`ctx.audit_channel.execution`へ書き込み、Backtest再生とLive証跡で同一シードが復元できるようにする。
+- **LatencyQuantile定義**: `execution.latency.LatencyQuantile = Literal["P50","P75","P90","P95"]`。`ExecutionModel.apply`は分位ラベルを指定して`ttl_seconds`/`expected_slippage`を決定し、監査ログでは`execution_latency.quantile`として保存する。
 
 #### APIインターフェース一覧
 | API/関数 | 入力 | 処理 | 出力 | 異常系 |
 | --- | --- | --- | --- | --- |
 | `ExecutionModel.apply(raw_signal, market_snapshot, spread_state, *, mode_context)` | `RawSignal`, 市場スナップショット（価格、ボラ指標）、Spread状態、実行設定、`ModeContext` | 遅延・滑り補正計算→TTL/保護幅決定→`ExecutionAdjustments`生成（モード別ログ/乱数シードを考慮） | `ExecutionAdjustments`のみ（後段のPositionSizerが参照） | 市場データ欠落/`spread_state is None`/辞書未登録シンボル: `ExecutionModelInputError`（呼び出し側でFail-FastしRejectログを残す）。ブローカー制約違反: `ExecutionRuleViolation` |
 | `ExecutionModel.validate_config(config)` | `execution_model.yaml`, 許容範囲設定 | 設定スキーマ検証→危険値（遅延>90s等）を警告→監査記録 | `ValidationReport` | スキーマ不正: `ExecutionConfigError` |
+| `ExecutionLatencyModel.sample(*, mode, symbol, regime, trade_size, seed)` | 運用モード、シンボル、レジーム、発注数量、決定論シード | ティックデータ/ライブ約定統計を基に分布フィット→`LatencyProfile(p50/p75/p90/p95)`生成 | `LatencyProfile` | 分布未学習: `LatencyProfileUnavailable`（Fail-Fastして`ExecutionModel`がReduce-Onlyを返す）、入力範囲外数量: `LatencyProfileOutOfRange` |
 | `SpreadMonitor.update(spread_frame)` | `SpreadMetrics`（最新スプレッド、分位、時間）、閾値設定 | ローリング統計更新→`cooldown_state`遷移→EventBus通知 | `SpreadCooldownState` | データ欠落: `SpreadDataDegraded` |
 | `SpreadMonitor.current_state(*, symbols: Iterable[str] &#124; None = None)` | 監視対象シンボル（省略時は全シンボル） | 内部キャッシュから最新`SpreadState`辞書を構築し、`symbols`フィルタを適用。戻り値はGateState/CLI/監査ログで共通利用する。 | `dict[str, SpreadState]` | 未初期化: `SpreadMonitorNotInitialized`（上流は全シグナルReject）。欠損シンボル: `SpreadMonitorNotFound`（該当シグナルをRejectし、`signal.reject.spread_state_missing`ログ必須） |
 | `SpreadMonitor.sample(symbol)` | シンボル、ウィンドウ長 | 現在状態と履歴サマリを返却 | `SpreadSample`（state, p95, p99, duration） | シンボル未登録: `SpreadMonitorNotFound` |
@@ -1729,6 +1862,9 @@ FillStyle = Literal["ioc", "fok", "gtd"]
 - **アルゴリズム（M2+）**: `hybrid_score = w_recency·PF_recent + w_global·PF_all − λ·DD_all − γ·(1-Stability) − δ·swap_penalty − ε·spread_penalty`。`Stability`は±10%パラメータ摂動で再計算し、`stability_cache.parquet`に保持。Feature Flag `scoring.hybrid_enabled`が真の時のみ適用。
 - **制約**: `config.scoring.max_signals_per_symbol`で上限管理。スコア閾値未満は`RejectedSignal(low_score)`として破棄。ハイブリッド有効時は`RankedSignal.hybrid_components`を監査ログへ出力し、M1では`base_components`のみ出力。
 - **モニタリング**: M1は`metrics/scoring_base.jsonl`にランキング結果と係数を記録。M2+では`metrics/scoring_hybrid.jsonl`へ構成要素を出力し、AC-07〜AC-09/AC-16用の統計値（PF_recent, PF_all, Stability Score, ランク反転率）をダッシュボードへ提供。
+- **ライブ/バックテスト乖離ガード**: `ScoringService`は`PerformanceLiveGuardStore`（§3.20）から`pf_trailing_live`/`pf_trailing_backtest`を取得し、乖離率`delta_pf = pf_live / pf_backtest`が`config.scoring.max_pf_drift`を超えた場合はスコアに`drift_penalty = κ · |1 - delta_pf|`（既定κ=0.35）を適用。Paper遅延や許容ProjectAlpha調整を反映するため、閾値とκは`config/scoring.yaml`で調整し、逸脱時は`ranked_signal.ui_hints['live_drift']`に差分を記録する。
+- **エッジバランサ**: ボラティリティ極端期にスコア偏重が発生しないよう`volatility_score = f(regime_state, realized_vol)`を導入し、`expected_R`へ上限バリア`expected_R_capped = min(expected_R, config.scoring.max_expected_r)`を適用。回帰テスト`tests/unit/test_scoring_expected_r_cap.py`で上限挙動を固定する。
+- **Scoreboard連携**: 週次処理で`ScoringService`が`metrics/strategy_scores.jsonl`へ戦略別`alpha_score_prelim`を出力し、付録G.1のStrategy Scoreboard Serviceが同値を取り込み`watchlist`判定に利用する。`alpha_score_prelim`は`RankedSignal`に含まれない集計値だが、`tradectl scoring diagnostics`経由で閲覧できる。Scoreboardが`watchlist`に指定した戦略は`StrategyEngine`へ`strategy_ctx.flags.watchlist=True`として伝播し、リクス審査とReporterコメント欄へ反映される。
 
 #### APIインターフェース一覧
 | API/関数 | 入力 | 処理 | 出力 | 異常系 |
@@ -1737,6 +1873,11 @@ FillStyle = Literal["ioc", "fok", "gtd"]
 | `BaseScoring.calculate_components(signal, stats, penalties)` | シグナル、戦略統計、Spread/Swap/遅延ペナルティ | 各コンポーネント（expected_R, PF_all, drawdown_penalty, spread_penalty）を算出 | `ScoreComponents` | データ不足: `ScoreComponentMissing` |
 | `RankingEngine.apply_thresholds(signals, config)` | `RankedSignal[]`, 閾値設定 (`min_score`, `max_per_symbol`, `max_drawdown`) | フィルタリング→順位調整→ボード表示順決定 | フィルタ済み`RankedSignal[]` | 設定矛盾: `RankingConfigError` |
 | `StabilityScoring.score(signal_history, perturbation)` | 戦略別履歴、摂動幅、`lookback_bars` | ±摂動でリプレイ→変動率をスコア化→`stability_flag`付与 | `StabilityScore` | 履歴不足: `StabilityDataError` |
+| `ScoringDiagnostics.generate(report_window)` | `metrics/scoring_base.jsonl`, `metrics/performance_live_guard.jsonl`, `reports/backtest/*/metrics.json` | ランク反転率、PF乖離、リジェクト理由トップを集計→Markdown生成 | `ScoringDiagnosticsReport`（path, stats） | メトリクス欠損: `ScoringDiagnosticsError` |
+
+- **Codex向けテスト**:
+  - `tests/unit/test_scoring_live_drift_penalty.py::test_penalty_applied_when_live_pf_below_threshold`で`delta_pf`が設定閾値未満のとき自動ペナルティが加算され、`ui_hints['live_drift']`に差分が記録されること。
+  - `tests/integration/test_scoring_diagnostics.py::test_generate_report_aggregates_metrics`で`ScoringDiagnostics.generate`がPF乖離・Spreadペナルティの集計をMarkdownへ出力すること。
 
 ### 3.8 RiskManager (`src/risk/manager.py`)
 - **公開API**: `evaluate(ranked_signals, context)`, `kill_switch_state()`, `capture_snapshot()`。
@@ -1750,7 +1891,13 @@ FillStyle = Literal["ioc", "fok", "gtd"]
   6. `SpreadMetrics`と`RiskPolicy.spread_max_pips`比較。
   7. `margin_estimate` vs `available_margin`。
   8. SPRT（M2+）。
-- **出力**: `RiskVettedSignal`、`RiskAlert`（`drawdown`, `bucket_limit`, `r_eff`, `margin`）、`RiskMetricsSnapshot`（`bucket_exposures`, `correlation_matrix_hash`, `r_eff`, `ts`。EventBusでは`risk.metrics_snapshot`として配信）。Reject理由は`risk_flags`に列挙し、Signal Boardがインラインで表示できるよう`ui_hints`（`severity`, `bucket`, `r_eff_delta`）を添付する。
+  9. **LivePerformanceGuard**（新設）: `PerformanceRepository.trending_metrics(strategy_id, window=4w)`と`latency_stats.json`を参照し、`PF_trailing`/`Sharpe_trailing`/`latency_p75`が`LATENCY-LIVE-GUARD`シナリオ閾値を下回る場合は`risk_flags=['live_perf_drift']`を付与してReduce-Onlyへ遷移。逸脱が連続2週続いた場合は`KillSwitchReview`イベントを発火し、`BoardModeGuard`へ`recommended_mode='guarded'`を伝搬する（Runbook `RUN-RISK-07`）。
+- **出力**: `RiskVettedSignal`、`RiskAlert`（`drawdown`, `bucket_limit`, `r_eff`, `margin`, `live_perf_drift`）、`RiskMetricsSnapshot`（`bucket_exposures`, `correlation_matrix_hash`, `r_eff`, `live_pf`, `live_sharpe`, `latency_p75`, `ts`。EventBusでは`risk.metrics_snapshot`として配信）。Reject理由は`risk_flags`に列挙し、Signal Boardがインラインで表示できるよう`ui_hints`（`severity`, `bucket`, `r_eff_delta`, `live_perf_gap`）を添付する。
+- **LivePerformanceGuard依存データ**: `PerformanceRepository.trending_metrics`（週次PF/Sharpe/HitRate/MaxDDトレンド）、`ExecutionLatencyModel.recent_stats`（p50/p75/p95）、`reports/research/m1_baseline/validation_latest/live_guard.json`。構成設定は`risk.live_guard.config.yaml`で管理し、窓長（既定28日）、ウォームアップ取引数（既定30）、閾値（`pf_threshold`, `sharpe_threshold`, `latency_p75_threshold`）を定義する。CLI `tradectl performance live-guard`はこの設定を読み込み、`live_guard.json`と`metrics/performance_live_guard.jsonl`を生成してRisk Managerへ供給する。
+- **Codex向けテスト**:
+  - `tests/unit/test_live_performance_guard.py::test_reduce_only_on_pf_breach`で`PF_trailing`が閾値未達のケースに`risk_flags=['live_perf_drift']`が付与され、`recommended_mode='guarded'`がSignal Boardへ渡ること。
+  - `tests/unit/test_live_performance_guard.py::test_kill_switch_review_after_two_windows`で逸脱が連続2ウィンドウ継続した場合に`KillSwitchReview`イベントと`RiskAlert(type='live_perf_drift')`が発火すること。
+  - `tests/integration/test_risk_snapshot_event.py::test_snapshot_includes_live_perf_fields`で`risk.metrics_snapshot`のペイロードに`live_pf`/`live_sharpe`/`latency_p75`が含まれることを検証する。
 - **Kill Switch**: 連続ドローダウンで`soft_stop(drawdown)`→Spread/CorrelationによるReduce-Only提案（M2+）を指示。`r_eff`逸脱が継続する場合はKill Switchへ`reason='r_eff_guard'`を伝搬し、解除時は`RiskMetricsSnapshot`（`risk.metrics_snapshot`）の`r_eff<=threshold`が2バー連続で確認できたことを条件とする。
 - **資本整合性チェック**: `RiskPolicy`に`base_capital_jpy`と`trade_frequency_estimate`を保持し、月次ジョブ`RiskSimulationJob`（CLI: `tradectl risk simulate --trials 10000 --horizon 252d`）が最新Paper実績（勝率/平均R/相関）をサンプルしてモンテカルロ試算を実行する。`Prob(max_drawdown>15%)`と`Prob(equity<0.8·base_capital)`を計算し、閾値（0.25/0.05）を超えた場合は`health.raise('degraded','risk_capital_gap')`→Kill Switchレビューをトリガーする。結果は`reports/risk/capital_adequacy/<YYYYMM>.md`へMarkdown出力し、PO＋Ops ManagerがRunbook `RUN-RISK-01`の月次レビュー節でサインする。
 
@@ -1771,6 +1918,7 @@ FillStyle = Literal["ioc", "fok", "gtd"]
   - `processing_delay_p95`や`processing_timeout_sec`の逸脱は`code='data_latency_processing'`で記録し、推奨アクションとして`runbook:RUN-DATA-05#processing_fallback`と`notify:ops`を付与する。`ManualCsvIngestionTask`や再処理はRunbook承認後に実行し、解除も`tradectl board --normal`を人手で行う。
   - データ取得が停止し`fetch_gap_sec>config.ingestion.fetch_timeout_sec`の場合は`severity='critical'`, `recommended_action='runbook:RUN-DATA-05#kill_switch_review'`で`AlertEvent`を生成し、Ops/POがRunbook `RUN-RISK-01`の審査手順で`tradectl kill-switch engage --reason data_feed_unavailable`実行可否を判断する。自動でKill Switchへ伝搬しない。
   - `catch_up_lag_minutes>config.ingestion.catch_up_warn_minutes`で`warn`レベルの`AlertEvent`を発行し、20分超過では`recommended_action`に`notify:ops`を、30分超過では追加で`pager:ingestion`, `runbook:RUN-DATA-06#guarded_checklist`を設定する。オペレータはRunbook記録に測定値、代替ソース実施状況、承認者サイン、手動実行した`tradectl board --guarded`/`tradectl board --normal`コマンドのログを必須項目として追記する。`catch_up_lag_minutes<30`が連続3回確認できた場合にのみ`degraded_recovered`イベントへ測定スナップショットとRunbook参照を添付して手動解除する。
+  - `execution.latency_alert`イベント（§3.6）を受信した場合は`code='execution_latency_drift'`で`HealthState=degraded`とし、`recommended_action=['runbook:RUN-EXEC-02#recalibrate','cli:tradectl kill-switch review --reason execution_latency']`を提示。解除は`tradectl execution recalibrate`で新パラメータ適用後、Live Guardが2日連続で閾値内に戻ったことを確認する。
   - `health.status=degraded`が`business_days_since(last_ok)≥3`または`rolling_30d_degraded_count≥2`を満たした際は`health.escalate`イベントを`runbook:RUN-DATA-05#escalation_review`付きで出力し、Ops Manager主導のレビュー会議を要求する。`business_days_since(last_ok)≥5`または週次KPIレビュー2回連続で`degraded`が解消されない場合でもKill Switch/Board Guard遷移は自動化せず、レビュー結果を踏まえて人間がコマンドを実行する。
 - **HealthStateStore & BusinessCalendar**:
   - `HealthStateStore`（`src/core/health_store.py`）で`data/health/state.json`（最新状態サマリ）、`data/health/history.jsonl`（全遷移履歴）、`data/health/degraded_ack_ledger.jsonl`（`degraded_ack.registered`イベント承認台帳）を管理する。`state.json`は`{"current_state","last_ok_ts","rolling_30d_degraded_count","business_days_since_last_ok"}`を保持し、`history.jsonl`は`{"ts","from","to","reason","alert_id","runbook_ref"}`を1行ずつ追記する。
@@ -1910,6 +2058,8 @@ Runbook references: RUN-FUND-01 (daily update), RUN-FUND-02 (degraded ops)
 - **CLIパラメータ整合**: `tradectl ticket approve`で使用する`--id`/`--double-entry`/`--comment`/`--note`/`--ack-only`/`--runbook-ref`各オプションは`TicketAction`ペイロードの`ticket_id`、`double_entry_user`、`manual_comment`, `notes[]`, `ack_only`, `runbook_ref`と一対一対応する。CLIは受け取ったオプションをそのまま`ticket.checklist.ack`イベントと監査ログ`cli_command`へ引数順序固定で書き出し、チェックリスト項目と突合させる。
 - **チェックリスト定義**: 下表の項目は全て`mandatory=true`で、検証ロジック/Runbook紐づけを固定する。`ChecklistBuilder`は順序崩れやラベル改変を検知した場合`ChecklistInvariantError`（新設予定の例外）を送出し、監査ログとCLI双方の整合を守る。`GateState.human`の`double_entry_required`/`required_roles`/`ack_deadline`/`comment_min_length`はChecklist入力へ直接伝播し、CLI・監査ログともに同値で記録される。
 - **Spread状態の連鎖**: Workflow Orchestratorは`GateAggregator.snapshot()`で取得した`gate_state.market`に`SpreadMonitor.current_state(symbols=None)`の戻り値を保持し、`TicketBuilder`は`gate_state.market.per_symbol.get(sized_signal.symbol)`を優先、無い場合は`gate_state.market.spread`を参照してSpread判定を行う。CLI `tradectl board`/`ticket inspect`は同じGateStateからSpreadチェックリストを描画し、`AuditWriter`は`TicketIssued`および`ticket.action`イベントに`spread_state`をそのままエンコードして監査ログへ記録する。
+- **Reduce-Onlyアドバイザ連携**: `TicketBuilder`は`reduce_only_advisor.evaluate(sized_signal, gate_state, latency_profile)`（M1.1準備）の戻り値を受け取り、`should_reduce_only=True`の場合はチケットに`reduce_only`バッジを付与し、Checklistへ`reduce_only_reason`行を追加。M1 Coreでは`reduce_only_advisor`スタブが常に`False`を返すが、インターフェースを先行定義することでM1.1での自動縮小提案を安全に導入できる。CLIおよび監査ログは`advisor_recommendation`フィールドを出力し、手動判断の証跡とする。
+- **Codex向けテスト**: `tests/unit/test_ticket_builder_reduce_only.py::test_advisor_recommendation_applied`でアドバイザがReduce-Onlyを推奨した際にバッジとChecklist項目が追加されること、`tests/approval/cli/board`スナップショットも新バッジ表示を検証する。
 
 | フィールド名 (`checklist[].field`) | CLI表示ラベル | 必須 | 検証ルール | Runbook/検証スクリプト連携 |
 | --- | --- | --- | --- | --- |
@@ -1984,6 +2134,8 @@ Checklist (mandatory items marked with *):
 - **拡張要素の段階的有効化**: Spread統計、Correlationガード履歴、Resync/StressTest/Journal要約、Kill Switchログ、Config差分はFeature Flag `feature_flags.reporter.enable_extended_blocks`配下で管理し、既定`False`（M1 Core）とする。M1.1以降で同FlagをON、または派生Flag（例:`reporter.enable_spread_cooldown_block`, `reporter.enable_kill_switch_block`）を用意して順次解放する。Flagが無効の場合は対応ブロックをスキップし、テンプレートには`<!-- deferred:M1.1 -->`コメントを残すのみとする。
 - **依存**: M1 Coreでは`PerformanceStats`、`reports/performance/paper|live/*.parquet`、`logs/events`（主要コメント抽出のみ）に限定する。Feature Flag有効時にのみ`metrics/pipeline.jsonl`、`kill_switch_events.jsonl`、`config/diff/`を追加読み込みする。
 - **リスク概要/キルスイッチ連携**: `RiskSummaryBuilder`はM1.1で有効化し、Flag無効時は`RiskSummaryStub`が`None`を返す。M1.1では`risk_policy.yaml`の閾値と`kill_switch_events.jsonl`を集計し、逸脱時に`[ALERT]`バッジを付与、閾値変更は`reports/risk/threshold_change_<date>.md`へのリンクを付ける。
+- **ライブ性能ガードサマリ**: `generate_weekly`は`PerformanceLiveGuardStore`（§3.20）から直近4週間分の`PF_trailing`/`Sharpe_trailing`/`latency_p75`を取得し、`Live Guard`セクションをMarkdownへ挿入。閾値未達時は`[ACTION REQUIRED] BoardMode=guarded`バナーと`RUN-RISK-07`リンクを表示し、`KillSwitchReview`チケットID（存在する場合）へのハイパーリンクを追加する。
+- **トレーダー行動ログ**: `Reporter`は`logs/ops/workload.log`と`ops_worklog.json`を読み出し、HITL操作時間やReduce-Only提案の採用率を`Human-in-the-Loop`節へ追記。スプレッド異常やAcceptable Degradation状態の解除に要した時間も一覧化する。
 - **同期メタデータ**: `kpi_snapshot_version`のみをM1 Coreで記録し、Feature Flagが有効化された際に`threshold_version`や`extended_block_version`を追加する。`tradectl risk status`はメタデータ齟齬を監視し、Flag無効時は拡張フィールドを`not_applicable`表示とする。
 - **コメント欄入力フロー**: `generate_weekly`は`reports/weekly/templates/m1_core.md`のコメント欄を空で出力する。Quant Leadが日曜18:00 JSTまでに`docs/review_log.md`(AB-<WW>)へA/B結果を記録しMarkdownへ反映、Ops Managerが月曜08:30 JSTまでに`tradectl ops agenda --date <Mon>`の結果とRunbook `RUN-PERF-01`/`RUN-RISK-01`を突合して次週ToDo欄を確定する。締切後の修正はレビュー記録へ`Update:`追記し、Product Ownerが09:00レビューでサインする。
 
@@ -1995,6 +2147,11 @@ Checklist (mandatory items marked with *):
 | `Reporter.emit_summary()` | 最新統計、Feature Flag状態 | サマリJSON組立→Signal Board/CLI向けに返却 | `ReportSummary`（metrics, status） | 集計失敗: `ReportSummaryError` |
 | `BenchmarkMonitor.sync(feed_source)` | 外部ベンチマーク設定、取得期間 | フィード取得→キャッシュ保存→Reporterへ連携 | `BenchmarkSyncResult` | API失敗: `BenchmarkSyncError` |
 | `BenchmarkCLI.compare(profile, range)` | CLI引数（基準、期間、フォーマット） | ベンチマークと戦略成績比較→CLI出力 | 表形式/JSON出力 | 比較対象欠落: `BenchmarkCompareError` |
+| `Reporter.generate_live_guard_section(strategy_id, window)` | 戦略ID、評価ウィンドウ、`PerformanceLiveGuardStore` | `PF_trailing`/`Sharpe_trailing`/`latency_p75`を整形→Markdown/JSON構造体 | `LiveGuardSection`（summary, breaches, recommended_actions） | データ欠損: `LiveGuardDataMissing` |
+
+- **Codex向けテスト**:
+  - `tests/unit/test_reporter_live_guard.py::test_section_highlights_breach`で閾値未達時に`[ACTION REQUIRED]`バナーが生成され、RunbookリンクとKillSwitchチケットIDが挿入されること。
+  - `tests/integration/test_reporter_weekly.py::test_human_in_loop_metrics_present`でHITL作業時間とReduce-Only採用率が`Human-in-the-Loop`節へ出力されることを検証。
 
 #### 3.18.1 Benchmark Monitor & Feed Loader (`src/reporter/benchmark.py`, `src/interfaces/cli/benchmark.py`)
 - **目的**: 市販シグナルツールとの比較KPIを算出し、`reports/benchmark/<YYYYWW>.md`および`reports/governance/benchmark_review/<YYYYQ>.md`へ自動反映する。
@@ -2022,6 +2179,7 @@ Checklist (mandatory items marked with *):
 | --- | --- | --- | --- | --- |
 | `risk.per_trade` | `0.0075` | dangerous | 次バー適用 (`NextBarChangeQueue`) | M1上限0.75%。変更時は監査ノート必須。 |
 | `risk.daily_loss`, `risk.weekly_loss` | `-0.025`, `-0.05` | dangerous | 次バー適用 | Kill Switch閾値。解除には手動承認が必要。 |
+| `risk.live_guard.{pf_threshold, sharpe_threshold, latency_p75_threshold}` | `1.08`, `0.9`, `120` | dangerous | 次バー適用 | ライブ性能ガード閾値。変更時はRunbook `RUN-RISK-07`でModel Governanceレビューを実施し、`metrics/performance_live_guard.jsonl`と証跡を更新する。 |
 | `gates.spread_max_pips` | `1.5` | dangerous | 次バー適用 | Spread guardの即時停止を防ぐため遅延適用。 |
 | `strategies[].weight` | `0.6/0.4` | safe | 即時反映 | 変更は`StrategyRegistry`へbroadcast。 |
 | `strategies[].params` | 戦略依存 | safe | 即時反映 | 変更履歴は`ConfigChanged`に記録。 |
@@ -2109,12 +2267,15 @@ Checklist (mandatory items marked with *):
 | `scripts/backup.sh` | バックアップ | `data/`と`logs/events/`を外部ストレージへ同期 | LaunchAgent化予定 |
 | `scripts/restore_snapshot.sh` | 復旧 | 指定スナップショットを復元し`tradectl resync`を実行 | ドリルトレーニングで利用 |
 | `scripts/preflight.sh` | プレフライト | 起動前にチェック項目を実行し結果をJSONで出力 | `tradectl preflight`から呼び出し |
+| `tools/scripts/config_init.py` | 設定雛形生成 | `make config-init`で`config/*.yaml`テンプレを展開し、`TODO`コメントを追記 | `CONFIG-SCAFF-01`で初期導入。実行後は`poetry run schema-validate`必須 |
+| `tools/check_ops_readiness.py` | Ops証跡検証 | `make check-ops-readiness`で`config/ops_readiness.yaml`とEvidenceパスの存在/更新日時を確認 | 週次Opsレビュー前に実行し、結果を`ops_worklog`へ記録 |
 | [docs/templates/incident_report.md](docs/templates/incident_report.md) | 事故レポート | 障害対応後の振り返り | Runbook付録参照 |
 | [docs/templates/config_change.md](docs/templates/config_change.md) | 設定変更計画 | 危険設定変更時の計画書 | Configレビューで必須 |
 | [docs/templates/release_announcement.md](docs/templates/release_announcement.md) | リリース告知 | リリース前日連絡テンプレ | §13.7参照 |
 
 - 各スクリプトには`--dry-run`オプションを持たせ、運用前に影響を確認できるようにする。
 - ドキュメントテンプレートはリポジトリに保存し、Pull Requestテンプレート(`.github/PULL_REQUEST_TEMPLATE.md`)から参照する。
+- `make check-ops-readiness`は`tools/check_ops_readiness.py`を実行し、Evidenceファイル欠損や更新遅延を検知した場合は`OpsEvidenceMissing`イベントを発火、Runbook `OPS-READINESS-01`で追跡する。
 
 #### ガバナンス系サービスのM1スコープガード
 - `src/scoreboard/`, `src/ideas/`, `src/ops_readiness/`, `src/governance/`, `src/reconciliation/`配下のサービスはM1ではスタブとしてのみ配置する。
@@ -2148,6 +2309,9 @@ Checklist (mandatory items marked with *):
 - **イベント/連携**: 健全性変更やScoreboard連携は行わない。Kill SwitchやReporterとの連携もスタブ。
 - **依存関係**: Scheduler登録は`jobs_stub.py`で`logger.info("ops_readiness job skipped (M1)")`を出力するのみ。HealthMonitorはこのスコアを参照しない。
 - **M2+実装**: 証跡評価やKill Switch連携のロジックは付録G.3を参照。
+- **M1手動運用**: 週次Opsレビュー（Runbook `OPS-READINESS-01`）で`reports/governance/ops_readiness_<YYYYWW>.md`テンプレートを手動更新し、バックアップ演習/手動復旧ドリル/incident postmortem完了状況をチェックボックス形式で記録する。評価結果は週次レポート（§3.18）とStrategy Scoreboard（付録G.1）へ貼り付け、`ops_readiness_score`が`min_score`未満の場合はPO/Ops Manager/Quant Leadが`KillSwitchReview`の必要性を判断し`ops_worklog`へ記録する。M1では自動Kill Switch連携を行わず、レビューログとRunbook署名を`reports/governance/ops_readiness_<YYYYWW>.md`に残す。
+- **テンプレート**: 雛形は`docs/governance/ops_readiness_TEMPLATE.md`として管理し、`make ops-readiness-init WEEK=2025-W10`で複製するスクリプトを提供する。テンプレには`evidence_paths`, `reviewers`, `follow_up_tickets`欄を備え、Scoreboard/Reporterが参照するハッシュを記録する。
+- **証跡検証**: Opsレビュー前に`make check-ops-readiness`を実行し、`config/ops_readiness.yaml`とEvidenceパスの存在/更新時刻を検証する。エラー時は`OpsEvidenceMissing`イベントを記録し、Runbook `OPS-READINESS-01#evidence_recovery`に従って補完する。
 
 ### 3.28 Model Risk Register Service Stub (M2+)
 - **M1実装**: `ModelRiskRegisterServiceStub`（`src/governance/model_risk_stub.py`）。
@@ -2385,6 +2549,10 @@ FillStyle = Literal["ioc", "fok", "gtd"]
 - `docs/schemas/cfg.schema.json`（`config/README.md`で参照）で型/範囲検証。`apply_patch`時は`jsonschema`+独自検査（丸め、閾値相互制約）。`CONFIG-SCAFF-01`で雛形作成時に同スキーマを`schema/`シンボリックリンク経由で参照できる状態を保証する。
 - `strategy_manifest.yaml`のキー構成は下表を参照。Manifestは§6.7 Config Governanceのレビュー対象であり、戦略順序・有効化状態の単一情報源となる。
 - `config/brokers/error_map.yaml`はAPIエラー→`trigger_reason`正規化テーブル。CIでは`pytest -k broker_orders`（`tests/unit/test_order_recovery_planner.py`予定）と`make check-validation --category broker_orders`で検証し、`docs/schemas/broker_error_map.schema.json`（新設, Appendix参照）と`pydantic` `BrokerErrorDescriptor`で整合を強制する。Runbook `RUN-BROKER-API-02`と証跡パスの同期が必須。
+- `config/scoring.yaml`はスコアリング係数（α/β/δ/ε）、`max_pf_drift`、`max_expected_r`、`volatility_score`係数、`diagnostics`出力設定を保持する。更新時は`poetry run schema-validate config/scoring.yaml --schema docs/schemas/scoring_config.schema.json`を必須とし、Runbook `RUN-SCORE-01`でダブルサイン。
+- `config/scoreboard.yaml`は付録G.1の閾値（`alpha_threshold`, `decay_threshold`）と重み、`watchlist`ルールを定義し、`Strategy Scoreboard Service`の週次ジョブが参照する。
+- `config/ops_readiness.yaml`はOps評価重み・必須証跡パス・Runbook参照を保持し、M1は手動更新（§3.27）だがスキーマ検証のみ先行させる。
+- `config/risk_live_guard.yaml`（§4.4.3）はライブ性能ガード閾値を管理し、`tradectl performance live-guard`と`RiskManager`が共通参照する。
 
 #### 4.4.1 `strategy_manifest.yaml`
 
@@ -2425,9 +2593,33 @@ FillStyle = Literal["ioc", "fok", "gtd"]
   - `evidence_path_template`: `Path`。`<order_id>`プレースホルダ必須。`OrderCompletionReceipt.evidence_paths`の親ディレクトリとして利用される。
   - `required_context`: `list[str]`。要素は`[a-z0-9_]+`で、`RecoveryPlan.error_context.context_data`に存在しないキーが指定された場合は`ValidationError`を発生させ`unknown_error`へフォールバック。
   - `notes`: 任意の`list[str]`。DocOpsがRunbook更新やCI追加時に使用する。内容は`<=256`文字に制限。
-- **CI/テスト**:
-  - `pytest -k broker_orders`：`tests/unit/test_order_recovery_planner.py::test_error_code_mapping`で`trigger_reason`/`retry_policy`の組み合わせと`required_context`必須性を確認（§84.6参照）。
-  - `pytest -k json_schema_validation`：`tests/schema/test_json_schema_validation.py`に`BrokerErrorMapValidator`ケースを追加し、`docs/schemas/broker_error_map.schema.json`でYAML→JSON変換結果を検証。
+  - **CI/テスト**:
+    - `pytest -k broker_orders`：`tests/unit/test_order_recovery_planner.py::test_error_code_mapping`で`trigger_reason`/`retry_policy`の組み合わせと`required_context`必須性を確認（§84.6参照）。
+    - `pytest -k json_schema_validation`：`tests/schema/test_json_schema_validation.py`に`BrokerErrorMapValidator`ケースを追加し、`docs/schemas/broker_error_map.schema.json`でYAML→JSON変換結果を検証。
+
+#### 4.4.3 `risk.live_guard.config.yaml`
+- **役割**: ライブ性能ガード（§3.8, §5.15, §6.5, §9.4.3）の閾値・窓設定を環境別に一元管理し、CLI/Risk Manager/Reporterへ共通値を提供する。
+- **ファイル構造**:
+  ```yaml
+  version: 1
+  window_days: 28        # ローリング評価日数
+  warmup_trades: 30      # 閾値判定前に必要な取引数
+  pf_threshold: 1.08     # PF_trailing下限
+  sharpe_threshold: 0.90 # Sharpe_trailing下限
+  latency_p75_threshold: 120 # 秒。p75遅延がこの値を超過した場合Reduce-Only推奨
+  live_guard_mode: paper # default評価モード
+  notify:
+    kill_switch_review: true
+    ops_agenda_task: true
+  runbook_ref: RUN-RISK-07
+  ```
+- **バリデーション要件**:
+  - `window_days`: `PositiveInt`（14〜60）であること。閾値外は`ConfigValidationError('window_days_range')`。
+  - `pf_threshold`: `Decimal`（1.0〜2.0）。`sharpe_threshold`: `Decimal`（0.6〜1.5）。`latency_p75_threshold`: `PositiveInt`（60〜240）。いずれも`dangerous`区分（§3.19.1）でNext Bar適用。
+  - `warmup_trades`: `PositiveInt`（>=15）。`tradectl performance live-guard`はウォームアップ未満時に`ERROR live_guard.warmup_incomplete`を返す。
+  - `notify.kill_switch_review`: `bool`。`true`の場合、Risk Managerが閾値逸脱連続2ウィンドウで`KillSwitchReview`イベントを発火。
+  - `runbook_ref`: `RUN-RISK-07#<step>`形式。`DocLint`でアンカー確認。
+- **運用**: Config変更は`GOV-STRAT-01`レビューに加え、`RUN-RISK-07`の「閾値変更」節でPO/Quant/Opsがダブルサイン。変更後は`tradectl performance live-guard --strict`を即時実行し、結果ログを`reports/validation_log/live_guard_threshold_change_<date>.md`に添付する。
   - `make check-validation --category broker_orders`：`validation_playbook/AC41_broker_orders.yaml`のエントリと`evidence_path_template`の整合をチェック。Runbook/DocOps更新漏れがある場合はCIを失敗させる。
 
 
@@ -2517,6 +2709,8 @@ FillStyle = Literal["ioc", "fok", "gtd"]
 | any | ok | 手動`ack` + 状態確認 | 新規シグナル再開、Alert履歴更新 | `HealthMonitor.ack`でアラートクローズ |
 
 ModeController遷移: `BACKTEST ↔ PAPER ↔ LIVE`は`active_jobs=0`かつ未処理チケット無しを前提に実行し、前提未満では`TransitionRejected`イベントで理由（open tickets, pending resync等）を通知する。
+
+- **レビュー証跡生成**: `soft_stop`または`hard_stop`へ遷移した場合はRunbook `RUN-RISK-01`に従い`tradectl kill-switch review --reason <code> --strategy <id>`を実行して審査テンプレを作成し、解除条件・担当者・添付メトリクス（Live Guard, ExecutionModel再キャリブレーション結果など）を記録する。テンプレは`reports/audit/kill_switch_review/<timestamp>.md`に保存され、解除時には同ファイルへ承認サインを追記して監査証跡とする。
 
 ### 5.4 Spreadクールダウン判定
 1. `spread_pips > spread_max_pips`または分位超過で`SpreadCooldownState=cooldown`。
@@ -2648,12 +2842,13 @@ Kill Switch解除 & Scoreboard閾値通常運用へ復帰
 
 ### 5.15 Acceptable Degradation実務フロー（データ遅延・Spread異常）
 1. **検知**: `metrics/data_ingestion_sla.jsonl`または`SpreadCooldownState`が閾値超過→`HealthMonitor.raise(level='degraded', reason='data_latency'|'spread_cooldown')`を発火。
-2. **運用宣言**: `tradectl status --verbose`で理由を確認し、CLI `tradectl board --guarded`を実行。Runbook `RUN-DATA-05`/`RUN-RISK-02`に従って`degraded_ack.registered`を記録し、`logs/ops/workload.log`へ開始時刻を記録。
-3. **代替ソース投入**: `tradectl data manual-template`で双子CSVを生成→運用担当とレビュアが各自入力→`tradectl data validate-csv`で一致確認。Spread異常時は`config/gates.spread_max_pips`を強化し、`feature_flags.reduce_only_advisor`が無効でも手動でReduce-OnlyチェックをRunbookに沿って実施。
-4. **モニタリング**: `tradectl metrics report --window 1h --kind sla`を15分ごとに確認し、`catch_up_lag_minutes`が閾値内へ戻るまでフォロー。CLIボードは主要4ペアのみ承認可。`ops_worklog`へ手動作業時間を追記し、`metrics/ops_workload.json`を更新。
-5. **解除判定**: `catch_up_lag_minutes<30`かつ`SpreadCooldownState`が`normal`に戻り、直近3バーの`data_ingestion_delay_sec`が`warning`未満であることを確認。Runbook `RUN-DATA-06`で承認者ダブルサイン→`tradectl board --normal`→`health.ack(reason='data_latency')`を実行。
-6. **事後レビュー**: `reports/ops/degradation_log/<YYYYMMDD>.md`に原因・所要時間・使用代替ソース・改善案を記録。Codexへ改善依頼を行う場合は`docs/implementation_packets/`にフィードバックし、`feature_flags.reduce_only_advisor`など将来自動化候補を評価する。
-7. **M1.1自動化準備**: Spread/データ双方で解除条件が整った場合、`health.suggest_resume`イベントを自動発火し、CLIに解除提案を表示する。M1 Coreでは手動承認必須だが、メトリクスとRunbook整備によりM1.1での自動解除可否を判断する。
+2. **ライブ性能逸脱検知（新設）**: `tradectl performance live-guard --strategy <id>`をLondon close後に日次実行し、`metrics/performance_live_guard.jsonl`へ`PF_trailing`/`Sharpe_trailing`/`latency_p75`を追記。閾値未達時はCLIがExit code 42で終了し、`ops_worklog`へ`{"task":"live_performance_review","strategy":<id>,"runbook":"RUN-RISK-07"}`を追加。リミット違反は`HealthMonitor.raise('degraded','performance_live_guard_breach')`とRisk Managerの`risk_flags=['live_perf_drift']`を誘発する。
+3. **運用宣言**: `tradectl status --verbose`で理由を確認し、CLI `tradectl board --guarded`を実行。Runbook `RUN-DATA-05`/`RUN-RISK-02`/`RUN-RISK-07`に従って`degraded_ack.registered`と`KillSwitchReview`チケットを記録し、`tradectl kill-switch review --reason <code> --strategy <id>`でレビュー証跡を生成して`reports/audit/kill_switch_review/`へ保存、同時に`logs/ops/workload.log`へ開始時刻を記録。
+4. **代替ソース投入**: `tradectl data manual-template`で双子CSVを生成→運用担当とレビュアが各自入力→`tradectl data validate-csv`で一致確認。Spread異常時は`config/gates.spread_max_pips`を強化し、`feature_flags.reduce_only_advisor`が無効でも手動でReduce-OnlyチェックをRunbookに沿って実施。ライブ性能逸脱時は`StrategyManifest`の`weight`/`enabled`を調整し、Reduce-Onlyまたは一時停止案を検討する。
+5. **モニタリング**: `tradectl metrics report --window 1h --kind sla`と`tradectl performance live-guard --strategy <id> --output json`を15分〜1日単位で確認し、`catch_up_lag_minutes`と`PF_trailing`/`latency_p75`が閾値内へ戻るまでフォロー。CLIボードは主要4ペアのみ承認可。`ops_worklog`へ手動作業時間を追記し、`metrics/ops_workload.json`を更新。
+6. **解除判定**: `catch_up_lag_minutes<30`かつ`SpreadCooldownState`が`normal`に戻り、直近3バーの`data_ingestion_delay_sec`が`warning`未満、加えて`PF_trailing≥config.risk.live_guard.pf_threshold`かつ`latency_p75≤config.risk.live_guard.latency_p75_threshold`が連続2日満たされていることを確認。Runbook `RUN-DATA-06`/`RUN-RISK-07`で承認者ダブルサイン→`tradectl board --normal`→`health.ack(...)`を実行。
+7. **事後レビュー**: `reports/ops/degradation_log/<YYYYMMDD>.md`に原因・所要時間・使用代替ソース・改善案を記録。Codexへ改善依頼を行う場合は`docs/implementation_packets/`にフィードバックし、`feature_flags.reduce_only_advisor`や`strategy_manifest`の調整案など将来自動化候補を評価する。
+8. **M1.1自動化準備**: Spread/データ/ライブ性能の全条件が揃った場合、`health.suggest_resume`イベントを自動発火し、CLIに解除提案を表示する。M1 Coreでは手動承認必須だが、メトリクスとRunbook整備によりM1.1での自動解除可否を判断する。
 
 #### 5.15.1 Fundingデータ欠落時の対応（AC-09, FR-28）
 1. **検知**: `funding_state.json`の`last_synced_at`が48時間超過、または`tradectl funding status`で`shadow_reconciliation="fail"`が表示された場合に`FundingDegraded`イベントが発火し、`health.raise('degraded','funding_data_gap')`が記録される。監視メトリクスは`funding_state.json`, `reports/validation_log/AC-09_funding_<date>.md`, `logs/health/funding_events.jsonl`の3点を必須とする。
@@ -2726,6 +2921,11 @@ HealthMonitor.ack()
 | `tradectl account import` | Live実績CSVの取り込み・突合 | `--csv <path>`, `--dry-run`, `--since` | `AccountService.sync_from_csv`を呼び出し、突合結果とスリッページ統計を表示。成功時は`actual_fill_imported`イベント数と`unmatched`件数をサマリ表示 | 必須列欠落: `ERROR account.csv_missing_columns`。監査書込失敗: `CRITICAL account.audit_failed`でKill Switch=hard_stop。 |
 | `tradectl resync` | Catch-up/バックフィル操作 | `--since <ts>`, `--force` | Resyncジョブ投入→進捗バー表示→完了時`ResyncCompleted`イベント確認 | 他ジョブ競合: `WARN resync.busy`。Resync失敗で`ERROR resync.failed`＋再試行提案。 |
 | `tradectl spread inspect` | Spreadメトリクス確認/解除条件確認 | `--window`, `--symbol` | `data/spread_metrics.parquet`統計を表示、クールダウン解除条件を提示 | ファイル欠損: `WARN spread.data_missing`→再計測を促す。 |
+| `tradectl performance live-guard` | ライブ性能・レイテンシ監視＆ガードレコメンド | `--strategy`, `--window 4w`, `--mode paper|live`, `--output json|md`, `--strict` | `metrics/performance_live_guard.jsonl`と`reports/research/<strategy>/validation_<date>/live_guard.json`を生成し、閾値超過時は`recommended_mode=guarded`とRunbook `RUN-RISK-07`の該当節を表示 | データ不足: `ERROR live_guard.warmup_incomplete`。閾値逸脱: `EXIT 42`（Reduce-Only推奨）＋CLIが`KillSwitchReview`チケット起票指示を表示。 |
+| `tradectl execution recalibrate` | ExecutionModel遅延/スリッページ分布の再推定 | `--from <parquet>`, `--window <days>`, `--out`, `--dry-run`, `--strict` | ライブfillsを集計して`config/execution_model.calib.yaml`を生成。`--strict`時は閾値超過で`EXIT 44`と`execution.latency_alert`を発火 | サンプル不足: `ERROR execution_recalibrate.insufficient_samples`。出力先書込失敗: `ERROR execution_recalibrate.write_failed` |
+| `tradectl kill-switch review` | Kill Switchエスカレーションの証跡作成と復旧条件整理 | `--reason`, `--strategy`, `--attach <path>`(複数可), `--mode paper|live`, `--recommend <guarded|resume>` | `reports/audit/kill_switch_review/<timestamp>.md`へテンプレを生成し、`KillSwitchReview`チケットIDとRunbook参照を記録。推奨モードが`resume`の場合は`ExecutionLatencyModel`やLive Guardの最新統計を自動添付 | 証跡未添付: `ERROR kill_switch_review.evidence_missing`。`--recommend resume`で条件未達の場合は`EXIT 43`（復旧不可）とし、必要メトリクス/Runbook手順をCLI上に提示 |
+| `tradectl scoring diagnostics` | スコアリングの乖離/リジェクト要因分析 | `--strategy`, `--window 4w`, `--out`, `--format md|json` | `reports/diagnostics/scoring_<date>.md`にPF乖離・Spread/Lagペナルティ・Reject上位を出力し、閾値逸脱時は`ACTION REQUIRED`バナーとRunbookリンクを表示 | メトリクス欠損: `ERROR scoring_diagnostics.metrics_missing`。PF乖離が大きい場合はExit code 41で終了し、Runbook `RUN-RISK-07`へのリンクを表示 |
+| `tradectl config validate` (M1.1予定) | Config一式のスキーマ検証 | `--bundle`, `--file <path>`, `--schema-id` | `poetry run schema-validate`と同等の検証結果を表示し、`reports/validation_log/config_<date>.md`へ保存 | スキーマ不一致: `ERROR config_validate.schema_mismatch`。M1では`poetry run schema-validate`で代替 |
 | `tradectl reduce-only status|release`(M2+) | Reduce-Only提案の管理 | `--id`, `--all` | 対象ポジションと理由を表示/解除 | Reduce-Only未対応時は`INFO reduce_only.disabled`。 |
 | `tradectl research stage` (M2+) | Idea Pipeline | `--id`, `--stage`, `--note` | M1: Feature Flag既定`False`→`Feature disabled (M2+)`メッセージのみ。M2+: Appendix G.2記載の`manager.transition_stage`を呼び出し監査ログに記録 | M1: INFOログ`research.disabled`。M2+: バリデーションNGで`IdeaPromotionDenied`、Ops低下時は`IdeaPromotionDenied(ops_readiness_low)` |
 | `tradectl ops readiness --explain` (M2+) | Opsヘルス可視化 | `--period`, `--output` | M1: `OpsReadinessEvaluatorStub`が`status=not_assessed`を返し、CLIは`(M2+)`案内のみ表示。M2+: Appendix G.3記載の証跡内訳を表示 | M1: `ops_readiness.disabled`ログ。M2+: 証跡欠損時は`OpsEvidenceMissing`を列挙 |
@@ -2862,6 +3062,7 @@ HealthMonitor.ack()
   2. `tradectl board --view strategy --save-snapshot reports/weekly/evidence/<YYYY-WW>/board_snapshot.json`でSignal Boardサマリを取得し、`reports/validation_log/AC-45_sla_<date>.md`の`signal_cycle_snapshot`項目にパスを追記。
   3. `metrics/strategy_execution.jsonl`のローリング7日統計を`tools/metrics_extract.py --source metrics/strategy_execution.jsonl --window 7d --out reports/weekly/evidence/<YYYY-WW>/strategy_execution.md`で抽出し、Runbook `RUN-PERF-01`チェックリストに添付。
   4. `logs/signals/raw/<date>.jsonl`から代表的な`signal_id`を3件抽出し、`docs/review_log.md`該当週エントリの「Follow-up Tickets」に添付。ハッシュ不一致時は`PKG-STRAT-IFACE-01`チェックリストで再調査。
+  5. テンプレートを更新する場合は`reports/weekly/templates/m1_core.md`および`docs/validation_log/templates/weekly.md`を同期し、追加フィールド（`signal_cycle_snapshot`, `strategy_execution_extract`, `live_guard_section`など）が反映されていることを確認。テンプレ更新後は`pytest -k weekly_report_template`を実行し差分を記録する。
 - **承認ワークフロー**
   - Ops Manager: `docs/review_log.md`週次エントリの`Next ToDo`欄にCLI/メトリクス証跡パスを貼付し、「Signal Cycle Snapshot」「Strategy Execution Metrics」の確認チェックを実施。
   - Trader Lead: `docs/trader_signoff/<packet>.md`（該当Packet）を更新し、`signal_cycle_snapshot`ファイルを参照してApprove/Rejectを記載。
@@ -2886,6 +3087,10 @@ HealthMonitor.ack()
 - **戻り値構造**
   - `PerformanceSnapshot`は`dataclass`で`series_hash: str`, `equity_curve: Mapping[str, list[EquityPoint]]`, `aggregate: PerformanceAggregate`, `last_updated: datetime`を保持する。`PerformanceAggregate`は`nav`, `pnl`, `return_pct`, `drawdown_pct`, `turnover_pct`, `slippage_bps`を含む。
   - `PenaltySnapshot`は`dataclass`で`penalties: dict[str, PenaltyValue]`, `effective_at: datetime`, `source_files: list[Path]`, `checksum: str`を保持し、`PenaltyValue`は`bps: float`, `reason: str`, `expires_at: datetime | None`を含める。両スナップショットは`to_dict()`でシリアライズ可能な構造を提供し、ReporterやCLIでのJSON出力に再利用する。
+- **ライブ性能ガードデータストア（新設）**
+  - `PerformanceLiveGuardStore`（`src/persistence/performance_live_guard.py`）を追加し、`metrics/performance_live_guard.jsonl`と`reports/research/<strategy>/validation_<date>/live_guard.json`を読み出して`LiveGuardSnapshot`（`pf_trailing`, `sharpe_trailing`, `latency_p75`, `hit_rate_trailing`, `window_days`, `recommended_mode`）を返す。Risk Manager (§3.8) と CLI (§6.5) が同一構造を利用する。
+  - JSONLスキーマは`docs/schemas/performance_live_guard.schema.json`で定義し、`poetry run schema-validate metrics/performance_live_guard.jsonl --schema docs/schemas/performance_live_guard.schema.json`をCIに追加。欠損時は`LiveGuardSnapshot.empty(window_days=config.risk.live_guard.warmup_days)`を返却する。
+  - `tradectl performance live-guard`は実行時に`PerformanceLiveGuardStore.append(observation)`を呼び出し、直近ウィンドウの閾値判定を`metrics/performance_live_guard.jsonl`へ書き出す。Risk ManagerはEventBusで`performance.live_guard.updated`を受信し、`RiskMetricsSnapshot`へ`live_pf`/`live_sharpe`/`latency_p75`を転記する。
 - **M1フォールバックポリシー**
   - Feature Flag `reports.performance.enable`（`config/feature_flags.yaml`予定）と`reports.penalty.enable`を追加。Flagが`False`の場合、`PerformanceRepository.load`は`PerformanceSnapshot(series_hash="noop", aggregate=PerformanceAggregate.zero(), equity_curve={}, last_updated=None)`を返し、ファイルI/Oを行わない。`PenaltyRegistry.snapshot`は`PenaltySnapshot(penalties={}, effective_at=None, source_files=[], checksum="noop")`を返却する。
   - Flagが`True`でもファイルが未配置の場合は`FallbackPolicy.M1`を適用し、WARNログとともにダミー値を返す（`aggregate.return_pct=0.0`, `penalties`全0）。Codexスタブはこのフォールバックを必須として実装し、後続マイルストーンで実データを差し込む際に差分が明確になるようにする。
@@ -3034,6 +3239,7 @@ Flag切替時は`ConfigChanged`イベントに`flag_delta`が記録され、Repo
 ### 9.0 機能別テストケースマトリクス
 | 機能領域 | 単体テスト (例) | 結合テスト (例) | バックテスト検証 | シミュレーション/リプレイ |
 | --- | --- | --- | --- | --- |
+| 設定スキーマ/Configガバナンス | `pytest -k config_schema_smoke`, `pytest -k schema_validate_bundle` | `poetry run schema-validate config --schema docs/schemas/config_bundle.schema.json` | 該当なし（設定のみ） | `make config-init --dry-run`で雛形生成・差分確認 |
 | データ取得・品質監視 (FR-01/02) | `UT-ING-01`, `pytest -k data_latency_guard` | `IT-PIPE-01`, `IT-RESYNC-01` | `tradectl backtest --mode ingestion --since 14d`で遅延差分を確認 | `tests/simulation/test_data_failover.py`（擬似429/timeoutを再生） |
 | 特徴量パイプライン (FR-03) | `UT-FEAT-01`, `pytest -k feature_joiner` | `IT-PIPE-01` | `tradectl backtest --strategy m1_baseline_ma_rsi --since 90d --metrics feature` | `tools/replay/features.py --window 1d`でオンデマンド再計算 |
 | シグナルエンジン/スコアリング (FR-04/FR-33) | `UT-STR-01`, `pytest -k signal_ranker` | `IT-PIPE-01`, `IT-COR-01` | `tradectl backtest --strategy m1_baseline_ma_rsi --since 180d --export signals`で再現性確認 | `tests/simulation/test_signal_replay.py`（ヒストリカルTick→Boardレンダリング） |
@@ -3045,6 +3251,7 @@ Flag切替時は`ConfigChanged`イベントに`flag_delta`が記録され、Repo
 
 - Backtest/シミュレーション列のコマンドは`poetry run`を前置して実行する。結果は`reports/validation_log/`配下に保存し、CIでは主要シナリオのみスモーク実行（`--since 14d`）とする。
 - 追加機能を実装する際は本マトリクスに行を追記し、Runbookおよび`docs/implementation_packets/`のテスト節で参照する。
+- Config系変更は必ず`make config-init --dry-run`で雛形差分を確認し、`poetry run schema-validate config --schema docs/schemas/config_bundle.schema.json`と`pytest -k config_schema_smoke`を実行したログをPRへ添付する。
 
 ### 9.1 テストデータ戦略
 - `tests/fixtures/market/`に代表的OHLCVサンプル（高ボラ/低ボラ/欠損）を配置。
@@ -3076,21 +3283,26 @@ Flag切替時は`ConfigChanged`イベントに`flag_delta`が記録され、Repo
 - KPI未達時のアクション: `sprt_guard`で提案頻度縮小→戦略OFF→パラメータ調整→Backtest再検証。決定はPO/運用/開発のレビューで確定。
 - KPI達成を維持するため、Paper/LIVE乖離が継続する場合は`walkforward`再評価とFeature Flagの切替を実施。
 - HITLチケット仕様が変わった場合、`tests/approval/cli/board`と`tests/approval/cli/ticket`のスナップショット差分がKPIレビュー結果に影響するため、§5.5の更新方針に従い`pytest-approvaltests`を再実行し、`reports/validation_log/AC-02_<date>.md`と`RUN-HITL-01`で参照するスクリーンショットも同期させる。
+- Reporter/Scoring診断の自動テスト: `tests/integration/test_reporter_weekly.py`でLive GuardセクションとHITLワークロード指標の有無を検証し、`tests/integration/test_scoring_diagnostics.py`でPF乖離レポート生成を確認する。テスト完了ログをPacketレビューに添付すること。
 
 ### 9.4 M1ベース戦略データセット/パラメータ参照
 
 #### 9.4.1 データセット一覧
 | Dataset ID | パス | TF | 期間 | ソース/備考 | `data_manifest`キー |
 | --- | --- | --- | --- | --- | --- |
-| `usdjpy_m5_core` | `data/research/curated/usdjpy/usdjpy_m5_20210101_20241231.parquet` | 5m | 2021-01-01〜2024-12-31 | Dukascopyベース、欠損はyfinanceで補完 | `m1_baseline.usdjpy.m5` |
-| `eurusd_m5_core` | `data/research/curated/eurusd/eurusd_m5_20210101_20241231.parquet` | 5m | 同上 | Dukascopy+yfinance補完 | `m1_baseline.eurusd.m5` |
-| `gbpusd_m5_core` | `data/research/curated/gbpusd/gbpusd_m5_20210101_20241231.parquet` | 5m | 同上 | Dukascopy+yfinance補完 | `m1_baseline.gbpusd.m5` |
-| `eurjpy_m5_core` | `data/research/curated/eurjpy/eurjpy_m5_20210101_20241231.parquet` | 5m | 同上 | Dukascopy+yfinance補完 | `m1_baseline.eurjpy.m5` |
-| `major_h1_filter` | `data/research/curated/common/majors_h1_20210101_20241231.parquet` | 1h | 2021-01-01〜2024-12-31 | 5m→1h集計済みキャッシュ | `m1_baseline.majors.h1` |
-| `daily_bias` | `data/research/curated/common/majors_d1_bias.parquet` | 1d | 2020-01-01〜最新 | 日次終値Zスコア用、週次更新 | `m1_baseline.majors.d1` |
-| `spread_hist` | `data/research/curated/common/spread_hist_m5.json` | 5m | 2018-01-01〜2024-12-31 | 公開CSVから生成した分位テーブル | `m1_baseline.spread.hist` |
+| `usdjpy_m5_core` | `data/research/curated/usdjpy/usdjpy_m5_20210101_20241231.parquet` | 5m | 2021-01-01〜2024-12-31 | Dukascopyプライマリ+ICE DataServices補完、欠損時はLSEG Refinitivから埋め戻し | `m1_baseline.usdjpy.m5` |
+| `eurusd_m5_core` | `data/research/curated/eurusd/eurusd_m5_20210101_20241231.parquet` | 5m | 同上 | Dukascopy/LSEGクロスチェック、休日ギャップはTrueFXで再構築 | `m1_baseline.eurusd.m5` |
+| `gbpusd_m5_core` | `data/research/curated/gbpusd/gbpusd_m5_20210101_20241231.parquet` | 5m | 同上 | Dukascopy+HotspotFX、週次でQA差分検知 | `m1_baseline.gbpusd.m5` |
+| `eurjpy_m5_core` | `data/research/curated/eurjpy/eurjpy_m5_20210101_20241231.parquet` | 5m | 同上 | Dukascopy+OANDA、円クロス特有の祝日穴埋め済 | `m1_baseline.eurjpy.m5` |
+| `audusd_m5_core` | `data/research/curated/audusd/audusd_m5_20210101_20241231.parquet` | 5m | 2021-01-01〜2024-12-31 | RBAイベント対策としてASX時系列をマージ | `m1_baseline.audusd.m5` |
+| `major_h1_filter` | `data/research/curated/common/majors_h1_20210101_20241231.parquet` | 1h | 2021-01-01〜2024-12-31 | 5m→1h集計済みキャッシュ。複数ベンダーの終値平均を採用 | `m1_baseline.majors.h1` |
+| `daily_bias` | `data/research/curated/common/majors_d1_bias.parquet` | 1d | 2020-01-01〜最新 | 日次終値Zスコア用、Bloomberg FXBFIXで週次更新 | `m1_baseline.majors.d1` |
+| `spread_hist` | `data/research/curated/common/spread_hist_m5.json` | 5m | 2018-01-01〜2024-12-31 | TrueFX/Hotspotティックから生成した分位テーブル | `m1_baseline.spread.hist` |
+| `usdjpy_tick_truefx` | `data/research/raw/usdjpy/usdjpy_tick_truefx_20180101_20241231.parquet` | tick | 2018-01-01〜2024-12-31 | TrueFX REST。ExecutionLatencyModel用に約定/気配を保持 | `m1_baseline.usdjpy.tick.truefx` |
+| `eurusd_tick_lmax` | `data/research/raw/eurusd/eurusd_tick_lmax_20180101_20241231.parquet` | tick | 同上 | LMAX DigiFeed、遅延/スリッページキャリブレーション | `m1_baseline.eurusd.tick.lmax` |
+| `asia_session_m1_bundle` | `data/research/curated/common/asia_session_m1_20210101_20241231.parquet` | 1m | 2021-01-01〜2024-12-31 | 東京/シドニー時間帯の板厚を付与 | `m1_baseline.asia.m1` |
 
-> **保管ルール**: 生成時に`reports/data_manifest.json`へハッシュ/サイズ/取得コマンドを登録し、`reports/research/m1_baseline/validation_YYYYMMDD.md`へ`dataset_hash`を転載する。トレーダーと実装者は本表を照合して同一データセットで検証・ライブ監視を行う。
+> **保管ルール**: 生成時に`reports/data_manifest.json`へハッシュ/サイズ/取得コマンドを登録し、`reports/research/m1_baseline/validation_YYYYMMDD.md`へ`dataset_hash`とベンダー構成（primary/secondary/fallback）を転載する。ベンダー差分チェックは`poetry run data-qa compare --left ... --right ...`で週次実施し、トレーダーと実装者は本表を照合して同一データセットで検証・ライブ監視を行う。
 
 #### 9.4.2 パラメータテーブル（`strategy_manifest.yaml::strategies.m1_baseline_ma_rsi.parameters`）
 > **PO/Ops合意メモ（2025-02-21）**: M1 Coreは**per-trade=0.75% / 日次=-2.5% / 週次=-5%**を正式基準とする。`risk_policy.yaml`、`config/profiles/*`, Runbook、および検証シナリオは同じ値で初期化し、逸脱時は`reports/governance/risk_policy_changes/`で承認ログを残す。
@@ -3116,16 +3328,21 @@ Flag切替時は`ConfigChanged`イベントに`flag_delta`が記録され、Repo
 | `max_concurrent_positions` | `{bucket:2,total:4}` | 通貨バケット/全体上限 | 要件§3.2, AC-09 |
 | `r_eff_cap` | 2.5 | 相関合算R上限 | 要件§3.2 |
 
+> **トレーダー所見（2025-03-18）**: `decision_delay_triangular`はライブレビューで観測した中央値45sを基準に設定。`ExecutionLatencyModel`がp75遅延を>120sと推定した場合は`tradectl performance live-guard`がFail扱いとし、`execution_model.yaml`のセッション別分布を再推定する。
+
 #### 9.4.3 検証シナリオ（実装者/トレーダー共通）
 | Scenario ID | コマンド / ノート | 期待結果 | 対応AC |
 | --- | --- | --- | --- |
-| `BT-IS` | `tradectl backtest run --strategy m1_baseline_ma_rsi --profile paper-m1-baseline --from 2021-01-01 --to 2023-06-30 --out reports/backtest/m1_baseline/is` | `PF=1.20±0.05`, `Sharpe=0.90±0.05`, 取引数≈260（IS） | AC-07 |
-| `BT-OOS` | `tradectl backtest run --strategy m1_baseline_ma_rsi --profile paper-m1-baseline --from 2023-07-01 --to 2024-12-31 --out reports/backtest/m1_baseline/oos` | `PF≥1.10`, `Sharpe=0.88±0.07`, `MaxDD≤13%`, `HitRate=48〜55%` | AC-07 |
-| `STRESS-SPREAD+50` | `tradectl backtest run ... --what-if spread=1.5,slip=1.5` | レジーム別PF中央値≥1.0、`MaxDD`増分≤+3% | AC-08 |
-| `RISK-DIAG` | `tradectl diagnostics risk --strategy m1_baseline_ma_rsi --from 2023-07-01 --to 2024-12-31 --mode backtest` | `per_trade_R_stdev∈[0.70,0.80]`, `max_concurrent`違反0件、`R_eff_cap`違反0件 | AC-09 |
-| `LATENCY-PAPER` | `tradectl metrics latency --mode paper --from 2024-01-01 --to 2024-12-31` | 承認→OCO設定 `median≤60s`, `p90≤120s`, 遅延サンプル>200 | AC-09 |
+| `BT-IS` | `tradectl backtest run --strategy m1_baseline_ma_rsi --profile paper-m1-baseline --from 2021-01-01 --to 2023-06-30 --out reports/backtest/m1_baseline/is` | `PF=1.35±0.05`, `Sharpe≥1.05`, `HitRate=50〜56%`, 取引数≈260（IS），`R_eff_p95≤2.2` | AC-07 |
+| `BT-OOS` | `tradectl backtest run --strategy m1_baseline_ma_rsi --profile paper-m1-baseline --from 2023-07-01 --to 2024-12-31 --out reports/backtest/m1_baseline/oos` | `PF≥1.20`, `Sharpe≥0.95`, `MaxDD≤11%`, `HitRate=48〜55%`, `CAR/MDD≥1.4` | AC-07 |
+| `WF-ROLLING` | `tradectl backtest walk-forward --strategy m1_baseline_ma_rsi --profile paper-m1-baseline --window 6m --step 1m --from 2021-01-01 --to 2024-12-31 --out reports/backtest/m1_baseline/wf` | 各ローリング窓の`PF_median≥1.18`, `Sharpe_median≥0.92`, 下位10%窓でも`PF≥1.05` | AC-07, AC-16 |
+| `MC-LATENCY` | `tradectl simulate monte-carlo --strategy m1_baseline_ma_rsi --simulations 512 --latency-profile latest --out reports/backtest/m1_baseline/mc_latency` | `PF_p50≥1.15`, `PF_p10≥1.05`, `slippage_p95≤1.8×baseline`, `ttl_p90≤150s` | AC-08, AC-09 |
+| `STRESS-SPREAD+50` | `tradectl backtest run ... --what-if spread=1.5,slip=1.5` | レジーム別PF中央値≥1.05、`MaxDD`増分≤+3%、`KillSwitch_triggered=0` | AC-08 |
+| `RISK-DIAG` | `tradectl diagnostics risk --strategy m1_baseline_ma_rsi --from 2023-07-01 --to 2024-12-31 --mode backtest` | `per_trade_R_stdev∈[0.68,0.78]`, `max_concurrent`違反0件、`R_eff_cap`違反0件、`exposure_ratio≤0.24` | AC-09 |
+| `LATENCY-LIVE-GUARD` | `tradectl performance live-guard --strategy m1_baseline_ma_rsi --window 4w --mode paper` | `PF_trailing≥1.08`, `Sharpe_trailing≥0.9`を下回る場合は`BoardMode=guarded`推奨/Runbook `RUN-RISK-07`起票、逸脱継続≥2wで`KillSwitchReview` | AC-34, AC-43 |
+| `SCORING-LIVE-DRIFT` | `tradectl scoring diagnostics --strategy m1_baseline_ma_rsi --window 4w --out reports/diagnostics/scoring_<date>.md` | `delta_pf∈[0.9,1.1]`、閾値逸脱時に`live_drift`ペナルティが付与されレポートへ「Action Required」セクション追加 | AC-07, AC-34 |
 
-> **シナリオ運用メモ**: 各シナリオで生成された`metrics.json`/`stress_tests.json`/`latency_stats.json`は`reports/research/m1_baseline/validation_YYYYMMDD/`配下に保存し、週次レビューで`reports/weekly/<YYYY-WW>.md`へ転載する。閾値逸脱時は`strategy.watchlist`を付与し、再検証チケット（`tickets/strategy_revalidation/<date>.md`）を起票する。
+> **シナリオ運用メモ**: 各シナリオで生成された`metrics.json`/`stress_tests.json`/`walk_forward_stats.json`/`mc_latency.json`/`live_guard.json`は`reports/research/m1_baseline/validation_YYYYMMDD/`配下に保存し、週次レビューで`reports/weekly/<YYYY-WW>.md`へ転載する。閾値逸脱時は`strategy.watchlist`を付与し、再検証チケット（`tickets/strategy_revalidation/<date>.md`）を起票。`LATENCY-LIVE-GUARD`が連続2回Failの場合は`KillSwitchReview`チケットと`ops.agenda`タスクを同時発行する。
 
 #### 9.4.4 データ品質・ガード連携
 - `multi_tf_joiner`はIS/OOS区間の欠損率・再計算範囲を`reports/research/m1_baseline/data_quality.json`へ出力し、欠損率>0.5%/日でAC-22のアラートテストを再実行する。
@@ -3193,6 +3410,7 @@ Flag切替時は`ConfigChanged`イベントに`flag_delta`が記録され、Repo
 - **Reduce-Only運用負荷**: Spread/相関異常時に提案が集中する可能性。M1では手動レビューだが、M2で優先度キューとバッチ操作UIを設計する。
 - **SPRTチューニング**: 戦略追加時にSPRT閾値が不安定。ウォームアップ期間とベイズ更新をM2バックログに登録。
 - **データ供給レイテンシ**: macOSローカル運用でネットワーク品質が不安定な場合、Catch-up時間が延びる。`provider.timeout`と`retry`を調整し、長時間停止時はバックフィルを分割する。
+- **ライブ性能ドリフト検知**: `LATENCY-LIVE-GUARD`シナリオが連続Failした場合に`BoardMode=guarded`と`KillSwitchReview`を義務化。PFトレンドが目標未達のまま2週間以上継続した場合は`strategy_manifest`でフィンガープリントを付与し、減量またはオフボーディング判定をModel Governance会議で行う。
 
 ### 11.2 運用課題
 - Spread/Funding CSVの手動更新頻度が高い場合、Human Errorが発生しやすい。将来的に自動取得スクリプトを追加し、`logs/ops`へ自動記録する計画。
@@ -3221,6 +3439,7 @@ Flag切替時は`ConfigChanged`イベントに`flag_delta`が記録され、Repo
 ### 12.1 Packetバックログ概要（Sprint-Alpha〜Sprint-1）
 | Packet ID | Epic | 範囲 | 依存セクション | 必須テスト | トレーダー確認ポイント |
 | --- | --- | --- | --- | --- | --- |
+| EP00-P1 | EP-00 Config Foundations | `make config-init`雛形整備、`schema-validate` CIジョブ追加、`config/README.md`更新 | §0.6.12, §4.4, §12.2 | `pytest -k config_schema_smoke`, `poetry run schema-validate config --schema docs/schemas/config_bundle.schema.json` | `config/README.md`チェックリスト、`tradectl config ls`（仮CLI）で雛形が出力されること |
 | EP01-P1 | EP-01 DataLag Mitigation | `DataIngestionService.fetch_latest`の遅延計測、`metrics/data_ingestion_sla.jsonl`出力整備 | §3.1, §3.20, §5.15 | `pytest -k data_ingestion`、`tests/integration/test_data_pipeline.py` | `tradectl metrics report --kind sla`のp95値、`health.reasons`表示 |
 | EP01-P2 | EP-01 DataLag Mitigation | 手動CSVフォールバックCLI (`tradectl data manual-*`)、`ManualCsvReconciler` | §2.1, §3.1, §5.15 | `pytest -k manual_csv`, CLIスナップショット | Runbook `RUN-DATA-05`手順がCLIに反映、`ops_worklog`追記 |
 | EP03-P1 | EP-03 Guardrails | `HealthMonitor`拡張（`suggest_guarded/resume`イベント、Acceptable Degradation運用ログ） | §2.5, §5.15, §8.10 | `tests/unit/test_health_state.py`, `pytest -k health_monitor` | `tradectl status`で理由/解除条件が明示、Kill Switchログ |
@@ -3238,6 +3457,9 @@ Flag切替時は`ConfigChanged`イベントに`flag_delta`が記録され、Repo
 - **監査ログ検証**: `pytest -k audit_snapshot`など監査ログをファイル比較するテストを定義し、Codexには出力例を提供する。`git diff logs/audit`があれば差戻し。
 - **UX確認**: トレーダーはCLIスクリーンショットと`tradectl status`出力をレビュー。`docs/trader_signoff/<packet>.md`テンプレに沿って(1) 画面キャプチャ、(2) 操作所要時間、(3) コメントを記入する。
 - **Rollback手順**: 各Packetで変更した設定/Flag/データを明記。例: `cfg change: config/profile_live.yaml (feature_flags.risk_disclosure_enforce)` → `git checkout -- config/profile_live.yaml`で戻す。データ生成の場合は削除コマンドも記載。
+- **Configスキャフォールト**: `CONFIG-SCAFF-01`適用済み前提。設定を追加・変更するPacketは`poetry run schema-validate ...`ログをPR本文へ貼付し、必要に応じて`make config-init`の差分を更新する。欠落している雛形が判明した場合は§0.6.12を参照して追加。
+- **新規CLI**: `tradectl execution recalibrate` / `tradectl scoring diagnostics` / `tradectl kill-switch review`を利用するPacketは、サンプル実行ログと生成物パス（`config/execution_model.calib.yaml`, `reports/diagnostics/scoring_<date>.md`, `reports/audit/kill_switch_review/<ts>.md`）を添付し、Runbook更新との整合を明記する。
+- **テンプレ同期**: ReporterやValidationテンプレを変更した場合は`reports/weekly/templates/m1_core.md`・`docs/validation_log/templates/weekly.md`・`docs/trader_signoff/TEMPLATE.md`の差分をPacketに含め、`pytest -k weekly_report_template`・`pytest -k validation_log_template`ログを添付する。
 - **初期テンプレート位置と保守責任**: Implementation Packetの詳細は`docs/implementation_packets/TEMPLATE.md`をベースに作成し、Ops Managerが構造保守、Codex Liaisonが各Packetの更新履歴を追記する。関連するプロンプト差分は`docs/prompt_packages/TEMPLATE.md`を参照し、同担当者が同期する。
 
 ### 12.3 トレーダー受入試験テンプレ
@@ -3392,6 +3614,7 @@ linked_runbook: docs/runbooks/RUN-XXXX-YY.md
 - **公開API**: `generate_weekly_snapshot(week_ending)`, `get_latest()`, `trigger_watchlist(strategy_id)`。
 - **入力データ**: `data/returns/returns_24w.parquet`, `metrics/kpi_cache.parquet`, `reports/research/alpha_score/<YYYYWW>.md`, 戦略ごとの`reports/strategy_review_<id>.md`。
 - **主要ロジック**: KPIキャッシュからPF/Sharpe/Stabilityを標準化→`decay_score`は24週リニア回帰から傾きを算出。`alpha_score`<`config.scoreboard.alpha_threshold`または`decay_score`>`config.scoreboard.decay_threshold`で`strategy.watchlist`イベントをEventBusへ送信（AC-49, FR-61）。
+- **ScoringService連携**: `metrics/strategy_scores.jsonl`に出力された`alpha_score_prelim`/`decay_score_prelim`を取り込み、`config/scoreboard.yaml`の重みと閾値で正式スコアを決定。`WatchlistEntry`に`source='scoring_prelim'`を保持し、CLI/Reporterから前処理スコアの内訳を追跡できるようにする。
 - **イベント/連携**: `scoreboard.generated`でJSONサマリを`scoreboard/alpha/<YYYYWW>.json`と`reports/research/alpha_score/<YYYYWW>.md`へ書き込み。`strategy.watchlist`受信時にTicketBuilderへウォーニングバッジを追加、Model Risk Register Serviceへ`watchlist=true`を通知。
 - **異常系**: KPI計算失敗→`ScoreboardComputationFailed`イベント→`HealthMonitor.degraded(scoreboard)`。証跡Markdown欠損時は`evidence_missing`フラグを立て、Ops Readiness Evaluatorにも不足として反映。
 - **設定ファイル**: `config/scoreboard.yaml`（閾値、重み、対象戦略リスト、runbookリンク）。週次ジョブは`config.scheduler.jobs.scoreboard`で定義し、SessionManager起動時に`AsyncOneShotJob`として登録。
@@ -8537,4 +8760,3 @@ API接続の信頼性を高めるには、レート制限・レスポンス遅�
   - GitHub Actions `ci/shadow-gateway.yml`を追加し、`pytest -k shadow_gateway`、`make load-shadow-gateway --duration 5m --smoke`、`make chaos-shadow-gateway --fault drop-events --smoke`を夜間実行。
   - `make check-validation --category shadow_gateway`と`tradectl validation audit --category shadow_gateway`を必須化し、Validation Data Playbookの欠落をCIで検知。
   - 成果物（SQLite/Parquet）のハッシュは`data_manifest.json`に自動追記。差分検知時は`docs/change_requests/SHADOW-GW-<date>.md`を生成し、Codexがレビュー可能なテンプレを添付。
-

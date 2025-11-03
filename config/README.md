@@ -10,6 +10,10 @@
 | `feature_pipeline.yaml` | `docs/schemas/feature_pipeline.schema.json` | 詳細設計 §3.4〜§3.5 | STRAT-M1-VALIDATION, `reports/validation_log/AC-01_*.md`, `AC-07_*.md` | 指標ON/OFFと窓長。Guarded運用時のFlagもここで切替。 |
 | `board_modes.yaml` | `docs/schemas/board_modes.schema.json` | 詳細設計 §2.5, §3.5 | RUN-DATA-05, RUN-SPREAD-03, RUN-RISK-01 | BoardMode遷移時のエスカレーションリンクを集約。`schema/gate_state.sample.json`と整合させる。 |
 | `execution_model.yaml` | `docs/schemas/execution_model.schema.json` | 詳細設計 §3.6, §4.4 | [RUN-HITL-01](../docs/runbooks/RUN-HITL-01.md), [RUN-RISK-01](../docs/runbooks/RUN-RISK-01.md), [`reports/validation_log/templates/weekly.md`](../reports/validation_log/templates/weekly.md) | ヒューマン遅延・スリッページ分布とエントリーモード閾値のベースライン。シンボル/レジーム別上書きを記録し、Runbook承認ログと紐付ける。 |
+| `scoring.yaml` | `docs/schemas/scoring_config.schema.json` | 詳細設計 §3.7, §4.4.4 | RUN-SCORE-01, `reports/diagnostics/scoring_<date>.md` | スコア係数・PF乖離ガード・診断閾値。`tradectl scoring diagnostics`と共有。 |
+| `scoreboard.yaml` | `docs/schemas/scoreboard.schema.json` | 付録G.1, §4.4.5 | RUN-GOV-BOARD-01, RUN-RISK-07 | Strategy Scoreboard のα/Decay閾値とウォッチリスト判定条件。 |
+| `risk_live_guard.yaml` | `docs/schemas/risk_live_guard.schema.json` | 詳細設計 §3.8, §4.4.3 | RUN-RISK-07 | ライブ性能ガードのPF/Sharpe/Latency基準と通知ルール。 |
+| `ops_readiness.yaml` | `docs/schemas/ops_readiness.schema.json` | 詳細設計 §3.27, §4.4.6 | OPS-READINESS-01, RUN-RISK-07 | Ops レビュー重みと証跡パス。`make check-ops-readiness` の入力。 |
 | `reduce_only.yaml` | `docs/schemas/human_gate_config.schema.json` | 詳細設計 §3.5.6, §5.12 | RUN-RISK-02, RUN-RISK-03 | Human GateダブルアックとReduce-Only優先度の既定値。`config/profiles/*.yaml::gates`の上書きと整合させる。 |
 | `profiles/backtest.yaml` | `docs/schemas/cfg.schema.json` | 詳細設計 §3.1, §4.4 | STRAT-M1-VALIDATION | バックテスト専用の最小構成。`ModeContext`再現用。 |
 | `profiles/paper.yaml` | `docs/schemas/cfg.schema.json` | 詳細設計 §3.1, §4.4 | RUN-DATA-05, RUN-HITL-01, `reports/validation_log/AC-45_*.md` | yfinance/dukascopyのSLA閾値とBoardMode既定値。 |
@@ -23,10 +27,15 @@
 
 ## スモークテスト
 
-- `pytest -k config_schema_smoke` — JSON Schema による雛形検証。`strategy_manifest`/`feature_pipeline`/`board_modes`/`execution_model`/`profiles/*`/`sla_thresholds/*`と`schema/gate_state.sample.json`を対象とする。
-- `pytest -k strategy_manifest` / `pytest -k strategy_registry` — Manifest と Registry の読み込みテスト（詳細設計 §4.4.1 推奨）。
-- `pytest -k funding` — Funding CSV読み込みとハッシュ突合（将来追加予定）を対象としたテスト。列構成を変更した場合はテスト更新を忘れずに。
+- `pytest -k config_schema_smoke` — JSON Schema による雛形検証。`strategy_manifest`/`feature_pipeline`/`board_modes`/`execution_model`/`ops`/`roles`/`broker_rules`/`profiles/*`/`sla_thresholds/*`に加え、本稿で追加した`scoring`/`scoreboard`/`risk_live_guard`/`ops_readiness`を対象とする。
+- `poetry run schema-validate config --schema docs/schemas/config_bundle.schema.json` — `config/`全体の必須ファイルが揃い、個別スキーマと整合していることを確認。
+- `poetry run schema-validate config/scoring.yaml --schema docs/schemas/scoring_config.schema.json`（`risk_live_guard.yaml`/`scoreboard.yaml`/`ops_readiness.yaml`も同様） — ランブック準拠のスキーマ検証をCLIと同一条件で実行。
 - `make sla-report` — SLA プロファイルと `metrics/data_ingestion_sla.jsonl` の整合確認（RUN-DATA-05 手順3参照）。
+
+## 初期化コマンド
+
+- `make config-init` — `tools/scripts/config_init.py` を呼び出し、欠落している設定ファイルを生成する。差分のみを確認したい場合は `make config-init ARGS=--dry-run` を使用。
+- 初期化後は本節の `schema-validate` コマンドと `pytest -k config_schema_smoke` を実行し、結果ログを `artifacts/` もしくは `reports/validation_log/` に保存してPRへ添付する。
 
 ## 運用メモ
 

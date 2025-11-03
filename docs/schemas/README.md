@@ -34,6 +34,18 @@ materials stored here serve as the authoritative source for governance reviews a
   Governs `config/ops.yaml` for CLI automation workflows.
 - `roles_config.schema.json` – CLI permission catalogue covering Ops/Research/Governance workflows
   (§52/§57/§68). Governs `config/roles.yaml` and Access Registry consistency checks.
+- `risk_policy.schema.json` – Risk policy profiles, kill switch thresholds, and reporting guardrails
+  (§5.2). Governs `config/risk_policy.yaml` for governance and audit workflows.
+- `scoring_config.schema.json` – ScoringService coefficient, drift penalty, and diagnostics contract
+  (§3.7/§4.4.4). Governs `config/scoring.yaml`.
+- `scoreboard.schema.json` – Strategy Scoreboard thresholds, weightings, and watchlist rules
+  (付録G.1/§4.4.5). Governs `config/scoreboard.yaml`.
+- `risk_live_guard.schema.json` – Live Guard PF/Sharpe/latency guardrails and notification toggles
+  (§3.8/§4.4.3). Governs `config/risk_live_guard.yaml`.
+- `ops_readiness.schema.json` – Ops readiness score weights, evidence paths, and governance thresholds
+  (§3.27/§4.4.6). Governs `config/ops_readiness.yaml`.
+- `config_bundle.schema.json` – Aggregate schema ensuring the full config scaffolding is present and
+  aligned with individual schemas. Used by `poetry run schema-validate config --schema ...`.
 - `CHANGELOG.md` – Required update log whenever schema contracts evolve. Each PR touching the
   registry must append an entry summarising the change, linked to the relevant design/runbook
   context.

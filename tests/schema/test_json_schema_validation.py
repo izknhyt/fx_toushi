@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+import warnings
 from collections.abc import Callable
 from copy import deepcopy
 from pathlib import Path
@@ -8,6 +10,14 @@ from typing import Any
 import pytest
 from jsonschema import Draft202012Validator, ValidationError
 
+warnings.filterwarnings(
+    "ignore",
+    category=DeprecationWarning,
+    message=".*RefResolver is deprecated.*",
+)
+
+from jsonschema.validators import RefResolver
+
 pytestmark = pytest.mark.smoke
 
 
@@ -15,9 +25,27 @@ def _build_validator(
     load_json_schema: Callable[[str | Path], dict],
     schema_path: str,
 ) -> Draft202012Validator:
+    schema_file = Path(schema_path)
     schema = load_json_schema(schema_path)
     Draft202012Validator.check_schema(schema)
-    return Draft202012Validator(schema)
+    base_uri = schema_file.resolve().as_uri()
+
+    store: dict[str, Any] = {}
+    for candidate in schema_file.parent.glob("*.schema.json"):
+        try:
+            candidate_data = json.loads(candidate.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            continue
+        schema_id = candidate_data.get("$id")
+        if schema_id:
+            store[schema_id] = candidate_data
+        fallback_id = f"https://fx-toushi.dev/schemas/{candidate.name}"
+        store.setdefault(fallback_id, candidate_data)
+        store.setdefault(candidate.resolve().as_uri(), candidate_data)
+
+    resolver = RefResolver(base_uri=base_uri, referrer=schema)
+    resolver.store.update(store)
+    return Draft202012Validator(schema, resolver=resolver)
 
 
 def test_accounts_profile_accepts_valid_profile(
@@ -462,6 +490,19 @@ def test_ops_config_scaffold_is_valid(
 
 
 @pytest.mark.config_schema_smoke
+def test_ops_readiness_scaffold_is_valid(
+    load_json_schema: Callable[[str | Path], dict],
+    load_config: Callable[[str | Path], object],
+) -> None:
+    validator = _build_validator(
+        load_json_schema, "docs/schemas/ops_readiness.schema.json"
+    )
+    ops_readiness = load_config("config/ops_readiness.yaml")
+
+    validator.validate(ops_readiness)
+
+
+@pytest.mark.config_schema_smoke
 def test_roles_config_scaffold_is_valid(
     load_json_schema: Callable[[str | Path], dict],
     load_config: Callable[[str | Path], object],
@@ -485,6 +526,45 @@ def test_broker_rules_config_matches_schema(
     broker_rules = load_config("config/broker_rules.yaml")
 
     validator.validate(broker_rules)
+
+
+@pytest.mark.config_schema_smoke
+def test_scoring_config_scaffold_is_valid(
+    load_json_schema: Callable[[str | Path], dict],
+    load_config: Callable[[str | Path], object],
+) -> None:
+    validator = _build_validator(
+        load_json_schema, "docs/schemas/scoring_config.schema.json"
+    )
+    scoring_config = load_config("config/scoring.yaml")
+
+    validator.validate(scoring_config)
+
+
+@pytest.mark.config_schema_smoke
+def test_scoreboard_config_scaffold_is_valid(
+    load_json_schema: Callable[[str | Path], dict],
+    load_config: Callable[[str | Path], object],
+) -> None:
+    validator = _build_validator(
+        load_json_schema, "docs/schemas/scoreboard.schema.json"
+    )
+    scoreboard_config = load_config("config/scoreboard.yaml")
+
+    validator.validate(scoreboard_config)
+
+
+@pytest.mark.config_schema_smoke
+def test_risk_live_guard_scaffold_is_valid(
+    load_json_schema: Callable[[str | Path], dict],
+    load_config: Callable[[str | Path], object],
+) -> None:
+    validator = _build_validator(
+        load_json_schema, "docs/schemas/risk_live_guard.schema.json"
+    )
+    risk_live_guard = load_config("config/risk_live_guard.yaml")
+
+    validator.validate(risk_live_guard)
 
 
 @pytest.mark.config_schema_smoke
@@ -522,6 +602,29 @@ def test_sla_threshold_profiles_are_valid(
     profile = load_config(profile_path)
 
     validator.validate(profile)
+
+
+@pytest.mark.config_schema_smoke
+def test_config_bundle_schema_covers_scaffolds(
+    load_json_schema: Callable[[str | Path], dict],
+    load_config: Callable[[str | Path], object],
+    project_root: Path,
+) -> None:
+    validator = _build_validator(
+        load_json_schema, "docs/schemas/config_bundle.schema.json"
+    )
+    config_dir = project_root / "config"
+
+    bundle: dict[str, object] = {}
+    for path in sorted(config_dir.rglob("*")):
+        if path.is_dir():
+            continue
+        if path.suffix.lower() not in {".yaml", ".yml", ".json"}:
+            continue
+        relative = path.relative_to(config_dir).as_posix()
+        bundle[relative] = load_config(Path("config") / Path(relative))
+
+    validator.validate(bundle)
 
 
 @pytest.mark.config_schema_smoke

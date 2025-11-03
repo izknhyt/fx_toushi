@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+from pathlib import Path
 from typing import Any, Iterable, Mapping
 
 import typer
@@ -12,7 +13,10 @@ from rich.json import JSON
 from rich.panel import Panel
 from rich.pretty import Pretty
 
+from .execution import ExecutionEvidenceError, recalibrate
+from .kill_switch import KillSwitchEvidenceError, ResumeBlocked, review as kill_switch_review
 from .resync import resync
+from .scoring import DiagnosticsEvidenceError, run_diagnostics
 from .status import status
 
 logger = logging.getLogger(__name__)
@@ -55,13 +59,13 @@ def create_cli_app() -> typer.Typer:
 
     @app.command("status")
     def status_command(
+        ctx: typer.Context,
         ack: str | None = typer.Option(None, "--ack", help="Ack reference or Runbook ID"),
         kill_switch: str | None = typer.Option(None, "--kill-switch", help="Requested kill switch state"),
         board: str | None = typer.Option(None, "--board", help="Board guard operation reference"),
         verbose: bool | None = typer.Option(None, "--verbose", "-v", help="Override verbose flag"),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx = typer.get_current_context()
         ctx_obj = ctx.obj or {"verbose": False, "json": False}
         effective_verbose = _merge_with_context(verbose, ctx_obj.get("verbose", False))
         effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
@@ -77,6 +81,7 @@ def create_cli_app() -> typer.Typer:
 
     @app.command("resync")
     def resync_command(
+        ctx: typer.Context,
         since: str | None = typer.Option(None, "--since", help="Start timestamp for catch-up"),
         symbols: list[str] = typer.Option([], "--symbol", help="Target symbols", show_default=False),
         force: bool = typer.Option(False, "--force", help="Force replay despite active run"),
@@ -86,7 +91,6 @@ def create_cli_app() -> typer.Typer:
         verbose: bool | None = typer.Option(None, "--verbose", "-v", help="Override verbose flag"),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx = typer.get_current_context()
         ctx_obj = ctx.obj or {"verbose": False, "json": False}
         effective_verbose = _merge_with_context(verbose, ctx_obj.get("verbose", False))
         effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
@@ -103,5 +107,117 @@ def create_cli_app() -> typer.Typer:
             console=console if not effective_json else None,
         )
         _render_payload(console, payload, json_output=effective_json)
+
+    execution_app = typer.Typer(help="Execution model utilities")
+
+    @execution_app.command("recalibrate")
+    def execution_recalibrate_command(
+        ctx: typer.Context,
+        source: Path = typer.Option(..., "--from", help="Input parquet containing recent fills."),
+        window: str = typer.Option("30d", "--window", help="Lookback window for recalibration."),
+        out: Path | None = typer.Option(None, "--out", help="Optional override for output path."),
+        dry_run: bool = typer.Option(False, "--dry-run", help="Plan recalibration without writing output."),
+        strict: bool = typer.Option(False, "--strict", help="Exit with code 44 if thresholds are violated."),
+        verbose: bool | None = typer.Option(None, "--verbose", "-v", help="Override verbose flag."),
+        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON."),
+    ) -> None:
+        ctx_obj = ctx.obj or {"verbose": False, "json": False}
+        effective_verbose = _merge_with_context(verbose, ctx_obj.get("verbose", False))
+        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        try:
+            payload = dict(
+                recalibrate(
+                    source=source,
+                    window=window,
+                    output=out,
+                    dry_run=dry_run,
+                    strict=strict,
+                )
+            )
+        except ExecutionEvidenceError as exc:
+            typer.echo(f"[execution.recalibrate] {exc}", err=True)
+            raise typer.Exit(44 if strict else 1) from exc
+        payload["verbose"] = effective_verbose
+        _render_payload(console, payload, json_output=effective_json)
+
+    app.add_typer(execution_app, name="execution")
+
+    scoring_app = typer.Typer(help="Scoring diagnostics utilities")
+
+    @scoring_app.command("diagnostics")
+    def scoring_diagnostics_command(
+        ctx: typer.Context,
+        strategy: str = typer.Option(..., "--strategy", help="Target strategy identifier."),
+        window: str = typer.Option("4w", "--window", help="Lookback window for diagnostics."),
+        out: Path | None = typer.Option(None, "--out", help="Optional override for output file or directory."),
+        fmt: str = typer.Option("md", "--format", help="Output format: md or json."),
+        verbose: bool | None = typer.Option(None, "--verbose", "-v", help="Override verbose flag."),
+        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON."),
+    ) -> None:
+        ctx_obj = ctx.obj or {"verbose": False, "json": False}
+        effective_verbose = _merge_with_context(verbose, ctx_obj.get("verbose", False))
+        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        try:
+            payload = dict(
+                run_diagnostics(
+                    strategy=strategy,
+                    window=window,
+                    output=out,
+                    fmt=fmt,
+                )
+            )
+        except DiagnosticsEvidenceError as exc:
+            typer.echo(f"[scoring.diagnostics] {exc}", err=True)
+            raise typer.Exit(1) from exc
+        payload["verbose"] = effective_verbose
+        _render_payload(console, payload, json_output=effective_json)
+
+    app.add_typer(scoring_app, name="scoring")
+
+    kill_switch_app = typer.Typer(help="Kill switch review utilities")
+
+    @kill_switch_app.command("review")
+    def kill_switch_review_command(
+        ctx: typer.Context,
+        reason: str = typer.Option(..., "--reason", help="Kill switch reason code."),
+        strategy: str | None = typer.Option(None, "--strategy", help="Associated strategy identifier."),
+        mode: str = typer.Option("paper", "--mode", help="Operating mode (paper|live)."),
+        recommend: str = typer.Option(
+            "guarded",
+            "--recommend",
+            help="Recommendation for next actions (guarded|resume).",
+        ),
+        attach: list[Path] = typer.Option(
+            [],
+            "--attach",
+            help="Evidence files to attach to the review.",
+            show_default=False,
+        ),
+        verbose: bool | None = typer.Option(None, "--verbose", "-v", help="Override verbose flag."),
+        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON."),
+    ) -> None:
+        ctx_obj = ctx.obj or {"verbose": False, "json": False}
+        effective_verbose = _merge_with_context(verbose, ctx_obj.get("verbose", False))
+        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        try:
+            payload = dict(
+                kill_switch_review(
+                    reason=reason,
+                    strategy=strategy,
+                    mode=mode,
+                    recommendation=recommend,
+                    attachments=attach,
+                )
+            )
+        except ResumeBlocked as exc:
+            typer.echo(f"[kill-switch.review] {exc}", err=True)
+            raise typer.Exit(43) from exc
+        except KillSwitchEvidenceError as exc:
+            typer.echo(f"[kill-switch.review] {exc}", err=True)
+            raise typer.Exit(1) from exc
+        payload["verbose"] = effective_verbose
+        _render_payload(console, payload, json_output=effective_json)
+
+    app.add_typer(kill_switch_app, name="kill-switch")
 
     return app

@@ -1,0 +1,121 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://fx-toushi.dev/schemas/scoreboard.schema.json",
+  "title": "ScoreboardConfig",
+  "description": "Strategy Scoreboard configuration for thresholds, weights, and watchlist governance per detailed design §4.4.5.",
+  "type": "object",
+  "required": [
+    "version",
+    "thresholds",
+    "weights",
+    "watchlist_rules",
+    "runbook_refs"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "version": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "thresholds": {
+      "type": "object",
+      "required": [
+        "alpha",
+        "decay",
+        "watchlist_cooldown_weeks"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "alpha": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "decay": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "watchlist_cooldown_weeks": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 12
+        }
+      }
+    },
+    "weights": {
+      "type": "object",
+      "required": [
+        "profit_factor",
+        "sharpe",
+        "stability_index",
+        "regime_fit"
+      ],
+      "additionalProperties": {
+        "type": "number",
+        "minimum": 0,
+        "maximum": 1
+      },
+      "properties": {
+        "profit_factor": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "sharpe": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "stability_index": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "regime_fit": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        }
+      }
+    },
+    "watchlist_rules": {
+      "type": "object",
+      "required": [
+        "min_consecutive_breaches",
+        "review_window_weeks"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "min_consecutive_breaches": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 8
+        },
+        "review_window_weeks": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 12
+        }
+      }
+    },
+    "runbook_refs": {
+      "type": "object",
+      "required": [
+        "watchlist",
+        "escalation"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "watchlist": {
+          "type": "string",
+          "pattern": "^[A-Z0-9\\-]+(#[A-Za-z0-9_\\-]+)?$"
+        },
+        "escalation": {
+          "type": "string",
+          "pattern": "^[A-Z0-9\\-]+(#[A-Za-z0-9_\\-]+)?$"
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,24 @@
+# config/scoring.yaml -- CONFIG-SCAFF-01 scaffold
+# このファイルは ScoringService / Strategy Scoreboard で共有する係数を定義します。
+# 実運用値に変更する際は detailed_design_fx_signal_tool_v1.md §3.7, §4.4.4 と
+# docs/runbooks/RUN-SCORE-01.md の承認手順を参照し、承認ログを残してください。
+
+version: 1  # TODO: 係数セットをローリング運用する場合はバージョンを更新し、関連テストを同期する。
+weights:
+  expected_r: 0.55       # TODO: バックテスト/ライブ乖離レビューで再調整する。
+  pf_all: 0.35
+  drawdown_penalty: 0.07
+  spread_penalty: 0.03
+drift_penalty:
+  max_pf_drift: 0.10     # PF ライブ/バックテスト比がこの閾値を超えた場合に警告。
+  kappa: 0.35            # 乖離ペナルティの強度（ScoringDiagnostics で記録）。
+volatility_cap:
+  max_expected_r: 2.5
+  regime_weights:
+    trend: 1.0
+    range: 0.85
+    spike: 0.65
+diagnostics:
+  report_path: reports/diagnostics
+  alert_delta_pf: 0.15        # TODO: Live Guard レポートと整合させる。
+  alert_latency_p75: 150

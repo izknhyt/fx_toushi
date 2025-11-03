@@ -1,0 +1,84 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://fx-toushi.dev/schemas/config_bundle.schema.json",
+  "title": "ConfigBundle",
+  "description": "Aggregate schema ensuring required configuration scaffolds exist and conform to individual schemas.",
+  "type": "object",
+  "required": [
+    "board_modes.yaml",
+    "broker_rules.yaml",
+    "execution_model.yaml",
+    "feature_pipeline.yaml",
+    "ops.yaml",
+    "roles.yaml",
+    "risk_policy.yaml",
+    "strategy_manifest.yaml",
+    "reduce_only.yaml",
+    "scoring.yaml",
+    "scoreboard.yaml",
+    "risk_live_guard.yaml",
+    "ops_readiness.yaml",
+    "profiles/backtest.yaml",
+    "profiles/paper.yaml",
+    "profiles/live.yaml",
+    "sla_thresholds/default.yaml",
+    "sla_thresholds/active.yaml"
+  ],
+  "additionalProperties": true,
+  "properties": {
+    "board_modes.yaml": {
+      "$ref": "board_modes.schema.json"
+    },
+    "broker_rules.yaml": {
+      "$ref": "broker_rules.schema.json"
+    },
+    "execution_model.yaml": {
+      "$ref": "execution_model.schema.json"
+    },
+    "feature_pipeline.yaml": {
+      "$ref": "feature_pipeline.schema.json"
+    },
+    "ops.yaml": {
+      "$ref": "ops_config.schema.json"
+    },
+    "roles.yaml": {
+      "$ref": "roles_config.schema.json"
+    },
+    "risk_policy.yaml": {
+      "$ref": "risk_policy.schema.json"
+    },
+    "strategy_manifest.yaml": {
+      "$ref": "strategy_manifest.schema.json"
+    },
+    "reduce_only.yaml": {
+      "$ref": "human_gate_config.schema.json"
+    },
+    "scoring.yaml": {
+      "$ref": "scoring_config.schema.json"
+    },
+    "scoreboard.yaml": {
+      "$ref": "scoreboard.schema.json"
+    },
+    "risk_live_guard.yaml": {
+      "$ref": "risk_live_guard.schema.json"
+    },
+    "ops_readiness.yaml": {
+      "$ref": "ops_readiness.schema.json"
+    },
+    "profiles/backtest.yaml": {
+      "$ref": "cfg.schema.json"
+    },
+    "profiles/paper.yaml": {
+      "$ref": "cfg.schema.json"
+    },
+    "profiles/live.yaml": {
+      "$ref": "cfg.schema.json"
+    },
+    "sla_thresholds/default.yaml": {
+      "$ref": "sla_threshold_profile.schema.json"
+    },
+    "sla_thresholds/active.yaml": {
+      "$ref": "sla_threshold_profile.schema.json"
+    }
+  }
+}

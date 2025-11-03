@@ -1,0 +1,77 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://fx-toushi.dev/schemas/risk_live_guard.schema.json",
+  "title": "RiskLiveGuardConfig",
+  "description": "Live performance guard configuration for thresholds, windows, and notifications per detailed design §4.4.3.",
+  "type": "object",
+  "required": [
+    "version",
+    "window_days",
+    "warmup_trades",
+    "pf_threshold",
+    "sharpe_threshold",
+    "latency_p75_threshold",
+    "live_guard_mode",
+    "notify",
+    "runbook_ref"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "version": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "window_days": {
+      "type": "integer",
+      "minimum": 14,
+      "maximum": 60
+    },
+    "warmup_trades": {
+      "type": "integer",
+      "minimum": 15
+    },
+    "pf_threshold": {
+      "type": "number",
+      "minimum": 1.0,
+      "maximum": 2.0
+    },
+    "sharpe_threshold": {
+      "type": "number",
+      "minimum": 0.6,
+      "maximum": 1.5
+    },
+    "latency_p75_threshold": {
+      "type": "integer",
+      "minimum": 60,
+      "maximum": 240
+    },
+    "live_guard_mode": {
+      "type": "string",
+      "enum": [
+        "backtest",
+        "paper",
+        "live"
+      ]
+    },
+    "notify": {
+      "type": "object",
+      "required": [
+        "kill_switch_review",
+        "ops_agenda_task"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "kill_switch_review": {
+          "type": "boolean"
+        },
+        "ops_agenda_task": {
+          "type": "boolean"
+        }
+      }
+    },
+    "runbook_ref": {
+      "type": "string",
+      "pattern": "^RUN-RISK-07(#[-A-Za-z0-9_]+)?$"
+    }
+  }
+}

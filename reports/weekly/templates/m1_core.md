@@ -16,6 +16,39 @@
 
 > **データ出典**: `reports/performance/{{mode}}/{{report_week}}/*.parquet`, `reports/kpi_snapshots/{{report_week}}.json`
 
+## Ops Evidence Checklist
+- `tradectl report weekly --dry-run --week {{report_week}} --save-snapshot reports/weekly/evidence/{{report_week}}/report.json`
+- `tradectl board --view strategy --strategy-id {{strategy_id}} --save-snapshot reports/weekly/evidence/{{report_week}}/board_snapshot.json`
+- `tools/metrics_extract.py --source metrics/strategy_execution.jsonl --window 7d --out reports/weekly/evidence/{{report_week}}/strategy_execution.md`
+- `tradectl performance live-guard --strategy {{strategy_id}} --window 4w --mode {{mode}} --output json --strict --save reports/weekly/evidence/{{report_week}}/live_guard.json`
+- `make check-ops-readiness` → ログ: `reports/validation_log/ops_readiness_{{report_week}}.md`
+
+## Signal Cycle Evidence
+| Evidence | Path | Owner | Notes |
+| --- | --- | --- | --- |
+| Signal Board snapshot | `reports/weekly/evidence/{{report_week}}/board_snapshot.json` | Ops | `tradectl board --view strategy --strategy-id {{strategy_id}}` |
+| Strategy execution extract | `reports/weekly/evidence/{{report_week}}/strategy_execution.md` | Quant | `tools/metrics_extract.py` |
+| Live Guard result | `reports/weekly/evidence/{{report_week}}/live_guard.json` | Risk | `tradectl performance live-guard --strategy {{strategy_id}} --strict` |
+| Ops readiness validation | `reports/validation_log/ops_readiness_{{report_week}}.md` | Ops | `make check-ops-readiness` |
+
+## Live Guard Watch
+| Metric | Value | Threshold | State | Notes |
+| --- | --- | --- | --- | --- |
+| PF trailing | {{live_guard.pf_trailing.value}} | {{live_guard.pf_trailing.threshold}} | {{live_guard.pf_trailing.state}} | {{live_guard.pf_trailing.note}} |
+| Sharpe trailing | {{live_guard.sharpe_trailing.value}} | {{live_guard.sharpe_trailing.threshold}} | {{live_guard.sharpe_trailing.state}} | {{live_guard.sharpe_trailing.note}} |
+| Latency p75 | {{live_guard.latency_p75.value}} | {{live_guard.latency_p75.threshold}} | {{live_guard.latency_p75.state}} | {{live_guard.latency_p75.note}} |
+| Alerts | {{live_guard.alerts}} | - | {{live_guard.status}} | {{live_guard.recommended_action}} |
+
+## Risk Disclosure
+| Item | Status | Expires At | Last Accepted By | Consent Ref |
+| --- | --- | --- | --- | --- |
+| Model Risk Statement | {{risk_disclosure.status}} | {{risk_disclosure.expires_at}} | {{risk_disclosure.last_accepted_by}} | {{risk_disclosure.consent_reference_id}} |
+
+## Incident & Alerts Summary
+- Acceptable Degradation: {{degradation.summary}}
+- Kill Switch Reviews: `reports/audit/kill_switch_review/`
+- Outstanding Tickets: {{open_tickets}}
+
 ## Manual Commentary
 
 ### A/Bテスト結果（担当: Quant Lead / 締切: 日曜 18:00 JST）
@@ -28,7 +61,7 @@
 
 ### 次週ToDo（担当: Ops Manager / 締切: 月曜 08:30 JST）
 - レビュー記録: `docs/review_log.md` の `OPS-{{report_week}}`
-- Runbook参照: `docs/runbooks/RUN-PERF-01.md`, `docs/runbooks/RUN-RISK-01.md`
+- Runbook参照: `docs/runbooks/RUN-PERF-01.md`, `docs/runbooks/RUN-RISK-01.md`, `docs/runbooks/RUN-RISK-07.md`, `docs/runbooks/OPS-READINESS-01.md`
 - サマリ:
   - 優先タスク: 
   - 所要Runbook/チケット: 
@@ -36,6 +69,8 @@
 
 ## Attachments & Links
 - Validation Logs: `reports/validation_log/AC-45_sla_*.md`
+- Live Guard Actions: `reports/validation_log/live_guard_*.md`
+- Ops Readiness: `reports/validation_log/ops_readiness_{{report_week}}.md`
 - Ops Worklog Snapshot: `metrics/ops_workload.json`
 - Feature Flags: `config/profile_{{profile}}.yaml`
 

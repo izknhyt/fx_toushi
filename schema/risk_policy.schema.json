@@ -1,0 +1,247 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://fx-toushi.dev/schemas/risk_policy.schema.json",
+  "title": "RiskPolicyConfig",
+  "description": "Risk policy scaffolding covering kill switch, exposure, and reporting guardrails per detailed design §5.2.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "metadata",
+    "profiles"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "anyOf": [
+        {
+          "type": "integer",
+          "minimum": 1
+        },
+        {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^[a-z0-9_.\\-]+$"
+        }
+      ]
+    },
+    "metadata": {
+      "type": "object",
+      "required": [
+        "policy_name",
+        "base_capital_jpy",
+        "trade_frequency_estimate_per_year"
+      ],
+      "additionalProperties": true,
+      "properties": {
+        "policy_name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "base_capital_jpy": {
+          "type": "number",
+          "minimum": 0
+        },
+        "trade_frequency_estimate_per_year": {
+          "type": "number",
+          "minimum": 0
+        },
+        "notes": {
+          "type": "string"
+        }
+      }
+    },
+    "profiles": {
+      "type": "object",
+      "minProperties": 1,
+      "patternProperties": {
+        "^[a-z0-9_\\-]+$": {
+          "type": "object",
+          "required": [
+            "description",
+            "risk_limits",
+            "kill_switch",
+            "spread_guard",
+            "board_mode_overrides",
+            "reduce_only_policy",
+            "reporting"
+          ],
+          "additionalProperties": true,
+          "properties": {
+            "description": {
+              "type": "string",
+              "minLength": 1
+            },
+            "risk_limits": {
+              "type": "object",
+              "required": [
+                "per_trade_risk_pct",
+                "max_concurrent_positions",
+                "exposure_r_eff_soft_stop",
+                "exposure_r_eff_hard_stop"
+              ],
+              "additionalProperties": true,
+              "properties": {
+                "per_trade_risk_pct": {
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 100
+                },
+                "max_concurrent_positions": {
+                  "type": "object",
+                  "required": [
+                    "overall",
+                    "per_currency_bucket"
+                  ],
+                  "additionalProperties": false,
+                  "properties": {
+                    "overall": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "per_currency_bucket": {
+                      "type": "integer",
+                      "minimum": 0
+                    }
+                  }
+                },
+                "exposure_r_eff_soft_stop": {
+                  "type": "number",
+                  "minimum": 0
+                },
+                "exposure_r_eff_hard_stop": {
+                  "type": "number",
+                  "minimum": 0
+                }
+              }
+            },
+            "kill_switch": {
+              "type": "object",
+              "required": [
+                "drawdown_threshold_pct",
+                "capital_floor_pct_of_base",
+                "release_requirements"
+              ],
+              "additionalProperties": true,
+              "properties": {
+                "drawdown_threshold_pct": {
+                  "type": "object",
+                  "required": [
+                    "daily",
+                    "weekly"
+                  ],
+                  "additionalProperties": false,
+                  "properties": {
+                    "daily": {
+                      "type": "number",
+                      "minimum": 0,
+                      "maximum": 100
+                    },
+                    "weekly": {
+                      "type": "number",
+                      "minimum": 0,
+                      "maximum": 100
+                    }
+                  }
+                },
+                "capital_floor_pct_of_base": {
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 100
+                },
+                "release_requirements": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "minItems": 1
+                }
+              }
+            },
+            "spread_guard": {
+              "type": "object",
+              "required": [
+                "warning_spread_pips",
+                "critical_spread_pips",
+                "cooldown_minutes"
+              ],
+              "additionalProperties": false,
+              "properties": {
+                "warning_spread_pips": {
+                  "type": "number",
+                  "minimum": 0
+                },
+                "critical_spread_pips": {
+                  "type": "number",
+                  "minimum": 0
+                },
+                "cooldown_minutes": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              }
+            },
+            "board_mode_overrides": {
+              "type": "object",
+              "required": [
+                "degrade_on_soft_stop",
+                "halt_on_kill_switch"
+              ],
+              "additionalProperties": false,
+              "properties": {
+                "degrade_on_soft_stop": {
+                  "type": "string",
+                  "pattern": "^[a-z_]+$"
+                },
+                "halt_on_kill_switch": {
+                  "type": "string",
+                  "pattern": "^[a-z_]+$"
+                }
+              }
+            },
+            "reduce_only_policy": {
+              "type": "object",
+              "required": [
+                "enabled",
+                "exit_after_minutes"
+              ],
+              "additionalProperties": false,
+              "properties": {
+                "enabled": {
+                  "type": "boolean"
+                },
+                "exit_after_minutes": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              }
+            },
+            "reporting": {
+              "type": "object",
+              "required": [
+                "metrics_snapshot_path",
+                "audit_targets"
+              ],
+              "additionalProperties": true,
+              "properties": {
+                "metrics_snapshot_path": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "audit_targets": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "minItems": 1
+                }
+              }
+            }
+          }
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

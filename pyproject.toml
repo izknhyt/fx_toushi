@@ -31,6 +31,8 @@ mypy = "==1.18.2"
 
 [tool.poetry.scripts]
 tradectl = "src.interfaces.cli.main:main"
+schema-validate = "src.interfaces.cli.schema_validate:main"
+check-ops-readiness = "tools.check_ops_readiness:main"
 
 [build-system]
 requires = ["poetry-core>=2.0.0,<3.0.0"]

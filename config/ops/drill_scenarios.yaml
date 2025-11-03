@@ -11,8 +11,7 @@ scenarios:
       - RUN-OPS-AGENDA-01
     validation_playbook_ids:
       - AC-45
-    trigger: >-
-      TODO: Document the condition that requires this drill (e.g., sustained SLA breach).
+    trigger: "TODO: Document the condition that requires this drill (e.g., sustained SLA breach)."
     expected_duration_min: 45
     impact_tags:
       - data-quality
