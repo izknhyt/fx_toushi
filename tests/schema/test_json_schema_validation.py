@@ -477,6 +477,19 @@ def test_execution_model_scaffold_is_valid(
 
 
 @pytest.mark.config_schema_smoke
+def test_feature_flags_config_is_valid(
+    load_json_schema: Callable[[str | Path], dict],
+    load_config: Callable[[str | Path], object],
+) -> None:
+    validator = _build_validator(
+        load_json_schema, "docs/schemas/feature_flags.schema.json"
+    )
+    feature_flags = load_config("config/feature_flags.yaml")
+
+    validator.validate(feature_flags)
+
+
+@pytest.mark.config_schema_smoke
 def test_ops_config_scaffold_is_valid(
     load_json_schema: Callable[[str | Path], dict],
     load_config: Callable[[str | Path], object],

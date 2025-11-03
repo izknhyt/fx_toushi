@@ -207,7 +207,7 @@
 | 1 | `pyproject.toml`/`poetry.lock`が未配置で、§1.7・§3.22の依存管理方針と乖離。 | 依存解決が属人的になり、Codexが環境を再現できない。 | ✅ 2025-03-14 / `PKG-BOOT-01`: リポジトリ直下に`pyproject.toml`・`poetry.lock`を配置し、`ci/templates/python_smoke.yml`から`poetry install --no-root`を実行する前提を整備。 |
 | 2 | `src/`配下は`brokers/adapter.py`のみで、§1.3のディレクトリ構成に必要なパッケージ雛形が存在しない。 | Codexがクラス配置やインポート方針を誤解し、後続のPR差分が巨大化。 | ✅ 2025-03-14 / `SRC-SCAFF-01`: `src/__init__.py`と`src/app/__init__.py`、`src/core/__init__.py`、`src/infra/__init__.py`などを追加し、詳細設計準拠のパッケージスキャフォールドを構築。 |
 | 3 | `tests/`は空で、§0.6.3の受入テスト名が未定義。 | Codexがテストを新設する際の命名/配置が分からず、CI整備に遅延。 | ✅ 2025-03-14 / `TEST-SMOKE-01`: `tests/conftest.py`、`tests/smoke/test_feature_context_contract.py`、`tests/schema/test_json_schema_validation.py`を整備し、`pytest.ini`で`smoke`/`config_schema_smoke`マーカーを宣言。 |
-| 4 | §79.1が`FieldMapping`/`RATE_LIMIT_SLA`を要求しているが、`src/brokers/adapter.py`は`EndpointSpec`のみ。 | ブローカー統合時にフィールド整合性テストが欠落し、HITL/Live移行のリスクが増大。 | ⏳ 2025-03-14時点 / `BROKER-META-01`: `src/brokers/adapter.py`に`FieldMapping` dataclassと`RATE_LIMIT_SLA`定数を追加済み。想定テスト`tests/unit/test_broker_adapter_contracts.py`が未配置のため、検証ロジックの実装が残課題。 |
+| 4 | §79.1が`FieldMapping`/`RATE_LIMIT_SLA`を要求しているが、`src/brokers/adapter.py`は`EndpointSpec`のみ。 | ブローカー統合時にフィールド整合性テストが欠落し、HITL/Live移行のリスクが増大。 | ⏳ 2025-03-14時点 / Task4 `BROKER-CONTRACT-TEST`: `src/brokers/adapter.py`向けに`tests/unit/test_broker_adapter_contracts.py`を新設し、(a) `FieldMapping`必須キー集合、(b) `RATE_LIMIT_SLA`閾値、(c) dataclass型定義を検証する。必要に応じて`tests/fixtures/broker_adapter.json`でモックマッピングを固定化し、`poetry run pytest tests/unit/test_broker_adapter_contracts.py`（テスト完了）の証跡を残す。 |
 | 5 | `docs/review_log.md`に本レビュー結果の記録が未反映。 | 変更履歴と意思決定トレースが断絶し、AC-45/AC-51監査要件に抵触。 | ✅ 2025-03-12 / Packet該当なし（Opsレビュー議事）: `docs/review_log.md`に2025-03-10/11/12レビューのサマリを追記済み。`logs/ops/review.log`は未整備のため、週次Opsレビューでフォローアップ継続。 |
 | 6 | `config/`配下の雛形（`risk_policy.yaml`/`strategy_manifest.yaml`/`board_modes.yaml`/`sla_thresholds/*.yaml`等）が存在せず、§4.4やRunbook参照と乖離。 | Codexが設定スキーマを前提に実装できず、テスト/CLIが即時失敗する。 | ✅ 2025-03-13 / `CONFIG-SCAFF-01`: `config/README.md`、`config/risk_policy.yaml`、`config/board_modes.yaml`、`config/strategy_manifest.yaml`、`config/feature_pipeline.yaml`、`config/profiles/{backtest,paper,live}.yaml`、`config/sla_thresholds/{README,default,active}.yaml`を整備し、`pytest -k config_schema_smoke`で検証可能な雛形を配置。 |
 
@@ -268,6 +268,74 @@ poetry run schema-validate config/ops_readiness.yaml --schema docs/schemas/ops_r
 
 - **初期化ツール**: `make config-init`（`tools/scripts/config_init.py`）で雛形をコピーし、各ファイルに`TODO:`コメントで調整ポイント（例: `alpha_threshold`, `latency_alert_threshold_sec`）を明示する。Runbook `CONFIG-SCAFF-01`へステップバイステップ手順を追加する。
 - **レビュー要件**: 設定変更を含むPRは`pytest -k config_schema_smoke`と上記`schema-validate`ログ添付を必須とし、§0.6.11のPRチェックリストへ「Configスキーマ検証ログ」項目を追記する。
+
+#### 0.6.13 Feature Flagマトリクス & Runbook連携
+- `config/feature_flags.yaml`を単一の情報源とし、Backtest/Paper/Liveの既定値とマイルストーンを明示した。設定差分はRunbook `RUN-FEATURE-FLAG-01`で承認・証跡化する。
+- CodexはテーブルのRunbook参照IDをPR本文に記載し、`pytest -k config_schema_smoke`と`pytest -k feature_flags`のログを添付すること。
+
+| Flag名 | Default (Backtest/Paper/Live) | 所有者 | 有効条件 | Rollback | Runbook参照ID |
+| --- | --- | --- | --- | --- | --- |
+| `sprt_guard` | `false / false / false` | Risk Manager | M2到達後、Paper soak ≥10取引日で`metrics/sprt_health.jsonl`の`false_positive=0`を継続 | `tradectl config flags --set sprt_guard=false --profile live`→`pytest -k feature_flags`→`NextBarChangeQueue`確認 | `RUN-FEATURE-FLAG-01 §5.1` |
+| `reduce_only_advisor` | `false / false / false` | Ops Manager | M1.1 Spread訓練完了、Paper soak ≥5取引日で提案ログを確認 | `tradectl config flags --set reduce_only_advisor=false --profile <mode>`→Board表示確認 | `RUN-FEATURE-FLAG-01 §5.2` |
+| `risk_disclosure_enforce` | `false / false / false` | Compliance/Risk | M1.1 リスク開示手順が`RUN-RISK-01`/`GOV-AUD-01`に従って更新済み、Paperで`ConsentRequiredError`挙動を確認 | `tradectl config flags --set risk_disclosure_enforce=false --profile <mode>`→`risk_consent`監査追記テスト | `RUN-FEATURE-FLAG-01 §5.3` |
+| `reporter.enable_extended_blocks` | `false / false / false` | Ops Manager | M1.1 Reporterテンプレのレイアウト検証完了 (`reports/weekly/templates/m1_core.md`) | `defaults.<mode>.reporter.enable_extended_blocks=false`へ戻しテンプレ差分を破棄 | `RUN-FEATURE-FLAG-01 §5.4` |
+| `reports.performance.enable` | `false / false / false` | Ops Manager / PO | M1.2 PerformanceSnapshotのCI連続3回成功、ストレージ容量評価完了 | `defaults.<mode>.reports.performance.enable=false`→レポートジョブ停止 | `RUN-FEATURE-FLAG-01 §5.5` |
+| `data.paid_feed` | `false / false / false` | PO / Compliance | M1.2 有償フィード契約締結、`RUN-DATA-05/06`再実施、ライセンスチェックリスト完了 | `defaults.live.data.paid_feed=false`→代替フィードへフェイルバック→`metrics/data_ingestion_sla.jsonl`回復確認 | `RUN-FEATURE-FLAG-01 §5.6` |
+
+- `config/feature_flags.yaml`抜粋（Runbookと同期して更新すること）:
+
+```yaml
+# config/feature_flags.yaml（一部）
+schema_version: "feature_flags.v1"
+defaults:
+  backtest:
+    sprt_guard: false
+    reduce_only_advisor: false
+    risk_disclosure_enforce: false
+    reporter.enable_extended_blocks: false
+    reports.performance.enable: false
+    data.paid_feed: false
+  paper:
+    sprt_guard: false
+    reduce_only_advisor: false
+    risk_disclosure_enforce: false
+    reporter.enable_extended_blocks: false
+    reports.performance.enable: false
+    data.paid_feed: false
+  live:
+    sprt_guard: false
+    reduce_only_advisor: false
+    risk_disclosure_enforce: false
+    reporter.enable_extended_blocks: false
+    reports.performance.enable: false
+    data.paid_feed: false
+definitions:
+  sprt_guard:
+    milestone: "M2"
+    owner: risk_manager
+    category: dangerous
+    runbook_ref: "RUN-FEATURE-FLAG-01 §5.1"
+    enable_conditions:
+      - "Paper soak ≥10取引日、`metrics/sprt_health.jsonl.false_positive=0`継続"
+    rollback:
+      - "tradectl config flags --set sprt_guard=false --profile live"
+      - "poetry run pytest -k feature_flags"
+  reduce_only_advisor:
+    milestone: "M1.1"
+    owner: ops_manager
+    category: guarded
+    runbook_ref: "RUN-FEATURE-FLAG-01 §5.2"
+    enable_conditions:
+      - "`RUN-SPREAD-03`完了＋Paper soak ≥5取引日で提案ログ一致"
+    rollback:
+      - "tradectl config flags --set reduce_only_advisor=false --profile <mode>"
+```
+
+- マイルストーン別の有効化タイムライン:
+  1. **M1.0**: 全Flag `false`（Backtest/Paper/Live共通）。`pytest -k feature_flags`で整合性のみ検証。
+  2. **M1.1**: `reduce_only_advisor`, `risk_disclosure_enforce`, `reporter.enable_extended_blocks`をPaperで有効化→Runbook記録→Live反映。
+  3. **M1.2**: `reports.performance.enable`, `data.paid_feed`をPaper→Liveへ段階展開。ストレージ/ライセンス証跡必須。
+  4. **M2**: `sprt_guard`をPaper soak後にLive反映。`GateState`/`NextBarChangeQueue`との連携テレメトリを監視。
 
 #### 4.4.4 `config/scoring.yaml`
 - **用途**: ScoringService（§3.7）、Strategy Scoreboard（付録G.1）、`tradectl scoring diagnostics`（§6.5）で共通利用する係数と閾値を管理。
@@ -3358,7 +3426,7 @@ Flag切替時は`ConfigChanged`イベントに`flag_delta`が記録され、Repo
 | FR-04 | AC-01, AC-06 | §3.5, §5.0, §5.2, §5.5, §5.7, §9.5 |
 | FR-05 | AC-03, AC-05 | §3.8, §3.9, §5.0, §5.3, §5.14, §7, §9.5 |
 | FR-06 | AC-02, AC-06 | §3.11, §5.0, §5.2, §5.5, §9.5 |
-| FR-07, FR-38 | AC-02, AC-06 | §3.16, §4.3, §5.0, §5.5, §9.5 |
+| FR-07, FR-38 | AC-02, AC-06 | §3.16, §4.3, §5.0, §5.5, §9.5, §79.6.4 |
 | FR-08 | AC-04 | §2.1, §2.2, §5.0, §5.1, §5.2, §9.5 |
 | FR-09 | AC-01 | §3.17, §5.0, §5.7, §9.5 |
 | FR-10 | AC-06 | §3.18, §5.0, §5.5, §9.5 |
@@ -3386,7 +3454,7 @@ Flag切替時は`ConfigChanged`イベントに`flag_delta`が記録され、Repo
 | FR-35 | AC-03 | §3.16, §3.17, §5.0, §5.3 |
 | FR-36 | AC-03, AC-05 | §3.8, §5.0, §5.3, §5.14 |
 | FR-37 | AC-02, AC-03 | §3.10, §5.0, §5.3, §5.5 |
-| FR-39 | AC-02 | §3.6, §3.16, §5.0, §5.5 |
+| FR-39 | AC-02 | §3.6, §3.16, §5.0, §5.5, §79.6.4 |
 | FR-40 | AC-06 | §3.13, §5.0, §5.5 |
 | FR-41 | AC-02 | §3.6, §5.0, §5.4, §5.5 |
 | FR-42 | AC-03 | §3.10 (M2+), §5.0, §5.3 |
@@ -3450,42 +3518,100 @@ Flag切替時は`ConfigChanged`イベントに`flag_delta`が記録され、Repo
 - **Packet採番**: `EP<epic>-P<sequence>`。Issue/PRタイトルにも同番号を付与（例: `[EP03-P1] HealthMonitor suggest_guarded`）。
 - **依存管理**: P1→P2の順で完了させる。`EP03-P1`は`EP01-P1`完了後（メトリクスが揃った状態）で着手する。
 
-### 12.2 Packetチェックリスト（Codex向け共通テンプレ）
-- **設計整合**: 対象セクション引用、I/O契約、例外、Feature Flag初期値をIssue本文にコピペ。差分がある場合は本書更新→再レビュー。
-- **テスト指示**: `pytest`コマンド、CLIスナップショット、必要なダミーデータ生成コマンドを列挙。Codexが実行困難な外部依存（SMTP等）は`--skip-smtp`等のオプションを用意し、テスト結果に`SKIP`が出る想定を明示する。
-- **戦略マニフェスト**: 戦略の有効化/順序/重みを変更するPacketは`strategy_manifest.yaml`差分を明記し、`strategies.<id>.enabled|priority|weight|feature_flags`の更新値と§3.5/§4.4/§6.7（Config Governance）参照先をPR本文に記載する。CodexはManifestを単一情報源とみなし、他ファイルへの重複定義を禁止。
-- **監査ログ検証**: `pytest -k audit_snapshot`など監査ログをファイル比較するテストを定義し、Codexには出力例を提供する。`git diff logs/audit`があれば差戻し。
-- **UX確認**: トレーダーはCLIスクリーンショットと`tradectl status`出力をレビュー。`docs/trader_signoff/<packet>.md`テンプレに沿って(1) 画面キャプチャ、(2) 操作所要時間、(3) コメントを記入する。
-- **Rollback手順**: 各Packetで変更した設定/Flag/データを明記。例: `cfg change: config/profile_live.yaml (feature_flags.risk_disclosure_enforce)` → `git checkout -- config/profile_live.yaml`で戻す。データ生成の場合は削除コマンドも記載。
-- **Configスキャフォールト**: `CONFIG-SCAFF-01`適用済み前提。設定を追加・変更するPacketは`poetry run schema-validate ...`ログをPR本文へ貼付し、必要に応じて`make config-init`の差分を更新する。欠落している雛形が判明した場合は§0.6.12を参照して追加。
-- **新規CLI**: `tradectl execution recalibrate` / `tradectl scoring diagnostics` / `tradectl kill-switch review`を利用するPacketは、サンプル実行ログと生成物パス（`config/execution_model.calib.yaml`, `reports/diagnostics/scoring_<date>.md`, `reports/audit/kill_switch_review/<ts>.md`）を添付し、Runbook更新との整合を明記する。
-- **テンプレ同期**: ReporterやValidationテンプレを変更した場合は`reports/weekly/templates/m1_core.md`・`docs/validation_log/templates/weekly.md`・`docs/trader_signoff/TEMPLATE.md`の差分をPacketに含め、`pytest -k weekly_report_template`・`pytest -k validation_log_template`ログを添付する。
-- **初期テンプレート位置と保守責任**: Implementation Packetの詳細は`docs/implementation_packets/TEMPLATE.md`をベースに作成し、Ops Managerが構造保守、Codex Liaisonが各Packetの更新履歴を追記する。関連するプロンプト差分は`docs/prompt_packages/TEMPLATE.md`を参照し、同担当者が同期する。
+### 12.2 テンプレートアセット参照
+- Packet/PR/レビュー関連テンプレートは[docs/templates/pr_checklist.md](docs/templates/pr_checklist.md)へ集約した。主な内訳:
+  - Packetチェックリスト（Codex向け共通テンプレ）
+  - トレーダー受入試験テンプレ
+  - Codexレビューフィードバックフォーマット
+  - Pull Requestテンプレート（Codex向け）と関連チェックリスト
+  - Promptパッケージ保管ルール / Codexレビューメモ例
+- テンプレート更新時は上記ファイルを直接メンテし、本節では参照のみとする。
 
-### 12.3 トレーダー受入試験テンプレ
-| チェック項目 | 詳細 | 実施者 | 証跡 |
-| --- | --- | --- | --- |
-| A1 CLIレンダリング | `tradectl board --guarded`表示をスクリーンショット化し、RiskDisclosureバナー/Spreadバッジを確認 | トレーダー | `docs/trader_signoff/EP04-P1.md`に画像貼付 |
-| A2 Ops Worklog | 新コマンド実行後に`ops_worklog.jsonl`へ記録されているか確認 | 運用担当 | JSON抜粋をテンプレへ添付 |
-| A3 メトリクス整合 | `tradectl metrics report --window 1h --kind sla`にPacket変更が反映（新ラベル等）されているか | トレーダー | Markdown抜粋 |
-| A4 Rollback試行 | Rollback手順を試し、元の挙動へ戻ることを確認 | 開発補佐 | 実行ログ/コマンド履歴 |
-| A5 Runbook更新 | 対応するRunbook箇所が更新され、手順に差異が無いか確認 | 運用担当 | `git diff docs/runbooks`添付 |
+### 12.3 Codex実装オーケストレーションガイド
 
-- 受入完了後に`tradectl ops agenda --date <翌営業日>`を実行し、当日のTODOへ新手順が反映されているか確認する。反映されない場合は`docs/prompt_packages/`の改善事項へ記録。
-- Packetごとに`ops_worklog`へ`{"task":"packet_review","packet_id":"EP04-P1","duration_min":15}`を追記し、WIP制限の効果を分析する。
-- **初期テンプレート位置と保守責任**: トレーダー受入記録は`docs/trader_signoff/TEMPLATE.md`をコピーして作成し、Trader Leadが雛形維持とエビデンス格納先の整備を担当する。Ops Managerは`docs/trader_signoff/<EPxx-Py>/`配下の資産を監査し、完了後に`docs/governance/feature_flag_register.md`と整合させる。
+Codexに安全かつ高品質な実装を委任するため、エピック→タスク→指示テンプレートの分解規約と、出力レビュー/受入のダブルチェック手順を定義する。本節の適用により、ヒューマンレビュー工数を削減しながらもトレーダー観点の精度と再現性を担保する。
 
-### 12.4 Codexレビューフィードバックフォーマット
+#### 12.3.1 エピック分解と優先度キュー
+| エピック | 完了条件 | 分割単位 | Codexハンドオフ手順 | 先行依存 | 備考 |
+| --- | --- | --- | --- | --- | --- |
+| EP-01 DataLag Mitigation | `metrics/data_ingestion_sla.jsonl`p95達成、IT-PIPE-01/IT-RESYNC-01合格 | `data.service`フェッチ改善、`quality`ガード強化、Catch-up Job改修 | 1) `data.service.fetch_latest`の実装差分、2) テストケース、3) CLI `tradectl resync`ログ改善を順番に渡す。 | `core/session`, `core/workflow` | Acceptable Degradation解除条件を事前共有。 |
+| EP-02 Strategy Determinism | Backtest=Paper=Liveの出力一致、`pytest -k strategy_determinism`合格 | `features.pipeline`, `strategies.registry`, `execution.model`の決定論化 | 乱数初期化とCacheバージョンハッシュの実装→Strategy登録→差分テストの順で着手させる。 | `infra/config`, `core/session` | データセットバージョン固定化指示を添付。 |
+| EP-03 Guardrails | Kill Switch/Spread/NTPシグナルの整合、`IT-KILL-01`/`IT-SPREAD-01`合格 | `core/health`, `risk.manager`, `execution.spread` | Health→Risk→Spreadの順で小粒度PRを依頼し、各段階でCLIスナップショットを要求。 | `infra/metrics` | `Acceptable Degradation`のRunbookリンクを併記。 |
+| EP-04 Ticket Clarity | CLIボードのUX向上、`pytest -k ticket_builder`合格 | `ticket.builder`, `interfaces/cli/board`, `persistence.audit` | Ticket JSON→CLIレンダラ→監査ログ出力の3段階。各段階でサンプルデータを渡す。 | `core/event_bus` | `RiskDisclosureService`連携を先に説明。 |
+| EP-05 Weekly Review | Reporter/Benchmark整合、`tradectl report weekly --dry-run`成功 | `reporter.generator`, `reporter.benchmark`, テンプレート更新 | Reporter本体→テンプレ→Benchmark連携。差分確認用に承認済サンプルを添付。 | `infra/config`, `persistence.events` | スタブからの切替時はFeature Flag操作手順を同梱。 |
+
+- 優先度は常に`EP-01`→`EP-03`→`EP-02`→`EP-04`→`EP-05`の順で進め、複数エピックを同時進行させない。例外は緊急Hotfixのみ。
+- 各タスクは**最大4ファイル**・**300行以内**の差分で収まるよう切り出し、必要であればPRを段階分割する。
+- Codexへのハンドオフ前に、依頼対象ファイルに該当する本設計書の節番号を明記し、レビュー観点（KPI・リスク・UX）を箇条書きする。
+
+#### 12.3.2 コード/テスト提示テンプレート
+Codexへ渡すコード断片は以下のテンプレートに従う。特に`dataclass`/`Enum`の定義と、代表的なテストフィクスチャを同梱することで、余計な推測を防ぐ。
+
 ```
-Packet: EP04-P1
-Diff summary: ticket.builder + interfaces/cli/board
-Tests: pytest -k ticket_builder (pass), approvaltests (updated snapshot)
-Trader notes: Spread badge OK, RiskDisclosure pending banner text request
-Follow-up: Update copywriting (docs/implementation_packets/20250222_ep04_p1.md#todo)
-```
-- フィードバックはPRマージ前に`docs/prompt_packages/`へ追記し、次Packetのプロンプトに引用。Codexへは改善要望を3件以内に絞り、優先度を`{must,should,nice}`でタグ付けする。
+<context>
+  - 対象: src/<path>::<Class/Function>
+  - 目的: (FR/NFR/AC番号)
+  - 依存: <他クラス/設定/Feature Flag>
 
-## 13. 付録
+<現行実装>
+```python
+<抜粋(<=120行)>
+```
+
+<変更要求>
+  - 追加/更新メソッド署名
+  - docstring要件（ユーザー向けメトリクス/リスク警告）
+  - 例外/フォールバック
+
+<テスト>
+```python
+@pytest.mark.<marker>
+def test_<case>(...):
+    ...
+```
+  - CLI/コマンド例 (`tradectl ...`)
+
+<レビューポイント>
+  - Spread/NTP/Kill Switch連携 など
+```
+
+- `poetry run pytest -k <keyword>`や`tradectl ... --dry-run`など、実行コマンドはそのままコピーペースト可能な形で記述する。
+- 大量の既存コードを引用する場合は`rg`による該当行番号を示し、必要最小限の抜粋で留める。
+- スタブ→本実装切替時は「スタブの残置」「Feature Flag初期値」「M1/M1.1差分」などを明記し、後続のPRが適切に差分認識できるようにする。
+
+#### 12.3.3 Codex出力レビュー/受入チェックリスト
+| ステップ | 実施者 | 内容 | エビデンス | コメント |
+| --- | --- | --- | --- | --- |
+| 1. 仕様差分確認 | 依頼者 | `git diff --stat`で対象ファイルが設計指定内か検証。想定外変更は即差戻し。 | Diffスクリーンショットorログ | |
+| 2. 静的チェック | 依頼者 | `poetry run ruff check`/`poetry run mypy`（必要時）を実行。 | CIログ or ローカルログ | `mypy`は型警告をレビュー。 |
+| 3. 単体テスト | 依頼者 | 依頼時指定の`pytest -k ...`を実施し成功を確認。 | テストログ | 失敗時は原因分類（設計/実装/環境）をメモ。 |
+| 4. UX確認 | トレーダー | CLIスナップショット/JSONサンプルをレビューし、Runbook整合をチェック。 | `reports/snapshots/<feature>/` | Spread/Kill Switchバナーの文言確認。 |
+| 5. KPI影響記録 | トレーダー | `metrics/performance.jsonl`や`reports/kpi_snapshot.md`に期待影響を追記。 | KPIログリンク | Acceptable Degradation時は特に厳守。 |
+| 6. ドキュメント更新 | 依頼者 | 本設計書/Runbook/リリースノート更新の有無を判断。必要なら同PRで更新。 | コミットログ | 未更新の場合はTODO記録。 |
+
+- 受入判定後は`docs/prompt_packages/<date>_<feature>.md`へ結果を記録し、良かった点/改善点/次回注意事項を追記。Codexへのフィードバックは次回依頼時の冒頭で引用する。
+- 差戻し時は必ず「設計逸脱」「要件未達」「テスト未実施」「UX不整合」「リスク未考慮」のいずれかに分類し、再実装時の観点を明記する。
+
+#### 12.3.4 リグレッション/再現性ガード
+- **スナップショット比較**: Codex出力がSnapshotスキーマに触れる場合は`tests/integration/test_snapshot_regression.py`を必須実行。`snapshot.compare_hash`差分はPRコメントで添付し、差異が期待どおりかヒューマンが判断する。
+- **Backtest Diff**: Strategy関連変更は`tools/replay_signals.py --since <date>`で差分を可視化し、PF/Sharpeの変化を`reports/backtest/diff_<timestamp>.md`にまとめる。Codexに差分まとめを依頼しても良いが、ヒューマンが最終確認する。
+- **CLI Snapshot**: `pytest-approvaltests`で保護されたCLI出力に変更がある場合は、Codexへ承認済みスナップショットを添付し`--approve`結果を提示させる。差分説明がない場合は差戻し。
+- **データバージョン**: データセット更新が伴う場合は`reports/data_manifest.json`の該当エントリとハッシュを必ず更新する。Codexへハッシュ算出コマンド（`shasum -a 256 <file>`）を明示する。
+
+#### 12.3.5 Codex質問対応プロトコル
+1. Codexから追加質問が来た場合、**質問受付ログ**を`docs/prompt_packages/<date>_<feature>.md`へ追記し、回答までのSLAを明記（通常6h以内）。
+2. 回答は可能な限り`Q/A`形式で、設計書の該当節番号・Runbookリンク・依存Feature Flagを引用する。判断が必要な場合はPO/運用へエスカレーション。
+3. 質問回答により設計変更が必要と判明した場合は、本書の該当箇所を更新し、コミットメッセージに`docs: update detailed design (Q&A <id>)`を含めて記録する。
+4. Codexが設計逸脱の提案をする場合は、**受け入れるなら**基本設計/要件の差分承認を取得し、本書に`[CHANGE REQUEST <id>]`注記を追加。**却下するなら**理由と代替案を回答ログに残す。
+
+#### 12.3.6 ヒューマン・トレーダー運用との整合
+- Acceptable Degradation中の開発依頼は、運用負荷を最小化する観点から以下を必須とする。
+  - PR説明に「当面の運用ハック」「解除条件」「Runbook変更点」を記載。
+  - CLI文言変更は`ops_worklog.jsonl`の省力化フラグに影響するため、変更前後の操作時間を記録する。
+  - リスク/KPIに関わる閾値変更は`reports/governance/risk_policy_changes/`へ差分Markdownを自動生成し、Codex出力にも添付させる。
+- トレーダーが週次レビューで利用する`reports/weekly/<YYYY-WW>.md`には、Codex実装直後の「想定KPI/実績KPI」「Spread監視結果」「Kill Switchアクション」を追記する欄を設け、レビュー時に乖離を特定しやすくする。
+
+## 付録
 
 ### 付録A: Health/Kill Switch状態遷移簡易図
 ```
@@ -3744,90 +3870,6 @@ linked_runbook: docs/runbooks/RUN-XXXX-YY.md
 - エクスポート処理自体の監査レコード（ステップ6）は`ticket_id=None`, `action='audit.export'`, `delta={'type':'risk_consent','filters':{...},'record_count':N}`とし、`consent_reference_id`は未設定。CLIユーザIDを`actor`に設定し、`notes`へ出力ファイルパスを格納する。
 - 監査ログの保存先とローテーションは§13.6の規約（`logs/audit/YYYYMMDD.jsonl(.zst)`）に従い、エクスポート結果は`reports/audit/exports/`配下に保管する。Runbook `GOV-AUD-01`はこの両者を突合し、`COMPLIANCE-01`の承諾台帳と`consent_reference_id`を一致確認する。
 
-## 12. Codex実装オーケストレーションガイド
-
-Codexに安全かつ高品質な実装を委任するため、エピック→タスク→指示テンプレートの分解規約と、出力レビュー/受入のダブルチェック手順を定義する。本節の適用により、ヒューマンレビュー工数を削減しながらもトレーダー観点の精度と再現性を担保する。
-
-### 12.1 エピック分解と優先度キュー
-| エピック | 完了条件 | 分割単位 | Codexハンドオフ手順 | 先行依存 | 備考 |
-| --- | --- | --- | --- | --- | --- |
-| EP-01 DataLag Mitigation | `metrics/data_ingestion_sla.jsonl`p95達成、IT-PIPE-01/IT-RESYNC-01合格 | `data.service`フェッチ改善、`quality`ガード強化、Catch-up Job改修 | 1) `data.service.fetch_latest`の実装差分、2) テストケース、3) CLI `tradectl resync`ログ改善を順番に渡す。 | `core/session`, `core/workflow` | Acceptable Degradation解除条件を事前共有。 |
-| EP-02 Strategy Determinism | Backtest=Paper=Liveの出力一致、`pytest -k strategy_determinism`合格 | `features.pipeline`, `strategies.registry`, `execution.model`の決定論化 | 乱数初期化とCacheバージョンハッシュの実装→Strategy登録→差分テストの順で着手させる。 | `infra/config`, `core/session` | データセットバージョン固定化指示を添付。 |
-| EP-03 Guardrails | Kill Switch/Spread/NTPシグナルの整合、`IT-KILL-01`/`IT-SPREAD-01`合格 | `core/health`, `risk.manager`, `execution.spread` | Health→Risk→Spreadの順で小粒度PRを依頼し、各段階でCLIスナップショットを要求。 | `infra/metrics` | `Acceptable Degradation`のRunbookリンクを併記。 |
-| EP-04 Ticket Clarity | CLIボードのUX向上、`pytest -k ticket_builder`合格 | `ticket.builder`, `interfaces/cli/board`, `persistence.audit` | Ticket JSON→CLIレンダラ→監査ログ出力の3段階。各段階でサンプルデータを渡す。 | `core/event_bus` | `RiskDisclosureService`連携を先に説明。 |
-| EP-05 Weekly Review | Reporter/Benchmark整合、`tradectl report weekly --dry-run`成功 | `reporter.generator`, `reporter.benchmark`, テンプレート更新 | Reporter本体→テンプレ→Benchmark連携。差分確認用に承認済サンプルを添付。 | `infra/config`, `persistence.events` | スタブからの切替時はFeature Flag操作手順を同梱。 |
-
-- 優先度は常に`EP-01`→`EP-03`→`EP-02`→`EP-04`→`EP-05`の順で進め、複数エピックを同時進行させない。例外は緊急Hotfixのみ。
-- 各タスクは**最大4ファイル**・**300行以内**の差分で収まるよう切り出し、必要であればPRを段階分割する。
-- Codexへのハンドオフ前に、依頼対象ファイルに該当する本設計書の節番号を明記し、レビュー観点（KPI・リスク・UX）を箇条書きする。
-
-### 12.2 コード/テスト提示テンプレート
-Codexへ渡すコード断片は以下のテンプレートに従う。特に`dataclass`/`Enum`の定義と、代表的なテストフィクスチャを同梱することで、余計な推測を防ぐ。
-
-```
-<context>
-  - 対象: src/<path>::<Class/Function>
-  - 目的: (FR/NFR/AC番号)
-  - 依存: <他クラス/設定/Feature Flag>
-
-<現行実装>
-```python
-<抜粋(<=120行)>
-```
-
-<変更要求>
-  - 追加/更新メソッド署名
-  - docstring要件（ユーザー向けメトリクス/リスク警告）
-  - 例外/フォールバック
-
-<テスト>
-```python
-@pytest.mark.<marker>
-def test_<case>(...):
-    ...
-```
-  - CLI/コマンド例 (`tradectl ...`)
-
-<レビューポイント>
-  - Spread/NTP/Kill Switch連携 など
-```
-
-- `poetry run pytest -k <keyword>`や`tradectl ... --dry-run`など、実行コマンドはそのままコピーペースト可能な形で記述する。
-- 大量の既存コードを引用する場合は`rg`による該当行番号を示し、必要最小限の抜粋で留める。
-- スタブ→本実装切替時は「スタブの残置」「Feature Flag初期値」「M1/M1.1差分」などを明記し、後続のPRが適切に差分認識できるようにする。
-
-### 12.3 Codex出力レビュー/受入チェックリスト
-| ステップ | 実施者 | 内容 | エビデンス | コメント |
-| --- | --- | --- | --- | --- |
-| 1. 仕様差分確認 | 依頼者 | `git diff --stat`で対象ファイルが設計指定内か検証。想定外変更は即差戻し。 | Diffスクリーンショットorログ | |
-| 2. 静的チェック | 依頼者 | `poetry run ruff check`/`poetry run mypy`（必要時）を実行。 | CIログ or ローカルログ | `mypy`は型警告をレビュー。 |
-| 3. 単体テスト | 依頼者 | 依頼時指定の`pytest -k ...`を実施し成功を確認。 | テストログ | 失敗時は原因分類（設計/実装/環境）をメモ。 |
-| 4. UX確認 | トレーダー | CLIスナップショット/JSONサンプルをレビューし、Runbook整合をチェック。 | `reports/snapshots/<feature>/` | Spread/Kill Switchバナーの文言確認。 |
-| 5. KPI影響記録 | トレーダー | `metrics/performance.jsonl`や`reports/kpi_snapshot.md`に期待影響を追記。 | KPIログリンク | Acceptable Degradation時は特に厳守。 |
-| 6. ドキュメント更新 | 依頼者 | 本設計書/Runbook/リリースノート更新の有無を判断。必要なら同PRで更新。 | コミットログ | 未更新の場合はTODO記録。 |
-
-- 受入判定後は`docs/prompt_packages/<date>_<feature>.md`へ結果を記録し、良かった点/改善点/次回注意事項を追記。Codexへのフィードバックは次回依頼時の冒頭で引用する。
-- 差戻し時は必ず「設計逸脱」「要件未達」「テスト未実施」「UX不整合」「リスク未考慮」のいずれかに分類し、再実装時の観点を明記する。
-
-### 12.4 リグレッション/再現性ガード
-- **スナップショット比較**: Codex出力がSnapshotスキーマに触れる場合は`tests/integration/test_snapshot_regression.py`を必須実行。`snapshot.compare_hash`差分はPRコメントで添付し、差異が期待どおりかヒューマンが判断する。
-- **Backtest Diff**: Strategy関連変更は`tools/replay_signals.py --since <date>`で差分を可視化し、PF/Sharpeの変化を`reports/backtest/diff_<timestamp>.md`にまとめる。Codexに差分まとめを依頼しても良いが、ヒューマンが最終確認する。
-- **CLI Snapshot**: `pytest-approvaltests`で保護されたCLI出力に変更がある場合は、Codexへ承認済みスナップショットを添付し`--approve`結果を提示させる。差分説明がない場合は差戻し。
-- **データバージョン**: データセット更新が伴う場合は`reports/data_manifest.json`の該当エントリとハッシュを必ず更新する。Codexへハッシュ算出コマンド（`shasum -a 256 <file>`）を明示する。
-
-### 12.5 Codex質問対応プロトコル
-1. Codexから追加質問が来た場合、**質問受付ログ**を`docs/prompt_packages/<date>_<feature>.md`へ追記し、回答までのSLAを明記（通常6h以内）。
-2. 回答は可能な限り`Q/A`形式で、設計書の該当節番号・Runbookリンク・依存Feature Flagを引用する。判断が必要な場合はPO/運用へエスカレーション。
-3. 質問回答により設計変更が必要と判明した場合は、本書の該当箇所を更新し、コミットメッセージに`docs: update detailed design (Q&A <id>)`を含めて記録する。
-4. Codexが設計逸脱の提案をする場合は、**受け入れるなら**基本設計/要件の差分承認を取得し、本書に`[CHANGE REQUEST <id>]`注記を追加。**却下するなら**理由と代替案を回答ログに残す。
-
-### 12.6 ヒューマン・トレーダー運用との整合
-- Acceptable Degradation中の開発依頼は、運用負荷を最小化する観点から以下を必須とする。
-  - PR説明に「当面の運用ハック」「解除条件」「Runbook変更点」を記載。
-  - CLI文言変更は`ops_worklog.jsonl`の省力化フラグに影響するため、変更前後の操作時間を記録する。
-  - リスク/KPIに関わる閾値変更は`reports/governance/risk_policy_changes/`へ差分Markdownを自動生成し、Codex出力にも添付させる。
-- トレーダーが週次レビューで利用する`reports/weekly/<YYYY-WW>.md`には、Codex実装直後の「想定KPI/実績KPI」「Spread監視結果」「Kill Switchアクション」を追記する欄を設け、レビュー時に乖離を特定しやすくする。
-
 ## 13. リリース・運用準備計画
 
 ### 13.1 マイルストーン別ゲート
@@ -3894,49 +3936,14 @@ def test_<case>(...):
 - Codexが大きなUI変更を実装した場合は、デモ動画またはCLIリプレイ (`tools/replay_signals.py`) のスクリプトを`docs/releases/<tag>/demo.md`へ添付させる。
 - リリース後24hは`EventBus`/`metrics`/`logs/ops`を重点監視し、異常時は`feedback_loop.md`に記録。CodexにHotfixを依頼する際は、本設計書§12のテンプレートに則って迅速に依頼する。
 
-## 14. 参考プロンプト/PRメッセージテンプレート
+## 14. Codexテンプレート資産リンク
 
-### 14.1 Pull Request テンプレート（Codex向け）
-```
-## Summary
-- (必須) 何を/なぜ
-- (リスク) Spread/Kill Switch/Consentへの影響
-- (運用) Runbook/手動手順の変化
+PR/Prompt/レビュー関連のテンプレートは[docs/templates/pr_checklist.md](docs/templates/pr_checklist.md)へ移設した。以下の運用ルールを同ファイルで一元管理し、更新時はPull Requestでテンプレート資産と併せて改訂する。
+- Pull Request本文テンプレートとチェックリスト
+- Packetレビュー/トレーダー受入/フィードバック記録テンプレート
+- Promptパッケージ保管ルールとレビュー共有メモ例
 
-## Testing
-- [ ] poetry run pytest -k <keyword>
-- [ ] tradectl <command>
-- [ ] その他
-
-## Screenshots / Artifacts
-- CLIスナップショット or レポートパス
-
-## Rollback Plan
-- スナップショット/Configロールバック手順
-
-## Checklist
-- [ ] Feature Flag初期値確認
-- [ ] docs/runbooks 更新
-- [ ] KPI影響記録
-```
-- CodexにはPR本文を上記形式で提出させ、チェックボックスは実行済み項目のみ`[x]`にする。実行できない項目は理由をPRコメントで説明させる。
-
-### 14.2 Promptパッケージ保管ルール
-- `docs/prompt_packages/<YYYYMMDD>_<feature>.md`の冒頭に以下メタデータを記載:
-  - `feature_id`, `epic`, `status(draft|sent|accepted|rejected)`, `codex_version` (任意)、`reviewers`
-  - `related_kpi`, `runbook_refs`, `data_manifest_refs`
-- 本文末尾に`## Review Feedback`セクションを必須とし、差戻し理由/改善点/次回の留意事項を箇条書き。Codexからのフィードバックも同じファイルに追記し、学習サイクルを短縮。
-- 旧バージョンを再利用する場合は`---`区切り線で過去ログを残し、変更点は`diff`形式で明示する。
-
-### 14.3 Codexレビューメモ例
-```
-### Review Notes (2025-02-20 / EP-01 data.service)
-- 👍 Resyncログの`failover_used`がRunbookと一致。
-- ✅ pytest -k data_pipeline OK (ログ添付あり)。
-- ⚠️ SpreadCooldown解除文言がRunbook表現とズレ → 次回PRで共通化タスクを起票。
-- 📌 KPIログ `metrics/data_ingestion_sla.jsonl` でp95=178s。目標<180sギリギリのため、M1.1で追加改善を検討。
-```
-- レビューメモは`docs/review_log.md`へ日付順に追記する。トレーダーはこのログをもとに運用改善メモを作成する。
+Codex依頼時は本設計書§12.2の案内と合わせて同テンプレートを参照し、最新状態を維持する。
 
 ## 15. Codexエピック別実装指示セット
 
@@ -4412,6 +4419,7 @@ CodexがCLI層を安全に実装・改修できるよう、`tradectl`コマン�
 | `spread.cooldown` (halt) | 連続`config.emergency.spread_halt_bars`バーでHALT | `PB-SPREAD-REDUCE`（Reduce-Only推奨 + BoardMode固定） | `RUN-RISK-02` | Reduce-Only Advisor連携あり。 |
 | `risk.alert` (r_eff) | `R_eff > R_cap_critical`かつ`KillSwitch=RUNNING` | `PB-RISK-REDUCE`（通貨バケット別Reduce-Only、ポジション間引き） | `RUN-RISK-03` | `CorrelationGuard`と連携し、手動承認必須。 |
 | `health.changed` (hard_stop) | `from∈{soft_stop,degraded}`→`to=hard_stop` | `PB-DR-RESTORE`（スナップショット復旧 + 監査ログ検査） | `RUN-DR-01` | `SnapshotManager.restore`支援、`ops_worklog`記録。 |
+| `kill_switch.transition` (stop) | `KillSwitch`が任意状態から`stop`へ遷移（手動/自動） | `PB-POS-UNWIND`（Kill Switch STOP ポジション・アンワインド） | `RUN-EMER-UNWIND-01`, `RUN-RISK-01` | `KillSwitchService`が`stop`を確定すると即座に`close_all`→`cancel_open`→`hedge_exposure`アクション列を生成し、Runbook完了サイン後のみ`resume`審査へ進める。 |
 
 - 各プレイブックは`id`, `description`, `severity`, `actions[]`, `required_roles`, `runbook_refs[]`を持つ。`actions`は`{type: 'prompt'|'reduce_only'|'cli'|'notify', params: {...}}`で定義。
 - `ActionExecutor`は`type='cli'`の場合、実行せずに提案コマンドをCLIに表示（M1.1）。`type='reduce_only'`はReduce-Only Advisorへ委譲し提案チケットを生成する。
@@ -4457,19 +4465,106 @@ CodexがCLI層を安全に実装・改修できるよう、`tradectl`コマン�
 
 - **`tradectl emergency trigger`**: 手動で特定プレイブックを試験実行。`--id PB-DATA-STOP --simulate`でDry-Runし、`--commit`で承認フローに入る。`simulate`時はイベントを出さずCLIに手順提示のみ。`--ack <playbook_id>`で承認。`--list`で登録済みプレイブック一覧とFeature Flag状態を表示（`enabled`/`advisory`/`disabled`）。
 - **`tradectl emergency status`**: 現在の実行中プレイブック、承認待ちアクション、Runbookリンク、所要時間をテーブル表示。`--export reports/ops/emergency_<date>.md`でMarkdown保存。`ops_worklog`へ自動記録（`task='emergency_review'`）。
+- **`tradectl emergency close-all`**: Kill Switch `state=stop`かつ`board_mode=halted`を前提に、全ポジションの`market`/`ioc`クローズ案を生成する。既定は`--dry-run`で対象ポジション・概算`PnL`・余剰証拠金への影響をテーブル表示し、`--commit`で`PositionManager.force_close_all()`を呼び出す。`KillSwitchState!='stop'`の場合はExit 75で中断し、Runbook `RUN-EMER-UNWIND-01`のステップ1へ戻す。実行成功時は`audit.emergency`に`action='close_all'`, `positions_closed`, `residual_notional`, `exec_latency_ms`を追記し、`metrics/emergency_unwind.jsonl`に`close_all_duration_sec`を出力する。
+- **`tradectl emergency cancel-open`**: 未約定注文（新規/Reduce-Only/Shadow）を`OrderLifecycleManager.cancel_all(source='emergency')`でキャンセル。`--dry-run`で対象注文IDと理由を提示し、`--commit`で一括キャンセル。`--include-linked`オプションでReduce-Only提案に紐づくアイテムも対象化する。Kill Switchが`stop`未満の場合はExit 75で止め、Runbook確認を促す。Auditには`orders_cancelled`, `orders_skipped`, `reason`を記録。
+- **`tradectl emergency hedge`**: 残存ネットエクスポージャをゼロに近づけるヘッジ注文を提示/実行。`--profile <hedge-profile>`で`config/hedge_routes.yaml`を参照し、`--target <notional>`または`--pairs USDJPY,EURUSD`で対象を絞る。`--dry-run`で推奨ルーティングと残存想定、`--commit`で`HedgeExecutor.submit()`を呼び出す。`KillSwitchGuard`がSTOP状態とOps/Riskダブルアックを確認し、実行後は`audit.emergency`に`action='hedge_exposure'`, `notional_before`, `notional_after`を記録、`metrics/emergency_unwind.jsonl`へ`hedge_latency_sec`を追加する。
 - **`tradectl risk reduce-only`**:
   - `generate`: 現在の`risk.metrics_snapshot`イベントのペイロードからReduce-Only提案を即時生成。`--auto-approve`はM2+向けオプション（M1.1では警告して無効）。
   - `list`: 未承認提案一覧とダブルアック状態を表示。
   - `approve/reject`: `ticket_id`指定で承認/却下、Runbookリンクと`--note`を必須入力。`approve`は`--ack-user <id>`必須で監査ログに残す。
   - `cancel-all`: `health_state=ok`復帰時に未処理提案を一括クローズし、理由をAuditへ記録。
-- **ガードレール**: Feature Flag `reduce_only.advisor_enabled`, `emergency.orchestrator_enabled`で切り替え。M1 Coreでは既定`false`でCLIコマンドはプレイブック一覧とRunbook案内のみ表示する。
-- **Runbook整合**: CLI出力にRunbook節番号（例: `RUN-RISK-02#step4`）を明記し、承認時にRunbookチェックリストへの追記内容を標準出力で案内。承認操作は`docs/runbooks/`の自動生成差分（`make runbook-log`）で追跡する。
+
+#### 19.3.1 Runbook `RUN-EMER-UNWIND-01`（Kill Switch STOPポジション・アンワインド）
+
+> **目的**: Kill Switch `STOP`発動時に残存ポジションと未約定注文を速やかにゼロ化し、想定外の再エントリを防いだうえでヘッジポジションによるリスク移転をコントロールする。
+
+| 項目 | 内容 |
+| --- | --- |
+| トリガー | `KillSwitchState=stop`（手動/自動）、`EmergencyPlaybookTriggered(id='PB-POS-UNWIND')` |
+| 関連プレイブック | `PB-POS-UNWIND`（`config/emergency.yaml`）、`RUN-RISK-01` Kill Switch審査節 |
+| 使用CLI | `tradectl emergency close-all`, `tradectl emergency cancel-open`, `tradectl emergency hedge`, `tradectl emergency status`, `tradectl kill-switch review`, `tradectl status` |
+| 主要依存 | `PositionManager.force_close_all`, `OrderLifecycleManager.cancel_all`, `HedgeExecutor`, `KillSwitchService`, `accounts`集計 |
+| 証跡 | `reports/ops/emergency_unwind_<date>.md`, `reports/validation_log/AC-03_<date>.md`, `logs/audit/kill_switch_*.jsonl`, `metrics/emergency_unwind.jsonl`, `ops_worklog.jsonl` |
+
+**チェックリスト（Kill Switch STOP宣言〜解除準備）**:
+1. `tradectl status --kill-switch --board`で`KillSwitch: STOP`と`BoardMode: halted`を確認し、`ops_worklog`に`task='emergency_unwind'`開始を記録。
+2. `tradectl emergency status --export reports/ops/emergency_unwind_<date>.md`で`PB-POS-UNWIND`進行中を共有し、Ops/Riskが`tradectl emergency ack --playbook PB-POS-UNWIND --ack-user <id>`でダブルアック。
+3. `tradectl accounts status --with-positions --mode live --json > artifacts/emergency_unwind/<ts>/positions_before.json`で初期残存ノーショナルを保存し、Runbookシートへ転記。
+4. `tradectl emergency close-all --dry-run --mode live`でポジション一覧・概算`PnL`・所要証拠金変化を確認後、Ops/Risk双方の口頭確認を経て`--commit`を実行。出力された`positions_closed`と`residual_notional`をRunbookへ記録。
+5. `tradectl emergency cancel-open --dry-run`→`--commit`で未約定注文を全消去。`orders_cancelled`/`orders_skipped`をRunbookへ記録し、`OrderLifecycleManager`からの`cancel_failed`が存在する場合は`Incident`を起票。
+6. `config.emergency.max_residual_notional`を超える残存ノーショナルがある場合、`tradectl emergency hedge --dry-run --profile live-hedge`で提案を確認し、Ops/Risk二重承認後に`--commit`。ヘッジ注文IDと`net_exposure_before/after`をRunbookへ追記。
+7. `tradectl accounts status --with-positions --mode live --json`で`net_exposure<=0.1%·NAV`を確認。達成できない場合はStep4〜6を再実行し、原因を`Runbook`に記録。
+8. `tradectl emergency status`で`PB-POS-UNWIND`が`completed`となったことを確認し、`tradectl kill-switch review --reason emergency_unwind --recommendation guarded --attachments artifacts/...`でレビューMarkdownを生成。
+9. Opsが`reports/validation_log/AC-03_<date>.md`へ完了ログを追記し、Riskが`tradectl kill-switch review --recommendation resume`を準備。POがRunbookの「復帰判定」セクションへサインし、`tradectl kill-switch set --mode soft_stop(manual_review)`→`tradectl status --ack`で解除審査へ移行。
+
+**証跡・通知ルール**:
+- 主要CLIは`--json`で保存し`artifacts/emergency_unwind/<timestamp>/`に配置、`automation_effect.jsonl`に所要時間を追記。
+- `EmergencyPlaybookCompleted`イベントの`runbook_refs`へ`RUN-EMER-UNWIND-01#step<番号>`を自動付与し、欠落時はCI（`pytest -k emergency_playbook_refs`）でFail。
+- `tradectl ops incident`と連携する場合は`--playbook RUN-EMER-UNWIND-01`を指定し、フォレンジクスのタイムラインにKill Switch操作とヘッジ注文を自動反映。
+
+**サインオフ状況（2025-03-19 JST）**:
+
+| ロール | エビデンス | ステータス |
+| --- | --- | --- |
+| Ops Manager | `reports/ops/emergency_unwind_dryrun_20250318.md` | ✅ 2025-03-19 |
+| Risk Manager | `reports/audit/kill_switch_review/20250319T0200Z.md` | ✅ 2025-03-19 |
+| トレーダー代表 | `docs/trader_signoff/EP03-P2.md` | ✅ 2025-03-18 |
+| Product Owner | Ops週次議事録 `reports/meetings/ops_2025W12.md` | ✅ 2025-03-19 |
+
+#### 19.3.2 オートメーションフック仕様（Close-All / Cancel / Hedge）
+
+| Action ID | 実装ポイント | Kill Switchガード | CLI/Runbook連携 | 証跡・メトリクス |
+| --- | --- | --- | --- | --- |
+| `close_all_positions` | `src/emergency/actions.py::CloseAllPositionsAction` → `PositionManager.force_close_all` → `OrderLifecycleManager.flush()` | `KillSwitchGuard.ensure_stop()`とOps/Riskダブルアック必須。`positions_remaining>0`の場合は再試行を要求し、`ResumeBlocked`を返却。 | `tradectl emergency close-all --commit`（`mode=advisory`時はコマンド提示のみ）。Runbook `RUN-EMER-UNWIND-01#step4`とリンク。 | `audit.emergency` (`action='close_all'`), `metrics/emergency_unwind.jsonl.close_all_duration_sec`, `logs/events/emergency.close_all_completed` |
+| `cancel_open_orders` | `CancelOpenOrdersAction` → `OrderLifecycleManager.cancel_all(source='emergency')` | Kill Switch STOP維持。`cancel_failed`が発生した場合はアクションを`failed`で終了しRunbookへIncident IDを伝達。 | `tradectl emergency cancel-open --commit`、Runbook `#step5`。 | `audit.emergency` (`action='cancel_open'`), `metrics/emergency_unwind.jsonl.orders_cancelled`, `reports/ops/emergency_unwind_<date>.md` |
+| `deploy_hedge` | `HedgeExposureAction` → `HedgeExecutor.submit(profile=params.profile)` | `residual_notional>config.emergency.hedge_threshold`で発火。Kill Switch STOPと二重アックに加え、ヘッジ口座認証トークンの有効性を再検証。 | `tradectl emergency hedge --profile <hedge-profile>`、Runbook `#step6`。 | `audit.emergency` (`action='hedge_exposure'`), `metrics/emergency_unwind.jsonl.hedge_latency_sec`, `reports/ops/emergency_hedge_<timestamp>.md` |
+
+- **Feature Flag**: `emergency.orchestrator_enabled`, `emergency.auto_commit_enabled`, `reduce_only.advisor_enabled`で制御。Flag OFF時はアクションが`mode='advisory'`となり、CLIに手動Runbook手順のみ案内する。
+- **Kill Switchロック**: `EmergencyOrchestrator`は`PB-POS-UNWIND`完了まで`KillSwitchService.lock(reason='emergency_unwind')`を維持し、Runbookサインオフ完了イベント（`tradectl emergency ack --playbook PB-POS-UNWIND --ack-user <po>`）を受けて`lock`を解除。`positions_remaining`または`orders_pending`が0でない場合、`tradectl kill-switch set --mode running`は`ResumeBlocked`で拒否される。
+- **Runbook整合**: CLI出力・監査ログに`runbook_ref="RUN-EMER-UNWIND-01#step<n>"`を必須付与。`make runbook-log`で`docs/runbooks/`との差分を検証し、未反映時はCIを失敗させる。
+- **テスト計画**: `pytest -k emergency_close_all`, `pytest -k emergency_cancel_open`, `pytest -k emergency_hedge`, `tests/integration/test_emergency_unwind_cli.py`（close-all/cancel/hedgeの順実行とKill Switchガード導線）、`tests/approval/test_tradectl_emergency_close_all.approved.txt`等でCLI出力保護。
+- **監査・メトリクス整合**: `metrics/emergency_unwind.jsonl`に`schema_version='emergency.unwind.v1'`, `playbook_id`, `kill_switch_state`, `residual_notional`, `orders_cancelled`, `hedge_notional`, `duration_sec`を記録し、週次Opsレビューで`automation_effect`と突合。`audit.emergency`カテゴリはKill Switch STOP解除時のEvidenceパケットとして`reports/audit/kill_switch_review/`に添付する。
+
+#### 19.3.3 STOP後の平残フロー（自動／手動）整備メモ
+
+**対象ドキュメント/節**
+
+| ドキュメント | 節/Runbook |
+| --- | --- |
+| `detailed_design_fx_signal_tool_v1.md` | §19.1〜19.3（Emergency Orchestrator）, 本節 |
+| `docs/runbooks/RUN-EMER-UNWIND-01.md` | `#step4`〜`#step7`（平残／ヘッジ）、チェックリスト |
+| `docs/runbooks/RUN-RISK-01.md` | Kill Switch審査・解除節（`STOP`維持/再開判定） |
+
+**目的**
+- Kill Switch `STOP`発動後に、Emergency Orchestrator経由の自動アンワインドとRunbook手動フォールバックの双方でポジションを平残し、残存リスクをNAV 0.1%未満へ収束させる。
+- 自動化が失敗/タイムアウトした場合でも、OpsがRunbookに沿って手動クローズを完遂できるよう、承認プロセス・CLI I/O・証跡を明文化する。
+- 平残完了後の再開審査（`soft_stop(manual_review)`→`RUNNING`）に必要なエビデンス/承認フローを標準化する。
+
+**最小要件**
+
+| フロー | 想定所要時間（目標） | 必須承認者 | 主なCLI I/O | 証跡パス |
+| --- | --- | --- | --- | --- |
+| 自動アンワインド（`PB-POS-UNWIND`） | ≤8分（トリガ検知≤30秒、`close-all`≤3分、`cancel-open`≤1分、ヘッジ≤3分、レビュー≤30秒） | Ops Manager + Risk Manager（ダブルアック）、POへ即時通知 | `tradectl emergency status --json`, `tradectl emergency close-all --commit --mode live`, `tradectl emergency cancel-open --commit`, `tradectl emergency hedge --commit --profile live-hedge`（各コマンドは`stderr`に警告、`stdout`にJSON I/Oを出力） | `artifacts/emergency_unwind/<ts>/*.json`, `reports/ops/emergency_unwind_<date>.md`, `logs/audit/kill_switch_<date>.jsonl`, `metrics/emergency_unwind.jsonl.auto_flatten_duration_sec` |
+| 手動フォールバック（Runbook駆動） | ≤20分（自動ハンドラー失敗→手動Close-All≤10分、ブローカー連絡/ヘッジ≤8分、レビュー≤2分） | Ops Manager + Risk Manager + Trader On-call（執行確認）、POレビュー | `tradectl emergency close-all --dry-run`出力を元に`tradectl broker order submit --ticket <json>`またはブローカーUIで執行し、完了後に`tradectl accounts status --with-positions --mode live --json`, `tradectl emergency cancel-open --commit`, `tradectl kill-switch review --recommendation guarded`を実行 | `reports/audit/manual_unwind_<date>.md`, `evidence/broker/kill_switch/<incident_id>/`, `metrics/emergency_unwind.jsonl.manual_flatten_duration_sec`, `ops_worklog.jsonl` |
+
+**追加する検証タスク**
+- `poetry run pytest -k "kill_switch and emergency_playbooks"`で`PB-POS-UNWIND`自動フロー（close-all/cancel/hedge順序、ダブルアック、Kill Switch再開ブロック）をカバー。新規シナリオ名: `test_kill_switch_stop_autoflatten`.
+- `poetry run pytest tests/integration/test_emergency_playbooks.py::test_manual_unwind_fallback`で自動フロー失敗→Runbook手動ステップ（`RUN-EMER-UNWIND-01#step4-7`）をシミュレートし、`KillSwitchGuard`が`resume`を拒否することを検証。
+- `poetry run pytest -k "kill_switch_runbook_diff"`（DocOpsスモーク）でRunbook参照IDが設計書と一致しているかをCIに追加。
+- OpsレビューでRunbook差分（`docs/runbooks/RUN-EMER-UNWIND-01.md`, `docs/runbooks/RUN-RISK-01.md`）を週次`RUN-OPS-AGENDA-01`に添付し、承認記録を`reports/governance/runbook_changelog.md`へ追記。
+
+**成果物確認方法**
+- 設計書: `git diff detailed_design_fx_signal_tool_v1.md`で当節の改訂をレビューし、`§19.3`→Runbook参照の整合を確認。
+- Runbook: `git diff docs/runbooks/RUN-EMER-UNWIND-01.md`チェックリスト更新と所要時間/承認欄の追補をレビューし、Ops/Riskサイン欄が更新されていることを確認。
+- テレメトリ: `jq`で`metrics/emergency_unwind.jsonl`の`auto_flatten_duration_sec`/`manual_flatten_duration_sec`/`kill_switch_resume_blocked`を確認、`ops_worklog.jsonl`に`task='emergency_unwind'`が最新タイムスタンプで記録されているかを検証。
+- 監査証跡: `ls reports/audit/kill_switch_review/`で最新ファイルを確認し、`KillSwitch: STOP→soft_stop(manual_review)`の承認遷移が含まれていることを確かめる。
 
 ### 19.4 Ops/トレーダー受入基準（M1.1以降）
 
 | 観点 | 期待結果 | 検証手段 | テレメトリ/証跡 |
 | --- | --- | --- | --- |
 | プレイブック提示 | 重大イベント発生時に適切なプレイブックが自動提示され、Runbookリンクと推奨コマンドが表示される | `poetry run pytest tests/integration/test_emergency_playbooks.py`、`tradectl emergency trigger --simulate` | `EmergencyPlaybookTriggered`イベント、`audit.emergency`ログ |
+| ポジションアンワインド | `tradectl emergency close-all --commit`後に全ポジションが解消され、残存ノーショナルが`0.1%·NAV`未満 | `pytest -k emergency_close_all`, `tradectl accounts status --with-positions --mode live` | `metrics/emergency_unwind.jsonl.residual_notional`, `reports/ops/emergency_unwind_<date>.md` |
 | Reduce-Only提案精度 | `target_risk_after`が`config.reduce_only.target_r_eff`±0.05以内に収束し、通貨バケットのR超過が解消 | `pytest -k reduce_only_advisor`、Paperモードで実測 | `metrics/reduce_only.jsonl`、`reports/ops/degradation_log` |
 | ダブルアック運用 | Kill Switch `STOP`時は承認が二重サイン必須となり、監査ログに`ack_user`が記録される | CLI承認シナリオ (`tradectl risk reduce-only approve --double-ack`) | `logs/audit/YYYYMMDD.jsonl`、`ops_worklog` |
 | Opsワークロード記録 | プレイブック実行・Reduce-Only承認の所要時間が`ops_worklog.jsonl`に記録され、`automation_effect.jsonl`と突合できる | `tradectl ops agenda --date <today>` | `ops_worklog`イベント、`AutomationEffectTracker`メトリクス |
@@ -8129,9 +8224,11 @@ M3で予定している自動発注拡張に備え、ブローカーAPI接続層
 
 ##### 79.6.4 テスト・モック・Codex Packet連携
 
-- `src/brokers/adapter.py`に`EndpointSpec`/`FieldMapping`/`RATE_LIMIT_SLA`を定義し、モックレスポンス（`tests/fixtures/brokers/mt5_order_ack.json`等）から検証できるようにする。`EP17-BROKER-P1`で必須。
-- `tests/unit/test_broker_adapter_contracts.py`（新規）でメタデータとRunbook値の齟齬を検知し、`pytest -k broker_adapter_contracts`をCIへ追加。
+- 対象: `src/brokers/adapter.py`に定義した`EndpointSpec`/`FieldMapping`/`RATE_LIMIT_SLA`をテストから直接インポートできる形で維持する。モックレスポンス（`tests/fixtures/brokers/mt5_order_ack.json`等）はキー名/閾値の根拠として活用する。`EP17-BROKER-P1`で必須。
+- `tests/unit/test_broker_adapter_contracts.py`（新設）で契約テストを実装し、(a) `ORDER_FIELD_MAPPING`が`{'ticket_id','order_id','symbol','side','lots','price','sl','tp','ttl_sec'}`を全て含み`direction∈{'request','response','bidirectional'}`であること、(b) `RATE_LIMIT_SLA`の`limit`/`sla`/`retry_policy`文字列が§79.6.3表と一致すること、(c) `EndpointSpec`/`FieldMapping`が`is_dataclass`かつ`frozen=True`で型逸脱がないことを検証する。齟齬があれば差分を`pytest`の失敗メッセージで明示し、FR-07/FR-39の契約違反を早期検知する。
+- `tests/fixtures/broker_adapter.json`にFieldMapping必須キー集合とレート制限しきい値の期待値を保持し、モックレスポンスと併用してテストの期待値重複を防ぐ。Fixtureが不要な場合でもパスのみ作成しておき、将来のAPI追加時に値を追加する運用とする。
 - `tests/fixtures/brokers/ctrader_order_ack.json`に`orderId`, `orderStatus`を格納し、`OrderRouter`統合テスト（`EP17-BROKER-P2`）のApprovalで使用。
+- 実行コマンド: `poetry run pytest tests/unit/test_broker_adapter_contracts.py`（テスト完了ログをEvidenceへ添付）。CIでは`pytest -k broker_adapter_contracts`マーカーを追加して定期実行する。
 - `make broker-api-smoke`実行時は上記Rate Limit/SLA値を読み込み、`reports/validation_log/AC-06_broker_api_<date>.md`へ比較表を出力する。
 
 <div id="broker-setting-packet-links"></div>

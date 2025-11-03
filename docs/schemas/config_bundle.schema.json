@@ -8,6 +8,7 @@
     "board_modes.yaml",
     "broker_rules.yaml",
     "execution_model.yaml",
+    "feature_flags.yaml",
     "feature_pipeline.yaml",
     "ops.yaml",
     "roles.yaml",
@@ -37,6 +38,9 @@
     },
     "feature_pipeline.yaml": {
       "$ref": "feature_pipeline.schema.json"
+    },
+    "feature_flags.yaml": {
+      "$ref": "feature_flags.schema.json"
     },
     "ops.yaml": {
       "$ref": "ops_config.schema.json"
