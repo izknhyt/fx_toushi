@@ -1,0 +1,258 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://fx-toushi.dev/schemas/performance_snapshot.schema.json",
+  "title": "PerformanceSnapshot",
+  "description": "Performance KPI snapshot contract for backtest/paper/live windows per detailed design §3.5.2 and §7.6.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "timestamp",
+    "mode",
+    "metrics",
+    "metadata"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "description": "Semantic identifier for the snapshot schema release (performance.snapshot.v*).",
+      "pattern": "^performance\\.snapshot\\.v[0-9]+$"
+    },
+    "timestamp": {
+      "type": "string",
+      "description": "UTC ISO8601 timestamp indicating when the KPI snapshot was generated.",
+      "format": "date-time",
+      "pattern": "Z$"
+    },
+    "mode": {
+      "type": "string",
+      "description": "Operating mode for which the KPIs were computed.",
+      "enum": [
+        "backtest",
+        "paper",
+        "live"
+      ]
+    },
+    "metrics": {
+      "type": "object",
+      "description": "Aggregated KPI measurements for the snapshot window.",
+      "required": [
+        "sharpe_ratio",
+        "sortino_ratio",
+        "max_drawdown_pct",
+        "win_rate",
+        "pnl",
+        "metric_state"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "sharpe_ratio": {
+          "type": "number",
+          "description": "Annualised Sharpe ratio for the snapshot window."
+        },
+        "sortino_ratio": {
+          "type": "number",
+          "description": "Annualised Sortino ratio for the snapshot window."
+        },
+        "max_drawdown_pct": {
+          "type": "number",
+          "description": "Maximum peak-to-trough drawdown percentage observed in the window.",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "win_rate": {
+          "type": "number",
+          "description": "Fraction of profitable trades (0-1) during the window.",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "pnl": {
+          "type": "object",
+          "description": "Profit and loss summary for the snapshot window.",
+          "required": [
+            "absolute",
+            "currency",
+            "return_pct"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "absolute": {
+              "type": "number",
+              "description": "Total P&L over the window in the quoted currency."
+            },
+            "currency": {
+              "type": "string",
+              "description": "ISO-4217 currency code for the P&L amount.",
+              "pattern": "^[A-Z]{3}$"
+            },
+            "return_pct": {
+              "type": "number",
+              "description": "Percentage return relative to starting equity for the window.",
+              "minimum": -1000,
+              "maximum": 1000
+            }
+          }
+        },
+        "metric_state": {
+          "type": "string",
+          "description": "Governance review state for the KPI set (confirmed/provisional/pending/etc.).",
+          "enum": [
+            "confirmed",
+            "provisional",
+            "pending",
+            "degraded",
+            "invalid"
+          ]
+        },
+        "metric_state_reason": {
+          "type": "string",
+          "description": "Machine-readable reason code explaining the current metric_state.",
+          "pattern": "^[a-z0-9._-]+$"
+        },
+        "rolling_volatility_pct": {
+          "type": "number",
+          "description": "Annualised volatility percentage for the snapshot window.",
+          "minimum": 0
+        },
+        "profit_factor": {
+          "type": "number",
+          "description": "Gross profit divided by gross loss for closed trades in the window.",
+          "minimum": 0
+        },
+        "expectancy_r": {
+          "type": "number",
+          "description": "Average R-multiple expectancy across trades in the window."
+        }
+      }
+    },
+    "metadata": {
+      "type": "object",
+      "description": "Supporting metadata describing sampling windows, evidence links, and provenance.",
+      "required": [
+        "sample_count",
+        "window",
+        "links"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "sample_count": {
+          "type": "integer",
+          "description": "Number of qualifying executions captured in the snapshot window.",
+          "minimum": 0
+        },
+        "trade_days": {
+          "type": "integer",
+          "description": "Trading days represented within the snapshot window.",
+          "minimum": 0
+        },
+        "window": {
+          "type": "object",
+          "description": "Temporal bounds used to compute the KPIs.",
+          "required": [
+            "label",
+            "period",
+            "starts_at",
+            "ends_at"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "label": {
+              "type": "string",
+              "description": "Human readable label describing the window (e.g. 90d trailing).",
+              "minLength": 1
+            },
+            "period": {
+              "type": "string",
+              "description": "ISO-8601 duration string describing the lookback window.",
+              "pattern": "^P(?!$)(?:\\d+Y)?(?:\\d+M)?(?:\\d+W)?(?:\\d+D)?(?:T(?:\\d+H)?(?:\\d+M)?(?:\\d+S)?)?$"
+            },
+            "starts_at": {
+              "type": "string",
+              "description": "UTC ISO8601 timestamp marking the beginning of the window.",
+              "format": "date-time",
+              "pattern": "Z$"
+            },
+            "ends_at": {
+              "type": "string",
+              "description": "UTC ISO8601 timestamp marking the end of the window.",
+              "format": "date-time",
+              "pattern": "Z$"
+            }
+          }
+        },
+        "links": {
+          "type": "array",
+          "description": "Related evidence, reports, or runbooks tied to the snapshot.",
+          "items": {
+            "$ref": "#/$defs/link"
+          },
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "generated_by": {
+          "type": "string",
+          "description": "Job, CLI command, or service responsible for producing the snapshot.",
+          "minLength": 1
+        },
+        "source_hash": {
+          "type": "string",
+          "description": "Hash summarising the underlying dataset or configuration inputs.",
+          "pattern": "^[A-Fa-f0-9]{8,}$"
+        },
+        "tags": {
+          "type": "array",
+          "description": "Free-form governance or review tags applied to the snapshot.",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "uniqueItems": true
+        }
+      }
+    },
+    "notes": {
+      "type": "array",
+      "description": "Optional free-form annotations captured during reviews.",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    }
+  },
+  "$defs": {
+    "link": {
+      "type": "object",
+      "description": "Link to supporting evidence or downstream tooling.",
+      "required": [
+        "rel",
+        "href"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "rel": {
+          "type": "string",
+          "description": "Relationship label describing the target resource type.",
+          "enum": [
+            "report",
+            "notebook",
+            "runbook",
+            "evidence",
+            "source_data",
+            "change_request"
+          ]
+        },
+        "href": {
+          "type": "string",
+          "description": "URI or repository-relative path to the supporting resource.",
+          "format": "uri-reference",
+          "minLength": 1
+        },
+        "title": {
+          "type": "string",
+          "description": "Human readable title for the linked resource.",
+          "minLength": 1
+        }
+      }
+    }
+  }
+}

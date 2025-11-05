@@ -23,6 +23,8 @@ DEFAULT_CONFIG_PATH = Path("config/ops_readiness.yaml")
 DEFAULT_EVENTS_PATH = Path("logs/health/events.jsonl")
 DEFAULT_MAX_AGE_DAYS = 14
 RUNBOOK_ANCHOR = "OPS-READINESS-01#evidence-recovery"
+SIGNOFF_TEMPLATE_PATH = Path("docs/trader_signoff/OPS-P4.md")
+SIGNOFF_TEMPLATE_ANCHOR = "## 1. 目的"
 
 
 @dataclass(slots=True)
@@ -144,6 +146,21 @@ def gather_evidence_statuses(evidence_map: dict[str, str], *, now: datetime, max
     return statuses
 
 
+def ensure_signoff_template(path: Path, *, anchor: str) -> list[str]:
+    errors: list[str] = []
+    if not path.exists():
+        errors.append(f"sign-off template missing: {path}")
+        return errors
+    try:
+        content = path.read_text(encoding="utf-8")
+    except OSError as exc:
+        errors.append(f"cannot read {path}: {exc}")
+        return errors
+    if anchor not in content:
+        errors.append(f"sign-off template missing anchor '{anchor}' in {path}")
+    return errors
+
+
 def _most_recent_mtime(directory: Path) -> float | None:
     latest: float | None = None
     for child in directory.rglob("*"):
@@ -244,6 +261,7 @@ def main(argv: Iterable[str] | None = None) -> int:
         now=now,
         max_age_days=max(0, args.max_age_days),
     )
+    template_errors = ensure_signoff_template(SIGNOFF_TEMPLATE_PATH, anchor=SIGNOFF_TEMPLATE_ANCHOR)
 
     missing = [status for status in statuses if status.issue]
     summary = render_summary(
@@ -252,9 +270,15 @@ def main(argv: Iterable[str] | None = None) -> int:
         threshold_errors=threshold_errors,
     )
     print(summary)
+    if template_errors:
+        print("Sign-off template issues detected:")
+        for message in template_errors:
+            print(f"  - {message}")
 
     exit_code = 0
     if weight_errors or threshold_errors:
+        exit_code = 1
+    if template_errors:
         exit_code = 1
     if missing:
         exit_code = 1

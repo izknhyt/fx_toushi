@@ -1,6 +1,6 @@
 ARGS ?=
 
-.PHONY: config-init schema-validate check-ops-readiness
+.PHONY: config-init schema-validate check-ops-readiness contract-performance-snapshot
 
 config-init:
 	@if command -v poetry >/dev/null 2>&1; then \
@@ -21,4 +21,11 @@ check-ops-readiness:
 		poetry run python tools/check_ops_readiness.py $(ARGS); \
 	else \
 		PYTHONPATH=src python3 tools/check_ops_readiness.py $(ARGS); \
+	fi
+
+contract-performance-snapshot:
+	@if command -v poetry >/dev/null 2>&1; then \
+		poetry run pytest tests/contracts/test_performance_snapshot_schema.py -vv --maxfail=1; \
+	else \
+		python3 -m pytest tests/contracts/test_performance_snapshot_schema.py -vv --maxfail=1; \
 	fi

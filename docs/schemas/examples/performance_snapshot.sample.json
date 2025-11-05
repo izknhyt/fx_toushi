@@ -1,0 +1,59 @@
+{
+  "schema_version": "performance.snapshot.v1",
+  "timestamp": "2025-03-18T09:30:00Z",
+  "mode": "paper",
+  "metrics": {
+    "sharpe_ratio": 1.83,
+    "sortino_ratio": 2.74,
+    "max_drawdown_pct": 6.4,
+    "win_rate": 0.58,
+    "pnl": {
+      "absolute": 1245000.32,
+      "currency": "JPY",
+      "return_pct": 11.4
+    },
+    "metric_state": "provisional",
+    "metric_state_reason": "sample_size_under_minimum",
+    "rolling_volatility_pct": 12.8,
+    "profit_factor": 1.32,
+    "expectancy_r": 0.18
+  },
+  "metadata": {
+    "sample_count": 46,
+    "trade_days": 62,
+    "window": {
+      "label": "Trailing 90 trading days",
+      "period": "P90D",
+      "starts_at": "2024-12-19T00:00:00Z",
+      "ends_at": "2025-03-18T09:00:00Z"
+    },
+    "links": [
+      {
+        "rel": "report",
+        "href": "reports/performance/paper/2025-03-18.json",
+        "title": "Paper KPI snapshot payload"
+      },
+      {
+        "rel": "runbook",
+        "href": "docs/runbooks/RUN-PERF-01.md",
+        "title": "RUN-PERF-01 Performance review runbook"
+      },
+      {
+        "rel": "change_request",
+        "href": "docs/change_requests/CR-20250318-kpi-sample.md",
+        "title": "CR-20250318 KPI validation checklist"
+      }
+    ],
+    "generated_by": "tradectl kpi snapshot --mode paper --window 90d",
+    "source_hash": "8f4c2d7a5b1c334fe91802d4a1b5c0e9",
+    "tags": [
+      "m1",
+      "paper",
+      "kpi_snapshot"
+    ]
+  },
+  "notes": [
+    "Sharpe ratio excludes the 2025-03-11 outlier after manual audit.",
+    "Pending live soak approval scheduled in weekly Ops review."
+  ]
+}

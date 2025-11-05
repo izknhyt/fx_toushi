@@ -1,5 +1,8 @@
 # Schema Registry Change Log
 
+## 2025-03-21
+- Added `performance_snapshot.schema.json` capturing KPI snapshots (Sharpe, Sortino, drawdown, win rate, P&L metadata and governance state) for backtest/paper/live windows per detailed design §3.5.2/§7.6. Included curated sample `docs/schemas/examples/performance_snapshot.sample.json`, symlink `schema/performance_snapshot.schema.json`, and regression coverage via `tests/contracts/test_performance_snapshot_schema.py`.
+
 ## 2025-03-20
 - Added `scoring_config.schema.json`, `scoreboard.schema.json`, and `risk_live_guard.schema.json` to codify scoring drift guards, governance thresholds, and Live Guard notification rules per detailed design §4.4.3〜§4.4.5. Config smoke tests now assert these scaffolds via `pytest -k config_schema_smoke`.
 - Added `ops_readiness.schema.json` and `config_bundle.schema.json` so Ops Readiness reviews and the repository-wide bundle check (`poetry run schema-validate config --schema docs/schemas/config_bundle.schema.json`) align with RUN-OPS-AGENDA-01 / OPS-READINESS-01 workflows.

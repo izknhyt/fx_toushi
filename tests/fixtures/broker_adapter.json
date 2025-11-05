@@ -1,0 +1,44 @@
+{
+  "required_ticket_fields": [
+    "ticket_id",
+    "order_id",
+    "symbol",
+    "side",
+    "lots",
+    "price",
+    "sl",
+    "tp",
+    "ttl_sec"
+  ],
+  "allowed_directions": [
+    "request",
+    "response",
+    "bidirectional"
+  ],
+  "rate_limit_sla": {
+    "mt5": {
+      "trade_order_send": {
+        "limit": "50 req/min/account, バースト10 req/5s",
+        "sla": "Ack < 800ms, Fill < 2s",
+        "retry_policy": "500ms指数バックオフ×3 → Ops Escalation"
+      },
+      "trade_positions": {
+        "limit": "30 req/min",
+        "sla": "Response < 600ms",
+        "retry_policy": "1sリニアバックオフ×2"
+      }
+    },
+    "ctrader": {
+      "trade_order_send": {
+        "limit": "20 req/s バースト, 300 req/5min",
+        "sla": "Ack < 700ms",
+        "retry_policy": "Retry-After尊重, 最大3回→Manual"
+      },
+      "trade_positions": {
+        "limit": "10 req/s",
+        "sla": "Response < 500ms",
+        "retry_policy": "1s待機×1 → Ops"
+      }
+    }
+  }
+}

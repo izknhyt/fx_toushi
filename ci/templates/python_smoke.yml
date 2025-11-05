@@ -30,6 +30,11 @@ jobs:
           poetry run pytest -k smoke --maxfail=1 --disable-warnings -vv \
             | tee artifacts/python-smoke/pytest.log
         displayName: 'Run smoke test suite'
+      - script: |
+          mkdir -p artifacts/python-smoke/performance-snapshot-contract
+          poetry run pytest tests/contracts/test_performance_snapshot_schema.py -vv --maxfail=1 \
+            | tee artifacts/python-smoke/performance-snapshot-contract/pytest.log
+        displayName: 'Validate performance snapshot schema'
 
       - task: PublishPipelineArtifact@1
         displayName: 'Publish smoke logs'

@@ -197,10 +197,10 @@ class FieldMapping:
 ORDER_FIELD_MAPPING: Final[Sequence[FieldMapping]] = (
     FieldMapping(
         ticket_field="ticket_id",
-        mt5_field="order_request_id",
+        mt5_field="request_id",
         ctrader_field="clientOrderId",
-        direction="request",
-        notes="Client-specified correlation identifier echoed in acknowledgements.",
+        direction="bidirectional",
+        notes="Correlation identifier travels request→response to join broker acks with tickets.",
     ),
     FieldMapping(
         ticket_field="order_id",
@@ -218,10 +218,10 @@ ORDER_FIELD_MAPPING: Final[Sequence[FieldMapping]] = (
     ),
     FieldMapping(
         ticket_field="side",
-        mt5_field="type (0=buy,1=sell)",
+        mt5_field="type",
         ctrader_field="tradeSide",
         direction="request",
-        notes="Internal `buy|sell` mapped to numeric flag (MT5) or enum (cTrader).",
+        notes="Internal `buy|sell` mapped to MT5 numeric flag (0=buy,1=sell) or cTrader enum.",
     ),
     FieldMapping(
         ticket_field="lots",
@@ -281,37 +281,49 @@ RATE_LIMIT_SLA: Final[Mapping[str, Sequence[Mapping[str, str]]]] = {
     "mt5": (
         {
             "endpoint": "trade_order_send",
-            "limit": "50 requests/minute shared per account",
-            "sla": "Ack < 800ms p95, Fill status < 2s p95",
-            "error_codes": "401, 429, 503, 5403 (Manager throttling)",
-            "retry_policy": "Exponential backoff starting 500ms; abort after 3 attempts",
-            "config_keys": "config/brokers/mt5.yaml::rate_limit.order_send, sla.order_ack_ms",
+            "limit": "50 req/min/account, バースト10 req/5s",
+            "sla": "Ack < 800ms, Fill < 2s",
+            "error_codes": "401, 429, 503, 5403",
+            "retry_policy": "500ms指数バックオフ×3 → Ops Escalation",
+            "config_keys": (
+                "config/brokers/mt5.yaml::rate_limit.order_send, "
+                "sla.order_ack_ms, sla.fill_latency_ms, retry.order_send.max_attempts"
+            ),
         },
         {
             "endpoint": "trade_positions",
-            "limit": "30 requests/minute",
-            "sla": "Response < 600ms p95",
+            "limit": "30 req/min",
+            "sla": "Response < 600ms",
             "error_codes": "401, 429, 504",
-            "retry_policy": "Linear backoff 1s up to 2 retries",
-            "config_keys": "config/brokers/mt5.yaml::rate_limit.positions, sla.snapshot_ms",
+            "retry_policy": "1sリニアバックオフ×2",
+            "config_keys": (
+                "config/brokers/mt5.yaml::rate_limit.positions, "
+                "sla.snapshot_ms, retry.snapshot.max_attempts"
+            ),
         },
     ),
     "ctrader": (
         {
             "endpoint": "trade_order_send",
-            "limit": "20 requests/second burst, 300 requests/5min",
-            "sla": "Ack < 700ms p95",
+            "limit": "20 req/s バースト, 300 req/5min",
+            "sla": "Ack < 700ms",
             "error_codes": "400, 401, 403, 429, 500",
-            "retry_policy": "Retry after Retry-After header; fallback to manual after 3 retries",
-            "config_keys": "config/brokers/ctrader.yaml::rate_limit.order_send, sla.order_ack_ms",
+            "retry_policy": "Retry-After尊重, 最大3回→Manual",
+            "config_keys": (
+                "config/brokers/ctrader.yaml::rate_limit.order_send, "
+                "sla.order_ack_ms, retry.order_send.max_attempts"
+            ),
         },
         {
             "endpoint": "trade_positions",
-            "limit": "10 requests/second",
-            "sla": "Response < 500ms p95",
+            "limit": "10 req/s",
+            "sla": "Response < 500ms",
             "error_codes": "401, 404, 429, 503",
-            "retry_policy": "Single retry after 1s; escalate to Ops if still failing",
-            "config_keys": "config/brokers/ctrader.yaml::rate_limit.positions, sla.snapshot_ms",
+            "retry_policy": "1s待機×1 → Ops",
+            "config_keys": (
+                "config/brokers/ctrader.yaml::rate_limit.positions, "
+                "sla.snapshot_ms, retry.snapshot.max_attempts"
+            ),
         },
     ),
 }

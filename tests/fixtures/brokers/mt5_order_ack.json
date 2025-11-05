@@ -1,0 +1,13 @@
+{
+  "request_id": "TKT-123456",
+  "retcode": 0,
+  "order": 451239876,
+  "symbol": "EURUSD",
+  "type": 0,
+  "volume": 0.10,
+  "price": 1.09345,
+  "sl": 1.09100,
+  "tp": 1.09950,
+  "expiration": "2024-03-14T10:00:00+02:00",
+  "order_state": "ORDER_ACCEPTED"
+}

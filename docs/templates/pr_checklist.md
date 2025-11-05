@@ -13,6 +13,7 @@ Codex実装依頼時に利用するPR本文・Packetチェックリスト・受�
 - **新規CLI**: `tradectl execution recalibrate` / `tradectl scoring diagnostics` / `tradectl kill-switch review`を利用するPacketは、サンプル実行ログと生成物パス（`config/execution_model.calib.yaml`, `reports/diagnostics/scoring_<date>.md`, `reports/audit/kill_switch_review/<ts>.md`）を添付し、Runbook更新との整合を明記する。
 - **テンプレ同期**: ReporterやValidationテンプレを変更した場合は`reports/weekly/templates/m1_core.md`・`docs/validation_log/templates/weekly.md`・`docs/trader_signoff/TEMPLATE.md`の差分をPacketに含め、`pytest -k weekly_report_template`・`pytest -k validation_log_template`ログを添付する。
 - **初期テンプレート位置と保守責任**: Implementation Packetの詳細は`docs/implementation_packets/TEMPLATE.md`をベースに作成し、Ops Managerが構造保守、Codex Liaisonが各Packetの更新履歴を追記する。関連するプロンプト差分は`docs/prompt_packages/TEMPLATE.md`を参照し、同担当者が同期する。
+- **Runbook整合 (Governance/Finance)**: Manifest/Strategy Lifecycle/ガバナンス差分は`docs/runbooks/GOV-STRAT-01.md`、口座ヘルス/ステートメント突合/Ledger/税務差分は`docs/runbooks/RUN-ACC-01.md`・`RUN-AUD-02.md`・`RUN-REC-02.md`・`RUN-TAX-01.md`を更新し、PR本文に該当Runbookと証跡パス（`reports/governance/runbook_inventory_status.json`, `reports/audit/reconciliation/*.md`, `reports/tax/*.md` など）を明示する。
 
 ## 2. トレーダー受入試験テンプレ
 | チェック項目 | 詳細 | 実施者 | 証跡 |
@@ -57,7 +58,8 @@ Follow-up: Update copywriting (docs/implementation_packets/20250222_ep04_p1.md#t
 
 ## Checklist
 - [ ] Feature Flag初期値確認
-- [ ] docs/runbooks 更新
+- [ ] docs/runbooks 更新（対象: GOV-STRAT-01 / RUN-ACC-01 / RUN-AUD-02 / RUN-REC-02 / RUN-TAX-01 など必要なもの）
+- [ ] Runbookエビデンス添付（`reports/governance/runbook_inventory_status.json`・`reports/audit/reconciliation/`・`reports/tax/`等へのリンク）
 - [ ] KPI影響記録
 ```
 - CodexにはPR本文を上記形式で提出させ、チェックボックスは実行済み項目のみ`[x]`にする。実行できない項目は理由をPRコメントで説明させる。

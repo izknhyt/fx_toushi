@@ -40,3 +40,4 @@
 - [reports/ops/workload/README.md](../../reports/ops/workload/README.md)
 - [RUN-OPS-AGENDA-01](RUN-OPS-AGENDA-01.md)
 - [Validation Playbook テンプレ](../../reports/validation_log/templates/playbook_entry.md)
+- [Validation Data Playbook Index](../validation_playbook/index.md)

@@ -18,8 +18,8 @@
 1. `tradectl audit bundle --period <YYYYMM>`を実行し、`audit_manifest.json`と`audit_manifest.sig`が生成されていることを確認する。
 2. 生成物を`reports/audit/`と照合し、シグナル履歴・承認ログ・約定実績・設定差分・リスク承諾ログ・ベンチマーク比較が揃っているかチェックする。
 3. `data/market_rates/risk_free.parquet`に当該レビュー期の最新営業日分が保存されているか確認し、`risk_free.jp_tb_3m`終値がSharpe控除ロジックと一致することを`reports/validation_log/risk_free_patch_<date>.md`のサインオフ（Ops Manager＋Compliance）で突き合わせる。欠損時は`risk_free_fallback.csv`の補完値と承認コメントを要求し、差分を`audit_manifest.json`へ追記する。
-4. 不足や異常がある場合は補完データを取得し、Issueを`reports/audit/reconciliation/`または`reports/governance/`に起票する。
-5. 外部税理士/監査人とレビューセッションを開催し、指摘事項と承認結果を記録する。
+4. 不足や異常がある場合は補完データを取得し、Issueを`reports/audit/reconciliation/`または`reports/governance/`に起票する。ステートメント差分は`RUN-AUD-02`、Ledger/税務差分は`RUN-REC-02`/`RUN-TAX-01`へハンドオフして是正手順を進める。
+5. 外部税理士/監査人とレビューセッションを開催し、指摘事項と承認結果を記録する。提出・共有フローは`RUN-TAX-01`のSecureShare手順に従う。
 6. 指摘事項は24時間以内に`reports/governance/audit_followup/<ticket>.md`へ記録し、本Runbookの履歴節に追記して改善タスクをリリース計画へ登録する。
 
 ## 責任者

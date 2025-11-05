@@ -9,6 +9,7 @@ metadata:
   runbook_refs:
     - docs/runbooks/STRAT-M1-VALIDATION.md
     - reports/validation_log/templates/playbook_entry.md
+    - docs/validation_playbook/dataset_template.md
 mode: backtest
 data_ingestion:
   provider: local_parquet

@@ -10,6 +10,7 @@ metadata:
     - docs/runbooks/RUN-RISK-01.md
     - docs/runbooks/RUN-SPREAD-03.md
     - docs/runbooks/STRAT-PROMOTE-01.md
+    - docs/validation_playbook/index.md
 mode: live
 data_ingestion:
   provider: broker_stream_stub

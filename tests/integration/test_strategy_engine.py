@@ -11,7 +11,7 @@ import pytest
 from src.core.gate import GateBlockState, GateState, NewsGateState, SpreadGateState
 from src.features.pipeline import FeaturePipeline
 from src.execution import DeterministicExecutionModel
-from src.strategies.base import StrategyMetadata, StrategyPluginProtocol
+from src.strategies.base import StrategyContext, StrategyMetadata, StrategyPluginProtocol
 from src.strategies.registry import ManifestValidationError, StrategyEngine
 from yaml import safe_load
 
@@ -31,6 +31,7 @@ class DeterministicStrategy(StrategyPluginProtocol):
     """Minimal strategy plugin that records evaluation contexts."""
 
     id = "m1_baseline_ma_rsi"
+    determinism_key = "m1_baseline_ma_rsi:v0"
     metadata = StrategyMetadata(
         name="M1 Baseline MA/RSI",
         version="0.1.0",
@@ -49,12 +50,17 @@ class DeterministicStrategy(StrategyPluginProtocol):
 
     def __init__(self) -> None:
         self.contexts: list = []
+        self.context: StrategyContext | None = None
 
     def required_warmup_bars(self) -> int:
         return 128
 
     def cooldown_bars(self) -> int:
         return 4
+
+    def generate_signals(self, context) -> Iterable[DummySignal]:
+        self.context = context
+        return self.evaluate(context)
 
     def evaluate(self, context) -> Iterable[DummySignal]:
         self.contexts.append(context)

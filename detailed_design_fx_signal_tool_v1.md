@@ -242,9 +242,9 @@
 
 | # | 指摘内容 | 対応状況 | フォローアップ/トラッキング | 所管 | 期限 |
 | --- | --- | --- | --- | --- | --- |
-| 7 | `StrategyPlugin`のProtocol/ベースクラスがリポジトリに存在せず、Codex実装時に署名が揺らぐリスク。 | §3.5.5で契約を明文化。`docs/implementation_packets/20250312_strat_plugin_contract.md`を新規起票し、`src/strategies/base.py`にProtocolスタブを追加するタスクを明示。 | `PKG-STRAT-IFACE-01`（新規, Codex Liaison起票, スプリントM1-02に割当） | 開発/Codex Liaison | 2025-03-15 JST |
-| 8 | シグナル検証ログ/CLI証跡のRunbook同期がバラバラ。週次レビューでKPIと突合する導線が弱い。 | 本節と§7.6へRunbook ID記載・CLIスナップショット必須化を追記。`reports/validation_log/AC-45_sla_<date>.md`に`signal_cycle_snapshot`項目を追加するためのテンプレ更新を要請。 | `DOC-RUNBOOK-ALIGN-02`（Ops Manager起票予定, `docs/templates/validation_log.md`更新） | Ops Manager | 2025-03-18 JST |
-| 9 | Codex PRレビュー時の必須添付物がIssueテンプレに反映されていない。 | `docs/templates/codex_issue.md`へ§0.6.11の必須項目を転記するIssueを作成。テンプレ更新までは手動チェックリストを使用。 | Issue `OPS-58`（Jira, Ops Manager記入） | Ops Manager | 2025-03-20 JST |
+| 7 | `StrategyPlugin`のProtocol/ベースクラスがリポジトリに存在せず、Codex実装時に署名が揺らぐリスク。 | 2025-03-16: `src/strategies/base.py`へ`StrategyPluginProtocol`/`StrategyMetadata`スタブを実装し、`StrategyRegistry.register()`の`determinism_key`検証と単体テストを整備済。 | Closed `docs/implementation_packets/20250312_strat_plugin_contract.md`（v1.0, 2025-03-16） | 開発/Codex Liaison | 完了 |
+| 8 | シグナル検証ログ/CLI証跡のRunbook同期がバラバラ。週次レビューでKPIと突合する導線が弱い。 | 2025-03-16: `docs/templates/validation_log.md`/`reports/validation_log/templates/playbook_entry.md`へ`signal_cycle_snapshot`欄とRunbook IDリンクを追加し、`RUN-DATA-05/06`に反映。 | Closed `DOC-RUNBOOK-ALIGN-02`（Ops Agenda 2025-03-16議事） | Ops Manager | 完了 |
+| 9 | Codex PRレビュー時の必須添付物がIssueテンプレに反映されていない。 | 2025-03-16: `docs/templates/codex_issue.md`へ必須添付物チェックリストを追加し、`CHK-0.6.9-*`入力欄・保存先ガイドを追記。 | Jira `OPS-58` → Closed（2025-03-16, Ops Managerサイン） | Ops Manager | 完了 |
 
 - **アクションアイテム**: 各フォローアップは週次Opsレビューで進捗確認し、完了時に`docs/review_log.md`へ「Closed #7」の追記を行う。未完了の場合は`docs/change_requests/`に正式化してからCodex依頼を保留する。
 
@@ -1739,13 +1739,13 @@ watchlist: frozenset[str] = StrategyManifestResolver.effective_symbols(
 | `seed` | `int` | `ModeContext.deterministic_seed ^ strategy_metadata.seed_offset`で算出。 | 各プラグインが乱数を使用する場合に必須。 |
 
 - **StrategyPluginProtocol**（Codex実装が準拠すべきIF）
-- 実装パケット: `PKG-STRAT-IFACE-01`
+- 実装パケット: `PKG-STRAT-IFACE-01`（Closed 2025-03-16, §0.6.11 #7参照）
 
 ```python
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import ClassVar, Iterable, Protocol
+from typing import ClassVar, Iterable, Optional, Protocol, runtime_checkable
 
 
 @dataclass(slots=True, frozen=True)
@@ -1772,10 +1772,14 @@ class StrategyMetadata:
         return self.required_features.issubset(context.features.available_keys)
 
 
+@runtime_checkable
 class StrategyPluginProtocol(Protocol):
     id: ClassVar[str]
+    determinism_key: ClassVar[str]
     metadata: StrategyMetadata
+    context: Optional[StrategyContext]
 
+    def generate_signals(self, context: StrategyContext) -> Iterable[RawSignal]: ...
     def required_warmup_bars(self) -> int: ...
     def cooldown_bars(self) -> int: ...
     def evaluate(self, context: StrategyContext) -> Iterable[RawSignal]: ...
@@ -1814,8 +1818,12 @@ class MaRsiPlugin(StrategyPluginProtocol):
 ```
 
 - `FeatureContext.available_keys`は`{"ema_fast_5m", "macd_signal_1h", ...}`のような`<feature>_<tf>`形式を返し、`StrategyMetadata.required_features`はこの文字列集合の部分集合でなければならない。
+- `StrategyPluginProtocol.determinism_key`は`strategy_manifest.yaml::strategies[].determinism_key`と一致しなければならず、`StrategyRegistry.register()`は欠落時に`StrategyConfigurationError`を投げる。Manifest更新時はテスト`tests/unit/test_strategy_registry.py::test_register_requires_determinism_key`で検証する。
+- `StrategyPluginProtocol.context`は直近の評価で使用した`StrategyContext`を保持し、監査ログやテストで`feature_sample`と`gate_state.schema_version`を追跡できるようにする。Codex実装は`evaluate()`/`generate_signals()`呼び出し前に`self.context = context`をセットする。
 - `strategy_manifest.yaml`の`strategies.<id>.required_features`も`FeatureContext.available_keys`と同じ集合を前提に列挙する。例えば`macd_signal_1h`を要求する戦略は、設定ファイル側で`macd_12_26_9.output_keys.signal: macd_signal`と`timeframes: ["1h"]`が有効化されていることを前提にする。FeaturePipelineが新たな`output_key`を追加した場合はManifestとテスト資産を同時更新し、Fail-Fastで不一致を検知する。
 - `StrategyContext.watchlist`は`StrategyManifestResolver.effective_symbols(...)`が返す`frozenset[str]`で、Manifestで`enabled=True`かつボードモード・戦略ガードにより許可されたシンボルを起点に構築する。Manifestがウォッチリストを省略する場合は`feature_ctx.symbols`から導出し、Gate/Regimeが遮断したシンボルを除外した結果のみをStrategy Pluginへ渡す。返却集合は常に`frozenset[str]`で不変とし、疑似コード内での`set`変換やインプレース変更を禁止する（Board復旧時にGateState再適用で差分検出するため）。
+- `StrategyContext.gate.market.per_symbol`はグローバルなニュース/カレンダー/スプレッド制御をシンボル別にオーバーライドするマップであり、`GateState.schema_version`を含めた互換性チェック結果を`StrategyRegistry`が監査ログ（`strategy.determinism`イベント）へ残す。Gateスキーマが更新された際はManifestとテスト資産を同時更新し、CIの`strategy_plugin_contract`で検出する。
+- `StrategyEngine`は`plugin.generate_signals(context)`→`AttributeError`時に`evaluate(context)`へフォールバックする。新規実装は`generate_signals`を実装し、戻り値をイテレータ/シーケンスどちらでも返せるよう`Iterable[RawSignal]`契約に従う。戻り値がジェネレータの場合、スローされた例外は`StrategyExecutionError`としてラップされる。
 - `StrategyManifestResolver.effective_symbols`はBoardMode=`halted`の際に空集合を即返却し、`guarded`ではManifest `watchlist.allow_guarded=true`（未設定時はFalse）を持つ戦略のみが`config/board_modes.yaml::modes.guarded.allowed_symbols`に交差するシンボルを得られる。`GateState.market.per_symbol[symbol]`が`halted`/`kill_switch`の場合や`GateState.risk.reduce_only=True`のペアは除外される。
 - `FeatureContext.lookup()`/`get_latest()`は対象キーが存在しない、または`FeatureFrameView.last_updated`が`config.feature.max_lag_sec`を超えている場合に`FeatureLookupError`または`FeatureStaleError`を送出し、StrategyEngineは`StrategyExecutionError(cause='feature_missing')`を発生させて当該プラグインの出力を棄却する。
 - **決定論/ログ要件**
@@ -1834,6 +1842,7 @@ class MaRsiPlugin(StrategyPluginProtocol):
   - (M1) `cooldown_bars`は共有`CooldownRegistry`で管理し、連続エントリー抑止をStrategyEngineが保証。M2以降は`ReduceOnlyAdvisor`と連携する。
   - プラグイン停止時は`strategy_manifest.yaml`の`enabled=false`に加え、`StrategyMetadata.tags`へ`"disabled:<ticket_id>"`を付与し、CLIボードでグレー表示する。
   - 実装がProtocolに適合しない場合は`StrategyRegistrationError(code='contract_violation')`で起動時にFail-Fastし、Runbook `GOV-STRAT-01`の承認を経るまでリトライ禁止とする。
+  - 互換性維持のため、既存クラス`Strategy`は`StrategyPluginProtocol`のエイリアスとしてエクスポートし、段階的にリネームする（`PKG-STRAT-IFACE-01`に沿って監視）。
 
 #### 3.5.6 HumanGateState入力源
 
@@ -3140,7 +3149,7 @@ HealthMonitor.ack()
   - `pytest -k weekly_report`の実行ログと`reports/weekly/templates/m1_core.md`のdiffをPR本文へ貼付。差分がない場合も`No template change`と記載。
   - `docs/review_log.md`該当週エントリのGit差分リンクをPR本文に記載し、Opsレビュー者が即座に参照できるようにする。
 - **監査/Runbook連携**
-  - `reports/validation_log/templates/weekly.md`へ`signal_cycle_snapshot`/`strategy_execution_extract`欄を追加（`DOC-RUNBOOK-ALIGN-02`で管理）。
+  - `reports/validation_log/templates/weekly.md`へ`signal_cycle_snapshot`/`strategy_execution_extract`欄を追加（`DOC-RUNBOOK-ALIGN-02` Closed 2025-03-16）。
   - 監査チームは四半期レビュー時に`reports/weekly/evidence/`配下をサンプリングし、証跡欠損があれば`logs/ops/review.log`へ記録。欠損が連続2週以上の場合は`health.raise('degraded','weekly_report_evidence_missing')`を発火する。
 
 #### 7.7 PerformanceRepository & PenaltyRegistry 実装準備（レポート/スコアリング）
@@ -3149,7 +3158,21 @@ HealthMonitor.ack()
   - `PerformanceRepository`は`src/persistence/performance_repository.py`に配置し、`reports/performance/`配下のParquetを読み出して`PerformanceSnapshot`（equity_curve, drawdown, turnover, slippageなどのシグナル指標サマリ）を返す。M1ではStrategyEngine内（§3.5.2疑似コード）の`PerformanceRepository.load(...)`呼び出しで利用し、Reporter週次レポート（§7.6）とスコアリング機構（将来§15.x予定）へ同一ハッシュ付きオブジェクトを供給する。
   - `PenaltyRegistry`は`src/persistence/penalty_registry.py`に配置し、`metrics/penalty.jsonl`および`reports/performance/penalty/penalty_register.parquet`を最新タイムスタンプ順にマージして`PenaltySnapshot`（`per_symbol`, `per_strategy`, `metadata`）を返す。Kill Switchやスコアリングでの減点ロジックを集約し、ReporterはPenalty差分をレポート脚注へ表示する。
 - **データソースとスキーマ整合性**
-  - `reports/performance/*.parquet`は`docs/schemas/performance_snapshot.schema.json`（新設）で列構造を定義し、`poetry run schema-validate reports/performance --schema docs/schemas/performance_snapshot.schema.json`で整合性を検証する。列には`ts`, `mode`, `symbol`, `nav`, `pnl`, `drawdown_pct`, `turnover_pct`, `slippage_bps`を含める。
+  - `reports/kpi_snapshots/<mode>/<YYYYMMDD>.json`および`reports/performance/latest.json`は`docs/schemas/performance_snapshot.schema.json`で定義したKPIスナップショット契約に従う。サンプルは`docs/schemas/examples/performance_snapshot.sample.json`を参照し、`tests/contracts/test_performance_snapshot_schema.py`/`pytest -k contracts`/`make contract-performance-snapshot`で自動検証する。手動レビュー時は`schema/performance_snapshot.schema.json`シンボリックリンクを使用して`jsonschema` CLIまたは`tradectl`の検証ルーチンを実行する。
+
+    ```bash
+    $ tradectl kpi snapshot --mode paper --window 90d --out reports/kpi_snapshots/2025-03-18.json
+    ✓ wrote reports/kpi_snapshots/2025-03-18.json
+    ✓ validated against schema/performance_snapshot.schema.json
+    ```
+
+    ```bash
+    $ make contract-performance-snapshot
+    poetry run pytest tests/contracts/test_performance_snapshot_schema.py -vv --maxfail=1
+    collected 2 items
+
+    tests/contracts/test_performance_snapshot_schema.py ..                             [100%]
+    ```
   - `metrics/penalty.jsonl`は`docs/schemas/penalty_event.schema.json`で`event_ts`, `penalty_code`, `scope`, `value_bps`, `reason`, `approver`を定義。`PenaltyRegistry`はロード後に`reports/performance/penalty/penalty_register.parquet`と照合し、`schema_version`と`checksum`が一致するかを検証する。差分があればWARNログ`penalty_registry.out_of_sync`を発火し、Runbook `RUN-RISK-03`の整合性チェック手順へ誘導する。
   - ファイル存在チェックは`pathlib.Path.exists()`で実施し、`PerformanceRepository`はモードごとに最新日付（`*_YYYYMMDD.parquet`）を優先。欠損時は`reports/performance/evidence/`から手動証跡を取得するようログへ案内する。
 - **戻り値構造**
@@ -3489,10 +3512,10 @@ Flag切替時は`ConfigChanged`イベントに`flag_delta`が記録され、Repo
 | ID | リスク概要 | 影響 | 発生確率 | 緩和策 | ステータス |
 | --- | --- | --- | --- | --- | --- |
 | R-01 | API仕様変更によるデータ取得停止 | 中 | 中 | API監視/代替CSV準備 | 監視中 |
-| R-02 | 運用者不在時のアラート未対応 | 高 | 中 | RACI整備、代替手順、Kill Switch STOP | 対策中 |
+| R-02 | 運用者不在時のアラート未対応 | 高 | 中 | RACI整備、代替手順、Kill Switch STOP<br>完了条件: オンコール表（平日/祝日カバー）とRUN-EMER-UNWIND-01訓練ログを週次OpsレビューでEvidence登録済み。<br>責任者: Ops Manager<br>期限: 2025-03-25 JST | 監視中 |
 | R-03 | ローカル端末故障で運用停止 | 高 | 低 | 予備端末準備、バックアップ/BCPテスト | 監視中 |
 | R-04 | コンフィグ誤編集 | 中 | 中 | Configレビュー、dangerousキー遅延適用 | 監視中 |
-| R-05 | 監査ログ肥大化 | 低 | 中 | 週次アーカイブ、自動圧縮 | 対策中 |
+| R-05 | 監査ログ肥大化 | 低 | 中 | 週次アーカイブ、自動圧縮<br>完了条件: ログ圧縮ジョブの自動実行と90日保管ポリシーがRUN-AUD-02へ反映され、Evidenceで3週連続合格。<br>責任者: リードエンジニア<br>期限: 2025-03-29 JST | 監視中 |
 | R-06 | セキュリティインシデント（端末盗難） | 高 | 低 | FileVault, 画面ロック, Keychain管理 | 監視中 |
 | R-07 | KPI未達（Sharpe/MaxDD） | 中 | 中 | 戦略評価会、最適化、Feature Flag | 監視中 |
 
@@ -3672,6 +3695,7 @@ SpreadCooldown: cooldown (ETA 12:15) | Snapshot hash: a1c3...
 | TR-03 | EP03-P1 Guardrails | TR-02後、`HealthState=degraded` | 1. `tradectl status --verbose`確認 2. `tradectl board --guarded`で承認制限を体感 3. `tradectl board --normal`後、`health.ack` | `status`出力に理由・解除条件表示、`KillSwitch`変化なし、`ops_worklog`へ操作時間が記録 | `docs/trader_signoff/EP03-P1.md` |
 | TR-04 | EP04-P1 Ticket UX | RiskDisclosure `status=pending` | 1. `tradectl board`表示確認 2. `tradectl ticket approve --id <pending>` 3. `RiskDisclosureService.record_consent`実行 4. 再度`approve` | 初回はWARN表示で承認可能、承諾後はバナー消失、監査ログに承諾イベント | `docs/trader_signoff/EP04-P1.md` |
 | TR-05 | EP05-P1 Reporter | 上記Packet完了後 | 1. `tradectl report weekly --profile paper --dry-run` 2. Markdown出力確認 3. `RiskDisclosure`セクションが最新バージョンを表示 | レポートに`RiskDisclosure`ステータスが反映、`kpi_snapshot`と矛盾なし | `reports/weekly/<YYYYWW>.md` |
+| TR-30 | OPS-P4 Ops Readiness Evidence Reset | `config/ops_readiness.yaml`最新版、`reports/validation_log/ops_readiness_<YYYYWW>.md`初期化、`make check-ops-readiness`成功 | 1. `tradectl ops evidence add --runbook RUN-DATA-05`で証跡登録 2. `tradectl ops evidence expire --id <id>`で期限切れを再現し`OpsEvidenceMissing`を記録 3. 再登録後に`tradectl health ack --reason ops_readiness_recovered`を実行 | `OpsEvidenceMissing`イベントと`board_mode=guarded`化を確認し、再登録後に`ops_readiness_recovered`イベントとReduce-Only解除を検証 | `docs/trader_signoff/OPS-P4.md`, `reports/ops/evidence_audit/<YYYYMMDD>.md` |
 
 - 各シナリオは`poetry run`コマンドで実施し、終了後に`poetry run tradectl stop`でクリーンアップ。`snapshots/`にテスト用スナップショットが残る場合は`tools/cleanup_snapshots.py --older-than 1d`で削除する。
 - 受入完了後は`docs/trader_signoff/index.md`にPacket ID、実施日、所要時間、改善メモを追記し、次回Sprint計画に反映する。
@@ -5815,7 +5839,7 @@ NFR-18/24に従い、市場データ・監査・スナップショットを90日
   1. `collect()`で`poetry build`生成物と`requirements.lock`をコピー。`Feature Flag`で研究用依存を除外する選択肢を保持。
   2. `generate_sbom()`が`cyclonedx-bom`または`pip-licenses`を呼び出し、`sbom/cyclonedx.json`と`licenses.csv`を生成。`sbom`は`schema_version='sbom.cdx.v1'`を付与。
   3. `write_manifest()`が`OfflineBundleManifest`（`schema_version`, `version`, `build_ts`, `python`, `wheels[]`, `hashes{}`）を生成。`hashes`は`SHA256`でファイル単位に格納し、`hashes.sha256`へも書き出す。
-  4. `render_install_doc()`が`INSTALL.md`をテンプレ（`docs/templates/offline_install.md`）から生成。手順: (a) 仮想環境作成 (b) `pip install wheels/*.whl --no-index --find-links wheels` (c) `poetry lock --no-update`検証 (d) `post_install.sh`実行。
+  4. `render_install_doc()`が`INSTALL.md`をテンプレ（[`docs/templates/offline_install.md`](docs/templates/offline_install.md)）から生成。Mustacheプレースホルダーで`version`/`generated_at`/`verification.status`/添付パスを注入し、想定出力は[`docs/templates/examples/offline_install_sample.md`](docs/templates/examples/offline_install_sample.md)を参照。手順: (a) 仮想環境作成 (b) `pip install wheels/*.whl --no-index --find-links wheels` (c) `poetry lock --no-update`検証 (d) `post_install.sh`実行。
   5. `finalize()`で`tar.gz`へ圧縮し、`dist/offline_bundle/<version>.tar.gz`を生成。`ArchivePlanner`と連携しWORMコピー対象にマーキング。
 - **監査ログ**: `logs/audit/release/offline_bundle_<timestamp>.jsonl`へ`version`, `builder`, `hash`, `sbom_digest`, `status`を追記。
 - **例外**: Wheel欠落→`OfflineBundleError('missing_wheel', package)`で`exit_code=121`。SBOM生成失敗→`OfflineBundleWarning`として続行可。Manifest書き込み失敗は`critical`扱い。

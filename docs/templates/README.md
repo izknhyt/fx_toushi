@@ -11,6 +11,7 @@
 | [Config Change](config_change.md) | 設定変更の事前レビューと記録 | `RUN-CHANGE-02` |
 | [Ops Workload Report](ops_workload_report.md) | Ops負荷の定期報告 | `RUN-OPS-LOAD-03` |
 | [Release Announcement](release_announcement.md) | リリース計画・告知 | `RUN-RELEASE-01` |
+| [Offline Install Guide](offline_install.md) | オフラインバンドル受領時のインストール/検証記録 | `RUN-RELEASE-01`, `DR-LOCAL-01` |
 
 ## 利用手順
 1. `docs/templates/<template>.md` をコピーし、対象日のレポートディレクトリ（例: `reports/ops/`）に配置します。
@@ -19,3 +20,6 @@
 4. 完成したレポートは所定の承認フロー（Ops Lead → Risk Lead → Product Owner など）に従い、必要な署名欄を更新してください。
 
 > Runbook IDは `docs/runbooks/` 配下に格納されているドキュメントと対応しています。不明な場合は運用チームに確認してください。
+
+## Examples
+- [Offline Install Template Sample](examples/offline_install_sample.md) — `render_install_doc()`の想定出力（Markdown差分・添付リスト付き）。

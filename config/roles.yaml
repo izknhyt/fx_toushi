@@ -18,6 +18,7 @@ roles:
       - RUN-RISK-01
     validation_refs:
       - reports/validation_log/templates/weekly.md
+      - docs/validation_playbook/index.md
     members:
       - principal_id: user:emi.ops
         type: user
@@ -36,6 +37,7 @@ roles:
       - RUN-RISK-01
     validation_refs:
       - reports/validation_log/templates/playbook_entry.md
+      - docs/validation_playbook/index.md
     members:
       - principal_id: user:kazuo.ops
         type: user
@@ -53,6 +55,7 @@ roles:
       - STRAT-PROMOTE-01
     validation_refs:
       - reports/validation_log/templates/playbook_entry.md
+      - docs/validation_playbook/dataset_template.md
     members:
       - principal_id: user:takashi.quant
         type: user
@@ -68,6 +71,7 @@ roles:
       - STRAT-PROMOTE-01
     validation_refs:
       - reports/validation_log/templates/playbook_entry.md
+      - docs/validation_playbook/dataset_template.md
     members:
       - principal_id: user:lena.research
         type: user
@@ -79,6 +83,7 @@ roles:
       - STRAT-STRESS-01
     validation_refs:
       - reports/validation_log/templates/weekly.md
+      - docs/validation_playbook/review_log_template.md
     members:
       - principal_id: service:research-ci
         type: service
@@ -90,6 +95,7 @@ roles:
       - STRAT-PROMOTE-01
     validation_refs:
       - reports/validation_log/templates/playbook_entry.md
+      - docs/validation_playbook/index.md
     members:
       - principal_id: user:olivia.po
         type: user
@@ -103,6 +109,7 @@ roles:
       - RUN-RISK-01
     validation_refs:
       - reports/validation_log/templates/playbook_entry.md
+      - docs/validation_playbook/index.md
     members:
       - principal_id: user:sebastian.risk
         type: user
@@ -128,6 +135,7 @@ roles:
       - GOV-AUD-01
     validation_refs:
       - reports/validation_log/templates/playbook_entry.md
+      - docs/validation_playbook/index.md
     members:
       - principal_id: user:andrew.platform
         type: user
@@ -139,6 +147,7 @@ roles:
       - RUN-RISK-01
     validation_refs:
       - reports/validation_log/templates/playbook_entry.md
+      - docs/validation_playbook/dataset_template.md
     members:
       - principal_id: user:sasha.security
         type: user

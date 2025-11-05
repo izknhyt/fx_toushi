@@ -93,3 +93,14 @@
   - Ops Agenda `docs/runbooks/daily_agenda/2025-03-15.md` を作成し、上記Packetリンクと `tests/README.md` 行番号を紐付け。
 - Ops Agenda Sync: `docs/runbooks/daily_agenda/2025-03-15.md`
 - Next Review Gate: 2025-03-18 週次Opsレビューで各Packetのテスト実装着手状況を確認。
+
+### 2025-03-23 Detailed Design §11 Follow-ups (Pre-Sign-off)
+- Reviewer: Codex Liaison / Ops Manager
+- Scope: `detailed_design_fx_signal_tool_v1.md` §11 リスクログおよびRunbook追記タスク
+- Follow-up Items:
+  - [ ] Runbook `docs/runbooks/RUN-EXEC-02.md` に「Paper/LIVE 実績に基づく半月ごとの `execution_model.yaml` 更新」手順を追記（Owner: Quant Lead, Due: 2025-03-28 JST, Ref: §11.1 技術的リスク 1行目）
+  - [ ] リスクログ `R-02`（運用者不在時のアラート未対応）: オンコール表整備と `RUN-EMER-UNWIND-01` 訓練ログ Evidence 登録をチケット化（Owner: Ops Manager, Due: 2025-03-25 JST, Evidence: §11.3 R-02）
+  - [ ] リスクログ `R-05`（監査ログ肥大化）: ログ圧縮ジョブ自動化と `RUN-AUD-02` 反映をチケット化（Owner: Lead Engineer, Due: 2025-03-29 JST, Evidence: §11.3 R-05）
+  - [ ] リリース計画ドキュメント（`docs/release_checklist.md` 相当）不在：詳細設計 §13/§31 のゲート手順を参照する正式なチェックリストファイルを作成し、節番号整合を確認（Owner: Product Owner, Due: 2025-03-27 JST, Notes: Release plan cross-checkで欠損を確認）
+- Notes:
+  - Codex実装パケット各資料のセクション参照は`detailed_design_fx_signal_tool_v1.md`の実際の節番号と整合していることを確認済み（§0.6.11, §3.5.5, §16.5 等）。

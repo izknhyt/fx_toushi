@@ -10,6 +10,7 @@ metadata:
     - docs/runbooks/RUN-DATA-05.md
     - docs/runbooks/RUN-HITL-01.md
     - reports/validation_log/AC-45_sla_20250220.md
+    - docs/validation_playbook/review_log_template.md
 mode: paper
 data_ingestion:
   provider: yfinance

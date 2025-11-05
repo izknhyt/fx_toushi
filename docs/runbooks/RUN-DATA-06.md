@@ -40,6 +40,7 @@
 - [ ] `tradectl data manual-template`で生成された双子CSVのヘッダと列順（`ts,open,high,low,close,volume,spread,session_tag`）を確認し、カスタマイズ時も順序が崩れていない。
 - [ ] `tradectl data validate-csv --path <...>_op.csv`および`..._review.csv`が共に`errors=0`で、UTC→JST変換ログに5分足境界逸脱がない。
 - [ ] `tradectl benchmark validate-manual --path data/manual_fallback/<provider>/<symbol>/<YYYYMMDD>/`でSHA256ハッシュとバー数が一致し、`reports/benchmark/manual_log_signoff/<YYYYMMDD>.md`へハッシュを転記した。
+- [ ] `docs/templates/validation_log.md`および`reports/validation_log/templates/playbook_entry.md`に沿って`signal_cycle_snapshot`/`status_snapshot`/`data_health_snapshot`/`runbook_ack_log`を保存し、各ファイルのSHA256を記録した。
 - [ ] `ManualCsvReconciler`の実行ログで`missing=0`/`duplicates=0`/`ohlc_consistency=pass`を確認し、Runbook `RUN-DATA-05`/`RUN-DATA-06`の解除条件リンクを添付した。
 
 ### 3. Resync/Catch-up 実行（AC-04）
@@ -67,7 +68,7 @@
 ### 6. Signal Board解除と`degraded_ack`発行
 1. Runbook `RUN-DATA-05`のチェックリストと本Runbookの補填ログを突合し、**データ鮮度検証→Reduce-Only運用→復旧確認→提案再開**の順で証跡が揃っていることを確認する。
 2. `tradectl status --detail`の`board_guard`セクションで`board_mode=guarded`が維持されていること、`reduce_only=true`のままであることを確認する。新規提案が抑止されているかは`tradectl board --view open_tickets`でダブルチェックする。
-3. Ops ManagerとPOがダブルサインした復旧記録（`reports/validation_log/AC-45_sla_<date>.md`）を添付し、解除可能と判断したら`tradectl board guard --release`（または等価の解除操作）を実行する。
+3. Ops ManagerとPOがダブルサインした復旧記録（`reports/validation_log/AC-45_sla_<date>.md`）を添付し、`signal_cycle_snapshot`欄に最新の`reports/validation_log/evidence/<date>/board_snapshot.json`が記録されていることを確認したうえで解除可能と判断したら`tradectl board guard --release`（または等価の解除操作）を実行する。
 4. 解除操作と同時に`audit`へ`degraded_ack`イベントを1件発行し、イベントID・解除時刻・参照チェックリストを`reports/validation_log/AC-45_sla_<date>.md`および`reports/audit/reduce_only/<date>.md`に追記する。再発防止タスクと一緒にRunbook `RUN-DATA-05`へリンクを戻し、次回の演習で参照できるようにする。
 
 ### ディレクトリ移行ノート（v1.5）

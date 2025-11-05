@@ -10,7 +10,7 @@ coupling to concrete implementations.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, ClassVar, Iterable, Mapping, Protocol, Sequence, runtime_checkable
+from typing import Any, ClassVar, Iterable, Mapping, Protocol, Sequence, runtime_checkable, Optional
 
 from src.execution import SpreadCooldownState
 
@@ -191,11 +191,19 @@ class StrategyPluginProtocol(Protocol):
     """Protocol that every strategy plugin must satisfy.
 
     The attributes and call signatures mirror the design contract so the
-    registry can validate plugins via :func:`isinstance` checks.
+    registry can validate plugins via :func:`isinstance` checks.  Plugins
+    must expose deterministic metadata (`determinism_key`) and surface the
+    active :class:`StrategyContext` so orchestration layers and tests can
+    inspect the evaluation snapshot that produced a given signal.
     """
 
     id: ClassVar[str]
+    determinism_key: ClassVar[str]
     metadata: StrategyMetadata
+    context: Optional[StrategyContext]
+
+    def generate_signals(self, context: StrategyContext) -> Iterable[RawSignal]:
+        """Return deterministic signals for the supplied context."""
 
     def required_warmup_bars(self) -> int:
         """Return the minimum warm-up bars needed before evaluation."""

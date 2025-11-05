@@ -1,0 +1,99 @@
+{
+  "generated_at": "2025-11-03T09:00:00+09:00",
+  "runbooks": {
+    "GOV-STRAT-01": {
+      "title": "戦略ガバナンスレビューフロー",
+      "status": "ready",
+      "review_due_in_days": 45,
+      "last_review_at": "2025-11-03",
+      "doc_owner": "Ops Manager",
+      "evidence_path": "reports/governance/strategy_board/",
+      "linked_playbooks": ["AC-46"],
+      "scenario_id": "TR-25",
+      "related_runbooks": ["RUN-RISK-07"],
+      "metrics": [
+        "metrics/strategy_manifest.jsonl",
+        "metrics/strategy_board.jsonl",
+        "metrics/strategy_lifecycle.jsonl"
+      ]
+    },
+    "OPS-READINESS-01": {
+      "title": "オペレーションレディネス評価手順",
+      "status": "ready",
+      "review_due_in_days": 21,
+      "last_review_at": "2025-03-23",
+      "doc_owner": "Ops Manager",
+      "evidence_path": "reports/governance/ops_readiness_/",
+      "linked_playbooks": ["AC-51", "FR-63"],
+      "scenario_id": "TR-30",
+      "related_runbooks": ["RUN-DATA-05", "RUN-DATA-06", "RUN-POST-03"],
+      "metrics": [
+        "metrics/ops_readiness.jsonl"
+      ],
+      "signoff_templates": [
+        {
+          "id": "OPS-P4",
+          "path": "docs/trader_signoff/OPS-P4.md#1-目的"
+        }
+      ]
+    },
+    "RUN-ACC-01": {
+      "title": "マルチ口座ヘルスチェック対応手順",
+      "status": "ready",
+      "review_due_in_days": 30,
+      "last_review_at": "2025-11-03",
+      "doc_owner": "Ops Manager",
+      "evidence_path": "reports/ops/aggregator/",
+      "linked_playbooks": ["AC-43"],
+      "scenario_id": "TR-31",
+      "related_runbooks": ["RUN-AUD-02", "RUN-REC-02"],
+      "metrics": [
+        "metrics/accounts_aggregator.jsonl",
+        "metrics/performance_live_guard.jsonl"
+      ]
+    },
+    "RUN-AUD-02": {
+      "title": "ブローカーステートメント突合手順",
+      "status": "ready",
+      "review_due_in_days": 30,
+      "last_review_at": "2025-11-03",
+      "doc_owner": "Back Office Lead",
+      "evidence_path": "reports/audit/reconciliation/",
+      "linked_playbooks": ["AC-64"],
+      "scenario_id": "TR-14",
+      "related_runbooks": ["RUN-REC-02", "RUN-TAX-01"],
+      "metrics": [
+        "metrics/reconciliation.jsonl"
+      ]
+    },
+    "RUN-REC-02": {
+      "title": "Ledger差分調査・是正手順",
+      "status": "ready",
+      "review_due_in_days": 35,
+      "last_review_at": "2025-11-03",
+      "doc_owner": "Back Office Lead",
+      "evidence_path": "reports/tax/",
+      "linked_playbooks": ["AC-64", "FR-59"],
+      "scenario_id": "TR-32",
+      "related_runbooks": ["RUN-AUD-02", "RUN-TAX-01"],
+      "metrics": [
+        "metrics/backoffice_ledger.jsonl"
+      ]
+    },
+    "RUN-TAX-01": {
+      "title": "税務レポート生成・提出手順",
+      "status": "ready",
+      "review_due_in_days": 90,
+      "last_review_at": "2025-11-03",
+      "doc_owner": "Back Office Lead",
+      "evidence_path": "reports/tax/",
+      "linked_playbooks": ["FR-59", "AC-64"],
+      "scenario_id": "DRILL-tax_reconciliation",
+      "related_runbooks": ["RUN-AUD-02", "RUN-REC-02"],
+      "metrics": [
+        "metrics/backoffice_ledger.jsonl",
+        "metrics/secure_share.jsonl"
+      ]
+    }
+  }
+}

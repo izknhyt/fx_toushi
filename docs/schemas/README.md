@@ -40,6 +40,10 @@ materials stored here serve as the authoritative source for governance reviews a
   (§3.7/§4.4.4). Governs `config/scoring.yaml`.
 - `scoreboard.schema.json` – Strategy Scoreboard thresholds, weightings, and watchlist rules
   (付録G.1/§4.4.5). Governs `config/scoreboard.yaml`.
+- `performance_snapshot.schema.json` – KPI snapshot contract for backtest/paper/live modes (Sharpe,
+  Sortino, max drawdown, win rate, P&L metadata) per detailed design §3.5.2/§7.6. A curated payload
+  is stored at `docs/schemas/examples/performance_snapshot.sample.json`, and regression coverage
+  lives in `tests/contracts/test_performance_snapshot_schema.py`.
 - `risk_live_guard.schema.json` – Live Guard PF/Sharpe/latency guardrails and notification toggles
   (§3.8/§4.4.3). Governs `config/risk_live_guard.yaml`.
 - `ops_readiness.schema.json` – Ops readiness score weights, evidence paths, and governance thresholds

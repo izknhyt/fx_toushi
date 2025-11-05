@@ -20,8 +20,8 @@
 | `profiles/paper.yaml` | `docs/schemas/cfg.schema.json` | 詳細設計 §3.1, §4.4 | RUN-DATA-05, RUN-HITL-01, `reports/validation_log/AC-45_*.md` | yfinance/dukascopyのSLA閾値とBoardMode既定値。 |
 | `profiles/live.yaml` | `docs/schemas/cfg.schema.json` | 詳細設計 §3.1, §4.4, §6.7 | RUN-RISK-01, RUN-SPREAD-03, STRAT-PROMOTE-01 | ブローカー接続前提のプレースホルダ。Kill Switch/BoardMode制御を明示。 |
 | `ops.yaml` | `docs/schemas/ops_config.schema.json` | 詳細設計 §52.2 | [RUN-DATA-05](../docs/runbooks/RUN-DATA-05.md), [RUN-RISK-01](../docs/runbooks/RUN-RISK-01.md), [`reports/validation_log/templates/weekly.md`](../reports/validation_log/templates/weekly.md) | Automation Effect Tracker の閾値/対象タスク/通知経路。週次レビューで`review_window_weeks`を見直し、Runbook記録と同期。 |
-| `ops/drill_scenarios.yaml` | ---（詳細設計 §53, 基本設計 §202 を参照） | 詳細設計 §53, 基本設計 §202 | [RUN-OPS-AGENDA-01](../docs/runbooks/RUN-OPS-AGENDA-01.md), [RUN-DATA-05](../docs/runbooks/RUN-DATA-05.md), [`reports/validation_log/templates/playbook_entry.md`](../reports/validation_log/templates/playbook_entry.md) | Ops Drill シナリオ登録カタログ。RunbookトレーサビリティとValidation Playbook（AC-40/AC-45）証跡を同期する。 |
-| `roles.yaml` | `docs/schemas/roles_config.schema.json` | 詳細設計 §52, §57, §68 | [STRAT-PROMOTE-01](../docs/runbooks/STRAT-PROMOTE-01.md), [GOV-AUD-01](../docs/runbooks/GOV-AUD-01.md), [`reports/validation_log/templates/playbook_entry.md`](../reports/validation_log/templates/playbook_entry.md) | CLI権限とRunbookサインオフの責任者。ロール更新時はValidationログとサイン取得を必須化。 |
+| `ops/drill_scenarios.yaml` | ---（詳細設計 §53, 基本設計 §202 を参照） | 詳細設計 §53, 基本設計 §202 | [RUN-OPS-AGENDA-01](../docs/runbooks/RUN-OPS-AGENDA-01.md), [RUN-DATA-05](../docs/runbooks/RUN-DATA-05.md), [`docs/validation_playbook/index.md`](../docs/validation_playbook/index.md) | Ops Drill シナリオ登録カタログ。RunbookトレーサビリティとValidation Playbook（AC-40/AC-45）証跡を同期する。 |
+| `roles.yaml` | `docs/schemas/roles_config.schema.json` | 詳細設計 §52, §57, §68 | [STRAT-PROMOTE-01](../docs/runbooks/STRAT-PROMOTE-01.md), [GOV-AUD-01](../docs/runbooks/GOV-AUD-01.md), [`docs/validation_playbook/dataset_template.md`](../docs/validation_playbook/dataset_template.md) | CLI権限とRunbookサインオフの責任者。ロール更新時はValidationログとサイン取得を必須化。 |
 | `swap_rates.csv` | ---（CSVテンプレート、`funding`系テストで検証予定） | 詳細設計 §3.12, §4.7, Runbook `RUN-FUND-01/02` | RUN-FUND-01, RUN-FUND-02, `reports/validation_log/templates/funding_daily.md` | 日次の手動更新対象。Shadow CSVとハッシュ照合する。 |
 | `sla_thresholds/default.yaml`<br>`sla_thresholds/active.yaml` | `docs/schemas/sla_threshold_profile.schema.json` | 詳細設計 §3.1, §4.4, §9.4.4 | RUN-DATA-05, RUN-DATA-06, `reports/validation_log/AC-45_*.md` | データSLAターゲットの基準値と適用中値。Runbook承認ログと同期。 |
 | `schema/gate_state.sample.json` | `docs/schemas/gate_state.schema.json` | 詳細設計 §4.2, §5.4 | RUN-RISK-01, RUN-SPREAD-03 | GateStateスナップショットの雛形。Reduce-OnlyやSpreadクールダウンの表示テキストと同期。 |
@@ -63,7 +63,7 @@
 1. `config/ops/drill_scenarios.yaml` を更新する前に、ドリル計画/容量の調整手順（[RUN-OPS-AGENDA-01](../docs/runbooks/RUN-OPS-AGENDA-01.md)）
    と週次Opsレビューの手順（[RUN-DATA-05](../docs/runbooks/RUN-DATA-05.md)）を確認し、Runbook記載のトリガー条件・承認者がシナリオ定義に反映されているかをチェックします。
 2. ドリルのRunbookリンクやValidation Playbook IDを追加/変更した場合は、Validation Data Playbookの該当行（AC-40/AC-45など）を
-   [`reports/validation_log/templates/playbook_entry.md`](../reports/validation_log/templates/playbook_entry.md) テンプレートに基づいて更新し、`maintained_by`/`last_reviewed_at`を最新化してください。
+  [`docs/validation_playbook/index.md`](../docs/validation_playbook/index.md) とテンプレート群に基づいて更新し、`maintained_by`/`last_reviewed_at`を最新化してください。
 3. 設計整合性を保つため、詳細設計 §53（Ops Drill Orchestrator）および基本設計 §202 に記載されたフィールド要件と照合し、シナリオ毎に
    `trigger`・`expected_duration_min`・`impact_tags`の根拠をドリルレポート（[`docs/templates/drill_report.md`](../docs/templates/drill_report.md)）と突合します。
 

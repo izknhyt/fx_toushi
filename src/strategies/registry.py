@@ -301,6 +301,11 @@ class StrategyEngine:
             msg = f"Strategy '{strategy_id}' is already registered"
             raise StrategyRegistrationError(msg)
 
+        determinism_key = getattr(plugin, "determinism_key", None)
+        if not isinstance(determinism_key, str) or not determinism_key.strip():
+            msg = f"Strategy '{strategy_id}' must declare a non-empty 'determinism_key'"
+            raise StrategyRegistrationError(msg)
+
         metadata = getattr(plugin, "metadata", None)
         if not isinstance(metadata, StrategyMetadata):
             msg = f"Strategy '{strategy_id}' must expose StrategyMetadata"
@@ -438,10 +443,14 @@ class StrategyEngine:
             )
 
             try:
-                for signal in plugin.evaluate(context):
+                signals = plugin.generate_signals(context)
+            except AttributeError:
+                signals = plugin.evaluate(context)
+
+            try:
+                for signal in signals:
                     results.append(signal)
             except BaseException as exc:  # pragma: no cover - defensive
                 raise StrategyExecutionError(strategy_id, exc) from exc
 
         return results
-

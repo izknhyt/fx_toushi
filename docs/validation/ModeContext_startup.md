@@ -61,8 +61,8 @@ Codex実装物の受入時に、`ModeContext`初期化手順（詳細設計 §0.
 ## 3. Codex着手前チェックリスト連携
 | Check ID | 詳細設計 §0.6.9 要件 | 証跡テンプレ位置 | Codexテンプレ参照 |
 | --- | --- | --- | --- |
-| CHK-0.6.9-1 | `poetry install --no-root` 成功 & `python -m tradectl --help` 0終了 | `reports/validation_log/templates/env_setup.md` (必要に応じ作成) | Codex Issueチェックリスト「環境前提」項 |
-| CHK-0.6.9-2 | `pytest -k smoke` スイートがCIテンプレに組み込み済み | `ci/templates/python_smoke.yml` 実行ログ | Codex PRチェックリスト「Tests」項 |
+| CHK-0.6.9-1 | `poetry install --no-root` 成功 & `poetry run tradectl --help` 0終了 | `reports/validation_log/CHK-0.6.9_env_setup_20250316.md`（2025-03-16記録） | Codex Issueチェックリスト「環境前提」項 |
+| CHK-0.6.9-2 | `pytest -k smoke` スイートがCIテンプレに組み込み済み | `reports/validation_log/CHK-0.6.9_env_setup_20250316.md`（スモーク実行ログ）<br>`ci/templates/python_smoke.yml` | Codex PRチェックリスト「Tests」項 |
 | CHK-0.6.9-3 | レビュー記録/Prompt Packet 格納 | `docs/review_log.md`, `docs/prompt_packages/` | Codex Issueチェックリスト「Review Hand-off」項 |
 | CHK-0.6.9-4 | リスク閾値ファイル雛形とスキーマ整合 | `config/` サンプル & `docs/schemas/` | Codex Issueチェックリスト「Risk Controls」項 |
 | CHK-0.6.9-5 | Issue/PR テンプレに §0.6.8 番号を引用 | Codex Issue/PR テンプレート | Codex Issueチェックリスト「Checklist」項 |

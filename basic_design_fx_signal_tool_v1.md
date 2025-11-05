@@ -575,14 +575,14 @@ symbols:
 - **バックアップ**: `data/`と`logs/events/`を日次インクリメンタル（rsync等）で取得し7世代保管。週次でフルバックアップを外部ドライブ/クラウドへ退避。
 - **ローテーション**: `logs/events`は30日で圧縮（gz）し`archive/`へ移動。`reports/`は月次でアーカイブ、`snapshots/`は最新3世代を保持。
 - **検証**: バックアップ後にSHA256チェックサムを比較し`logs/checksums/`に記録。復元テストは月1回、Runbookに従って実施。
-- **オフラインバンドル**: `make bundle-offline`で`dist/offline_bundle/<version>.tar.gz`を生成し、SBOM/ハッシュ/署名を`bundles/<version>/manifest.json`へ記録。`make bundle-verify`でDR演習を行い、結果を`reports/audit/dr/<YYYYMM>.md`に保存する。
+- **オフラインバンドル**: `make bundle-offline`で`dist/offline_bundle/<version>.tar.gz`を生成し、SBOM/ハッシュ/署名を`bundles/<version>/manifest.json`へ記録。`render_install_doc()`が[`docs/templates/offline_install.md`](docs/templates/offline_install.md)から`INSTALL.md`を生成し、`make bundle-verify`でDR演習を行い、結果を`reports/audit/dr/<YYYYMM>.md`に保存する（想定出力例: [`docs/templates/examples/offline_install_sample.md`](docs/templates/examples/offline_install_sample.md)）。
 
 ### 7.5 設定差分ガバナンス（NFR-25）
 - **差分検証コマンド**: `tradectl config diff --profile prod --baseline main`で`dev|paper|prod`の差分を出力し、リスク関連パラメータの±10%超変更に`[WARN]`バッジを付与。`--require-signed`オプションは`config/signatures/<profile>.sig`を照合し、署名不一致時は終了コード`104`で拒否する。
 - **CI連携**: `config_diff_test`ジョブがPull Requestで`tradectl config diff --profile prod --baseline origin/main --json`を実行し、リスク・マージン・Kill Switch関連フィールドに±10%超の変更があれば`policy_violation`を返す。承認者は`tradectl config sign --profile prod --approver <name>`で電子署名を更新。
 - **監査出力**: 差分結果は`reports/audit/config/<YYYYMMDD>_<profile>.md`に保存し、電子署名メタデータを`config/signatures/ledger.json`に追記。Runbook `GOV-CONFIG-01`でレビュー手順と承認フローを定義する。
 - **復元時整合性チェック**: スナップショット復元時は`cfg_hash`/`data_hash`の一致、未処理チケットと監査ログ最終イベントの整合、`HealthState`が`soft_stop`以上の場合の解除手順を確認し、Runbookへ結果をフィードバックする。
-- **オフラインバンドル**: リリースごとに`dist/offline_bundle/<version>.tar.gz`を生成し、Wheel/SBOM/ハッシュリスト/`requirements.lock`を同梱。`make bundle-offline`で生成し、`bundles/<version>/manifest.json`にハッシュと作成者を記録。Bundleは暗号化メディアへ二重保管し、`make bundle-verify`でRPO/RTOテスト（4時間以内復旧）を月次実施する（NFR-24）。
+- **オフラインバンドル**: リリースごとに`dist/offline_bundle/<version>.tar.gz`を生成し、Wheel/SBOM/ハッシュリスト/`requirements.lock`/`INSTALL.md`を同梱。`make bundle-offline`で生成し、`bundles/<version>/manifest.json`にハッシュと作成者を記録。`INSTALL.md`は[`docs/templates/offline_install.md`](docs/templates/offline_install.md)に準拠し、Bundleは暗号化メディアへ二重保管、`make bundle-verify`でRPO/RTOテスト（4時間以内復旧）を月次実施する（NFR-24）。
 ### 7.6 レイテンシ測定計画（NFR-01/AC-05）
 - **計測ポイント定義**: `SessionManager`起点で`on_bar_in`→`features_ready`→`signal_ranked`→`ticket_emitted`→`board_render`までを`perf_counter_ns`でトレースし、各区間の差分を`metrics/pipeline.jsonl`へ`{"metric":"latency","phase":"bar_to_board","p95_target":0.1,"elapsed_ms":...}`形式で追記する。`BoardMode=guarded`中も同一計測を継続し、代替ソース使用時の遅延を可視化する。
 - **CLI応答計測**: `tradectl board`と`tradectl tickets approve`はTyperコマンドラッパで`metrics/cli_perf.jsonl`へ`render_ms`/`fetch_ms`/`persist_ms`を記録。`p95(render_ms)<100ms`, `p99<180ms`、ガード付きフロー時でも`p95<140ms`を受入基準とする。計測はPoetryスクリプト`poetry run python tools/measure_cli_perf.py --runs 50`で自動化し、CIの`make perf-check`で週次実施する。

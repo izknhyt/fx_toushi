@@ -1,0 +1,12 @@
+{
+  "clientOrderId": "TKT-123456",
+  "orderId": 901234567,
+  "symbol": "EURUSD",
+  "tradeSide": "BUY",
+  "volume": 100000,
+  "requestedPrice": 1.09345,
+  "stopLoss": 1.09100,
+  "takeProfit": 1.09950,
+  "goodTillTime": "2024-03-14T08:00:00Z",
+  "orderStatus": "ACCEPTED"
+}

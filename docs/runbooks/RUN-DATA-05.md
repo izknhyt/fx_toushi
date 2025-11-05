@@ -22,6 +22,7 @@
    - Reduce-Only運用: 既存ポジションの縮小提案のみがSignal Boardで許可されていることを確認し、対応チケットID・判断理由を`reports/audit/reduce_only/<date>.md`へ記録する。
    - 復旧確認: Runbook `docs/runbooks/RUN-DATA-06.md`の補完状況とCatch-upログを参照し、`catch_up_lag_minutes<30`になるまで新規提案が再開されないようにする。
    - 提案再開: 上記3項目が完了した後にのみ解除判定に進むこと、`degraded_ack`イベントはこのステップの完了時に1回だけ発行することを明記する。
+   - Signal cycle snapshot: `tradectl board --view strategy --save-snapshot reports/validation_log/evidence/<date>/board_snapshot.json` を取得し、`docs/templates/validation_log.md`および`reports/validation_log/templates/playbook_entry.md`の`signal_cycle_snapshot`欄を更新する。
    - CLI確認ログ: `tradectl status --json` で `ops.banner.kind="acceptable_degradation"`、`ops.banner.runbook="docs/runbooks/RUN-DATA-05.md"`、`ops.actions.ack.status="queued"` であることを保存する。以下のような出力をOps Evidenceに貼付する。
 
      ```console
