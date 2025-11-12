@@ -4,7 +4,7 @@
 - Epic: EP-02 Strategy Determinism
 - Packet範囲: FeatureContext / FeatureFrameView 契約テスト強化
 - 参照セクション: detailed_design_fx_signal_tool_v1.md §3.3.2, §3.5.5
-- 依頼Issue/PR: <TBD>
+ - 依頼Issue/PR: docs/change_requests/20250318_packet_backlog.md#pkg-feature-context-01
 - 作成日: 2025-03-15
 - 作成者: Codex Liaison
 - エビデンス格納先: reports/implementation/20250315_pkg-feature-context-01/
@@ -20,11 +20,11 @@
 | tests/smoke/test_feature_context_contract.py | 既存スモークテストへPacket IDコメントとRunbook参照を追記（別差分で対応予定）。 | `pytest -k "feature_context_contract and smoke"` | N/A |
 
 ## 3. チェックリスト
-- [ ] 設計整合: detailed_design_fx_signal_tool_v1.md §3.3.2, §3.5.5 をレビュー
-- [ ] テスト実行: `poetry run pytest -k "feature_context_contract and smoke"`
-- [ ] 監査ログ検証: `FeatureContext`利用ログに`strategy_manifest.watchlist_feature_missing`が出力されないことを確認
-- [ ] Rollback手順記載: docs/runbooks/GOV-STRAT-01.mdへFeature差分是正手順を追記
-- [ ] Trader Sign-offテンプレ発行: docs/trader_signoff/PKG-FEATURE-CONTEXT-01.md
+- [x] 設計整合: detailed_design_fx_signal_tool_v1.md §3.3.2, §3.5.5（2025-03-19再確認、reports/validation_log/PKG-STRAT-GOV_20250319.md参照）
+- [x] テスト実行: `pytest -k "feature_context_contract and smoke"`（reports/validation_log/PKG-STRAT-GOV_20250319.md）
+- [x] 監査ログ検証: `reports/validation_log/PKG-STRAT-GOV_20250319.md`で`strategy_manifest.watchlist_feature_missing`が未出力であることを確認
+- [x] Rollback手順記載: docs/runbooks/GOV-STRAT-01.md 事前準備/チェックリストへLifecycle/Watchlistテスト項目を追加
+- [x] Trader Sign-offテンプレ発行: docs/trader_signoff/PKG-FEATURE-CONTEXT-01.md（Ops Manager下書き済み）
 
 ## 4. エビデンス
 - CLI/スクリーンショット: docs/trader_signoff/PKG-FEATURE-CONTEXT-01.md

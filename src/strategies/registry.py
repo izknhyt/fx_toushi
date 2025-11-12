@@ -11,10 +11,13 @@ instrumentation without breaking the public API introduced here.
 
 from __future__ import annotations
 
+import hashlib
+import json
+import logging
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Iterable, Iterator, Mapping, MutableMapping, Sequence
+from typing import Any, Iterable, Iterator, Literal, Mapping, MutableMapping, Sequence
 
 import yaml
 from pydantic import BaseModel, Field, ValidationError, field_validator, model_validator
@@ -30,7 +33,59 @@ __all__ = [
     "StrategyRegistrationError",
     "StrategyManifest",
     "StrategyEngine",
+    "compute_deterministic_hash",
 ]
+
+logger = logging.getLogger(__name__)
+
+
+def _as_utc(value: datetime | None) -> datetime:
+    """Return a timezone-aware UTC datetime for lifecycle comparisons."""
+
+    if value is None:
+        return datetime.now(timezone.utc)
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
+def _normalise_symbol_set(symbols: Iterable[str]) -> frozenset[str]:
+    """Normalise symbol identifiers to uppercase for watchlist comparisons."""
+
+    normalised: set[str] = set()
+    for symbol in symbols:
+        token = str(symbol).strip()
+        if not token:
+            continue
+        normalised.add(token.upper())
+    return frozenset(normalised)
+
+
+def _utcnow_iso() -> str:
+    """Return a compact UTC timestamp for logging."""
+
+    return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def compute_deterministic_hash(
+    *,
+    strategy_id: str,
+    determinism_key: str,
+    seed: int,
+    watchlist: Iterable[str],
+    required_features: Iterable[str],
+) -> str:
+    """Return a deterministic digest summarising a strategy evaluation."""
+
+    payload = {
+        "strategy_id": strategy_id,
+        "determinism_key": determinism_key.strip(),
+        "seed": seed,
+        "watchlist": sorted(watchlist),
+        "required_features": sorted(required_features),
+    }
+    serialized = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.blake2b(serialized, digest_size=16).hexdigest()
 
 
 # ---------------------------------------------------------------------------
@@ -89,6 +144,45 @@ class GovernanceRecord(BaseModel):
     reviewers: tuple[str, ...]
 
 
+class StrategyLifecycle(BaseModel):
+    """Lifecycle metadata enforcing validation cadences and statuses."""
+
+    status: Literal["draft", "active", "deprecated", "blocked"] = "draft"
+    last_validated_at: datetime
+    expires_at: datetime | None = None
+    deprecated_after_days: int = Field(default=90, ge=7, le=365)
+    runbook_ref: str | None = None
+
+    @model_validator(mode="after")
+    def _normalise_timestamps(self) -> "StrategyLifecycle":
+        self.last_validated_at = _as_utc(self.last_validated_at)
+        if self.expires_at is not None:
+            self.expires_at = _as_utc(self.expires_at)
+        return self
+
+    def effective_status(self, *, now: datetime | None = None) -> Literal["draft", "active", "deprecated", "blocked"]:
+        """Return the effective status considering expiry/validation age."""
+
+        reference = _as_utc(now)
+        if self.status == "blocked":
+            return "blocked"
+        if self.status == "deprecated":
+            return "deprecated"
+
+        if self.expires_at and reference >= self.expires_at:
+            return "deprecated"
+
+        if reference - self.last_validated_at > timedelta(days=self.deprecated_after_days):
+            return "deprecated"
+
+        return self.status
+
+    def is_stale(self, *, now: datetime | None = None) -> bool:
+        """Return True when the lifecycle would resolve to 'deprecated'."""
+
+        return self.effective_status(now=now) == "deprecated"
+
+
 class StrategyMetadataModel(BaseModel):
     """Static metadata asserted by the manifest for a strategy plugin."""
 
@@ -144,6 +238,8 @@ class StrategyEntry(BaseModel):
     feature_flags: Mapping[str, bool] = Field(default_factory=dict)
     datasets: tuple[DatasetReference, ...] = ()
     governance: GovernanceRecord | None = None
+    watchlist: tuple[str, ...] | None = None
+    lifecycle: StrategyLifecycle | None = None
     parameters: Mapping[str, Any] = Field(default_factory=dict)
 
     @field_validator("feature_flags")
@@ -154,6 +250,22 @@ class StrategyEntry(BaseModel):
             normalised[str(key)] = bool(flag)
         return normalised
 
+    @field_validator("watchlist")
+    @classmethod
+    def _normalise_watchlist(cls, value: Sequence[str] | None) -> tuple[str, ...] | None:
+        if value is None:
+            return None
+        normalised: list[str] = []
+        seen: set[str] = set()
+        for symbol in value:
+            token = str(symbol).strip().upper()
+            if not token:
+                raise ValueError("Watchlist symbols must be non-empty strings")
+            if token not in seen:
+                normalised.append(token)
+                seen.add(token)
+        return tuple(normalised) if normalised else None
+
     @property
     def enabled_feature_flags(self) -> frozenset[str]:
         """Return the subset of feature flags that are enabled."""
@@ -161,6 +273,13 @@ class StrategyEntry(BaseModel):
         return frozenset(
             key for key, enabled in self.feature_flags.items() if bool(enabled)
         )
+
+    def effective_status(self, *, now: datetime | None = None) -> Literal["draft", "active", "deprecated", "blocked"]:
+        """Return the lifecycle status resolved against validation cadence."""
+
+        if self.lifecycle is None:
+            return "active" if self.enabled else "draft"
+        return self.lifecycle.effective_status(now=now)
 
 
 class StrategyManifest(BaseModel):
@@ -226,7 +345,9 @@ class StrategyManifest(BaseModel):
         except Exception as exc:  # pragma: no cover - defensive
             raise ManifestLoadError(f"Failed to parse manifest YAML: {exc}") from exc
 
-        return cls.from_dict(payload)
+        manifest = cls.from_dict(payload)
+        manifest.validate_lifecycle()
+        return manifest
 
     # ------------------------------------------------------------------
     # Utilities
@@ -255,6 +376,61 @@ class StrategyManifest(BaseModel):
             msg = "Strategy manifest references unavailable features"
             raise ManifestValidationError(f"{msg}: {details}")
 
+    def validate_watchlists(self, available_symbols: Iterable[str]) -> None:
+        """Ensure strategy watchlists only reference available symbols."""
+
+        symbol_set = _normalise_symbol_set(available_symbols)
+        violations: dict[str, list[str]] = {}
+        for strategy_id, entry in self.enabled_strategies():
+            if not entry.watchlist:
+                continue
+            missing = frozenset(entry.watchlist) - symbol_set
+            if missing:
+                violations[strategy_id] = sorted(missing)
+        if violations:
+            msg = "Strategy watchlist references symbols missing from feature context"
+            raise ManifestValidationError(f"{msg}: {violations}")
+
+    def resolve_watchlist(
+        self,
+        available_symbols: Iterable[str],
+        *,
+        now: datetime | None = None,
+    ) -> frozenset[str]:
+        """Return the final watchlist derived from manifest entries."""
+
+        symbol_set = _normalise_symbol_set(available_symbols)
+        self.validate_watchlists(symbol_set)
+
+        resolved: set[str] = set()
+        for _, entry in self.enabled_strategies():
+            if entry.effective_status(now=now) == "deprecated":
+                continue
+            if entry.watchlist:
+                resolved.update(entry.watchlist)
+
+        if not resolved:
+            resolved.update(symbol_set)
+
+        return frozenset(resolved)
+
+    def validate_lifecycle(self, *, now: datetime | None = None) -> None:
+        """Ensure enabled strategies comply with lifecycle requirements."""
+
+        reference = _as_utc(now)
+        stale: dict[str, str] = {}
+        for strategy_id, entry in self.enabled_strategies():
+            status = entry.effective_status(now=reference)
+            if status == "deprecated":
+                reason = "status=deprecated"
+                if entry.lifecycle and entry.lifecycle.is_stale(now=reference):
+                    reason = "validation stale (> deprecated_after_days)"
+                stale[strategy_id] = reason
+
+        if stale:
+            details = ", ".join(f"{strategy_id}: {reason}" for strategy_id, reason in stale.items())
+            raise ManifestValidationError(f"Enabled strategies have lapsed lifecycle status: {details}")
+
 
 # ---------------------------------------------------------------------------
 # Strategy engine
@@ -278,9 +454,13 @@ class StrategyEvaluationContext:
 class StrategyEngine:
     """Simple registry that executes strategy plugins based on a manifest."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, determinism_log_path: Path | None = None) -> None:
         self._plugins: dict[str, StrategyPluginProtocol] = {}
         self._manifest: StrategyManifest | None = None
+        self._last_determinism_events: list[Mapping[str, Any]] = []
+        self._determinism_log_path = (
+            Path("logs") / "strategy" / "registry.log" if determinism_log_path is None else Path(determinism_log_path)
+        )
 
     # ------------------------------------------------------------------
     # Plugin registration & manifest loading
@@ -335,6 +515,12 @@ class StrategyEngine:
 
         return frozenset(self._plugins)
 
+    @property
+    def last_run_determinism_events(self) -> tuple[Mapping[str, Any], ...]:
+        """Return determinism audit events emitted during the most recent run."""
+
+        return tuple(self._last_determinism_events)
+
     def get_parameters(self, strategy_id: str) -> Mapping[str, Any]:
         """Return manifest parameters for ``strategy_id`` (if available)."""
 
@@ -382,7 +568,10 @@ class StrategyEngine:
             msg = "Strategy manifest has not been loaded"
             raise ManifestLoadError(msg)
 
+        self._last_determinism_events = []
         self._manifest.validate_feature_contract(features.available_keys)
+        self._manifest.validate_watchlists(features.symbols)
+        resolved_watchlist = watchlist or self._manifest.resolve_watchlist(features.symbols)
 
         evaluation = StrategyEvaluationContext(
             features=features,
@@ -391,7 +580,7 @@ class StrategyEngine:
             account=account,
             config=config,
             clock=clock,
-            watchlist=watchlist or features.symbols,
+            watchlist=resolved_watchlist,
             seed=seed,
         )
 
@@ -441,16 +630,59 @@ class StrategyEngine:
                 evaluation=evaluation,
                 plugin_metadata=plugin_metadata,
             )
+            setattr(plugin, "context", context)
 
             try:
                 signals = plugin.generate_signals(context)
             except AttributeError:
                 signals = plugin.evaluate(context)
 
+            signal_count = 0
             try:
                 for signal in signals:
                     results.append(signal)
+                    signal_count += 1
             except BaseException as exc:  # pragma: no cover - defensive
                 raise StrategyExecutionError(strategy_id, exc) from exc
 
+            determinism_key = getattr(plugin, "determinism_key", "")
+            determinism_hash = compute_deterministic_hash(
+                strategy_id=strategy_id,
+                determinism_key=determinism_key,
+                seed=context.seed,
+                watchlist=context.watchlist,
+                required_features=plugin_metadata.required_features,
+            )
+            event_payload = {
+                "event": "strategy.determinism",
+                "ts": _utcnow_iso(),
+                "strategy_id": strategy_id,
+                "determinism_key": determinism_key,
+                "deterministic_hash": determinism_hash,
+                "seed": context.seed,
+                "watchlist": sorted(context.watchlist),
+                "required_features": sorted(plugin_metadata.required_features),
+                "signal_count": signal_count,
+                "manifest_metadata": {
+                    "name": manifest_metadata.name,
+                    "version": manifest_metadata.version,
+                },
+                "priority": entry.priority,
+            }
+            self._record_determinism_event(event_payload)
+
         return results
+
+    def _record_determinism_event(self, payload: Mapping[str, Any]) -> None:
+        self._last_determinism_events.append(payload)
+        try:
+            self._append_determinism_log(payload)
+        except OSError as exc:  # pragma: no cover - best-effort logging
+            logger.warning("strategy.registry.determinism_log_failed", extra={"error": str(exc)})
+
+    def _append_determinism_log(self, payload: Mapping[str, Any]) -> None:
+        path = self._determinism_log_path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(payload, ensure_ascii=False))
+            handle.write("\n")

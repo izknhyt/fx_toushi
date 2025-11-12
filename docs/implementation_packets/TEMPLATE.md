@@ -4,7 +4,7 @@
 - Epic: <EP-0x>
 - Packet範囲: <機能概要>
 - 参照セクション: <§x.x, §y.y>
-- 依頼Issue/PR: <#123>
+- 依頼Issue/PR: <#123>（未割当の間は `docs/change_requests/<date>_packet_backlog.md` を指す）
 - 作成日: <YYYY-MM-DD>
 - 作成者: <Codex Liaison>
 - エビデンス格納先: reports/implementation/<YYYYMMDD>_<packet_id>/

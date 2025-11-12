@@ -4,12 +4,15 @@ from __future__ import annotations
 
 import logging
 
+from pathlib import Path
+
 from src.ops import (
     AutomationEffectTracker,
     OpsAgendaService,
     OpsDrillService,
     OpsWorklogService,
 )
+from src.ops.action_sync import ActionSyncError, sync_action_items
 
 logger = logging.getLogger(__name__)
 
@@ -17,6 +20,7 @@ __all__ = [
     "readiness",
     "agenda",
     "automation_log",
+    "action_item_sync",
     "OpsWorklogService",
     "AutomationEffectTracker",
     "OpsAgendaService",
@@ -46,3 +50,23 @@ def automation_log(*, task: str, before: int | None = None, after: int | None = 
         extra={"task": task, "before": before, "after": after},
     )
     raise NotImplementedError("tradectl ops automation log is not implemented in the M1 scaffold")
+
+
+def action_item_sync(
+    *,
+    review_log_path: Path,
+    change_request_path: Path,
+    agenda_path: Path | None = None,
+    label_date: str | None = None,
+) -> dict[str, object]:
+    """Bridge docs/review_log.md with change requests and agendas."""
+
+    try:
+        return sync_action_items(
+            review_log_path=review_log_path,
+            change_request_path=change_request_path,
+            agenda_path=agenda_path,
+            label_date=label_date,
+        )
+    except ActionSyncError as exc:
+        raise RuntimeError(str(exc)) from exc

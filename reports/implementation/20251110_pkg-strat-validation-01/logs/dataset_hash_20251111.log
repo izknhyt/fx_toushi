@@ -1,0 +1,14 @@
+{
+  "timestamp": "2025-11-10T21:58:57Z",
+  "strategy": "m1_baseline_ma_rsi",
+  "dataset_path": "data/research/curated/usdjpy/usdjpy_m5_20210101_20241231.parquet",
+  "window": {
+    "from": "2021-01-01",
+    "to": "2024-12-31"
+  },
+  "expected_hash": "c2767c1b16d1ed5cde9dde93efa4309cf34f8ad53389cbeec0a8609cf1ca57d6",
+  "actual_hash": "c2767c1b16d1ed5cde9dde93efa4309cf34f8ad53389cbeec0a8609cf1ca57d6",
+  "status": "matched"
+}
+{'checked_at': '2025-11-10T21:59:09Z', 'path': 'data/research/curated/usdjpy/usdjpy_m5_20210101_20241231.parquet', 'rows': 400, 'window': {'from': '2021-01-01 00:00:00', 'to': '2021-01-02 09:15:00'}, 'expected_frequency': '5T', 'gap_count': 0}
+{'checked_at': '2025-11-10T21:59:24Z', 'path': 'data/research/curated/usdjpy/usdjpy_m5_20210101_20241231.parquet', 'rows': 400, 'window': {'from': '2021-01-01 00:00:00', 'to': '2021-01-02 09:15:00'}, 'expected_frequency': '5T', 'gap_count': 0}

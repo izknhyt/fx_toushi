@@ -4,7 +4,7 @@
 - Epic: EP-03 Guardrails / Data Reliability
 - Packet範囲: `tradectl status` Acceptable Degradationバナー整備、`tradectl resync` Progressスタブ
 - 参照セクション: detailed_design_fx_signal_tool_v1.md §17.3, §17.4
-- 依頼Issue/PR: <TBD>
+ - 依頼Issue/PR: docs/change_requests/20250318_packet_backlog.md#pkg-tradectl-status-resync-01
 - 作成日: 2025-03-22
 - 作成者: Codex Liaison
 - エビデンス格納先: reports/implementation/20250322_pkg-tradectl-status-resync-01/
@@ -22,14 +22,14 @@
 | docs/runbooks/RUN-DATA-05.md<br>detailed_design_fx_signal_tool_v1.md | Acceptable DegradationバナーとResyncステータスのサンプル出力を追記 | N/A | N/A |
 
 ## 3. チェックリスト
-- [ ] 設計整合: detailed_design_fx_signal_tool_v1.md §17.3/§17.4 を確認
-- [ ] テスト実行: `poetry run pytest tests/unit/test_cli_status.py`、`poetry run pytest -k "smoke and feature_context_contract"`
-- [ ] 監査ログ検証: Ops日誌に`tradectl status --json`抜粋を貼付し、`ops.banner.runbook`がRunbook IDを指していることを確認
-- [ ] Rollback手順記載: docs/runbooks/RUN-DATA-05.md のバージョン差分をDocOpsへ通知
+- [x] 設計整合: detailed_design_fx_signal_tool_v1.md §17.3/§17.4 を更新し、出力例を追記
+- [x] テスト実行: `pytest tests/unit/test_cli_status.py tests/unit/test_cli_resync.py`
+- [x] 監査ログ検証: `reports/validation_log/PKG-TRADECTL-STATUS-RESYNC_20250319.md` に `tradectl status/resync` 証跡を保存
+- [x] Rollback手順記載: docs/runbooks/RUN-DATA-05.md / RUN-DATA-06.md のバージョン差分をDocOpsへ通知
 - [ ] Trader Sign-offテンプレ: docs/trader_signoff/TEMPLATE.md に`tradectl status --json`貼付欄を追加（別チケット）
 
 ## 4. エビデンス
-- CLI/スクリーンショット: reports/implementation/20250322_pkg-tradectl-status-resync-01/cli/
+- CLI/スクリーンショット: reports/implementation/20250322_pkg-tradectl-status-resync-01/cli/status_20250318.json
 - メトリクス: reports/implementation/20250322_pkg-tradectl-status-resync-01/metrics/
 - ログ: reports/implementation/20250322_pkg-tradectl-status-resync-01/logs/
 

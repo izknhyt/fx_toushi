@@ -11,3 +11,7 @@ The project reserves the `tools/` directory for operational utilities described 
 | `tools/render_perf_chart.py` | Renders CLI performance charts (sparkline/box plots) from collected metrics for RUN-PERF-01. | [Detailed design §18.5](detailed_design_fx_signal_tool_v1.md#185-クリパフォーマンス測定-toolsmeasure_cli_perfpy-toolsrender_perf_chartpy) |
 
 Future utilities should extend this table with their design anchors so follow-up Codex packets can navigate the specs quickly.
+
+## Continuous Integration
+
+CI runs on Azure Pipelines using `azure-pipelines.yml`, which imports `ci/templates/python_smoke.yml`. The python_smoke job installs dependencies via Poetry, runs `pytest -k smoke` and the performance snapshot contract, and enforces the documentation/evidence guards (`make check-doc-sync ARGS="--compare-ref origin/main"` and `make verify-config-evidence ARGS="--grace-days 2"`). The emitted logs are published as the `python-smoke-logs` artifact for each PR/build.

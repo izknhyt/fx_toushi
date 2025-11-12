@@ -6,18 +6,11 @@ import json
 from pathlib import Path
 from typing import Any
 
-import warnings
-
-warnings.filterwarnings(
-    "ignore",
-    category=DeprecationWarning,
-    message=".*RefResolver is deprecated.*",
-)
-
 import typer
 import yaml
 from jsonschema import Draft202012Validator, ValidationError
-from jsonschema.validators import RefResolver
+
+from src.core.schema_registry import build_schema_registry
 
 
 def _load_file(path: Path) -> Any:
@@ -50,25 +43,8 @@ def _load_target(target: Path) -> Any:
 def _build_validator(schema_path: Path) -> Draft202012Validator:
     schema_data = json.loads(schema_path.read_text(encoding="utf-8"))
     Draft202012Validator.check_schema(schema_data)
-    base_uri = schema_path.resolve().as_uri()
-
-    store: dict[str, Any] = {}
-    for candidate in schema_path.parent.glob("*.schema.json"):
-        try:
-            candidate_data = json.loads(candidate.read_text(encoding="utf-8"))
-        except json.JSONDecodeError:
-            continue
-        schema_id = candidate_data.get("$id")
-        if schema_id:
-            store[schema_id] = candidate_data
-        fallback_id = f"https://fx-toushi.dev/schemas/{candidate.name}"
-        store.setdefault(fallback_id, candidate_data)
-        file_uri = candidate.resolve().as_uri()
-        store.setdefault(file_uri, candidate_data)
-
-    resolver = RefResolver(base_uri=base_uri, referrer=schema_data)
-    resolver.store.update(store)
-    return Draft202012Validator(schema_data, resolver=resolver)
+    registry = build_schema_registry(schema_path)
+    return Draft202012Validator(schema_data, registry=registry)
 
 
 def _cli(

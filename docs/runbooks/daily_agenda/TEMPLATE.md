@@ -56,3 +56,14 @@
 | Product Owner |  |  |
 | Quant Lead |  |  |
 | Codex Liaison |  |  |
+
+## 7. Action Item Sync (RUN-POST-03)
+- `tradectl ops action-sync --review-log docs/review_log.md --agenda <this file> --out docs/change_requests/CR-<date>-ops-followups.md`
+- `Closed #n` の更新とChange Requestリンクを以下ブロックに残す。
+
+<!-- ACTION_ITEM_SYNC:BEGIN -->
+- Synced at: _pending_
+- Open items: _
+- Change Request: _
+- Latest Closed Marker: _
+<!-- ACTION_ITEM_SYNC:END -->

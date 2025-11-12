@@ -36,6 +36,15 @@ jobs:
             | tee artifacts/python-smoke/performance-snapshot-contract/pytest.log
         displayName: 'Validate performance snapshot schema'
 
+      - script: |
+          git fetch --force origin main
+          make check-doc-sync ARGS="--compare-ref origin/main"
+        displayName: 'Verify doc/runbook coverage'
+
+      - script: |
+          make verify-config-evidence ARGS="--grace-days 2"
+        displayName: 'Verify CONFIG-SCAFF-01 evidence bundle'
+
       - task: PublishPipelineArtifact@1
         displayName: 'Publish smoke logs'
         condition: succeededOrFailed()

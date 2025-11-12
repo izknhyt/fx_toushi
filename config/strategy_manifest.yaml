@@ -26,6 +26,14 @@ strategies:
         - rsi_14_5m
         - atr_14_1h
         - ema55_slope_1h
+    watchlist:
+      - USDJPY
+      - EURUSD
+    lifecycle:
+      status: active
+      last_validated_at: "2025-10-01T00:00:00Z"
+      deprecated_after_days: 365
+      runbook_ref: "docs/runbooks/GOV-STRAT-01.md#2025-10-01"
     feature_flags:
       determinism_enforced: true
       guarded_board_required: false

@@ -1,0 +1,1 @@
+{"since": null, "symbols": [], "force": false, "failover_report": false, "dry_run": false, "attachments": [], "verbose": false, "json_output": true, "status": "unavailable", "error": "SessionManager.catch_up is not wired for M1"}

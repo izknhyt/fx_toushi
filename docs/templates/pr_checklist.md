@@ -10,6 +10,7 @@ Codex実装依頼時に利用するPR本文・Packetチェックリスト・受�
 - **UX確認**: トレーダーはCLIスクリーンショットと`tradectl status`出力をレビュー。`docs/trader_signoff/<packet>.md`テンプレに沿って(1) 画面キャプチャ、(2) 操作所要時間、(3) コメントを記入する。
 - **Rollback手順**: 各Packetで変更した設定/Flag/データを明記。例: `cfg change: config/profile_live.yaml (feature_flags.risk_disclosure_enforce)` → `git checkout -- config/profile_live.yaml`で戻す。データ生成の場合は削除コマンドも記載。
 - **Configスキャフォールト**: `CONFIG-SCAFF-01`適用済み前提。設定を追加・変更するPacketは`poetry run schema-validate ...`ログをPR本文へ貼付し、必要に応じて`make config-init`の差分を更新する。欠落している雛形が判明した場合は§0.6.12を参照して追加。
+- **DocOps同期**: `make check-doc-sync`を実行してRunbook/設計書/Change Requestのいずれかに差分が反映されていることを確認する。差分が無い場合は`docs/change_requests/`にTODOを起票し、RUN-POST-03の「欠損時のエスカレーション」に従う（CIの`python_smoke`ジョブでも同チェックが実行される）。
 - **新規CLI**: `tradectl execution recalibrate` / `tradectl scoring diagnostics` / `tradectl kill-switch review`を利用するPacketは、サンプル実行ログと生成物パス（`config/execution_model.calib.yaml`, `reports/diagnostics/scoring_<date>.md`, `reports/audit/kill_switch_review/<ts>.md`）を添付し、Runbook更新との整合を明記する。
 - **テンプレ同期**: ReporterやValidationテンプレを変更した場合は`reports/weekly/templates/m1_core.md`・`docs/validation_log/templates/weekly.md`・`docs/trader_signoff/TEMPLATE.md`の差分をPacketに含め、`pytest -k weekly_report_template`・`pytest -k validation_log_template`ログを添付する。
 - **初期テンプレート位置と保守責任**: Implementation Packetの詳細は`docs/implementation_packets/TEMPLATE.md`をベースに作成し、Ops Managerが構造保守、Codex Liaisonが各Packetの更新履歴を追記する。関連するプロンプト差分は`docs/prompt_packages/TEMPLATE.md`を参照し、同担当者が同期する。
@@ -61,6 +62,7 @@ Follow-up: Update copywriting (docs/implementation_packets/20250222_ep04_p1.md#t
 - [ ] docs/runbooks 更新（対象: GOV-STRAT-01 / RUN-ACC-01 / RUN-AUD-02 / RUN-REC-02 / RUN-TAX-01 など必要なもの）
 - [ ] Runbookエビデンス添付（`reports/governance/runbook_inventory_status.json`・`reports/audit/reconciliation/`・`reports/tax/`等へのリンク）
 - [ ] KPI影響記録
+- [ ] `make check-doc-sync`（Runbook/詳細設計/Change Requestのいずれかに差分あり、またはRUN-POST-03でTODO起票済み）
 ```
 - CodexにはPR本文を上記形式で提出させ、チェックボックスは実行済み項目のみ`[x]`にする。実行できない項目は理由をPRコメントで説明させる。
 

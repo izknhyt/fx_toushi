@@ -1,9 +1,9 @@
 # RUN-HITL-01: HITL承認・OCO保護運用手順
 
 > **ACカバレッジ**: AC-02, AC-10, AC-11  
-> **Runbook版数**: v1.0  
-> **最終更新日**: 2025-03-08  
-> **最終更新者**: Ops Manager (Doc Maintainer)
+> **Runbook版数**: v1.1  
+> **最終更新日**: 2025-03-19  
+> **最終更新者**: Codex Liaison (Ops Manager代理)
 
 ## 目的
 - PaperおよびLiveモードのHITL承認フローでOCO(SL/TP)が期待通り常駐し、保護ロジックが崩れないことを保証する。
@@ -29,6 +29,7 @@
 4. `tradectl audit tail --type ticket` で直近承認/却下イベントに異常がないか確認する。
 
 ### 2. OCO常駐検証（AC-02/AC-10）
+> **TicketBuilderバッジ**: `tradectl ticket simulate` / `tradectl ticket preview` の出力には `badges` フィールドが含まれ、`spread_state`（WARN=RUN-SPREAD-03参照）、`double_entry_confirmed`（WARN=§3手順）、`manual_comment_logged`（INFO=コメント必須）の現在値が表示される。WARN表示時は該当Runbook節へ直ちにフォローアップする。
 1. Paperモードで検証用チケットを作成: `tradectl ticket simulate --symbol USDJPY --size 1.5 --tp 0.4R --sl 0.5R --mode paper`。
 2. `tradectl ticket approve --id <ticket_id> --mode paper` を実行し、承認直後に `tradectl ticket inspect --id <ticket_id> --mode paper` で `oco_status=armed`、`sl_price`/`tp_price`が記録されていることを確認する。
 3. `tradectl ticket monitor --id <ticket_id> --mode paper --watch 120` を用い、120秒以内に`oco_ack`イベントが記録されることを確認。未達の場合はKill Switch状態を確認し、Incidentを`reports/audit/hitl_incident/<date>.md`に起票する。
@@ -36,6 +37,7 @@
 5. チケットを `tradectl ticket expire --id <ticket_id> --mode paper` で手動失効させ、失効理由が`manual_check`で記録されたことを確認する。ログは `reports/validation_log/AC-02_<date>.md` に追記する。
 
 ### 3. 人的エラーチェックリスト連携（AC-10）
+> **CLIヒント**: `tradectl ticket checklist --id <ticket_id>` の結果はTicketBuilderのChecklist順序と完全一致し、Signal Board/CLIで表示されるバッジ名(`Spread & news window clear`, `Double-entry confirmed`, `Manual comment recorded`)とワンツーマッチする。WARNバッジが見えた場合は本節の手順に従い是正する。
 1. `tradectl ticket checklist --id <ticket_id>` で `HumanErrorChecklist` の判定結果を取得する。`unmet`項目が0であることを確認。
 2. 未充足項目がある場合はSignal Board上で赤バッジが表示されるため、担当者に修正を依頼し、修正後に再度チェックを実行する。
 3. 結果を `reports/validation_log/AC-10_<date>.md` に記録し、差異内容と是正担当者を記す。

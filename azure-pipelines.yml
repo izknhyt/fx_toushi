@@ -1,0 +1,24 @@
+# FX Signal Tool CI pipeline
+# This pipeline imports the shared python_smoke template (detailed_design §0.6.9)
+# and runs the doc-sync / config-evidence checks on every push and PR.
+
+trigger:
+  branches:
+    include:
+      - main
+      - develop
+      - feature/*
+
+pr:
+  branches:
+    include:
+      - '*'
+
+stages:
+  - stage: python_smoke
+    displayName: python-smoke
+    jobs:
+      - template: ci/templates/python_smoke.yml
+        parameters:
+          pythonVersion: '3.12'
+          displayName: 'python-smoke'

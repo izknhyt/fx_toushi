@@ -103,6 +103,54 @@
                 "additionalProperties": true
               }
             },
+            "watchlist": {
+              "type": "array",
+              "description": "Explicit list of symbols authorised for this strategy (GOV-STRAT-01).",
+              "minItems": 1,
+              "items": {
+                "type": "string",
+                "pattern": "^[A-Z0-9_./:-]{3,15}$"
+              },
+              "uniqueItems": true
+            },
+            "lifecycle": {
+              "type": "object",
+              "description": "Lifecycle metadata controlling status transitions and validation cadence.",
+              "required": [
+                "last_validated_at"
+              ],
+              "properties": {
+                "status": {
+                  "type": "string",
+                  "enum": [
+                    "draft",
+                    "active",
+                    "deprecated",
+                    "blocked"
+                  ],
+                  "default": "draft"
+                },
+                "last_validated_at": {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                "expires_at": {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                "deprecated_after_days": {
+                  "type": "integer",
+                  "minimum": 7,
+                  "maximum": 365,
+                  "default": 90
+                },
+                "runbook_ref": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "additionalProperties": false
+            },
             "governance": {
               "type": "object",
               "properties": {

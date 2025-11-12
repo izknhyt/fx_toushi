@@ -1,8 +1,8 @@
 # RUN-TIME-01: 時刻同期・タイムゾーン異常対応手順
 
 > **ACカバレッジ**: AC-05, AC-45（時刻整合）
-> **Runbook版数**: v0.2
-> **最終更新日**: 2025-03-15
+> **Runbook版数**: v0.3
+> **最終更新日**: 2025-03-18
 > **最終更新者**: Ops Manager (Doc Maintainer)
 
 ## 目的
@@ -34,6 +34,30 @@
 4. `python tools/check_time_drift.py --threshold-ms 2000`で追加チェックを行い、結果を`reports/diagnostics/time_sync/<date>.md`に保存。
 5. `tradectl preflight --recheck`を再度実行し、`clock_drift_ms`が閾値内に収まったことを確認。
 6. `reports/validation_log/AC-45_sla_<date>.md`へ対応内容とサインを追記し、必要に応じて`tickets/runbooks/RUN-TIME-01/<date>.md`へ詳細を記録。
+
+## Snapshot復旧演習（CHK-0.6.9-6/7）
+> 目的: `ModeContext`/`SnapshotManager`の手動検証を定期的に行い、Backtest/Paper/Liveの再起動手順をOps/Quant双方で共有する。
+
+### 実行頻度
+- 週次Opsレビュー前（通常は火曜）にBacktest/Paper/Live各1回。
+- Acceptable Degradation時は即時再実行し、`docs/risk_review/20250318_prelaunch.md`へタイムスタンプを記録。
+
+### 事前準備
+- `config/profiles/<mode>.yaml` が最新版であること。
+- `snapshots/sessions/<mode>/` に破損ファイルが残っていないことを `git status` または `python tools/verify_parquet.py` で確認。
+- `docs/validation/ModeContext_startup.md` の表に次回セッションIDを予約（例: `session-backtest-<date>`）。
+
+### 手順
+1. `poetry run python -m tradectl start --profile <mode> --session-id <session>` を実行し、`logs/sessions/<session>.log` に `ctx.mode`, `ctx.profile.name`, `deterministic_seed` が出力されたことを確認。
+2. 必要に応じて `--json` を付与し、CLI出力を `reports/validation_log/CHK-0.6.9_mode_context_<date>.md` へ貼り付ける。
+3. `poetry run python -m tradectl stop --session-id <session>` を実行し、`snapshots/sessions/<mode>/<session>.json` が生成/更新されたことを確認。
+4. `python tools/check_dataset_hash.py --manifest reports/data_manifest.json --strategy m1_baseline_ma_rsi --write reports/risk/20250318_prelaunch/modecontext_snapshot.md --append` を実行し、演習時刻をEvidence化（ハッシュ比較を流用）。
+5. `docs/validation/ModeContext_startup.md` の該当行にログ/スナップショットへのリンクを追記し、`[x] Pass` へ更新する。
+6. Ops Agenda `docs/runbooks/daily_agenda/<date>.md` → 「ModeContext Startup Walkthrough」欄に本Runbookの参照を貼り付け、Ops ManagerとCodex Liaisonがサインする。
+
+### エラー時の対応
+- `snapshots/...json` が破損している場合は直近良品へロールバックし、`git clean` は使用せずリネームで退避。
+- `tradectl start` が`config`解決に失敗した場合は`config/profiles/<mode>.yaml`と`ConfigRegistry`差分を確認。再現ログを`logs/ops/modecontext_<date>.log`へ保存し、R-04フォローアップとして`docs/risk_review/20250318_prelaunch.md`に追記。
 
 ## チェックリスト
 - [ ] `tradectl preflight --recheck`前後のログ取得

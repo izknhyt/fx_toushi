@@ -1,0 +1,28 @@
+Warning: 'tradectl' is an entry point defined in pyproject.toml, but it's not installed as a script. You may get improper `sys.argv[0]`.
+
+The support to run uninstalled scripts will be removed in a future release.
+
+Run `poetry install` to resolve and get rid of this message.
+
+╭──────────────────────────────────────────────────────────────────────────────╮
+│ {                                                                            │
+│     'timestamp': '2025-11-10T22:00:21Z',                                     │
+│     'view': 'strategy',                                                      │
+│     'mode': 'auto',                                                          │
+│     'filters': [],                                                           │
+│     'include': [],                                                           │
+│     'strategy_snapshot': {                                                   │
+│         'strategy': 'm1_baseline_ma_rsi',                                    │
+│         'board_state': 'normal',                                             │
+│         'dataset_hash':                                                      │
+│ 'c2767c1b16d1ed5cde9dde93efa4309cf34f8ad53389cbeec0a8609cf1ca57d6',          │
+│         'dataset_path':                                                      │
+│ 'data/research/curated/usdjpy/usdjpy_m5_20210101_20241231.parquet',          │
+│         'pf_all': 1.24,                                                      │
+│         'sharpe_oos': 0.92,                                                  │
+│         'acceptable_degradation': False                                      │
+│     },                                                                       │
+│     'snapshot_path':                                                         │
+│ 'reports/validation_log/evidence/20251111/board_snapshot.json'               │
+│ }                                                                            │
+╰──────────────────────────────────────────────────────────────────────────────╯

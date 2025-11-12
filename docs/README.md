@@ -10,7 +10,7 @@
 ## Key Operational References
 - [OPS-READINESS-01](runbooks/OPS-READINESS-01.md#sign-off) — Ops Readiness評価とエビデンス復旧フロー。`OPS-P4`の受入時に必須。
 - [RUN-DATA-05](runbooks/RUN-DATA-05.md#手順) — データ遅延時のReduce-Only運用と証跡収集。
-- `RUN-POST-03`（作成待ち） — 事後レビュー/フォローアップテンプレ。`OPS-P4`テンプレートでは`#postmortem`節を参照し、`logs/ops/review.log`へ記録する。
+- [`RUN-POST-03`](runbooks/RUN-POST-03.md) — 事後レビュー/フォローアップテンプレ。`OPS-P4`テンプレートでは`#postmortem`節を参照し、`logs/ops/review.log`へ記録する。
 - [Offline Install Guide Template](templates/offline_install.md) — `render_install_doc()`が生成するオフラインバンドル向けインストール/検証手順。添付例は[`templates/examples/offline_install_sample.md`](templates/examples/offline_install_sample.md)を参照。
 
 ## Validation Playbook

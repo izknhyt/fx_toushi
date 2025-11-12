@@ -4,7 +4,7 @@
 - Epic: EP-04 Ticket Clarity
 - Packet範囲: TicketBuilder チェックリスト / GateState連携テスト整備
 - 参照セクション: detailed_design_fx_signal_tool_v1.md §3.5.2, §3.16
-- 依頼Issue/PR: <TBD>
+ - 依頼Issue/PR: docs/change_requests/20250318_packet_backlog.md#pkg-ticket-builder-01
 - 作成日: 2025-03-15
 - 作成者: Codex Liaison
 - エビデンス格納先: reports/implementation/20250315_pkg-ticket-builder-01/
@@ -20,11 +20,11 @@
 | docs/implementation_packets/20250315_ticket_builder.md | 本Packet作成。GateState伝播要件とRunbook参照を整理。 | N/A | N/A |
 
 ## 3. チェックリスト
-- [ ] 設計整合: detailed_design_fx_signal_tool_v1.md §3.5.2, §3.16 をレビュー
-- [ ] テスト実行: `poetry run pytest -k "ticket_builder"`
-- [ ] 監査ログ検証: `ticket.issued`イベントにSpread/Checklist情報が含まれることを確認
-- [ ] Rollback手順記載: docs/runbooks/RUN-HITL-01.mdへFallback操作を追記
-- [ ] Trader Sign-offテンプレ発行: docs/trader_signoff/PKG-TICKET-BUILDER-01.md
+- [x] 設計整合: detailed_design_fx_signal_tool_v1.md §3.5.2, §3.16 をレビュー（証跡: `reports/validation_log/PKG-TICKET-BUILDER_20250319.md`）
+- [x] テスト実行: `pytest tests/unit/test_ticket_builder.py tests/unit/test_ticket_builder_gate_state.py -k ticket_builder`
+- [x] 監査ログ検証: TicketBuilder payloadの`gate_context`/`badge`メタデータが`ticket.issued`へ伝搬する設計どおりであることをテスト出力で確認
+- [x] Rollback手順記載: docs/runbooks/RUN-HITL-01.md §1/§3にBadge/Checklistの対処フローを追記
+- [x] Trader Sign-offテンプレ発行: docs/trader_signoff/PKG-TICKET-BUILDER-01.md（2025-03-19更新）
 
 ## 4. エビデンス
 - CLI/スクリーンショット: docs/trader_signoff/PKG-TICKET-BUILDER-01.md

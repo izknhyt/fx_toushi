@@ -1,9 +1,9 @@
 # RUN-DATA-05: データ遅延インシデント対応手順
 
 > **ACカバレッジ**: AC-04, AC-45  
-> **Runbook版数**: v1.3
+> **Runbook版数**: v1.5
 > **最終更新日**: 2025-03-22
-> **最終更新者**: Ops Manager (Doc Maintainer)
+> **最終更新者**: Ops Manager / Codex Liaison
 
 ## 目的
 - `HealthMonitor`が`data_latency`アラートを発火した際に、サービス停止を最小化しつつ代替ソースへ切り替え、SLA違反の根本原因を特定する。
@@ -16,6 +16,7 @@
 
 ## 手順
 1. `tradectl data health`で対象シンボルとプロバイダ、発生時刻、直近メトリクスを確認する。`metrics/data_ingestion_sla.jsonl`から前後30分のログを抽出し、`phase=fetch`/`phase=processing`それぞれの遅延を確認する。合わせて`config/sla_thresholds/active.yaml`（`schema_version`とRunbookリンクが`config/README.md`に記載されている雛形）を開き、`docs/schemas/sla_threshold_profile.schema.json`および`pytest -k config_schema_smoke`の検証結果が最新であることを確認した上で、現行プロファイルと閾値が一致しているかチェックする。
+   - **Stage Eval記録**: `tradectl data status --provider <name> --log-stage-eval --json`を実行し、`metrics/rate_limit_window.jsonl`へ`stage_eval.stage|decision|sample_window_min|429_rate|tokens_remaining|approver_stub|runbook_ref`を含む手動記録を必ず追加する。出力JSONは`reports/validation_log/AC-45_sla_<date>.md`へ貼付し、`reports/implementation/20250315_pkg-data-status-01/cli/*.json`などのEvidenceディレクトリにも保存する。`--watch`はM1では未使用だが、同コマンドのJSON出力をOps Agendaへ共有することでTraderが判断をトレースできる。
    - **実装参照**: DataIngestionServiceの公開APIは`src/data/service.py`、各プロバイダスタブは`src/data/providers/`配下に集約。Manual CSV監査ログは`src/data/quality.py::DataQualityGuard.record_manual_csv_hash_verification`で`metrics/data_ingestion_manual.jsonl`（仮）へ出力するため、開発へのエスカレーション時は該当モジュールを参照する。
 2. **Signal Boardガード制御**: `tradectl status --detail`の`board_guard`セクション（またはボードヘッダの警告バナー）で`board_mode=guarded`かつ`reduce_only=true`になっていることを確認し、以下のシーケンスをチェックリストに沿って記録する。
    - データ鮮度検証: `metrics/data_ingestion_sla.jsonl`/`metrics/pipeline_latency.jsonl`の逸脱区間を突き合わせ、復旧まで新規提案停止の根拠を`reports/validation_log/AC-45_sla_<date>.md`に追記する。

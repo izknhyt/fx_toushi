@@ -1,0 +1,11 @@
+============================= test session starts ==============================
+platform darwin -- Python 3.12.12, pytest-8.4.2, pluggy-1.6.0
+rootdir: /Users/izumimotohayato/development/codex_invest
+configfile: pytest.ini
+plugins: mock-3.15.1, approvaltests-0.2.4, approvaltests-15.3.2, hypothesis-6.142.4
+collected 40 items
+
+tests/jsonschema/test_domain_schemas.py ..............                   [ 35%]
+tests/jsonschema/test_schema_integrity.py ..........................     [100%]
+
+============================== 40 passed in 0.35s ==============================

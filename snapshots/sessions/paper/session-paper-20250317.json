@@ -1,0 +1,116 @@
+{
+  "session_id": "session-paper-20250317",
+  "captured_at": "2025-11-09T10:25:49Z",
+  "plan": [
+    "bootstrap"
+  ],
+  "mode_context": {
+    "mode": "paper",
+    "profile_id": "paper",
+    "schema_version": 0,
+    "profile_source": "/Users/izumimotohayato/development/codex_invest/config/profiles/paper.yaml",
+    "metadata": {
+      "description": "Paper モード用初期値。SLA逸脱時は RUN-DATA-05/06 のチェックリストで承認。",
+      "runbook_refs": [
+        "docs/runbooks/RUN-DATA-05.md",
+        "docs/runbooks/RUN-HITL-01.md",
+        "reports/validation_log/AC-45_sla_20250220.md",
+        "docs/validation_playbook/review_log_template.md"
+      ]
+    },
+    "data_ingestion": {
+      "provider": "yfinance",
+      "fallback_providers": [
+        "dukascopy"
+      ],
+      "poll_interval_sec": 15,
+      "catch_up_enabled": true,
+      "manual_fallback_allowed": true,
+      "sla_threshold_profile": "default"
+    },
+    "timeframes": {
+      "trigger": "5m",
+      "regime_ref": "1h"
+    },
+    "risk": {
+      "policy_id": "m1_baseline",
+      "overrides": {
+        "board_mode_on_soft_stop": "guarded"
+      }
+    },
+    "gates": {
+      "board_mode_default": "normal",
+      "enable_news_block": true,
+      "require_double_ack_on_resume": true,
+      "required_roles": [
+        "primary_operator",
+        "risk_officer",
+        "secondary_operator"
+      ],
+      "comment_min_length": 32,
+      "comment_max_length": 400
+    },
+    "strategies": [
+      {
+        "id": "m1_baseline_ma_rsi",
+        "enabled": true,
+        "weight": 1.0
+      }
+    ],
+    "execution": {
+      "slippage_bps": 8,
+      "latency_simulation_ms": 250
+    },
+    "spread": {
+      "source": "blended",
+      "cooldown_minutes": 10,
+      "guard_threshold_pips": 1.2
+    },
+    "funding": {
+      "apply_swap": true,
+      "accrual_calendar": "TARGET"
+    },
+    "correlation": {
+      "dataset": "data/correlation/initial/bootstrap.parquet"
+    },
+    "scheduler": {
+      "timezone": "Asia/Tokyo",
+      "session_start": "06:00",
+      "session_end": "05:00+1"
+    },
+    "clock": {
+      "mode": "paper",
+      "timeframe": "5m",
+      "timezone": "Asia/Tokyo"
+    },
+    "data_feeds": {
+      "primary": "yfinance",
+      "fallbacks": [
+        "dukascopy"
+      ],
+      "poll_interval_sec": 15,
+      "catch_up_enabled": true,
+      "manual_fallback_allowed": true,
+      "sla_threshold_profile": "default"
+    },
+    "execution_profile": {
+      "slippage_bps": 8,
+      "latency_simulation_ms": 250,
+      "additional_settings": {}
+    },
+    "account_gateway": {
+      "mode": "paper",
+      "profile_id": "paper"
+    },
+    "audit_channel": {
+      "profile_id": "paper",
+      "streams": [
+        "session",
+        "signals",
+        "execution"
+      ]
+    },
+    "deterministic_seed": 126527723148961580171776902497113837280
+  },
+  "stopped_at": "2025-11-09T10:25:54Z"
+}

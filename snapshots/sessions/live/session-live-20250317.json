@@ -1,0 +1,130 @@
+{
+  "session_id": "session-live-20250317",
+  "captured_at": "2025-11-09T10:25:59Z",
+  "plan": [
+    "bootstrap"
+  ],
+  "mode_context": {
+    "mode": "live",
+    "profile_id": "live",
+    "schema_version": 0,
+    "profile_source": "/Users/izumimotohayato/development/codex_invest/config/profiles/live.yaml",
+    "metadata": {
+      "description": "Live モード用のダミー設定。ブローカー接続が未実装のため placeholder として扱う。",
+      "runbook_refs": [
+        "docs/runbooks/RUN-RISK-01.md",
+        "docs/runbooks/RUN-SPREAD-03.md",
+        "docs/runbooks/STRAT-PROMOTE-01.md",
+        "docs/validation_playbook/index.md"
+      ]
+    },
+    "data_ingestion": {
+      "provider": "broker_stream_stub",
+      "fallback_providers": [
+        "manual_csv"
+      ],
+      "poll_interval_sec": 10,
+      "catch_up_enabled": true,
+      "manual_fallback_allowed": true,
+      "sla_threshold_profile": "active"
+    },
+    "timeframes": {
+      "trigger": "5m",
+      "regime_ref": "1h"
+    },
+    "risk": {
+      "policy_id": "m1_baseline",
+      "overrides": {
+        "board_mode_on_soft_stop": "halted",
+        "kill_switch_auto_release": false
+      }
+    },
+    "gates": {
+      "board_mode_default": "normal",
+      "enable_news_block": true,
+      "require_double_ack_on_resume": true,
+      "enforce_research_ticket": true,
+      "required_roles": [
+        "primary_operator",
+        "risk_officer",
+        "secondary_operator",
+        "governance_reviewer"
+      ],
+      "manual_comment_required": true,
+      "comment_min_length": 64,
+      "comment_max_length": 500
+    },
+    "strategies": [
+      {
+        "id": "m1_baseline_ma_rsi",
+        "enabled": true,
+        "weight": 0.9
+      },
+      {
+        "id": "placeholder_future_strategy",
+        "enabled": false,
+        "weight": 0.1
+      }
+    ],
+    "execution": {
+      "slippage_bps": 15,
+      "latency_simulation_ms": 500,
+      "require_manual_fill_import": true
+    },
+    "spread": {
+      "source": "broker",
+      "cooldown_minutes": 15,
+      "guard_threshold_pips": 1.0,
+      "halt_threshold_pips": 2.0
+    },
+    "funding": {
+      "apply_swap": true,
+      "accrual_calendar": "TARGET",
+      "broker_fee_bps": 2
+    },
+    "correlation": {
+      "dataset": "data/correlation/initial/bootstrap.parquet"
+    },
+    "scheduler": {
+      "timezone": "Asia/Tokyo",
+      "session_start": "06:00",
+      "session_end": "05:00+1"
+    },
+    "clock": {
+      "mode": "live",
+      "timeframe": "5m",
+      "timezone": "Asia/Tokyo"
+    },
+    "data_feeds": {
+      "primary": "broker_stream_stub",
+      "fallbacks": [
+        "manual_csv"
+      ],
+      "poll_interval_sec": 10,
+      "catch_up_enabled": true,
+      "manual_fallback_allowed": true,
+      "sla_threshold_profile": "active"
+    },
+    "execution_profile": {
+      "slippage_bps": 15,
+      "latency_simulation_ms": 500,
+      "additional_settings": {
+        "require_manual_fill_import": true
+      }
+    },
+    "account_gateway": {
+      "mode": "live",
+      "profile_id": "live"
+    },
+    "audit_channel": {
+      "profile_id": "live",
+      "streams": [
+        "session",
+        "signals",
+        "execution"
+      ]
+    },
+    "deterministic_seed": 264975844546404237647042043418244723801
+  },
+  "stopped_at": "2025-11-09T10:26:05Z"
+}

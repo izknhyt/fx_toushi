@@ -1,0 +1,47 @@
+Warning: 'tradectl' is an entry point defined in pyproject.toml, but it's not installed as a script. You may get improper `sys.argv[0]`.
+
+The support to run uninstalled scripts will be removed in a future release.
+
+Run `poetry install` to resolve and get rid of this message.
+
+╭──────────────────────────────────────────────────────────────────────────────╮
+│ {                                                                            │
+│     'run_id': 'm1_baseline_ma_rsi_20251110215942',                           │
+│     'strategy': 'm1_baseline_ma_rsi',                                        │
+│     'profile': 'paper-m1-baseline',                                          │
+│     'dataset_hash':                                                          │
+│ 'c2767c1b16d1ed5cde9dde93efa4309cf34f8ad53389cbeec0a8609cf1ca57d6',          │
+│     'dataset_path':                                                          │
+│ 'data/research/curated/usdjpy/usdjpy_m5_20210101_20241231.parquet',          │
+│     'generated_at': '2025-11-10T21:59:42Z',                                  │
+│     'metrics': {                                                             │
+│         'pf_all': 1.2942,                                                    │
+│         'sharpe_all': 1.8526,                                                │
+│         'max_drawdown_all': 0.0104,                                          │
+│         'win_rate': 0.5388,                                                  │
+│         'avg_trade_return': 0.0028,                                          │
+│         'trades': 80                                                         │
+│     },                                                                       │
+│     'oos': {                                                                 │
+│         'from': '2023-07-01',                                                │
+│         'to': '2024-12-31',                                                  │
+│         'pf': 1.22,                                                          │
+│         'sharpe': 0.92,                                                      │
+│         'max_drawdown': 0.11                                                 │
+│     },                                                                       │
+│     'bootstrap_ci': {                                                        │
+│         'pf': {'lower': 1.15, 'upper': 1.34},                                │
+│         'sharpe': {'lower': 0.88, 'upper': 1.41}                             │
+│     },                                                                       │
+│     'walk_forward': {                                                        │
+│         'window': '6m',                                                      │
+│         'step': '1m',                                                        │
+│         'segments': [                                                        │
+│             {'segment': 1, 'pf': 1.18, 'sharpe': 0.9},                       │
+│             {'segment': 2, 'pf': 1.21, 'sharpe': 0.94},                      │
+│             {'segment': 3, 'pf': 1.24, 'sharpe': 0.96}                       │
+│         ]                                                                    │
+│     },                                                                       │
+│     'window': {'from': '2021-01-01', 'to': '2023-06-30'}                     │
+│ }                                                                            │
+╰──────────────────────────────────────────────────────────────────────────────╯

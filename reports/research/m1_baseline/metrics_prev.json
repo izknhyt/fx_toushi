@@ -1,0 +1,34 @@
+{
+  "run_id": "m1_baseline_ma_rsi_prev",
+  "strategy": "m1_baseline_ma_rsi",
+  "generated_at": "2025-03-18T09:00:00Z",
+  "dataset_path": "data/research/curated/usdjpy/usdjpy_m5_20210101_20241231.parquet",
+  "dataset_hash": "c2767c1b16d1ed5cde9dde93efa4309cf34f8ad53389cbeec0a8609cf1ca57d6",
+  "config_hash": "config-20250318",
+  "profile": "paper-m1-baseline",
+  "metrics": {
+    "pf_all": 1.21,
+    "sharpe_all": 1.31,
+    "max_drawdown_all": 0.14,
+    "win_rate": 0.56,
+    "avg_trade_return": 0.0024,
+    "trades": 240
+  },
+  "oos": {
+    "from": "2023-07-01",
+    "to": "2024-12-31",
+    "pf": 1.19,
+    "sharpe": 0.89,
+    "max_drawdown": 0.12
+  },
+  "bootstrap_ci": {
+    "pf": {
+      "lower": 1.13,
+      "upper": 1.30
+    },
+    "sharpe": {
+      "lower": 0.80,
+      "upper": 1.36
+    }
+  }
+}

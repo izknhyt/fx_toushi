@@ -1,0 +1,107 @@
+{
+  "session_id": "session-backtest-20250318",
+  "captured_at": "2025-11-10T13:52:39Z",
+  "plan": [
+    "bootstrap"
+  ],
+  "mode_context": {
+    "mode": "backtest",
+    "profile_id": "backtest",
+    "schema_version": 0,
+    "profile_source": "/Users/izumimotohayato/development/codex_invest/config/profiles/backtest.yaml",
+    "metadata": {
+      "description": "バックテスト専用の最小プロファイル。ダミーデータでの整合確認用。",
+      "runbook_refs": [
+        "docs/runbooks/STRAT-M1-VALIDATION.md",
+        "reports/validation_log/templates/playbook_entry.md",
+        "docs/validation_playbook/dataset_template.md"
+      ]
+    },
+    "data_ingestion": {
+      "provider": "local_parquet",
+      "symbols": [
+        "USDJPY",
+        "EURUSD"
+      ],
+      "catch_up_enabled": false,
+      "manual_fallback_allowed": false
+    },
+    "timeframes": {
+      "trigger": "5m",
+      "regime_ref": "1h"
+    },
+    "risk": {
+      "policy_id": "m1_baseline",
+      "overrides": {}
+    },
+    "gates": {
+      "board_mode_default": "normal",
+      "enable_news_block": false,
+      "required_roles": [
+        "primary_operator",
+        "risk_officer",
+        "secondary_operator"
+      ],
+      "comment_min_length": 12,
+      "comment_max_length": 300
+    },
+    "strategies": [
+      {
+        "id": "m1_baseline_ma_rsi",
+        "enabled": true,
+        "weight": 1.0
+      }
+    ],
+    "execution": {
+      "slippage_bps": 0,
+      "latency_simulation_ms": 0
+    },
+    "spread": {
+      "source": "synthetic",
+      "cooldown_minutes": 0
+    },
+    "funding": {
+      "apply_swap": false
+    },
+    "correlation": {
+      "dataset": "data/correlation/initial/bootstrap.parquet"
+    },
+    "scheduler": {
+      "timezone": "Asia/Tokyo",
+      "session_start": "05:00",
+      "session_end": "05:00+1"
+    },
+    "clock": {
+      "mode": "backtest",
+      "timeframe": "5m",
+      "timezone": "Asia/Tokyo"
+    },
+    "data_feeds": {
+      "primary": "local_parquet",
+      "fallbacks": [],
+      "poll_interval_sec": null,
+      "catch_up_enabled": false,
+      "manual_fallback_allowed": false,
+      "sla_threshold_profile": null
+    },
+    "execution_profile": {
+      "slippage_bps": 0,
+      "latency_simulation_ms": 0,
+      "additional_settings": {}
+    },
+    "account_gateway": {
+      "mode": "backtest",
+      "profile_id": "backtest"
+    },
+    "audit_channel": {
+      "profile_id": "backtest",
+      "streams": [
+        "session",
+        "signals",
+        "execution"
+      ]
+    },
+    "deterministic_seed": 70015921102108632624850083602132590078
+  },
+  "stopped_at": "2025-11-10T13:52:45Z"
+}

@@ -43,6 +43,8 @@
 2. 保存したファイルを上記テンプレートの「Ops Agenda Export」にリンクし、ToDo欄と整合させる。
 3. Agendaの「ModeContext Startup Walkthrough」セクションで更新した証跡は`docs/validation/ModeContext_startup.md`の該当行へリンクし、次週レビュー時に`CHK-0.6.9-6/7`の状態を確認する。
 4. Agendaに未完了タスクがあれば次週ToDo欄へ転記し、完了済みタスクはOps Worklogへログする。
+5. 未完了チェックボックスを`tradectl ops action-sync --review-log docs/review_log.md --agenda docs/runbooks/daily_agenda/<date>.md --out docs/change_requests/CR-<date>-ops-followups.md`で抽出し、Change RequestとAgenda埋め込みブロックを同時更新する。
+6. フォローアップ完了時は本エントリへ`Closed #<n>`を追記し、`logs/ops/review.log`へ同じIDの行を追加する（RUN-POST-03参照）。
 
 ## 監査リンク
 - 週次コメント締切超過時は`reports/validation_log/AC-45_sla_<date>.md`に遅延理由を記録する。
@@ -93,6 +95,29 @@
   - Ops Agenda `docs/runbooks/daily_agenda/2025-03-15.md` を作成し、上記Packetリンクと `tests/README.md` 行番号を紐付け。
 - Ops Agenda Sync: `docs/runbooks/daily_agenda/2025-03-15.md`
 - Next Review Gate: 2025-03-18 週次Opsレビューで各Packetのテスト実装着手状況を確認。
+
+### 2025-03-17 ModeContext & Risk Validation Sync
+- Reviewer: Ops Manager / Codex Liaison
+- Scope: CHK-0.6.9-3/4/5 前提条件（ModeContext起動証跡、リスク設定スキーマ、Issueテンプレ参照）
+- Findings Summary:
+  - ModeContext起動ログとスナップショットをBacktest/Paper/Liveで取得し、`docs/validation/ModeContext_startup.md`および`reports/validation_log/CHK-0.6.9_mode_context_20250317.md`へリンクした。
+  - `config/risk_policy.yaml`と`config/risk_live_guard.yaml`をJSON Schemaで検証し、GateStateの`market.news.blocked`/`risk.reduce_only`/`human.double_entry_required`フィールドと整合することを確認（Evidence: `reports/validation_log/CHK-0.6.9_risk_schema_20250317.md`）。
+  - Codex IssueテンプレートのCHK一覧に§0.6.8参照記載欄を追加し、前提条件ごとの証跡パスを必須化。
+- Ops Agenda Sync: `docs/runbooks/daily_agenda/2025-03-17.md`
+- Next Review Gate: 2025-03-20 Weekly Ops Review（CHK-0.6.9完了確認とFR-28 Validation Data Playbookの追跡）
+
+### 2025-03-18 ModeContext / Ops Readiness Refresh
+- Reviewer: Ops Manager / Risk Officer
+- Scope: CHK-0.6.9-1/2/6/7再実行、Spread/Funding・Snapshot復旧タスクの前提整理、リスクログ更新
+- Evidence:
+  - `reports/validation_log/CHK-0.6.9_env_setup_20250318.md`
+  - `reports/validation_log/CHK-0.6.9_mode_context_20250318.md`
+  - `docs/runbooks/daily_agenda/2025-03-18.md`
+  - `docs/risk_review/20250318_prelaunch.md`
+- Decisions:
+  - Spread/Funding CSV自動化（RUN-FUND-01改訂）、Snapshot復旧演習（RUN-TIME-01改訂）、オンコールEvidence（R-02）をOps Agendaへ登録。
+  - `detailed_design_fx_signal_tool_v1.md` §11にリスクOwnerと期限を明記し、Ops/Quant/POへの責務割当を完了。
+- Next Review Gate: 2025-03-25 Ops Weekly（R-02/R-05 Evidence確認）
 
 ### 2025-03-23 Detailed Design §11 Follow-ups (Pre-Sign-off)
 - Reviewer: Codex Liaison / Ops Manager

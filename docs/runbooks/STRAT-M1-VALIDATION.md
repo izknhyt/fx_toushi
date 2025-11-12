@@ -1,9 +1,9 @@
 # STRAT-M1-VALIDATION: M1ベース戦略データ再承認フロー
 
 > **ACカバレッジ**: AC-01, AC-07
-> **Runbook版数**: v1.0
-> **最終更新日**: 2025-03-10
-> **最終更新者**: Quant Lead (Doc Maintainer)
+> **Runbook版数**: v1.1
+> **最終更新日**: 2025-03-22
+> **最終更新者**: Codex Liaison (Quant Lead代理)
 
 ## 目的
 - M1ベース戦略（`m1_baseline_ma_rsi`）の検証データセットが改訂された際に、データ整合性とパフォーマンス指標の再確認を行い、AC-01/AC-07の受け入れ条件を満たすことを担保する。
@@ -46,6 +46,17 @@
    - `bootstrap_ci.pf.lower` ≥ 1.12, `bootstrap_ci.sharpe.lower` ≥ 0.78
 4. `dataset_hash`と`config_hash`が`reports/data_manifest.json`/最新設定と一致することを確認。
 
+### 3.1 決定論リプレイ確認（Quant Lead）
+1. `pytest tests/integration/test_strategy_engine.py tests/integration/test_strategy_determinism.py -vv` を実行し、結果を `reports/validation_log/PKG-STRAT-DETERMINISM_<date>.md` に記録する。`pytest -k strategy_determinism` が環境依存で落ちる場合は明示的なファイル指定で代替し、ログにその旨を記載する。
+2. 実行後に `metrics/benchmark_replay.jsonl` へ `seed`/`watchlist`/`digest` 情報を追記し、前回実行との差分を確認する。Digest が変化した場合は差分理由（Feature/Manifest変更など）をRunbookチケットへ記録し、Ops Managerへ即時連絡する。
+3. Digest不一致またはテスト失敗時は`strategy.promote_requested`のフローを停止し、`HealthMonitor.raise('critical', reason='determinism_failed')`でアラートを発火させる。問題が解決するまで`tradectl report ack`による承認を保留し、`RUN-RISK-07`のStop条件に従ってPaper運用をReduce-Onlyへ切り替える。
+
+### 3.2 Strategy Registry Fail-Fastログ確認（Quant Lead）
+1. `poetry run pytest -k "strategy_registry"`を実行してRegistryのFail-Fastと`deterministic_hash`生成を確認し、結果を`reports/implementation/20250315_pkg-strat-registry-01/logs/pytest_strategy_registry_YYYYMMDD.log`へ保存する。
+2. `logs/strategy/registry.log`またはPacket Evidence（例: `reports/implementation/20250315_pkg-strat-registry-01/logs/determinism_event_<date>.jsonl`）から直近の`strategy.determinism`イベントを抽出し、`strategy_id`/`determinism_key`/`deterministic_hash`/`watchlist`/`required_features`がManifestと一致しているか確認する。
+3. HashドリフトやWatchlist不整合を検知した場合は、Manifest／FeaturePipeline差分をレビューし、対象コミットを`git revert`または`StrategyEngine`プラグイン修正で巻き戻す。Rollback後に再度`poetry run pytest -k "strategy_registry"`と`tradectl board --view diagnostics`でハッシュが一致することを証跡に残す。
+4. Fail-Fastにより`StrategyRegistrationError`や`ManifestValidationError`が発生した場合は`docs/change_requests/CR-<date>-ops-followups.md`へ切り戻し手順を記録し、Opsへ共有する。
+
 ### 4. レビューボード承認（Ops Manager主導）
 1. Ops Managerが`tickets/runbooks/STRAT-M1-VALIDATION/<date>.md`（テンプレートは`docs/runbooks/STRAT-M1-VALIDATION.md#チェックリスト`を参照）を起票。
 2. Quant Leadが`validation_<date>.md`と`metrics_<date>.json`を添付し、差分説明・ハッシュ値・指標結果を記入。
@@ -65,9 +76,16 @@
 - [ ] `data_manifest.json`の該当エントリ更新と`reports/data_manifest.sig`の再署名
 - [ ] `reports/research/m1_baseline/validation_<date>.md`に原因・指標差分・ハッシュ値を記録
 - [ ] `tradectl backtest run ...`で再計算した`metrics_<date>.json`を保存し、閾値達成を確認
+- [ ] `pytest tests/integration/test_strategy_engine.py tests/integration/test_strategy_determinism.py -vv`の結果と`metrics/benchmark_replay.jsonl`更新を記録
+- [ ] `poetry run pytest -k "strategy_registry"`と`logs/strategy/registry.log`の`strategy.determinism`イベント確認ログを添付
 - [ ] Ops ManagerとQuant Leadのダブルサイン（必要に応じてCompliance Advisorのコメント）
 - [ ] `tradectl report ack`による`metric_state=approved`への更新
 - [ ] `reports/validation_log/AC-07_<date>.md`と`reports/governance/runbook_changelog.md`の更新
+
+### 実行ログ（2025-11-11）
+- チケット: STRAT-M1-VALIDATION/20251111（ローカル）
+- Evidence: `reports/validation_log/evidence/20251111/`, `reports/implementation/20251110_pkg-strat-validation-01/`
+- サイン: `reports/validation_log/AC-01_backtest_replay_20251111.md`, `reports/validation_log/AC-07_strategy_performance_20251111.md`
 
 ## エスカレーション
 - 再計算後に閾値を下回る場合は即座に`strategy.promote_requested`フローを停止し、`HealthMonitor.raise('critical', reason='validation_failed')`を発火させる。暫定対応としてPaper運用をReduce-Onlyへ切替。

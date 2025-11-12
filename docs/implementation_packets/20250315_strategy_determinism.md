@@ -4,7 +4,7 @@
 - Epic: EP-02 Strategy Determinism
 - Packet範囲: StrategyEngine決定論テストハーネス
 - 参照セクション: detailed_design_fx_signal_tool_v1.md §3.5.2, §3.5.5, §15.2
-- 依頼Issue/PR: <TBD>
+ - 依頼Issue/PR: docs/change_requests/20250318_packet_backlog.md#pkg-strat-determinism-01
 - 作成日: 2025-03-15
 - 作成者: Codex Liaison
 - エビデンス格納先: reports/implementation/20250315_pkg-strat-determinism-01/
@@ -21,11 +21,11 @@
 | docs/implementation_packets/20250315_strategy_determinism.md | 本Packet作成。決定論KPIとRunbook整合を整理。 | N/A | N/A |
 
 ## 3. チェックリスト
-- [ ] 設計整合: detailed_design_fx_signal_tool_v1.md §3.5.2, §3.5.5, §15.2 をレビュー
-- [ ] テスト実行: `poetry run pytest -k "strategy_determinism"`
-- [ ] 監査ログ検証: `metrics/benchmark_replay.jsonl` のハッシュ一致を確認
-- [ ] Rollback手順記載: docs/runbooks/STRAT-M1-VALIDATION.mdへ決定論失敗時のStop条件を追記
-- [ ] Trader Sign-offテンプレ発行: docs/trader_signoff/PKG-STRAT-DETERMINISM-01.md
+- [x] 設計整合: detailed_design_fx_signal_tool_v1.md §3.5.2, §3.5.5, §15.2 をレビュー（記録: `reports/validation_log/PKG-STRAT-DETERMINISM_20250319.md`）
+- [x] テスト実行: `pytest tests/integration/test_strategy_engine.py tests/integration/test_strategy_determinism.py -vv`
+- [x] 監査ログ検証: `metrics/benchmark_replay.jsonl` にDigest `b983fb3e4a67f17ba39d0f97`を追記し、`reports/validation_log/PKG-STRAT-DETERMINISM_20250319.md`へリンク
+- [x] Rollback手順記載: docs/runbooks/STRAT-M1-VALIDATION.md §3.1に決定論リプレイ確認とStop条件を追加
+- [x] Trader Sign-offテンプレ発行: docs/trader_signoff/PKG-STRAT-DETERMINISM-01.md（2025-03-19下書き更新）
 
 ## 4. エビデンス
 - CLI/スクリーンショット: docs/trader_signoff/PKG-STRAT-DETERMINISM-01.md

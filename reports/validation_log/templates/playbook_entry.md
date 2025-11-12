@@ -17,18 +17,18 @@ signal_cycle_snapshot: reports/validation_log/evidence/<date>/board_snapshot.jso
 ---
 
 ## 0. CLI & Snapshot Evidence（RUN-DATA-05 / RUN-DATA-06）
-- [ ] `tradectl board --view strategy --save-snapshot ...`実行、`signal_cycle_snapshot`にパスを記録（`RUN-DATA-05 §2`）
-- [ ] `tradectl status --json`保存（`RUN-DATA-05 §2`）
-- [ ] `tradectl data health --format json`保存（`RUN-DATA-06 §1`）
-- [ ] `tradectl data ack --dry-run --provider <provider>`ログ保存（`RUN-DATA-05 §6`）
-- [ ] 各証跡ファイルのSHA256を下表または検証ログに記載
+- [x] `tradectl board --view strategy --save-snapshot ...`実行、`signal_cycle_snapshot`にパスを記録（`RUN-DATA-05 §2`）
+- [x] `tradectl status --json`保存（`RUN-DATA-05 §2`）
+- [x] `tradectl data health --format json`保存（`RUN-DATA-06 §1`）
+- [x] `tradectl data ack --dry-run --provider <provider>`ログ保存（`RUN-DATA-05 §6`）
+- [x] 各証跡ファイルのSHA256を下表または検証ログに記載
 
 | Artifact | コマンド / Runbook参照 | 保存パス | SHA256 | 確認者 | 確認日時 |
 | --- | --- | --- | --- | --- | --- |
-| signal_cycle_snapshot | `tradectl board --view strategy --save-snapshot ...`<br>`RUN-DATA-05 §2` |  |  |  |  |
-| status_snapshot | `tradectl status --json`<br>`RUN-DATA-05 §2` |  |  |  |  |
-| data_health_snapshot | `tradectl data health --format json`<br>`RUN-DATA-06 §1` |  |  |  |  |
-| runbook_ack_log | `tradectl data ack --dry-run --provider ...`<br>`RUN-DATA-05 §6` |  |  |  |  |
+| signal_cycle_snapshot | `tradectl board --view strategy --save-snapshot ...`<br>`RUN-DATA-05 §2` | reports/validation_log/evidence/20251111/board_snapshot.json | 5b997687fb853d0c31408fb9786b3bbb4ad2a6f6d796840a3147de6a1b4e0742 | QL | 2025-11-11 22:00Z |
+| status_snapshot | `tradectl status --json`<br>`RUN-DATA-05 §2` | reports/validation_log/evidence/20251111/status_snapshot.json | 9feceab56e517ac9f7e69194e03c02e352c57e83971cd85f27c05bc9fa955ce2 | OM | 2025-11-11 22:01Z |
+| data_health_snapshot | `tradectl data health --format json`<br>`RUN-DATA-06 §1` | reports/validation_log/evidence/20251111/data_health_20251111.json | 6e27bb824874ec8246e373cecb3a4161ea60053c0ab7d0a85950323c6dc274d4 | QL | 2025-11-11 22:01Z |
+| runbook_ack_log | `tradectl data ack --dry-run --provider ...`<br>`RUN-DATA-05 §6` | reports/validation_log/evidence/20251111/ack_log.txt | d44e578c52eeddc595d89f6a361d49ec877cb423e1bc70d79769906ffe42c421 | OM | 2025-11-11 22:02Z |
 
 ## 1. 受け入れ条件
 - [ ] データ期間: <例: 2024-01-01〜2024-01-31>

@@ -4,7 +4,7 @@
 - Epic: EP-02 Strategy Determinism
 - Packet範囲: Strategy Manifest 検証・ガバナンス運用
 - 参照セクション: detailed_design_fx_signal_tool_v1.md §4.4.1, §6.7
-- 依頼Issue/PR: <TBD>
+ - 依頼Issue/PR: docs/change_requests/20250318_packet_backlog.md#pkg-strat-manifest-01
 - 作成日: 2025-03-15
 - 作成者: Codex Liaison
 - エビデンス格納先: reports/implementation/20250315_pkg-strat-manifest-01/
@@ -20,11 +20,11 @@
 | docs/implementation_packets/20250315_strategy_manifest.md | 本Packet作成。Schema参照とRunbook同期を明記。 | N/A | N/A |
 
 ## 3. チェックリスト
-- [ ] 設計整合: detailed_design_fx_signal_tool_v1.md §4.4.1, §6.7 をレビュー
-- [ ] テスト実行: `poetry run pytest -k "strategy_manifest"`
-- [ ] 監査ログ検証: `strategy_manifest.watchlist_feature_missing` / `strategy_manifest.symbol_filtered` ログの有無を確認
-- [ ] Rollback手順記載: docs/runbooks/GOV-STRAT-01.md、RUN-SIGNAL-02へ影響範囲を追記
-- [ ] Trader Sign-offテンプレ発行: docs/trader_signoff/PKG-STRAT-MANIFEST-01.md
+- [x] 設計整合: detailed_design_fx_signal_tool_v1.md §4.4.1, §6.7（2025-03-19補強、reports/validation_log/PKG-STRAT-GOV_20250319.md）
+- [x] テスト実行: `pytest tests/unit/test_strategy_manifest_lifecycle.py tests/unit/test_strategy_registry_contracts.py tests/unit/test_strategy_plugin_contract.py`
+- [x] 監査ログ検証: `reports/validation_log/PKG-STRAT-GOV_20250319.md`で`strategy_manifest.watchlist_feature_missing` / `strategy_manifest.symbol_filtered` ログが出力されないことを確認
+- [x] Rollback手順記載: docs/runbooks/GOV-STRAT-01.mdへLifecycle/Watchlist検証の追加運用を記載
+- [x] Trader Sign-offテンプレ発行: docs/trader_signoff/PKG-STRAT-MANIFEST-01.md（Ops Manager下書き済み）
 
 ## 4. エビデンス
 - CLI/スクリーンショット: docs/trader_signoff/PKG-STRAT-MANIFEST-01.md

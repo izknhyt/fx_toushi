@@ -4,7 +4,7 @@
 - Epic: EP-02 Strategy Determinism
 - Packet範囲: Strategy Registry Fail-Fast と determinism hash テスト
 - 参照セクション: detailed_design_fx_signal_tool_v1.md §3.2（StrategyEngine/Registry）, §15.2
-- 依頼Issue/PR: <TBD>
+ - 依頼Issue/PR: docs/change_requests/20250318_packet_backlog.md#pkg-strat-registry-01
 - 作成日: 2025-03-15
 - 作成者: Codex Liaison
 - エビデンス格納先: reports/implementation/20250315_pkg-strat-registry-01/
@@ -16,15 +16,16 @@
 ## 2. 変更サマリ
 | コンポーネント | 変更内容 | テスト指示 | Feature Flag |
 | --- | --- | --- | --- |
-| tests/unit/test_strategy_registry_placeholder.py | `pytest.mark.strategy_registry`のxfailテストを追加し、Manifest不整合・deterministic_hash検証TODOを記載。 | `pytest -k "strategy_registry"` | N/A |
+| src/strategies/registry.py | `StrategyEngine.run_all`で`strategy.determinism`イベントと`deterministic_hash`生成・ファイル出力を実装。`StrategyEngine`へログパス切替と`last_run_determinism_events`を追加。 | `pytest -k "strategy_registry"` | N/A |
+| tests/unit/test_strategy_registry_contracts.py | Determinismログ検証テストを実装し、Digest算出の回帰を追加。 | `pytest -k "strategy_registry"` | N/A |
 | docs/implementation_packets/20250315_strategy_registry.md | 本Packet作成。設計参照とログ要件を整理。 | N/A | N/A |
 
 ## 3. チェックリスト
-- [ ] 設計整合: detailed_design_fx_signal_tool_v1.md §3.2, §15.2 をレビュー
-- [ ] テスト実行: `poetry run pytest -k "strategy_registry"`
-- [ ] 監査ログ検証: `logs/strategy/registry.log` に`strategy.determinism`イベントが生成されることを確認
-- [ ] Rollback手順記載: docs/runbooks/STRAT-M1-VALIDATION.mdへRegistry Fail-Fast時の対処を追記
-- [ ] Trader Sign-offテンプレ発行: docs/trader_signoff/PKG-STRAT-REGISTRY-01.md
+- [x] 設計整合: detailed_design_fx_signal_tool_v1.md §3.2, §15.2 をレビュー
+- [x] テスト実行: `poetry run pytest -k "strategy_registry"`
+- [x] 監査ログ検証: `logs/strategy/registry.log` に`strategy.determinism`イベントが生成されることを確認
+- [x] Rollback手順記載: docs/runbooks/STRAT-M1-VALIDATION.mdへRegistry Fail-Fast時の対処を追記
+- [x] Trader Sign-offテンプレ発行: docs/trader_signoff/PKG-STRAT-REGISTRY-01.md
 
 ## 4. エビデンス
 - CLI/スクリーンショット: docs/trader_signoff/PKG-STRAT-REGISTRY-01.md
@@ -43,3 +44,4 @@
 | 日付 | 更新者 | 内容 |
 | --- | --- | --- |
 | 2025-03-15 | Codex Liaison | 初版作成 |
+| 2025-03-22 | Codex Liaison | Determinism hash/ログ実装、テスト/Evidence更新 |

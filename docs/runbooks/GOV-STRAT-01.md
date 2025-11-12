@@ -31,6 +31,7 @@
 1. **事前準備 (会議2営業日前まで)**
    - `tradectl governance lifecycle simulate --strategy <id> --scenario paper_promotion --output json`を実行し、`reports/governance/strategy_board/prep/<id>_<date>.json`へ保存。ブロッカー項目を抽出する。
    - `poetry run pytest -k "strategy_manifest or strategy_registry"`を実行し、失敗がないことを確認。結果ログを`reports/validation_log/AC-46_<date>.md`へ貼付。
+   - `poetry run pytest tests/unit/test_strategy_manifest_lifecycle.py tests/unit/test_strategy_registry_contracts.py tests/unit/test_strategy_plugin_contract.py`を実行し、`reports/validation_log/PKG-STRAT-GOV_<date>.md`にCLI出力と判定結果を保存する（Lifecycle/Watchlist証跡）。
    - `tools/metrics_extract.py --source metrics/strategy_board.jsonl --window 4w --out reports/governance/strategy_board/metrics_<YYYYWW>.md`で直近4週の議事メトリクスを抽出。
    - Manifest差分を`git diff -- config/strategy_manifest.yaml`で確認し、該当Issue/Packetと紐付け。差分が無い場合は`N/A`理由を記載。
 2. **レビュー会議の実施**
@@ -56,6 +57,7 @@
 ## チェックリスト
 - [ ] `tradectl governance lifecycle simulate`の結果を保存し、ブロッカー項目を整理した
 - [ ] `poetry run pytest -k "strategy_manifest"`と`-k "strategy_registry"`が成功した証跡を添付した
+- [ ] `reports/validation_log/PKG-STRAT-GOV_<date>.md`にLifecycle/Watchlistテスト結果を記録した
 - [ ] `StrategyBoardService.generate_agenda`で欠損項目が無いことを確認した
 - [ ] `BoardDecision`と`FollowUpTicket`を`reports/governance/strategy_board/<meeting_id>.md`へ記録した
 - [ ] `tradectl governance lifecycle apply`後の監査ログ(`logs/audit/strategy_manifest_*.jsonl`)を保存した
@@ -65,6 +67,7 @@
 ## 証跡
 - `reports/governance/strategy_board/<meeting_id>.md`
 - `reports/validation_log/AC-46_<date>.md`
+- `reports/validation_log/PKG-STRAT-GOV_<date>.md`
 - `reports/governance/strategy_followups/<ticket>.md`
 - `metrics/strategy_manifest.jsonl`, `metrics/strategy_board.jsonl`, `metrics/strategy_lifecycle.jsonl`
 - `logs/audit/strategy_manifest_<timestamp>.jsonl`

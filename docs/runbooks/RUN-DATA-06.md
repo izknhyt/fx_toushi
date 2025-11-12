@@ -1,9 +1,9 @@
 # RUN-DATA-06: 手動データ補填・Resync運用手順
 
 > **ACカバレッジ**: AC-04, AC-45  
-> **Runbook版数**: v1.2
-> **最終更新日**: 2025-03-10
-> **最終更新者**: Data Engineer (Doc Maintainer)
+> **Runbook版数**: v1.3
+> **最終更新日**: 2025-03-19
+> **最終更新者**: Data Engineer / Codex Liaison
 
 ## 目的
 - 自動フィードが停止した際に手動CSVを用いてデータ欠損を補填し、Resync/Catch-up処理でTTL=3×TF・ドリフト≤0.5R・減衰λ=0.1/minの要件を満たす。
@@ -35,6 +35,23 @@
 2. `tradectl data jobs enqueue --task manual_csv --symbol <symbol> --tf m5 --from <start> --to <end>`を実行し、`ManualCsvIngestionTask`がキューに追加されたことを確認する。`tradectl data jobs --pending`で`status=running`→`completed`へ変化することを監視し、完了時刻を`reports/validation_log/AC-45_sla_<date>.md`に記録する。
 3. 取り込み後に`tradectl data verify --symbol <symbol> --tf m5 --from <start> --to <end>`を実行し、`missing_count=0`かつ`checksum_status=ok`であることを確認する。
 4. すべての対象シンボルについて完了したら、`reports/performance/data_latency/<YYYYMMDD>.md`および`reports/validation_log/AC-45_sla_<date>.md`に補填所要時間・担当者・データソースを記録し、`metrics/data_ingestion_sla.jsonl`の`phase=processing`に改善が反映されたことを確認する。
+
+### 3. Resync実行とCatch-up確認
+1. `tradectl resync --since <UTC timestamp> --symbol <symbol> --failover-report --attachment reports/validation_log/AC-45_sla_<date>.md --json` を実行し、出力をEvidenceに保存する。JSONに含まれる`{"ops":{"banner":{"kind":"acceptable_degradation"}}}`が`RUN-DATA-05`と同じRunbookリンクを指していることを確認。
+2. 成功時は`status=ok`、`summary.catch_up_elapsed_sec`や`summary.windows`が記録されるので、`reports/validation_log/AC-45_sla_<date>.md`に貼付する。`status=unimplemented|error`の場合は`tradectl status --json`に戻り、Reduce-Only運用を継続する。
+3. Resync中に追加CSVが必要な場合は`tradectl data jobs enqueue --task manual_csv ...`で再投入し、Resync完了後に`tradectl data verify`でドリフトが±0.5R以内であることを確認する。
+4. `tradectl status --json`に戻り、`ops.banner.visible=false`かつ`gate.risk.reduce_only=false`になっていることを確認した上で、Runbook `RUN-DATA-05`に従いGuarded解除を申請する。
+5. CLIログ例:
+
+   ```console
+   $ tradectl resync --since 2025-03-18T10:00:00Z --symbol USDJPY --failover-report --json
+   {
+     "since": "2025-03-18T10:00:00Z",
+     "symbols": ["USDJPY"],
+     "status": "ok",
+     "summary": {"catch_up_elapsed_sec": 42, "windows": 3}
+   }
+   ```
 
 ### 照合作業チェックリスト
 - [ ] `tradectl data manual-template`で生成された双子CSVのヘッダと列順（`ts,open,high,low,close,volume,spread,session_tag`）を確認し、カスタマイズ時も順序が崩れていない。

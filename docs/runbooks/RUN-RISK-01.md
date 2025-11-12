@@ -1,8 +1,8 @@
 # RUN-RISK-01: Kill Switch・リスク監視運用手順
 
 > **ACカバレッジ**: AC-03, AC-09
-> **Runbook版数**: v1.1
-> **最終更新日**: 2025-03-09
+> **Runbook版数**: v1.2
+> **最終更新日**: 2025-03-18
 > **最終更新者**: Risk Manager (Doc Maintainer)
 > **関連CLI**: `tradectl status`, `tradectl kill-switch engage`, `tradectl kill-switch release`
 > **イベントログ**: `logs/events/risk.assessment.jsonl`, `logs/risk/kill_switch_events.jsonl`
@@ -65,6 +65,26 @@
 2. `tradectl board --view risk`でSignal Boardの`R_eff`バナー時刻が最新スナップショットと一致しているかを確認する。バナーが更新されない場合は`tradectl events tail --type risk_metrics_snapshot --since -15m`でイベント遅延を確認し、必要に応じて`tradectl board`を再起動して反映させる。
 3. `tradectl diagnostics risk --from -30d --mode paper --export reports/diagnostics/risk/<YYYYWW>.json`を実行し、`r_eff_time_series`と`bucket_exposures`が新しいParquetと一致していることを確認する。
 4. Validation Data Playbook（要件定義§8.2, AC-09行）に従い、Risk ManagerとOps Managerが`reports/validation_log/AC-09_<date>.md`へ更新者・実行コマンド・ファイルハッシュ・差分要約を記録する。必要に応じて`tradectl correlation diff --base data/correlation/initial/bootstrap.parquet --target data/correlation/$(date +%G%V)_correlation.parquet`で基準データとの差分を確認し、バケット閾値の逸脱があれば是正タスクを起票する。
+
+### 6. Kill Switch演習・オンコール整合（週次 / Acceptable Degradation時）
+> 目的: オンコール体制とKill Switch操作手順を定期的に訓練し、R-02/R-05のフォローアップ（`docs/risk_review/20250318_prelaunch.md`）を満たす。
+
+1. **オンコール表の更新**  
+   - 週初め（月曜 09:00 JST）に`reports/risk/20250318_prelaunch/R02_oncall_readiness.md`へ直近4週間分のオンコール担当（Primary/Secondary/Risk）を追記し、Slack `#ops-oncall` のピン留めを更新する。  
+   - Ops Agenda「Opening Checks」にオンコール担当を表示するため、`tradectl ops agenda --date <YYYY-MM-DD> --with-oncall`（M1ではスタブ）を実行し、出力を`docs/runbooks/daily_agenda/<date>.md`に添付する。
+
+2. **Kill Switch演習（RUN-EMER-UNWIND-01連携）**  
+   - 週次Ops会議前に`tradectl kill-switch engage --mode paper --reason drill_soft_stop --dry-run`（スタブ可）で擬似発火し、`logs/risk/kill_switch_events.jsonl`へ演習ログを記録する。  
+   - `tradectl kill-switch release --mode paper --ticket DRILL-<id>` を実行し、解除条件の確認チェックリスト（R分布/Latency/是正タスク）を`reports/risk/20250318_prelaunch/ops_unwind_drill_<date>.md`へ記載する。  
+   - 演習結果は`reports/risk/20250318_prelaunch/R02_oncall_readiness.md`の訓練ログ表へリンクし、Ops ManagerとRisk Officerがサインする。
+
+3. **ウォッチポイント**  
+   - Kill Switch演習中に`tradectl diagnostics risk --from -1d --mode paper`の結果が閾値外だった場合、即座に`RUN-TIME-01`「Snapshot復旧演習」と連携し、ModeContext再起動テストを実施する。  
+   - オンコール担当が応答しない場合はRACIに従いSecondaryへ即時引き継ぎ、`docs/risk_review/20250318_prelaunch.md`へ記録する。
+
+4. **証跡**  
+   - `reports/validation_log/AC-03_<date>.md`へ演習コマンド・結果・参加者サインを記録。  
+   - `reports/risk/20250318_prelaunch/R02_oncall_readiness.md`／`R05_log_compression_plan.md`（ログ保全）を更新し、次回レビューで参照できるようOps Agendaへリンクする。
 
 ## チェックリスト
 - [ ] 日次`tradectl diagnostics risk`でR分布/同時保有数の基準確認（Signal Boardバナーと突合）

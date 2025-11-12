@@ -1,0 +1,13 @@
+{
+  "schema_version": "funding_state.v1",
+  "last_synced_at": "2025-11-10T13:49:15Z",
+  "csv_path": "config/swap_rates.csv",
+  "shadow_path": "reports/funding/swap_rates_shadow.csv",
+  "csv_sha256": "135669c121827fe7d8e368edba329b33ede9a54578a2e1a69524a66f091f2613",
+  "shadow_sha256": "135669c121827fe7d8e368edba329b33ede9a54578a2e1a69524a66f091f2613",
+  "prepared_by": "OM",
+  "reviewed_by": "RM",
+  "approved_by": "PO",
+  "shadow_reconciliation": "pass",
+  "pair_count": 2
+}

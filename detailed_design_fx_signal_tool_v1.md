@@ -207,8 +207,8 @@
 | 1 | `pyproject.toml`/`poetry.lock`が未配置で、§1.7・§3.22の依存管理方針と乖離。 | 依存解決が属人的になり、Codexが環境を再現できない。 | ✅ 2025-03-14 / `PKG-BOOT-01`: リポジトリ直下に`pyproject.toml`・`poetry.lock`を配置し、`ci/templates/python_smoke.yml`から`poetry install --no-root`を実行する前提を整備。 |
 | 2 | `src/`配下は`brokers/adapter.py`のみで、§1.3のディレクトリ構成に必要なパッケージ雛形が存在しない。 | Codexがクラス配置やインポート方針を誤解し、後続のPR差分が巨大化。 | ✅ 2025-03-14 / `SRC-SCAFF-01`: `src/__init__.py`と`src/app/__init__.py`、`src/core/__init__.py`、`src/infra/__init__.py`などを追加し、詳細設計準拠のパッケージスキャフォールドを構築。 |
 | 3 | `tests/`は空で、§0.6.3の受入テスト名が未定義。 | Codexがテストを新設する際の命名/配置が分からず、CI整備に遅延。 | ✅ 2025-03-14 / `TEST-SMOKE-01`: `tests/conftest.py`、`tests/smoke/test_feature_context_contract.py`、`tests/schema/test_json_schema_validation.py`を整備し、`pytest.ini`で`smoke`/`config_schema_smoke`マーカーを宣言。 |
-| 4 | §79.1が`FieldMapping`/`RATE_LIMIT_SLA`を要求しているが、`src/brokers/adapter.py`は`EndpointSpec`のみ。 | ブローカー統合時にフィールド整合性テストが欠落し、HITL/Live移行のリスクが増大。 | ⏳ 2025-03-14時点 / Task4 `BROKER-CONTRACT-TEST`: `src/brokers/adapter.py`向けに`tests/unit/test_broker_adapter_contracts.py`を新設し、(a) `FieldMapping`必須キー集合、(b) `RATE_LIMIT_SLA`閾値、(c) dataclass型定義を検証する。必要に応じて`tests/fixtures/broker_adapter.json`でモックマッピングを固定化し、`poetry run pytest tests/unit/test_broker_adapter_contracts.py`（テスト完了）の証跡を残す。 |
-| 5 | `docs/review_log.md`に本レビュー結果の記録が未反映。 | 変更履歴と意思決定トレースが断絶し、AC-45/AC-51監査要件に抵触。 | ✅ 2025-03-12 / Packet該当なし（Opsレビュー議事）: `docs/review_log.md`に2025-03-10/11/12レビューのサマリを追記済み。`logs/ops/review.log`は未整備のため、週次Opsレビューでフォローアップ継続。 |
+| 4 | §79.1が`FieldMapping`/`RATE_LIMIT_SLA`を要求しているが、`src/brokers/adapter.py`は`EndpointSpec`のみ。 | ブローカー統合時にフィールド整合性テストが欠落し、HITL/Live移行のリスクが増大。 | ✅ 2025-03-17 / Task4 `BROKER-CONTRACT-TEST`: `tests/unit/test_broker_adapter_contracts.py`＋`tests/fixtures/broker_adapter.json`で契約検証を実装し、`poetry run pytest tests/unit/test_broker_adapter_contracts.py`（5 passed, 0.08s）の出力を`reports/validation_log/CHK-0.6.9_env_setup_20250317.md`へ証跡化。 |
+| 5 | `docs/review_log.md`に本レビュー結果の記録が未反映。 | 変更履歴と意思決定トレースが断絶し、AC-45/AC-51監査要件に抵触。 | ✅ 2025-03-19 / `RUN-POST-03`: `docs/review_log.md`更新導線と`logs/ops/review.log`のCLI/Runbook (`tradectl ops action-sync`, `tools/check_ops_review_log.py`, `docs/runbooks/RUN-POST-03.md`) を整備し、Ops Agendaへ自動埋め込みを実装。 |
 | 6 | `config/`配下の雛形（`risk_policy.yaml`/`strategy_manifest.yaml`/`board_modes.yaml`/`sla_thresholds/*.yaml`等）が存在せず、§4.4やRunbook参照と乖離。 | Codexが設定スキーマを前提に実装できず、テスト/CLIが即時失敗する。 | ✅ 2025-03-13 / `CONFIG-SCAFF-01`: `config/README.md`、`config/risk_policy.yaml`、`config/board_modes.yaml`、`config/strategy_manifest.yaml`、`config/feature_pipeline.yaml`、`config/profiles/{backtest,paper,live}.yaml`、`config/sla_thresholds/{README,default,active}.yaml`を整備し、`pytest -k config_schema_smoke`で検証可能な雛形を配置。 |
 
 上記是正策の進捗は週次Opsレビューで確認し、未完了項目は`OpsAgendaService`（§52.3）にTODOとして登録する。是正完了後、Codexへ渡すPacketには本表の該当番号を「前提条件」として明記すること。
@@ -224,6 +224,10 @@
 5. Codexへ渡すIssue/PRテンプレに§0.6.8の番号を引用し、未解決項目がある場合は「受入不可（前提未了）」ラベルを適用してから再依頼すること（CHK-0.6.9-5）。
 6. `ModeContext`のフィールド（§3.1 表）を初期化する`ModeContextFactory`/`ModeController`のスタブが揃い、`config/profiles/<mode>.yaml`→`ModeContext.profile`→`SessionManager.start()`の流れで`clock`/`data_feeds`/`execution_profile`/`account_gateway`が埋まることを単体テストまたはドキュメントで確認していること（CHK-0.6.9-6）。証跡は `docs/validation/ModeContext_startup.md` §2 に記録する。
 7. `tradectl start --profile backtest`, `tradectl start --profile paper`, `tradectl start --profile live`（各モードはモック実装可）を手動/CIで実行し、`ModeContext`初期化ログ（`ctx.mode`, `ctx.profile.name`, `deterministic_seed`) が`logs/sessions/<session_id>.log`に出力されること。終了時は`tradectl stop`→`SnapshotManager.persist()`までを含むテスト手順を`docs/validation/ModeContext_startup.md` §1に記録し、Ops Agendaの「ModeContext Startup Walkthrough」セクションから参照すること（CHK-0.6.9-7）。
+
+> **最新証跡リンク**: `reports/validation_log/CHK-0.6.9_env_setup_20250318.md`（CHK-0.6.9-1/2/8）、`reports/validation_log/CHK-0.6.9_mode_context_20250318.md`（CHK-0.6.9-6/7）、`docs/runbooks/daily_agenda/2025-03-18.md#1-opening-checks`（Ops Agenda対向）、`docs/risk_review/20250318_prelaunch.md`（Runbook/フォローアップ集約）。以降のPacket/Issueではこれらログを前提条件として引用すること。
+
+> **CI実行**: `ci/templates/python_smoke.yml`は`poetry run pytest -k smoke`/`tests/contracts/test_performance_snapshot_schema.py`に加えて、`make check-doc-sync ARGS="--compare-ref origin/main"`および`make verify-config-evidence ARGS="--grace-days 2"`を実行し、コード差分にRunbook/設計の更新が含まれているか、最新のCONFIG-SCAFF-01証跡が存在するかを自動検証する。
 
 #### 0.6.10 すご腕SEレビュー（2025-03-10）フォローアップ
 
@@ -268,6 +272,7 @@ poetry run schema-validate config/ops_readiness.yaml --schema docs/schemas/ops_r
 
 - **初期化ツール**: `make config-init`（`tools/scripts/config_init.py`）で雛形をコピーし、各ファイルに`TODO:`コメントで調整ポイント（例: `alpha_threshold`, `latency_alert_threshold_sec`）を明示する。Runbook `CONFIG-SCAFF-01`へステップバイステップ手順を追加する。
 - **レビュー要件**: 設定変更を含むPRは`pytest -k config_schema_smoke`と上記`schema-validate`ログ添付を必須とし、§0.6.11のPRチェックリストへ「Configスキーマ検証ログ」項目を追記する。
+- **証跡自動化**: `make config-evidence`（`tools/collect_config_evidence.py`）で`config-init`ドライラン/本実行、`schema-validate`, `pytest -k config_schema_smoke`のログを収集し、`reports/validation_log/config_init_<date>.md`へ保存。週次レビューでは`make verify-config-evidence`を実行し、欠損時は`RUN-POST-03`経由でフォローアップを記録する。
 
 #### 0.6.13 Feature Flagマトリクス & Runbook連携
 - `config/feature_flags.yaml`を単一の情報源とし、Backtest/Paper/Liveの既定値とマイルストーンを明示した。設定差分はRunbook `RUN-FEATURE-FLAG-01`で承認・証跡化する。
@@ -405,7 +410,24 @@ definitions:
     review: OPS-READINESS-01
     escalation: RUN-RISK-07
   ```
-- **検証**: `poetry run schema-validate config/ops_readiness.yaml --schema docs/schemas/ops_readiness.schema.json`。`make check-ops-readiness`（新設予定）がEvidenceファイルの存在と更新時刻を検証し、Opsレビューでは`ops_worklog`へ結果を記録する。
+- **検証**:
+  1. `poetry run schema-validate config/ops_readiness.yaml --schema docs/schemas/ops_readiness.schema.json`でスキーマ整合性を確認する。
+  2. `make check-ops-readiness ARGS="--max-age-days 21 --config config/ops_readiness.yaml"`を実行し、`tools/check_ops_readiness.py`がEvidenceパスの存在・最終更新時刻と重み/閾値の妥当性を検査する。成功例:
+     ```console
+     $ make check-ops-readiness ARGS="--max-age-days 21"
+     Ops readiness evidence check
+     Evidence paths:
+       - backups: ok (reports/drill/backup_integrity.md, age=3.2d)
+       - runbooks: ok (docs/runbooks, age=0.4d)
+       - incidents: ok (docs/incident_reports, age=5.1d)
+     ```
+     更新遅延や欠損を検知すると、CLIは`issue=missing`/`stale`とともに`[WARN] Recorded OpsEvidenceMissing event in logs/health/events.jsonl`を出力し、Runbook `OPS-READINESS-01#evidence-recovery`の手順通りに補完する。失敗例:
+     ```console
+     Evidence paths:
+       - incidents: stale(28.4d>21d) (docs/incident_reports, age=28.4d)
+     [WARN] Recorded OpsEvidenceMissing event in logs/health/events.jsonl
+     ```
+  3. CLI標準出力は`reports/governance/ops_readiness_<YYYYWW>.md`とValidation Data Playbookエントリ（`reports/validation_log/ops_readiness_<YYYYWW>.md`, AC-51）へ添付し、Evidenceファイル更新の責任者サインを取得する。Ops当番は同じ内容を`ops_worklog.jsonl`へ`task='ops_readiness_check'`として追記し（AC-45/AC-51監査で参照）、Runbook `OPS-READINESS-01`および`RUN-OPS-AGENDA-01`の進捗欄にログパスをリンクする。
 
 #### 4.4.7 `config/README.md`
 - **目的**: 雛形一覧・スキーマID・Runbook参照・調整責任者をまとめ、初期セットアップ手順（`make config-init && poetry run schema-validate config --schema docs/schemas/config_bundle.schema.json`）を明記する。PRチェックリストに添付すべき証跡（スキーマ検証ログ、設定diff、Runbook更新）を案内する。
@@ -1419,9 +1441,23 @@ rsi_window = bb_frame.window("rsi_14", length=14)
 | 実装パス | クラス/関数 | 主メソッド | 役割/補足 |
 | --- | --- | --- | --- |
 | `src/core/gate.py` | `GateAggregator` | `snapshot()`, `persist_latest(...)` | `GateState`をディープコピーで提供し、`snapshots/latest/gate_state.json`に永続化する。Schema Versionを維持しつつ、Workflow/Ticket/監査の全系で同一スナップショットを共有する。 |
-| `src/core/gate.py` | `GateAggregator` | `refresh_from_sources(calendar, news, spread, risk, human)` *(M1.1予定)* | `CalendarService.fetch_window(...)`や`SpreadMonitor.current_state(...)`など下位サービスから取得した部分状態をマージし、整合チェックとデフォルト補完を行う。欠損は`GateAggregatorError(code='partial_state_missing')`で検出する。 |
-| `src/core/gate.py` | `GateAggregator` | `on_event(event: DomainEvent)` *(予定)* | `ticket.checklist.ack`/`ops.agenda.cleared`等のイベントを適用し、ACKロールやOps期限を再計算する。イベント・リプレイ時には`schema/gate_state.schema.json`との整合を再評価する。 |
+| `src/core/gate.py` | `GateAggregator` | `refresh_from_sources(calendar, news, spread, risk, human)` | `CalendarService.fetch_window(...)`や`SpreadMonitor.current_state(...)`など下位サービスから取得した部分状態をマージし、整合チェックとデフォルト補完を行う。欠損は`GateAggregatorError(code='partial_state_missing')`で検出し、M1でも`GateSnapshot`欠損アラートを即時送出する。 |
+| `src/core/gate.py` | `GateAggregator` | `on_event(event: DomainEvent)` | `ticket.checklist.*`/`ops.agenda.*`イベントを適用し、ACKロールやOps期限を再計算する。イベント・リプレイ時には`schema/gate_state.schema.json`との整合を再評価し、Spread欠損時は共通のエラーコードへ正規化する。 |
 | `src/core/gate.py` | `GateAggregator` | `update_{news|calendar|spread|risk|human}(...)`, `clear_symbol(...)` | サービス毎の部分スナップショットを受け取り、グローバル/シンボル粒度のブロック状態を整合的に更新する。Spread欠損時は当該シンボルの`GateBlockState.is_empty()`で自動削除する。 |
+
+- **`refresh_from_sources()`ライフサイクル（FR-50/FR-51/FR-53, M1実装）**:
+  1. `GateRefreshJob`が60秒周期で呼び出し、`calendar|news|spread|risk|human`の各サービスから`GatePartialState`を収集する。I/Oは`None`を許容し、最後に成功した値を`last_known.<service>`としてキャッシュする。
+  2. 取得した部分状態を`GateStateBuilder`でマージし、`human.blocked_symbols`と`spread.per_symbol`の差分から**GateSnapshot欠損**を検知する。欠損が1サービスでも発生した場合は`GateAggregatorError(code='partial_state_missing', missing=['spread', ...])`でFR-50のアラート監視へ伝播し、スナップショットを永続化しない。
+  3. Spreadシンボルが欠損した場合は必ず`GateAggregatorError(code='spread_state_missing', symbol=...)`を送出して統一し（Spread欠損時のエラーコードをM1で固定化）、Workflowは当該シグナルをRejectする。Spread復旧後は`GateBlockState.is_empty()`経由で欠損シンボルを自動削除する。
+  4. マージ完了後は`GateState.schema_version`を`docs/schemas/gate_state.schema.json`と照合し、バリデーション成功時のみ`persist_latest()`へ引き渡す。Schema versionを更新する必要がある場合は`GateAggregator.migrate(...)`をRunbook経由で明示的に実行する前提とする。
+     - 付録A/Bに掲載したGateState抜粋（`docs/schemas/gate_state.sample.json`）は2025-03-18版の`market`/`risk`/`human`構造・`calendar_block`/`spread_cooldown`フィールドと同期させ、スキーマ差分は`reports/validation_log/CHK-0.6.9_risk_schema_20250317.md`で検証済み。
+  5. 戻り値は`GateState`および差分サマリ（`GateRefreshResult{state, diff, audit_ref}`）で、呼び出し元は監査ログ`logs/audit/gate_refresh_*.jsonl`に結果を残す。例外は全て`GateAggregatorError`に正規化し、根本原因は`cause`に委譲する。
+
+- **`on_event()`インクリメンタル更新（FR-50/FR-53, M1実装）**:
+  - 対応イベント種別: `ticket.checklist.ack`, `ticket.checklist.revoked`, `ticket.checklist.reassigned`, `ops.agenda.scheduled`, `ops.agenda.cleared`, `ops.agenda.expired`。今後のイベント追加時は`DomainEvent.type`のプレフィックスでルーティングする。
+  - ハンドラは`event.symbol`または`event.scope`から対象ブロックを決定し、必要に応じて`OpsAgendaService.peek_deadline(...)`を再読込してACK期限を再計算する。Ops期限が切れている場合は`AckDeadlineExpired`イベントを連鎖生成し、同じ`on_event`パイプラインで処理する。
+  - 各イベント適用後に`GateState.recompute_rollup()`を実行し、Spread/Calendar/Newsの組合せでReduce-Only判定やFR-51の資本配分ブロックを更新する。Spread情報が欠落している場合は`refresh_from_sources()`と同じ`spread_state_missing`エラーを返し、イベント適用を中断する。
+  - イベントリプレイや監査復旧時は`logs/audit/ticket_actions_*.jsonl`を時系列順に読み出し、適用途中で`GateState.validate(schema_path='docs/schemas/gate_state.schema.json')`を必ず実行する。`ACKReplayMismatch`はCI/Runbookで即検知し、Opsは`docs/runbooks/RUN-OPS-AGENDA-01.md`の手順で再適用を行う。
 
 - **依存サービスとI/O要件**:
   - `CalendarService`（§3.13）: `get_active_blocks(now)`が`CalendarGateState`を返却。`refresh_from_sources`は`None`を許容し、欠損時はWARNログ＋`calendar_block=false`で復帰。APIエラー時は`CalendarServiceError`をラップした`GateAggregatorError(code='calendar_unavailable')`を送出する。
@@ -2374,6 +2410,8 @@ Checklist (mandatory items marked with *):
   - `load_manifest(idea_id)`は`IdeaManifestStub(status="not_applicable")`を返却し、ファイルアクセスは行わない。
   - `transition_stage(...)`は`IdeaStageResult(accepted=False, reason="governance_disabled")`を返す。
   - `validate_evidence(idea_id)`は`IdeaEvidenceStatus(not_assessed=True)`を返し、欠損イベントを発火しない。
+- **派生スタブ/補助モジュール**: `src/ideas/checklist_stub.py`がステージ別チェックリスト（常にTODO）を返却し、`src/ideas/schema_stub.py`はManifest/Checklist検証を`True`固定で返す。
+- **テスト**: `tests/unit/test_ideas_stubs.py`でManifest/StageResult/Evidenceの戻り値とChecklist GeneratorのTODO維持を検証し、将来の本実装への切替時も契約が崩れないよう保護する。
 - **イベント/連携**: `stage.changed`等のEventBus発火は実施しない。Reporter/Scoreboard/ModelRiskとの連携呼び出しもログ出力のみに留める。
 - **依存関係**: CLI `tradectl research stage`はFeature Flag `governance.enable_ideas`が有効な場合のみ有効化し、M1ではヘルプ表示に`(M2+)`を追加して案内する。
 - **M2+実装**: ステージ遷移や証跡検証の詳細は付録G.2に移設。M2+承認までは本節のスタブ仕様に従う。
@@ -3283,6 +3321,7 @@ Flag切替時は`ConfigChanged`イベントに`flag_delta`が記録され、Repo
 - **集計ジョブ**: `OpsWorkloadAggregator`を`src/app/telemetry.py`に追加し、毎日24:00に`ops_worklog.jsonl`を読み込んでカテゴリ別の総時間・中央値・標準偏差を計算。結果は`reports/ops/workload_<YYYYMM>.md`と`metrics/ops_workload.json`へ出力し、グラフは`tools/plot_ops_workload.py`で生成する。
 - **省力化トラッカー**: 自動化タスクの効果測定のため、`automation_effect.jsonl`に`{"task":"sla_review","before_min":60,"after_min":30,"effective_date":"2025-03-10"}`を記録。`tradectl ops automation log --task sla_review --before 60 --after 30`で更新し、削減時間が30分/週以上のものに`[PRIORITY]`タグを付与してバックログ管理する。
 - **アジェンダ生成**: `tradectl ops agenda --date <YYYY-MM-DD>`は`ops_worklog.jsonl`の最新値と未完了Runbook項目を組み合わせ、日次TODO Markdown（`docs/runbooks/daily_agenda/<date>.md`）とCLI出力を同時生成。Acceptable Degradation時は`HealthState`と連動して手動CSVチェックやKill Switchレビューを先頭に挿入する。
+- **アクションアイテム同期**: `tradectl ops action-sync --review-log docs/review_log.md --agenda docs/runbooks/daily_agenda/<date>.md --out docs/change_requests/CR-<date>-ops-followups.md`が未完了チェックを収集し、Change RequestとAgenda末尾（`<!-- ACTION_ITEM_SYNC:BEGIN -->`ブロック）を同時更新する。Runbook `RUN-POST-03`と`logs/ops/review.log`でトレースされ、`latest_closed_marker`に`Closed #n`が反映されるまでレビューをクローズしない。
 - **将来拡張**: M2ではSlack通知へ`ops agenda`を送信できるようWebhook連携を追加し、作業ログ入力のリマインダを実装する。
 
 ### 8.10 SLA閾値チューニングファクトリ
@@ -3497,29 +3536,29 @@ Flag切替時は`ConfigChanged`イベントに`flag_delta`が記録され、Repo
 ## 11. リスクと未解決課題
 
 ### 11.1 技術的リスク
-- **執行モデルの実績データ不足**: ブローカーAPI未連携のため、滑り・ヒューマン遅延パラメータの検証が限定的。Paper/LIVE実績から`execution_model.yaml`を半月ごとに更新する運用手順をRunbookに追記予定。
-- **Reduce-Only運用負荷**: Spread/相関異常時に提案が集中する可能性。M1では手動レビューだが、M2で優先度キューとバッチ操作UIを設計する。
-- **SPRTチューニング**: 戦略追加時にSPRT閾値が不安定。ウォームアップ期間とベイズ更新をM2バックログに登録。
-- **データ供給レイテンシ**: macOSローカル運用でネットワーク品質が不安定な場合、Catch-up時間が延びる。`provider.timeout`と`retry`を調整し、長時間停止時はバックフィルを分割する。
-- **ライブ性能ドリフト検知**: `LATENCY-LIVE-GUARD`シナリオが連続Failした場合に`BoardMode=guarded`と`KillSwitchReview`を義務化。PFトレンドが目標未達のまま2週間以上継続した場合は`strategy_manifest`でフィンガープリントを付与し、減量またはオフボーディング判定をModel Governance会議で行う。
+- **執行モデルの実績データ不足**: ブローカーAPI未連携のため、滑り・ヒューマン遅延パラメータの検証が限定的。Paper/LIVE実績から`execution_model.yaml`を半月ごとに更新する運用手順をRunbookに追記予定。**責任者: Quant Lead / Ops Manager、期限: 2025-03-27 JST、ステータス: RUN-EXEC-02/RUN-RISK-01改訂タスクを`docs/risk_review/20250318_prelaunch.md`で追跡。**
+- **Reduce-Only運用負荷**: Spread/相関異常時に提案が集中する可能性。M1では手動レビューだが、M2で優先度キューとバッチ操作UIを設計する。**責任者: Risk Officer、期限: 2025-03-24 JST、ステータス: RUN-RISK-01 v1.2（Kill Switch演習節）でチェックリスト更新済。**
+- **SPRTチューニング**: 戦略追加時にSPRT閾値が不安定。ウォームアップ期間とベイズ更新をM2バックログに登録。**責任者: Quant Lead、期限: 2025-04-05 JST、ステータス: `docs/implementation_packets/20250315_strategy_determinism.md`フォローアップ欄に要件化済。**
+- **データ供給レイテンシ**: macOSローカル運用でネットワーク品質が不安定な場合、Catch-up時間が延びる。`provider.timeout`と`retry`を調整し、長時間停止時はバックフィルを分割する。**責任者: Data Lead、期限: 2025-03-29 JST、ステータス: RUN-DATA-05改訂ドラフト（Ops Agenda 2025-03-18 P1項目）でSLA調整を定義中。**
+- **ライブ性能ドリフト検知**: `LATENCY-LIVE-GUARD`シナリオが連続Failした場合に`BoardMode=guarded`と`KillSwitchReview`を義務化。PFトレンドが目標未達のまま2週間以上継続した場合は`strategy_manifest`でフィンガープリントを付与し、減量またはオフボーディング判定をModel Governance会議で行う。**責任者: Ops Manager / Product Owner、期限: 2025-03-31 JST、ステータス: OPS-74（EP04-P1）でBoard/Weeklyレポート改修に連動。**
 
 ### 11.2 運用課題
-- Spread/Funding CSVの手動更新頻度が高い場合、Human Errorが発生しやすい。将来的に自動取得スクリプトを追加し、`logs/ops`へ自動記録する計画。
-- Snapshot破損や`hard_stop`後の復旧訓練を四半期ごとに実施し、Runbookの精度を高める必要がある。
-- `tradectl` CLIのUX向上（検索/絞り込み）とGUI化（M2）を段階的に検討。
+- Spread/Funding CSVの手動更新頻度が高い場合、Human Errorが発生しやすい。将来的に自動取得スクリプトを追加し、`logs/ops`へ自動記録する計画。**Owner: Risk Officer、Due: 2025-03-22 JST、ステータス: RUN-FUND-01 v1.1でAPIスナップショット/ハッシュ記録を追加し、`reports/risk/20250318_prelaunch/funding_auto_hash.md`でEvidence採取中。**
+- Snapshot破損や`hard_stop`後の復旧訓練を四半期ごとに実施し、Runbookの精度を高める必要がある。**Owner: Ops Manager、Due: 2025-03-24 JST、ステータス: RUN-TIME-01 v0.3に「Snapshot復旧演習」を追加し、`reports/risk/20250318_prelaunch/modecontext_snapshot.md`でログテンプレを配布。**
+- `tradectl` CLIのUX向上（検索/絞り込み）とGUI化（M2）を段階的に検討。**Owner: Product Owner、Due: 2025-03-29 JST、ステータス: UX backlog / OPS-74（EP04-P1）でロードマップ化予定。**
 
 ### 11.3 リスクログ (2025-02時点)
 | ID | リスク概要 | 影響 | 発生確率 | 緩和策 | ステータス |
 | --- | --- | --- | --- | --- | --- |
-| R-01 | API仕様変更によるデータ取得停止 | 中 | 中 | API監視/代替CSV準備 | 監視中 |
+| R-01 | API仕様変更によるデータ取得停止 | 中 | 中 | API監視/代替CSV準備<br>責任者: Data Lead<br>期限: 2025-03-29 JST（`RUN-DATA-05`） | 監視中 |
 | R-02 | 運用者不在時のアラート未対応 | 高 | 中 | RACI整備、代替手順、Kill Switch STOP<br>完了条件: オンコール表（平日/祝日カバー）とRUN-EMER-UNWIND-01訓練ログを週次OpsレビューでEvidence登録済み。<br>責任者: Ops Manager<br>期限: 2025-03-25 JST | 監視中 |
-| R-03 | ローカル端末故障で運用停止 | 高 | 低 | 予備端末準備、バックアップ/BCPテスト | 監視中 |
-| R-04 | コンフィグ誤編集 | 中 | 中 | Configレビュー、dangerousキー遅延適用 | 監視中 |
+| R-03 | ローカル端末故障で運用停止 | 高 | 低 | 予備端末準備、バックアップ/BCPテスト<br>責任者: Ops Manager<br>期限: 2025-04-05 JST（BCP演習ログを`docs/risk_review/20250318_prelaunch.md`へ追記） | 監視中 |
+| R-04 | コンフィグ誤編集 | 中 | 中 | Configレビュー、dangerousキー遅延適用<br>責任者: Product Owner（Config Maintainer）<br>期限: 2025-03-23 JST（`docs/templates/codex_issue.md`でCHKリンク運用） | 監視中 |
 | R-05 | 監査ログ肥大化 | 低 | 中 | 週次アーカイブ、自動圧縮<br>完了条件: ログ圧縮ジョブの自動実行と90日保管ポリシーがRUN-AUD-02へ反映され、Evidenceで3週連続合格。<br>責任者: リードエンジニア<br>期限: 2025-03-29 JST | 監視中 |
-| R-06 | セキュリティインシデント（端末盗難） | 高 | 低 | FileVault, 画面ロック, Keychain管理 | 監視中 |
-| R-07 | KPI未達（Sharpe/MaxDD） | 中 | 中 | 戦略評価会、最適化、Feature Flag | 監視中 |
+| R-06 | セキュリティインシデント（端末盗難） | 高 | 低 | FileVault, 画面ロック, Keychain管理<br>責任者: Security Officer<br>期限: 2025-03-31 JST（端末棚卸ログ更新） | 監視中 |
+| R-07 | KPI未達（Sharpe/MaxDD） | 中 | 中 | 戦略評価会、最適化、Feature Flag<br>責任者: Quant Lead<br>期限: 2025-04-01 JST（`reports/weekly/`比較でフォローアップ） | 監視中 |
 
-- リスクログは月次レビュー時に更新し、閾値を超えたリスクはIssue Trackerへ登録する。
+- リスクログは月次レビュー時に更新し、閾値を超えたリスクはIssue Trackerへ登録する。フォローアップ詳細と証跡は `docs/risk_review/20250318_prelaunch.md` に集約する。
 
 ---
 
@@ -3537,6 +3576,8 @@ Flag切替時は`ConfigChanged`イベントに`flag_delta`が記録され、Repo
 | EP04-P1 | EP-04 Ticket Clarity | `TicketBuilder` JSON整形、`RiskDisclosure` WARNバナー対応 | §3.16, §3.30, §5.5 | `pytest -k ticket_builder`, `pytest-approvaltests` | CLIチケット表示、RiskDisclosure pending時の文言 |
 | EP04-P2 | EP-04 Ticket Clarity | CLI承認コマンドの監査ログ強化、`ops_worklog`連携 | §2.6, §3.20, §8.9 | `pytest -k ticket_cli`, CLI手動試験 | 監査ログ`cfg_hash`、手動承認時間入力 |
 | EP05-P1 | EP-05 Weekly Review | Reporter週次テンプレ更新、`RiskDisclosure`状態表示 | §3.18, §3.30, §9.3 | `tradectl report weekly --dry-run` | Markdown出力に承諾バナー/リンク、POレビュー用コメント欄 |
+
+- **Issueマッピング**: Codex Issue（OPS-70〜OPS-79）と詳細Packet対応は`docs/change_requests/20250318_packet_backlog.md`/`docs/prompt_packages/20250318_packet_backlog.md`で管理する。例: EP00-P1→OPS-70（PKG-CONFIG-SCHEMA-01）、EP03-P1→OPS-73、EP05-P1→OPS-74b。各PRでは対象OPS IDをタイトル/descriptionに含め、CHK-0.6.9証跡（`reports/validation_log/CHK-0.6.9_env_setup_20250318.md`等）を添付する。
 
 - **Packet採番**: `EP<epic>-P<sequence>`。Issue/PRタイトルにも同番号を付与（例: `[EP03-P1] HealthMonitor suggest_guarded`）。
 - **依存管理**: P1→P2の順で完了させる。`EP03-P1`は`EP01-P1`完了後（メトリクスが揃った状態）で着手する。
@@ -3610,7 +3651,7 @@ def test_<case>(...):
 | 3. 単体テスト | 依頼者 | 依頼時指定の`pytest -k ...`を実施し成功を確認。 | テストログ | 失敗時は原因分類（設計/実装/環境）をメモ。 |
 | 4. UX確認 | トレーダー | CLIスナップショット/JSONサンプルをレビューし、Runbook整合をチェック。 | `reports/snapshots/<feature>/` | Spread/Kill Switchバナーの文言確認。 |
 | 5. KPI影響記録 | トレーダー | `metrics/performance.jsonl`や`reports/kpi_snapshot.md`に期待影響を追記。 | KPIログリンク | Acceptable Degradation時は特に厳守。 |
-| 6. ドキュメント更新 | 依頼者 | 本設計書/Runbook/リリースノート更新の有無を判断。必要なら同PRで更新。 | コミットログ | 未更新の場合はTODO記録。 |
+| 6. ドキュメント更新 | 依頼者 | 本設計書/Runbook/リリースノート更新の有無を判断し、`make check-doc-sync`でコード差分と証跡更新の整合を確認。更新できない場合は`docs/change_requests/CR-<date>-ops-followups.md`を起票し、`RUN-POST-03`手順に従い`logs/ops/review.log`へ記録する。 | コミットログ / CRリンク | 未更新の場合はTODO記録。 |
 
 - 受入判定後は`docs/prompt_packages/<date>_<feature>.md`へ結果を記録し、良かった点/改善点/次回注意事項を追記。Codexへのフィードバックは次回依頼時の冒頭で引用する。
 - 差戻し時は必ず「設計逸脱」「要件未達」「テスト未実施」「UX不整合」「リスク未考慮」のいずれかに分類し、再実装時の観点を明記する。
@@ -3709,7 +3750,7 @@ SpreadCooldown: cooldown (ETA 12:15) | Snapshot hash: a1c3...
 | `validation.playbook` | `reports/validation_log/` | Validation Data Playbookエントリ | `AC-45_20250301` |
 
 ### 付録F: Validation Data Playbookテンプレート
-```
+```markdown
 ---
 id: AC-XX-<YYYYMMDD>
 requirement: <FR/AC番号>
@@ -3725,22 +3766,22 @@ fallback_reason: <欠損補完理由>
 linked_runbook: docs/runbooks/RUN-XXXX-YY.md
 ---
 
-## 1. 受け入れ条件
+[SECTION 1] 受け入れ条件
 - [ ] データ期間: <例: 2024-01-01〜2024-01-31>
 - [ ] 欠損率 ≤ <閾値>
 - [ ] 二重入力ハッシュ一致
 
-## 2. 検証ログ
+[SECTION 2] 検証ログ
 | チェック | 実施者 | 実施日時 | 結果 | 証跡 |
 | --- | --- | --- | --- | --- |
 | レコード件数検証 |  |  |  |  |
 | スキーマ検証 (`tools/validate_schema.py`) |  |  |  |  |
 | ハッシュ再計算 (`tradectl data hash`) |  |  |  |  |
 
-## 3. コメント
+[SECTION 3] コメント
 -
 
-## 4. サインオフ
+[SECTION 4] サインオフ
 - 運用者: <署名/日時>
 - PO: <署名/日時>
 
@@ -4185,23 +4226,26 @@ CodexがCLI層を安全に実装・改修できるよう、`tradectl`コマン�
   - Acceptable Degradation 条件 (`health.status ∈ {degraded,soft_stop,hard_stop}` または `risk.reduce_only=True`) では `ops.banner.kind=acceptable_degradation` を表示し Runbook 参照 (`runbook` キー) を添付。
 - **操作フック**: `ack` / `kill_switch` / `board` 引数は即時実行ではなく `ops.actions` にキュー状態を記録し、後続のCodex実装でイベント発火ロジックを差し替えられるようにする。
 - **出力例**:
-  ```console
-  $ tradectl status --json
+  ```json
   {
-    "health": {"status": "degraded", "reasons": [...]},
-    "risk": {"reduce_only": true, "kill_switch_recommendation": "soft_stop", ...},
-    "snapshots": {"status": "unavailable", "base_path": "snapshots"},
+    "health": {"status": "degraded", "reasons": ["data_latency"]},
+    "risk": {"reduce_only": true, "kill_switch_recommendation": "soft_stop"},
+    "snapshots": {"status": "ok", "warnings": ["stale_snapshot"]},
     "ops": {
       "banner": {
         "kind": "acceptable_degradation",
         "runbook": "docs/runbooks/RUN-DATA-05.md",
         "reduce_only": true
       },
-      "actions": {"ack": {"status": "queued"}, "kill_switch": {"status": "idle"}}
+      "actions": {
+        "ack": {"status": "queued", "reference": "RUN-DATA-05#step2"},
+        "kill_switch": {"status": "idle"},
+        "board": {"status": "idle"}
+      }
     }
   }
   ```
-- **テスト**: `pytest tests/unit/test_cli_status.py`, `pytest -k "smoke and feature_context_contract"` でバナー構造を検証。
+- **テスト**: `pytest tests/unit/test_cli_status.py` でバナー/Reduce Only/スナップショット/ops.actionsを検証。
 - **Runbook連携**: `RUN-DATA-05` Acceptable Degradation 手順に JSON 出力例を引用し、Ops チェックリストが参照できるようにする。
 
 ### 17.4 `tradectl resync`
@@ -4211,11 +4255,15 @@ CodexがCLI層を安全に実装・改修できるよう、`tradectl`コマン�
 - **Session連携**: `SessionManager.catch_up(...)` を呼び出し、戻り値（辞書想定）を `summary` フィールドに保存。未配線の場合は `status=unavailable` とエラー文言を返す。
 - **エラー処理**: `NotImplementedError` を捕捉して `status=unimplemented`、その他例外はログへ記録し `status=error` を返す。Console には Rich `Panel` でバナーを表示。
 - **出力例**:
-  ```console
-  $ tradectl resync --since "2024-03-15T00:00:00Z" --symbol USDJPY --json
-  {"status": "unavailable", "since": "2024-03-15T00:00:00Z", "symbols": ["USDJPY"], ...}
+  ```json
+  {
+    "since": "2025-03-18T10:00:00Z",
+    "symbols": ["USDJPY"],
+    "status": "ok",
+    "summary": {"catch_up_elapsed_sec": 42, "windows": 3}
+  }
   ```
-- **テスト**: `pytest tests/smoke/test_feature_context_contract.py::test_status_payload_exposes_acceptable_degradation_banner` が `SessionManager.catch_up` 呼び出し有無に依存しない戻り値構造を監視。
+- **テスト**: `pytest tests/unit/test_cli_resync.py` が `SessionManager.catch_up` 未配線/成功/例外パスを検証。
 - **Runbook連携**: `RUN-DATA-05`/`RUN-DATA-06` に進捗表示スクリーンショットと `status` キーの意味付けを記載。Failover レポート連携は Codex 実装時に `summary` へ差し替え予定。
 
 ### 17.5 `tradectl preflight`
@@ -6552,11 +6600,11 @@ M2で必須となるFR-58「複数口座統合」とFR-51「キャピタル配�
 
 本章により、複数口座運用へ拡張する際の計測・監査・リスク連携の土台が整い、Capital Guard/Correlation Guard/BackOfficeとの整合を保ちながらCodexが段階的にM2実装へ移行できる。トレーダー視点では、ポートフォリオ全体の証拠金とリスク余力が一目で把握でき、Variance検知からRebalance実行までの導線がRunbookとCLIで一本化される。
 
-### 52. Ops Worklog & Agenda Services（`src/ops/worklog.py`, `src/ops/agenda.py`, `src/ops/automation.py`）
+## 52. Ops Worklog & Agenda Services（`src/ops/worklog.py`, `src/ops/agenda.py`, `src/ops/automation.py`）
 
 Paper90日運用とM1.1 Hardeningで求められる運用可視化（要件定義 §9.1, NFR-28, AC-45/AC-51）を支えるため、Ops作業ログ・自動化効果・日次アジェンダの3サービスを整理する。`OpsWorklogService`がヒューマン作業記録を一元化し、`AutomationEffectTracker`が削減効果を定量化、`OpsAgendaService`が翌営業日のTODOとRunbook参照を生成する。Acceptable Degradation発生時にはデータ/スプレッド/リスクの復旧タスクを先頭に並べ替え、Kill SwitchやBoardModeの承認ログとリンクさせる。
 
-#### 52.1 OpsWorklogService (`src/ops/worklog.py`)
+### 52.1 OpsWorklogService (`src/ops/worklog.py`)
 
 - **目的**: ヒューマン作業（データ検品、SLAレビュー、Kill Switch確認、Runbook更新など）を`ops_worklog.jsonl`へ正規化記録し、Ops Workload集計（§2.7, §18.3）とValidation Data Playbookの証跡に活用する。
 - **スキーマ** (`ops_worklog.jsonl`):
@@ -6588,7 +6636,7 @@ Paper90日運用とM1.1 Hardeningで求められる運用可視化（要件定�
   - `OpsReadinessService`（§33.1）と`OpsEvidenceStore`（§45.1）が監査サンプル抽出の基礎データとして利用する。
 - **Runbook連携**: `RUN-OPS-LOG-01`を新設し、`tradectl ops log` CLIでの入力手順、記録後の署名確認、`ops_worklog.jsonl`改ざん検出方法（SHA256ハッシュ）を定義。
 
-#### 52.2 AutomationEffectTracker (`src/ops/automation.py`)
+### 52.2 AutomationEffectTracker (`src/ops/automation.py`)
 
 - **目的**: `automation_effect.jsonl`を管理し、各自動化施策が削減した工数（minutes）をOps Workloadと突合。削減閾値達成時に`automation.effect_achieved`イベントを発火し、週次レビュー（要件定義 §9.1「アクションアイテム化」）での優先度決定に利用する。
 - **スキーマ** (`automation_effect.jsonl`):
@@ -6614,7 +6662,7 @@ Paper90日運用とM1.1 Hardeningで求められる運用可視化（要件定�
 - **監査**: `audit.ops_automation`カテゴリで`task`, `gain_min`, `approver`, `evidence_hash`を記録し、`SecureShareService`（§48）で共有可能にする。
 - **テスト**: `tests/unit/test_automation_effect_tracker.py`で閾値境界、エビデンス必須チェック、JSONL追記の整合性を検証。`pytest -k automation_effect_report`が生成物のMarkdown整形を確認（§18.4）。
 
-#### 52.3 OpsAgendaService (`src/ops/agenda.py`)
+### 52.3 OpsAgendaService (`src/ops/agenda.py`)
 
 - **目的**: `tradectl ops agenda --date <YYYY-MM-DD>`で日次TODOを生成し、`docs/runbooks/daily_agenda/<date>.md`へ保存。Ops Worklog/Automation Effect/HealthState/Runbook整備状況を統合し、未完タスクを可視化する。Acceptable Degradation時はデータ代替ソースチェックやKill Switchレビューを先頭へ昇格させる（要件定義 §9.1）。
 - **入力データ**:
@@ -6637,7 +6685,7 @@ Paper90日運用とM1.1 Hardeningで求められる運用可視化（要件定�
 - **ガードレール**: `--no-persist`オプションでDry-run。生成ファイルが既に存在する場合は`AgendaAlreadyExistsError`をraiseし、`--force`で上書き可。Acceptable Degradation解除前に`Critical First`タスクが未完（`ops_worklog`に記録なし）の場合、翌営業日のアジェンダ先頭へ再掲。
 - **Runbook連携**: `RUN-OPS-AGENDA-01`を策定し、生成・レビュー・承認・サインバック（Ops Manager/PO）の流れを明文化。生成後は`ops_worklog.recorded`で所要時間を残し、承認者が`docs/runbooks/daily_agenda/<date>.md`に署名欄を追記。
 
-#### 52.4 CLI & Workflow統合 (`src/interfaces/cli/ops.py`)
+### 52.4 CLI & Workflow統合 (`src/interfaces/cli/ops.py`)
 
 - **コマンド構成**:
   | コマンド | 概要 | 主要オプション | 出力/副作用 |
@@ -6651,7 +6699,7 @@ Paper90日運用とM1.1 Hardeningで求められる運用可視化（要件定�
 - **Health Monitor連携**: `health.changed(status='degraded')`発生時、CLIは次回`tradectl ops agenda`実行時に警告（非0 exit code 90 + TODO挿入）を表示し、手動承認を促す。
 - **テスト**: `tests/integration/test_ops_cli.py`で各コマンドのApprovalテストを実装し、`pytest -k ops_cli`で実行。`tests/unit/test_ops_worklog_service.py`と`test_ops_agenda_service.py`でバリデーションとテンプレ生成を検証。
 
-#### 52.5 テレメトリ・監査・受入基準
+### 52.5 テレメトリ・監査・受入基準
 
 - **メトリクス** (`metrics/ops_workload.json`, `metrics/ops_agenda.jsonl`):
   - `metrics/ops_workload.json`: `totals.minutes`, `totals.automation_gain_min`, `tasks[task].median_min`, `tasks[task].p90_min`, `tasks[task].count`。
@@ -6665,7 +6713,7 @@ Paper90日運用とM1.1 Hardeningで求められる運用可視化（要件定�
   - `TR-42`: 自動化効果登録→閾値超→週次レポートへ`[Automation Effect]`バナーが追加される→Ops Readiness Score（§33.1）が改善。
   - `TR-43`: Runbook期限切れ→アジェンダに警告→`OpsWorklogService.record(task='runbook_review')`で完了→翌日アジェンダから除外。
 
-#### 52.6 Codex Packet計画（Ops Automation Track）
+### 52.6 Codex Packet計画（Ops Automation Track）
 
 | Packet ID | スコープ | 依存セクション | 成果物 | テスト/証跡 |
 | --- | --- | --- | --- | --- |
@@ -6675,11 +6723,11 @@ Paper90日運用とM1.1 Hardeningで求められる運用可視化（要件定�
 
 - **Ops受入条件**: Packet完了時に`reports/ops/workload_<YYYYMM>.md`, `docs/runbooks/daily_agenda/<date>.md`, `reports/validation_log/AC-51_ops_<date>.md`を生成し、Ops Manager＋POダブルサインを取得。削減効果が閾値未達の場合でも、理由（タスク特性/Runbook未整備）を`automation_effect.jsonl`へ記録する。CodexはPacket単位でCLIキャプチャとメトリクス抜粋をPRコメントへ添付すること。
 
-### 53. Ops Drill Orchestrator & Runbook演習自動化設計（`src/ops/drills.py`, `src/interfaces/cli/ops.py`, M1.1準備）
+## 53. Ops Drill Orchestrator & Runbook演習自動化設計（`src/ops/drills.py`, `src/interfaces/cli/ops.py`, M1.1準備）
 
 M1.1 Hardeningでは、Acceptable DegradationやBCP演習を計画的に実施し、Runbook更新と証跡収集を自動化する必要がある（要件定義 §0「Acceptable Degradation復帰基準」、§10.1「Runbookインベントリ」、AC-40/AC-43/AC-45、ドリル結果保存要件）。`reports/drill/<YYYYMMDD>_<scenario>.md`に演習ログを残す既存方針を強化し、Codexが再現しやすいAPI/CLI/テンプレ構造を定義する。
 
-#### 53.1 OpsDrillService (`src/ops/drills.py`)
+### 53.1 OpsDrillService (`src/ops/drills.py`)
 
 - **責務**: ドリルシナリオの定義・スケジュール・実行・証跡集約。Runbook ID、Validation Data Playbook ID、関連メトリクスの紐付けを行い、Ops Readinessスコア（§33.1）やEvidence Store（§45.1）へ自動反映する。
 - **データモデル**:
@@ -6702,7 +6750,7 @@ M1.1 Hardeningでは、Acceptable DegradationやBCP演習を計画的に実施�
 - **Runbook連携**: `DrillScenario`に含まれる`runbook_refs`を元に、CLI実行時に対象Runbookのチェックリストを読み込み、未完項目がある場合は開始をブロック。要件定義のAcceptable Degradation復帰条件に沿って`acceptance_conditions`を満たさない場合、`complete()`は`success=False`で強制終了し、Ops Agendaへフォローアップタスクを追加する。
 - **Integration Hooks**: `OpsAgendaService`が翌営業日のアジェンダに演習TODOを挿入、`AutomationEffectTracker`が`DrillOutcome.metrics['minutes_saved_estimate']`を参照して効果を記録。`HealthMonitor`はドリル失敗時に`health.raise('info','drill_failed')`でRunbookレビューを促す。
 
-#### 53.2 CLI `tradectl ops drill *` (`src/interfaces/cli/ops.py`)
+### 53.2 CLI `tradectl ops drill *` (`src/interfaces/cli/ops.py`)
 
 - **サブコマンド**:
   | コマンド | 概要 | 主要オプション | 出力/副作用 |
@@ -6716,7 +6764,7 @@ M1.1 Hardeningでは、Acceptable DegradationやBCP演習を計画的に実施�
 - **UX**: RichテーブルでRunbook手順と進捗を視覚化し、`--with-checklist`で対象Runbookのチェックリストを表示。`--dry-run`でPlan/Executionを生成せず検証のみ行い、CIでテンプレ整合を確認できるようにする。
 - **権限**: `config/roles.yaml::ops_drill_organizers`を参照。Guarded未設定で開始する場合はOps Manager（`ops_managers`ロール）がCLI確認ダイアログで承認しない限り`DrillPreconditionError`を返す。
 
-#### 53.3 連携サービスとメトリクス
+### 53.3 連携サービスとメトリクス
 
 - **OpsWorklog/AutomationEffect**: `DrillStep`記録時に`OpsWorklogService.record(task='drill_step', duration_min=step.duration_min, metadata={...})`を呼び出し、削減効果は`AutomationEffectTracker.apply(task='drill', before_min, after_min)`で評価。削減未達時は`health.raise('info','drill_no_improvement')`。
 - **OpsAgenda**: `OpsAgendaService.generate()`が`drill_pending`セクションを含め、未完計画を日次アジェンダへ挿入。Acceptable Degradation状態では`critical`タグのドリルのみ許可し、他計画は自動で延期し`ops.agenda.deferred`をログ。延期理由と新日程は`PlanSchedulePolicy`が決定。
@@ -6726,7 +6774,7 @@ M1.1 Hardeningでは、Acceptable DegradationやBCP演習を計画的に実施�
   - `logs/events/`: `ops.drill.*`イベントをEventBusへpublish。`incident_drills`スコア（§33.1 Ops Readiness指標）を算出するため、イベントに`runbook_refs`と`validation_playbook_ids`を付与。
   - `reports/drill/<YYYYMMDD>_<scenario>.md`: CLI完了でテンプレ展開し、タイムライン、Runbook差分、フォローアップ項目を記録。`docs/templates/drill_report.md`を新設し、受入チェックリスト（SLA復帰、双子CSV突合、Kill Switchリセット条件など）を標準化。
 
-#### 53.4 テスト・Codex Packet
+### 53.4 テスト・Codex Packet
 
 - **テストケース**:
   - `tests/unit/test_ops_drill_service.py`: シナリオ登録・スケジュール・開始・ステップ追加・完了/中断の正常/異常系。Runbook参照/Validation ID検証、WIP制限、OpsAgendaフックをモックで確認。
@@ -6739,11 +6787,11 @@ M1.1 Hardeningでは、Acceptable DegradationやBCP演習を計画的に実施�
   | `EP11-DRILL-P2` | CLI `tradectl ops drill`フロー、OpsWorklog/Evidence統合、Runbook参照検証 | §53.2, §53.3 | `src/interfaces/cli/ops.py`, CLIテスト, Markdownテンプレ更新, `metrics/drill.jsonl`スキーマ | `pytest -k ops_drill_cli`, `pytest-approvaltests -k ops_drill` |
   | `EP11-DRILL-P3` | OpsAgenda/EvidenceStore/AutomationEffect連携、Acceptable Degradation制約検証、Ops Readiness指標更新 | §52.3, §53.3 | `src/ops/agenda.py`拡張, `src/ops/evidence.py`統合, `tests/integration/test_ops_agenda.py::test_drill_integration` | `pytest -k ops_agenda`, `pytest -k ops_evidence_store` |
 - **受入条件**: ドリル完了後に`reports/drill/<date>_<scenario>.md`が生成され、`OpsEvidenceStore.lookup('drill')`で`confidence_pct≥0.9`かつ`expires_at≥30d`が確認できること。Acceptable Degradation解除条件（SLA回復/双子CSV一致）が未達の場合はCLIが`exit code 121`で失敗し、Ops Agendaへ再演習タスクが追加される挙動をテストで担保する。
-### 54. Opportunity Pipeline自動化とステージガバナンス設計（`src/ideas/manager.py`, `src/research/pipeline.py`, M2, FR-62/AC-50）
+## 54. Opportunity Pipeline自動化とステージガバナンス設計（`src/ideas/manager.py`, `src/research/pipeline.py`, M2, FR-62/AC-50）
 
 FR-62/AC-50では研究段階の戦略候補をアイデア単位で可視化し、ステージ遷移ごとに必要なエビデンスとレビューを強制する。M1ではスタブ化されているIdea Pipelineを、M2でCodex実装へ引き継げる粒度に分解する。戦略昇格の責務分担（Research Guild/Quant Lead/Ops Manager）とOps Readiness/Model Riskとの連携を明確化し、Paper/Live導入前に**4週分の整合ログ**と**Runbookチェックリストの完了**をゲート条件として固定する。
 
-#### 54.1 IdeaPipelineManager本実装（`src/ideas/manager.py`）
+### 54.1 IdeaPipelineManager本実装（`src/ideas/manager.py`）
 
 - **責務**: `ideas/<idea_id>/`配下のManifest/チェックリスト/エビデンスを読み込み、`stage ∈ {draft, screening, paper, ready, archived}`を遷移管理する。ResearchPipeline（§26）、StrategyRegistry（§3.2.4）、ModelRiskRegister（§46）と連携し、昇格不可条件を即時フィードバックする。
 - **データモデル**:
@@ -6769,7 +6817,7 @@ FR-62/AC-50では研究段階の戦略候補をアイデア単位で可視化し
   - `EvidenceMissingError`: `EvidenceSpec.hash_required=True`かつファイル欠損。`OpsEvidenceStore`（§45）へ不足登録。
   - `MetricsGapError`: `minimum_metrics`を満たさない。ResearchPipelineへ再検証ジョブを発行し、`ideas.actions.md`へTODO追記。
 
-#### 54.2 ステージチェックリスト生成とエビデンス連携
+### 54.2 ステージチェックリスト生成とエビデンス連携
 
 - **テンプレ構造**:
   - `docs/templates/idea_checklists/<stage>.yaml`: 各ステージのデフォルト項目（例: `data_source_verified`, `backtest_windows`, `risk_controls_reviewed`）。`owner_role`でQuant/Ops/Complianceを割当。
@@ -6786,7 +6834,7 @@ FR-62/AC-50では研究段階の戦略候補をアイデア単位で可視化し
   - `min_weeks_at_stage`未達の場合は`StageEvaluationResult.allowed=False`＋`reasons=['insufficient_history']`。`--force`は`config/idea_pipeline.yaml::allow_force`で明示承認されたロールのみ（既定OFF）。
   - `feature_flags`により`news_guard`等の未実装機能に依存するIdeaを事前に拒否。`governance.feature_disabled`イベントを記録し、Runbookへフォローアップ。
 
-#### 54.3 CLI/Workflow統合 (`src/interfaces/cli/research.py`)
+### 54.3 CLI/Workflow統合 (`src/interfaces/cli/research.py`)
 
 - **サブコマンド設計**:
   | コマンド | 概要 | 主オプション | 出力/副作用 |
@@ -6804,7 +6852,7 @@ FR-62/AC-50では研究段階の戦略候補をアイデア単位で可視化し
   - `config/roles.yaml::research_stage_approvers`/`research_checklist_editors`を参照。`--force`は`research_stage_approvers`＋`ops_manager`ロールのダブルサインが必要。
   - CLI操作は`audit.research_cli`カテゴリに記録（`actor`, `idea_id`, `command`, `result`, `evidence_hashes`）。
 
-#### 54.4 テレメトリ・監査・周辺サービス連携
+### 54.4 テレメトリ・監査・周辺サービス連携
 
 - **メトリクス** (`metrics/idea_pipeline.jsonl`): `idea_id`, `stage`, `checklist_completion_pct`, `evidence_missing:int`, `weeks_in_stage`, `alpha_score`, `ops_readiness_score`, `model_risk_status`。Paper滞留>6週で`idea_pipeline.stalled`イベント。
 - **イベント連鎖**:
@@ -6819,7 +6867,7 @@ FR-62/AC-50では研究段階の戦略候補をアイデア単位で可視化し
   - `OpsReadinessEvaluator`（§33.1）が`idea_pipeline.checklist_completion`、`idea_pipeline.stalled_count`をサブスコアとして取り込み、未達時にOps Agendaへ改善タスクを追加。
   - Ops Drill（§53）完了時にIdea関連演習が成功すると`metrics/idea_pipeline.jsonl`へ`drill_credit`を加点し、Ready遷移のペナルティを緩和。
 
-#### 54.5 テスト戦略とCodex Packet
+### 54.5 テスト戦略とCodex Packet
 
 - **テスト**:
   - `tests/unit/test_idea_pipeline_manager.py`: ステージ定義ロード、チェックリスト生成、エビデンス添付、異常系（未完了・メトリクス不足・Ops Readiness低下）。

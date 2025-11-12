@@ -51,6 +51,10 @@
      - `logs/ops/workload.log`（Ops作業時間メトリクスが必要な場合）
    - PRでは上記Markdownと主要コマンドのログを添付し、`CONFIG-SCAFF-01`チェックリストを満たしたことを明示する。
 
+8. **自動化ショートカット**
+   - `make config-evidence`を実行すると本手順2〜5（`config_init` / `schema-validate` / `pytest -k config_schema_smoke`）のログを収集し、`reports/validation_log/config_init_<date>.md`を自動生成する。
+   - 運用レビュー時は`make verify-config-evidence ARGS="--grace-days 2"`（必要に応じ調整）を実行し、直近のEvidenceファイルが存在するか確認する。欠損している場合は`RUN-POST-03`の欠損フローに従ってIssueを起票する。
+
 ## 補足
 - `tools/scripts/config_init.py`へ新規テンプレートを追加した際は、対応する`docs/schemas/*.json`と`tests/`のスモークケースを同じPRで更新する。
 - 既存設定との差分が大きい場合は`make config-init --overwrite-existing=false`で安全に確認し、必要なファイルのみ手動反映する。
