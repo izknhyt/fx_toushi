@@ -1,4 +1,4 @@
-# FXヒューマン・インザループ投資ツール 詳細設計書 v1.31
+# FXヒューマン・インザループ投資ツール 詳細設計書 v1.36
 
 ## 0. 文書情報
 - 作成日: 2025-02-20
@@ -9,6 +9,11 @@
 ### 0.1 改訂履歴
 | 版 | 日付 | 改訂概要 |
 | --- | --- | --- |
+| v1.36 | 2025-11-13 | EP-04 Ticket Clarity設計（§92）を追加し、Ticket JSON/UX/監査/テレメトリ/テスト計画を整備。 |
+| v1.35 | 2025-11-13 | EP-02 Strategy Determinism設計（§91）を追加し、Feature/Strategy/Execution決定論、CLI/テレメトリ/テスト/Evidence連携を定義。 |
+| v1.34 | 2025-11-13 | EP-03 Guardrailsハードニング設計（§90）を追加し、Kill Switch/Spread/NTP制御、CLI/GUI通知、テレメトリ、Runbook/テストを定義。 |
+| v1.33 | 2025-11-13 | EP-01 DataLag Mitigation向けハードニング設計（§89）を追加し、Resync/Manual CSV CLI、テレメトリ、Runbook/Evidence、テストパケットを詳細化。 |
+| v1.32 | 2025-11-13 | すご腕SE/トレーダー視点のプロフィットアクセラレーションループ（§88）を追加し、Alphaフィードバック/CLI/テレメトリ/テスト計画を定義。 |
 | v1.31 | 2025-03-15 | GateStateを`market`/`risk`/`human`サブ構造体へ分割し、Humanダブルエントリーフィールドを定義。§3.16チェックリスト、§3.5.4例外表、GateStateスキーマ参照を更新。 |
 | v1.30 | 2025-03-14 | GateStateフィールドを再整理し、`calendar_block`/`spread_cooldown`命名に統一。§3.5.4例外表・Spreadクールダウン節・Reporter Feature Flag表記・Codexハンドオフチェックリストを更新し、監査用語と整合。レビュー履歴を追加。 |
 | v1.29 | 2025-03-12 | すご腕SEレビュー反映。§0.6.11を新設しレビュー結果/フォローアップを整理。§3.5にStrategy Plugin契約/コンテキスト仕様を追記し、シグナル疑似コードをExecutionModel/SpreadMonitorの実APIと整合。Codex向けチェックリストと監査リンクを更新。 |
@@ -8929,3 +8934,469 @@ API接続の信頼性を高めるには、レート制限・レスポンス遅�
   - GitHub Actions `ci/shadow-gateway.yml`を追加し、`pytest -k shadow_gateway`、`make load-shadow-gateway --duration 5m --smoke`、`make chaos-shadow-gateway --fault drop-events --smoke`を夜間実行。
   - `make check-validation --category shadow_gateway`と`tradectl validation audit --category shadow_gateway`を必須化し、Validation Data Playbookの欠落をCIで検知。
   - 成果物（SQLite/Parquet）のハッシュは`data_manifest.json`に自動追記。差分検知時は`docs/change_requests/SHADOW-GW-<date>.md`を生成し、Codexがレビュー可能なテンプレを添付。
+
+### 88. プロフィットアクセラレーションループ & トレーダーフィードバック設計（FR-03/FR-04/FR-19/FR-44/FR-61, AC-07/AC-09/AC-37, NFR-11/NFR-18）
+
+Sharpe/Sortinoを実際に押し上げるため、アルファ算出→ヒューマン意思決定→PnL検証→プレイブック更新を1営業日以内に閉じるループを定義する。`StrategyEngine`/`TicketBuilder`/`TradeJournal`（§34）と`Alpha Scoreboard`（§32）が同一データプロダクトを共有し、トレーダーが「何をどこまで攻めるか」を即断できるようにする。
+
+#### 88.1 Profit Acceleration Stackとモジュール構成
+
+| コンポーネント | ファイル | 主責務 | 主要連携 |
+| --- | --- | --- | --- |
+| `AlphaPulseSynthesizer` | `src/strategies/alpha_pulse.py` | FeaturePipeline（§3.3）とRegimeDetector（§5.2）を束ね、`AlphaPulse`（88.2）を生成。Conviction/半減期/エントリーバンドをリアルタイム更新。 | `StrategyRegistry`（§3.5）、`ExecutionProfile`（§3.0） |
+| `ExecutionAlphaOverlay` | `src/execution/alpha_overlay.py` | `TicketBuilder`に対し`size_hint`, `protect_pips`, `reduce_only_hint`を注入。Spread Guard（§5.4）違反時は自動で攻め度合いを落とし、損切/利確レベルをマーケット構造に合わせ再計算。 | `GateAggregator`（§3.15）、`RiskEnvelopeService`（§5.5） |
+| `TraderPlaybookService` | `src/trader/playbook.py` | トレーダー定義のプレイブック（ブレイクアウト、レンジ逆張り等）と`AlphaPulse`を突合。HITLカードに「優先シナリオ」「代替シナリオ」「撤退条件」を表示。 | Signal Board/Tauri（§86）、`tradectl alpha preview`（88.5） |
+| `PnLFeedbackLoop` | `src/analytics/pnl_feedback.py` | 実現利益/未実現リスクを`TradeJournal`、`Alpha Scoreboard`へ書き戻し。パフォーマンスヒートマップを生成して次サイクルのConviction補正として再注入。 | `reports/performance/`, `metrics/profit_loop.jsonl`（88.4） |
+| `OpsAlphaBridge` | `src/ops/alpha_bridge.py` | Runbook/Agendaと連携し、Alphaループの未完了チェックリストや逸脱をOpsに提示。 | `OpsAgendaService`（§52）、`DocOpsService`（§45） |
+
+- イベント連携: `AlphaPulseSynthesizer`→`EventBus`で`alpha.pulse.updated`をpublish。Board/TauriはSignalカードにConvictionバッジ（Low/Mid/High）と推奨ポジション幅を重畳表示。`PnLFeedbackLoop`は`alpha.feedback.closed`を発行し、Scoreboard/KPI集計をトリガーする。
+- サイジングの責任境界: `ExecutionAlphaOverlay`が**候補サイジング**のみ計算し、最終サイズは`TicketBuilder`がHITL入力とKill Switch状態を考慮したうえで決定する。HITL画面では「推奨Lot」「最大Lot」「推奨撤退レベル」が常時表示される。
+
+#### 88.2 データ構造・アルゴリズム
+
+##### 88.2.1 `AlphaPulse`
+
+| フィールド | 型 | 説明 | 生成元 |
+| --- | --- | --- | --- |
+| `pulse_id` | UUID | 1トレード機会単位の識別子。Ticket/Auditと相互参照。 | `AlphaPulseSynthesizer` |
+| `regime` | enum(`range`, `trend`, `news`, `illiquid`) | RegimeDetector（§5.2）が決定。 | Regime Feature |
+| `conviction` | float[0,1] | シグナル強度。Backtest/Liveバイアス補正後の値。 | Feature Shapley, Scoreboard |
+| `half_life_bars` | int | Conviction減衰の許容バー数。 | Volatility/Calendar |
+| `entry_window_pips` | tuple(min,max) | 推奨指値幅。Spread/ATR/板厚で調整。 | Spread Monitor（§5.4） |
+| `size_band` | tuple(min,max) | 推奨Lot幅。RiskBudget×Conviction×VolPenaltyで算出。 | RiskEnvelope |
+| `protect_levels` | struct | `stop_loss`, `take_profit`, `trail`, `reduce_only_hint`。 | ExecutionAlphaOverlay |
+| `playbook_hint` | str | 適合したプレイブックID。 | TraderPlaybookService |
+
+- Conviction算出フロー:
+  1. Featureスコア→`MomentumScore`, `MeanReversionScore`, `MacroScore`を正規化。
+  2. `Conviction = w_m * Momentum + w_r * MeanRev + w_c * Macro - penalty_spread - penalty_latency`
+  3. `penalty_spread`はSpread Guardの`cooldown_factor`、`penalty_latency`は`data.catch_up_lag_minutes`に比例。
+  4. `conviction < 0.25`は自動で`reduce_only_hint=true`、`<0.15`はSignalカード自体を「観察モード」で提示。
+
+- サイジング公式（Lot換算）:
+
+```
+size = min(
+    max_lot_profile,
+    account_equity * risk_budget_pct * conviction * (1 - volatility_penalty)
+) * board_mode_factor
+```
+
+`volatility_penalty = min(0.4, ATR(14)/ATR_baseline - 1)`、`board_mode_factor`は`normal=1`, `guarded=0.6`, `halted=0`。
+
+##### 88.2.2 `ProfitTargetBand`と`FeedbackVector`
+
+| オブジェクト | フィールド | 説明 |
+| --- | --- | --- |
+| `ProfitTargetBand` | `label`, `target_rr`, `min_conviction`, `max_hold_minutes`, `exit_policy` | トレーダーが選択する利確帯。「Day15」「NewsScalp」等。 |
+| `FeedbackVector` | `pulse_id`, `ticket_id`, `realized_rr`, `max_adverse`, `max_favorable`, `slippage_bp`, `ops_notes`, `journal_ref` | `PnLFeedbackLoop`が生成しScoreboard（§32）/Journal（§34）へ登録。 |
+
+- `StrategyManifest`（§27）へ`alpha_profile_id`, `default_target_band`, `feedback_channels`を追加。Manifest未設定時は`AlphaPulseSynthesizer`で`StrategyConfigurationError`をraise。
+- `FeedbackVector.realized_rr`が`target_rr`を0.5以上下回った場合、`TraderPlaybookService`が`playbook_adjustment_required`をOps Agendaへ登録し、Runbook `RUN-ALPHA-FEEDBACK-01`に従って根本原因レビューを行う。
+
+#### 88.3 トレードプラン生成〜HITLフロー
+
+1. **Pulse生成**: `AlphaPulseSynthesizer.refresh(pair="USDJPY")`が新Pulseを生成し、`EventBus`へ`alpha.pulse.updated`をpublish。Pulseには`ProfitTargetBand`候補が最大3件付属。
+2. **Trader Playbook適用**: `TraderPlaybookService.match(pulse)`が過去90営業日のFeedbackを参照し、プレイブック採択スコアを算出。スコア差が<0.05ならば複数シナリオを提示してヒューマンに選択を委ねる。
+3. **Ticket生成**: `TicketBuilder.build_from_pulse`が`size_hint`/`protect_levels`を埋込。`ExecutionAlphaOverlay`は`board_mode`と`Kill Switch`を参照してReduce-Only変換を適用。
+4. **HITL承認**: Signal Board/Tauriでカードに「推奨」「控え」ボタンを表示。承認時は`TicketValidator`が`conviction >= min_conviction`を確認。未達なら警告ダイアログ`alpha_low_conviction`を起動し、OverrideにはOps/Witnessダブルサインが必要。
+5. **実行 & 追跡**: 約定後、`PnLFeedbackLoop`が`FeedbackVector`を生成し、`TradeJournal`エントリへリンク。トレーダーは`tradectl alpha review`で補足コメントを残す。
+6. **プレイブック更新**: Dailyクローズジョブ`AlphaFeedbackJob`がConvictionバイアスとサイジング補正を計算し、`alpha_profiles.yaml`を更新。変更は`DocOpsService`を通じてPull Request化され、`RUN-ALPHA-PROFILE-01`で審査。
+
+- **例外フロー**:
+  - `board_mode=guarded`: `size_band.max`を0.5倍、`ProfitTargetBand`は`max_hold_minutes`を半減。強制Reduce-Onlyに切替。
+  - `health_state=degraded`か`spread_cooldown.active`: Pulseを`status=hold`で保存し、Boardには黄色バナー＋`Retry after cooldown`リンクのみ表示。
+  - `Kill Switch STOP`: `ExecutionAlphaOverlay`はPulseを`frozen`に設定し、Ops Agendaに`alpha_pulse_frozen`TODOを追加。
+
+#### 88.4 テレメトリ・監査・Runbook
+
+- **メトリクス (`metrics/profit_loop.jsonl`)**: `pulse_id`, `pair`, `conviction`, `size_hint`, `board_mode`, `fill_rr`, `max_adverse_pips`, `decision_latency_ms`, `feedback_cycle_minutes`. 目標: `decision_latency_ms ≤ 90000`, `feedback_cycle_minutes ≤ 1440`。連続2回閾値超過で`health.raise('warn','profit_loop_slow')`。
+- **レポート**: `reports/performance/profit_loop_daily.md`にペア別Hit率、Conviction vs 実RR散布チャート、トップ/ワーストPulse Top3を掲載。`Alpha Scoreboard`（§32）へリンク。
+- **監査ログ**: `audit.alpha_pulse`（生成/更新）、`audit.alpha_feedback`（FeedbackVector登録）、`audit.alpha_override`（Conviction未達Override）を新設。OverrideはダブルサインIDを必須。
+- **Runbook**:
+  - `RUN-ALPHA-FEEDBACK-01`: Feedback欠落/乖離時の調査手順。`PnLFeedbackLoop`異常をOpsが分担。
+  - `RUN-ALPHA-PROFILE-01`: `alpha_profiles.yaml`変更、シミュレーション、承認フロー（PO+Ops）を定義。
+  - `RUN-ALPHA-ESCALATION-02`: 連敗シナリオ（連続-3R）でBoardを`guarded`へ引き上げる判断基準と緊急ヘッジ手順。
+
+#### 88.5 CLI / Config / Feature Flag
+
+- **設定ファイル (`config/alpha_profiles.yaml`)**:
+
+```
+profiles:
+  usd_jpy_breakout:
+    risk_budget_pct: 0.45
+    baseline_edge_bps: 4.2
+    max_lot: 1.8
+    min_conviction: 0.32
+    default_target_band: day15
+    playbooks: ["breakout", "pullback"]
+```
+
+- **Feature Flags**: `alpha.profit_loop_enabled`（default: Paperのみ）、`alpha.dynamic_sizing`（default: false）、`alpha.playbook_override`（default: true）。Flag無効時は従来の静的Lotサイズにフォールバックし、Pulseは生成のみ。
+- **CLIコマンド**:
+  - `tradectl alpha preview --pair USDJPY --regime asia --target-band day15 --risk moderate`: 最新Pulse/サイジング/Protectレベルを表示し、JSONでエクスポート可能（`--format json`）。
+  - `tradectl alpha optimize --ticket <id> --playbook breakout --max-risk 0.5`: TicketにPulse情報を再適用し、HITLカードを更新。
+  - `tradectl alpha review --date 2025-11-13 --pair EURUSD --status open`: FeedbackVectorの未完了項目を一覧化し、CLI上でコメント追加・Opsエスカレーションを行う。
+  - `tradectl cfg alpha-profile diff --profile usd_jpy_breakout`: `alpha_profiles.yaml`差分を表示し、`DocOpsService`へ提出するテンプレ（`docs/change_requests/ALPHA-<date>.md`）を生成。
+
+#### 88.6 テスト計画・Codex Packet
+
+- **ユニット**:
+  - `tests/unit/test_alpha_pulse_synthesizer.py`: Conviction計算、Spread/Latencyペナルティ、Regime遷移時の半減期更新。
+  - `tests/unit/test_execution_alpha_overlay.py`: Board Mode別サイジング、Reduce-Only変換、Stop/TP算出。
+  - `tests/unit/test_trader_playbook_service.py`: Feedback履歴からのシナリオ選択、閾値未達時の代替提示。
+- **統合/回帰**:
+  - `tests/integration/test_profit_loop_flow.py`: `tradectl alpha preview`→Ticket承認→`PnLFeedbackLoop`→Scoreboard更新までのEnd-to-End。
+  - `tests/approval/alpha_pulse/*.json`を用いたCLIスナップショット。`poetry run pytest tests/approval -k alpha_pulse`.
+  - `make regression-alpha-loop`: Backtest結果を再利用しConviction vs RRの回帰を実施。Evidence: `evidence/alpha_loop/regression_<date>.md`。
+- **Codex Packet案**:
+  | Packet ID | スコープ | 成果物 | テスト |
+  | --- | --- | --- | --- |
+  | `EP21-ALPHA-P1` | `AlphaPulseSynthesizer`基盤、Conviction計算、データモデル | `src/strategies/alpha_pulse.py`, `config/alpha_profiles.yaml`, `tests/unit/test_alpha_pulse_synthesizer.py` | `pytest -k alpha_pulse_synth` |
+  | `EP21-ALPHA-P2` | `ExecutionAlphaOverlay`/`TraderPlaybookService`/CLI `alpha preview` | `src/execution/alpha_overlay.py`, `src/trader/playbook.py`, `src/interfaces/cli/alpha.py` | `pytest -k alpha_overlay`, `poetry run tradectl alpha preview --pair USDJPY --dry-run` |
+  | `EP21-ALPHA-P3` | `PnLFeedbackLoop`/Scoreboard連携/Runbook & Evidence | `src/analytics/pnl_feedback.py`, `docs/runbooks/RUN-ALPHA-FEEDBACK-01.md`, `reports/performance/profit_loop_daily.md`テンプレ | `pytest -k pnl_feedback`, `make regression-alpha-loop` |
+
+- **受入基準**:
+  1. `AlphaPulse`→Ticket→Feedbackの一連IDが`audit.alpha_*`で相互参照可能であること。
+  2. `tradectl alpha preview`が`--format json`指定時に`SchemaRegistry('alpha.pulse.v1')`へ準拠し、CI `schema-validate`に通ること。
+  3. Conviction 0.2未満のPulseはBoardで`観察`状態、それ以上は推奨Lot/Protect付きで表示され、Override時は監査ログとRunbookチェックが強制されること。
+
+### 89. DataLag Mitigationハードニング & Resyncオーケストレーション（FR-01/FR-02/FR-19, AC-01/AC-05/AC-45, NFR-06/NFR-12）
+
+EP-01で要求されるデータ遅延SLAと手動フォールバック手順を、サービス/CLI/Runbook/テレメトリ/テストの各レイヤーで一貫させる。`DataIngestionService`（§3.1）、`Workflow Orchestrator`（§2.3）、`Acceptable Degradation`（§5.15）が同じイベント/証跡を共有することで、「遅延検知→フォールバック→Resync→解除」までを1インシデントあたり90分以内で閉じることを目的とする。
+
+#### 89.1 パイプライン構造とResync動作
+
+- **優先度付きフェッチ**: `DataIngestionService.fetch_latest`は`provider_priority`を`config/ingestion/priorities.yaml`からロードし、`PriorityAsyncQueue`へ投入。優先度は`symbol_weight`×`timeframe_weight`で算出し、`BackfillJob`と競合しないよう`resync_job_id`をタグ付けする。
+- **Fallbackキュー**: `FallbackRetryTask`は`failover_queue`を監視し、再試行毎に`retry_backoff_factor`を指数成長させる。3回失敗で`FallbackPlan`を生成し、`ManualCsvIngestionTask`または`provider_failover=secondary`へ切替。各ステップは`event_bus.publish("ingestion.failover.state", {...})`で通知する。
+- **Resync API**: `Workflow Orchestrator.trigger_resync(range, failover_plan)`が`ResyncRequest`を組立て、`SessionManager`経由で`DataIngestionService.backfill`や`ManualCsvIngestionTask`を連鎖実行。Resync実行中は`ModeContext.catch_up_state`を`"resyncing"`へ更新し、Signal Engineへの新バー供給を一時停止（HITLカードには「Resync中」バナーを表示）。
+- **Blocking条件**: `ManualCsvIngestionTask`は`quality.failed & provider=primary`の場合のみ全パイプラインをブロックし、`fallback_plan.manual_csv_required=true`をセット。Failoverに成功した場合は自動解除とし、ヒューマン入力不要なケースでの摩擦を低減。
+- **イベント連携**:
+  - `ingestion.latency_exceeded`→`health.raise('degraded','data_latency_fetch|process')`
+  - `ingestion.failover.started/completed`→`audit.ingestion_failover`
+  - `resync.completed`→`health.suggest_resume`（Catch-up条件を満たした場合のみ）
+- **データ保証**: Resync完了時に`DataFrameHasher`がバックフィル対象のParquetハッシュを`data_manifest.json`へ追記し、`reports/validation_log/AC-45_sla_<date>.md`に`failover_used`/`manual_csv_required`/`catch_up_duration_minutes`を記録。Manifest差分は`docs/change_requests/DATA-SLA-<date>.md`に自動テンプレ生成。
+
+#### 89.2 CLI (`tradectl data/resync`系) とHITL導線
+
+- **`tradectl resync`**:
+  - 引数: `--since/--until`, `--symbols`, `--provider`, `--failover-plan <auto|manual|force-manual>`, `--failover-report`.
+  - 出力: `ResyncProgressTable`（列: symbol, timeframe, provider, failover_used, manual_csv_required, retries, duration_sec）と、`health.suggest_resume`発火有無。`--failover-report`時は`reports/ops/resync/<timestamp>.md`を生成。
+  - 返却コード: 0=成功、21=Failover未完、120=Manual CSV署名欠落。
+- **`tradectl data manual-template`**: 1) `data/manual_fallback/<provider>/<symbol>/<YYYYMMDD>/`配下に`fallback_primary.csv`/`fallback_review.csv`雛形を生成、2) `ManualCsvChecklist.md`を同梱しRunbookリンクを添付。
+- **`tradectl data validate-csv`**: ハッシュ比較＋行数/タイムスタンプ検証。`--approve`指定で`ManualCsvReconciler.approve()`を呼びだし、`audit.manual_csv`イベントを記録。失敗時Exit code 120で`ops_worklog`へ`manual_csv_retry_required`を追記。
+- **HITL通知**: Resync/Failover中はSignal Board/Tauri（§86）へ`state:syncing`イベントを送信し、カードヘッダに「Catch-up中」「手動CSV待ち」バナーを表示。`OpsOverlay`は`tradectl resync`出力から`pending_actions`を再構成して操作手順を明示。
+
+#### 89.3 テレメトリ・Evidence・監査
+
+- **メトリクス**:
+  - `metrics/data_ingestion_sla.jsonl`: `phase`, `delay_sec`, `provider`, `symbol`, `resync_job_id`, `failover_used`.
+  - `metrics/resync_jobs.jsonl`: `job_id`, `range_minutes`, `symbols`, `failover_plan`, `manual_csv_required`, `duration_sec`, `status`.
+  - `metrics/manual_csv.jsonl`: `symbol`, `provider`, `rows`, `hash_primary`, `hash_review`, `approver`.
+  - `metrics/ops_workload.json`: 15分粒度で`manual_csv_minutes`, `resync_minutes`を集計し、`OpsAgendaService`（§52）に転送。
+- **監査**:
+  - `audit.ingestion_failover`: payload=`{plan_id, symbol, provider, attempt, result, backoff_ms}`。
+  - `audit.resync`: `{job_id, initiator, range, failover_used, manual_csv_required, manifest_hash}`。
+  - `audit.manual_csv`: `{path, hash_primary, hash_review, approvers, runbook_id}`。
+- **Evidence**:
+  - `reports/validation_log/AC-45_sla_<date>.md`: SLA逸脱→是正手順→解除条件。`make sla-report`で生成し、Resync完了後に`RUN-POST-03`へ添付。
+  - `reports/ops/resync/<job_id>.md`: CLI出力＋Opsコメント＋`tradectl metrics report --kind sla`抜粋。
+  - `evidence/data/manual_csv/<YYYYMMDD>/<symbol>.md`: ハッシュとRunbookサインを保存し、`DocOpsService`が自動で`OpsEvidenceStore`へ登録。
+
+#### 89.4 Runbook/Agenda連携 & Acceptable Degradationトリガー
+
+- **Runbook連携**:
+  - `RUN-DATA-05`（フォールバック調整）: `ingestion.latency_exceeded`→`ops.agenda.data_lag`タスク生成→`tradectl resync --failover-plan auto`実行→`reports/validation_log`添付。
+  - `RUN-DATA-06`（Manual CSV）: `fallback_plan.manual_csv_required=true`時のみ実行。CLIテンプレ生成→二重入力→検証→承認ログ。
+  - `RUN-RISK-02`（Guardedモード）: Resync開始時にKill Switch検討、`board_mode=guarded`へ遷移。
+  - いずれも`OpsAgendaService`で`due_ts`と`ack_deadline`を管理。手順未完了時は`health.raise('warn','manual_csv_pending')`。
+- **Agenda Hooks**:
+  - `ops.agenda.data_lag`: `task_payload`に`resync_job_id`, `failover_plan`, `manual_csv_required`.
+  - 完了時に`OpsAlphaBridge`（§88.1）へ通知し、Profit Loop上でのデータ品質フラグを解除。
+- **Acceptable Degradation**:
+  - `tradectl status --verbose`で`degraded_reason`を確認し、`tradectl resync --failover-report`完了時に`health.suggest_resume`を自動発火。
+  - `Acceptable Degradation`解除条件（§5.15）に`resync_jobs.duration_p90<45分`とEvidence添付義務を追加。未達の場合は`RUN-POST-03`で恒久対策を登録。
+
+#### 89.5 Codex Packet & テスト計画（EP01-P1/P2/P3）
+
+| Packet ID | スコープ | 成果物 | テスト | 受入条件 |
+| --- | --- | --- | --- | --- |
+| `EP01-P1` | 優先度付きフェッチ、`metrics/data_ingestion_sla.jsonl`強化、`FallbackRetryTask`イベント化 | `src/data/service.py`, `src/data/fallback.py`, `tests/unit/test_data_ingestion_delays.py`, `tests/integration/test_data_pipeline.py` | `pytest -k data_ingestion`, `poetry run tradectl resync --since -1h --dry-run` | fetch/processing遅延がJSONLへ記録され、Health Monitorが`reason=data_latency_fetch|process`を受け取ること |
+| `EP01-P2` | Manual CSVテンプレ/検証CLI、`ManualCsvReconciler`整備、監査ログ | `src/interfaces/cli/data.py`, `src/data/manual_csv.py`, `tests/unit/test_manual_csv_reconciler.py`, `tests/approval/data/manual_csv` | `pytest -k manual_csv`, `poetry run tradectl data validate-csv tests/fixtures/manual_good --approve` | 双子CSV不一致でExit code 120、ハッシュ一致で`audit.manual_csv`が生成されEvidenceに書き出される |
+| `EP01-P3` | Resync CLIレポート、`health.suggest_resume`自動発火、Evidence出力 | `src/interfaces/cli/resync.py`, `src/core/workflow.py`, `reports/templates/resync_report.md`, `tools/sla_report.py` | `pytest-approvaltests -k resync_cli`, `make sla-report` | `tradectl resync --failover-report`が表・Evidenceファイルを出力し、Catch-up条件を満たすと`health.suggest_resume`イベントをPublish |
+
+- **追加テスト**:
+  - `tests/fault/test_data_failover_backoff.py`: Provider落ち→Fallback→Manual CSVブロックの順序を検証。
+  - `tests/cli/test_tradectl_resync.py`: CLI引数組合せ、`--failover-plan force-manual`時の警告表示をSnapshot化。
+  - `make chaos-data-lag --duration 20m --inject latency`: 故意に遅延を注入し、`metrics/resync_jobs.jsonl`のp95が`<45m`であることをCI夜間に確認。
+
+- **受入基準**:
+  1. `ingestion.latency_exceeded`→`resync.completed`→`health.suggest_resume`のイベントチェーンが監査ログと証跡で再構築できる。
+  2. Manual CSVフローで双子CSV不一致時にパイプラインが止まり、Runbookサインなしでは再開できない。
+  3. CLI/GUIともにResync・Failover状態を明示し、Ops AgendaとProfit Loop（§88）からデータ品質ステータスを参照できる。
+
+### 90. Guardrailsハードニング & Kill Switch/Spread制御統合（FR-05/FR-36/FR-37/FR-42/FR-47, AC-03/AC-11/AC-31/AC-34/AC-41, NFR-02/NFR-11/NFR-15/NFR-19）
+
+EP-03では、データ/リスク/オペレーションの状態を単一ソース（`HealthMonitor`, `RiskManager`, `SpreadMonitor`）で束ね、HITL判断に必要な情報をCLI/GUIへ同時に露出する。目的は「検知→Board Mode遷移→Kill Switch→解除」のループを15分以内に回し、Spread・NTP・ニュース・Kill Switchの競合を減らすこと。
+
+#### 90.1 Health State Machineとイベントハンドオフ
+
+- **状態モデル**: `health.state ∈ {ok, warn, degraded, halted}`、`board_mode ∈ {normal, guarded, halted}`、`kill_switch ∈ {none, soft_stop, hard_stop}`。`health.state`は理由リストと解除条件を保持し、`BoardMode`はHuman操作の可否を制御、`Kill Switch`はAPI送信を強制停止。
+- **イベントキュー**: `HealthMonitor`は`suggest_guarded`/`suggest_resume`を`HealthActionQueue`に積み、`tradectl status --ack`やGUI操作で承認されるまで保留。Queue要素は`{action, reason, evidence_paths, expires_at}`。承認時には`audit.health_action`を記録。
+- **自動トリガー**:
+  - `ingestion.latency_exceeded`（§89）→`HealthMonitor.raise('degraded','data_latency_fetch')`
+  - `spread.cooldown_active`（90.3）→`HealthMonitor.raise('warn','spread_cooldown')`
+  - `KillSwitchReview`未完→`health.raise('warn','kill_switch_pending_review')`
+- **解除条件**: `suggest_resume`は`Acceptable Degradation`（§5.15）を参照し、SLA/Evidenceが満たされた場合にのみ自動発火。CLI/GUIは解除条件をテーブル表示し、Ops承認後に`health.ack()`が呼ばれる。
+
+#### 90.2 Kill Switch/Board Mode連携とTicket制御
+
+- **Kill Switch層**:
+  - `soft_stop`: 新規エントリ禁止、Reduce-Only/Exitのみ許可。
+  - `hard_stop`: 既存ポジクローズ以外すべて禁止。Ops承認後のみ戻せる。
+- **Board Mode遷移**: `health.state=degraded`または`Kill Switch soft_stop`で自動的に`board_mode=guarded`へ。`Kill Switch hard_stop`で`board_mode=halted`。`tradectl board --guarded`は`HITLGuardOverlay`（GUI/CLI）を起動し、承認ボタンを無効化、Reduce-Onlyチケットのみ表示。
+- **Ticket評価**: `RiskManager.evaluate_ticket`は`kill_switch_state`と`spread_state`を参照し、`TicketForceCancelled`イベントを出力。`reduce_only_hint`がTrueの場合は`TicketBuilder`が自動変換し、HITLカードへ「Reduce-Only強制」バナーを追加。Kill Switch状態は`audit.ticket_action`に含める。
+
+#### 90.3 Spread Guard, NTP, Newsフィルタ
+
+- **SpreadMonitor**:
+  - `SpreadCooldownState = {status: normal|cooldown|block, p95, p99, cooldown_reason, expires_at}`。
+  - `cooldown_reason`例: `wide_spread`, `ntp_drift`, `news_volatility`.
+  - `status=block`でKill Switch `soft_stop`を推奨、`status=cooldown`でBoardを`guarded`へ誘導。
+- **NTP/ニュース連携**:
+  - `NtpDriftMonitor`（§2.7）から`drift_ms`が`config.guardrails.ntp_max_ms`超過でSpread Guardに`cooldown_reason='ntp_drift'`を付与。
+  - `NewsCalendarService`（§3.12）で`high_impact`イベントが15分以内にある場合は`spread.cooldown_active`へ`news_volatility`を追加。
+- **CLI**: `tradectl spread inspect --window 30m`はSpread分位/NTP/ニュースを表で表示し、`--json`で`cooldown_reason`と解除条件を出力。Exit code 31=block、21=cooldown。
+
+#### 90.4 CLI/GUI通知とOpsワークフロー
+
+- **CLI (`tradectl status --verbose`)**: `HealthActionQueue`、`board_mode`, `kill_switch`, `spread_state`, `degraded_reason`, `解除条件`, `Pending Runbooks`を表で表示。`--json`でOps自動化にも供給。
+- **CLI (`tradectl kill-switch *`)**: `status`, `review --reason`, `set --state soft_stop|hard_stop`. 実行時に`audit.kill_switch`と`ops_worklog`へ記録。`review`は`RUN-RISK-02`テンプレを自動添付。
+- **GUI**: StageGuardパネル（§86）で`Guarded/Halted`ラベルとCountdownを表示。`OpsOverlay`は`HealthActionQueue`のPendingをカード化し、Runbookリンクを横付け。`CommandPalette`ショートカットで`tradectl status`, `kill-switch review`を呼び出す。
+- **Ops Agenda**: `ops.agenda.guardrails`タスクが`{reason, suggested_action, deadline}`を保持し、完了時に`health.ack`とRunbook証跡を自動連携。
+
+#### 90.5 テレメトリ・監査・Runbook
+
+- **メトリクス**:
+  - `metrics/guardrails.jsonl`: `timestamp`, `board_mode`, `kill_switch`, `spread_status`, `health_state`, `reason`, `suggested_action`, `ack_user`.
+  - `metrics/spread_cooldown.jsonl`: `status`, `symbol`, `p95`, `p99`, `cooldown_reason`, `ntp_drift_ms`, `news_id`.
+  - `metrics/ops_workload.json`に`guardrails_minutes`, `kill_switch_minutes`を追記（Ops負荷評価用）。
+- **監査**:
+  - `audit.health_action`: `{action, reason, evidence, approved_by, queue_id}`。
+  - `audit.kill_switch`: `{state_before, state_after, reason, runbook_id, ops_ack}`。
+  - `audit.spread_guard`: `{symbol, status, cooldown_reason, expires_at}`。
+- **Runbook更新**:
+  - `RUN-RISK-02 Guarded Mode`: Health Queue承認/拒否、Kill Switch連動手順。
+  - `RUN-RISK-07 Live Performance Guard`: Spread/NTP/Newsを含む解除条件とEvidence添付を追記。
+  - `RUN-EMER-UNWIND-01`: Kill Switch hard_stop→Emergency unwinding→解除判定のTimelineを最新化。
+
+#### 90.6 Codex Packet & テスト計画（EP03-P1/P2/P3）
+
+| Packet ID | スコープ | 成果物 | テスト | 受入条件 |
+| --- | --- | --- | --- | --- |
+| `EP03-P1` | `HealthMonitor`イベントキュー化、`tradectl status`強化、`audit.health_action` | `src/core/health.py`, `src/interfaces/cli/status.py`, `tests/unit/test_health_state.py`, `tests/cli/test_tradectl_status.py` | `pytest -k health_state`, `pytest-approvaltests -k status_cli` | `suggest_guarded/resume`がQueue表示され、承認で`audit.health_action`が生成される |
+| `EP03-P2` | `SpreadMonitor`/NTP/News統合、`tradectl spread inspect`、`metrics/spread_cooldown.jsonl` | `src/execution/spread.py`, `src/interfaces/cli/spread.py`, `tests/unit/test_spread_monitor.py`, `tests/cli/test_tradectl_spread.py` | `pytest -k spread_monitor`, CLIスナップショット | `cooldown_reason`がCLI/GUIで共有され、`status=block`時にKill Switch推奨が表示される |
+| `EP03-P3` | Kill Switch/Board Mode連携、`RiskManager.evaluate_ticket`の強化、`audit.kill_switch` | `src/risk/manager.py`, `src/interfaces/cli/kill_switch.py`, `tests/unit/test_risk_manager.py`, `tests/integration/test_guarded_board.py` | `pytest -k risk_manager`, `tradectl board --guarded` | Kill Switch変更が監査ログに残り、Board/TicketがReduce-Only制御に従う |
+
+- **追加テスト**:
+  - `tests/fault/test_guardrails_state_machine.py`: `data_latency`+`spread_block`発生時の状態遷移を検証。
+  - `tests/gui/test_stageguard_panel.ts`: GUIバナーとCountdown、Command Paletteショートカット動作。
+  - `make chaos-guardrails --fault spread_wide --duration 10m`: Spread異常注入→Kill Switch推奨→解除までのEvidence生成を自動検証。
+
+- **受入基準**:
+  1. `HealthActionQueue`の提案→承認→Kill Switch/Board Mode遷移→解除までのイベントが`metrics`/`audit`/`reports`で再現できる。
+  2. Spread/NTP/Newsの組合せでGuarded/Haltedが自動提案され、手動承認が必要であること。
+  3. CLI/GUIともにGuardrails状態とRunbook連携が同期し、Ops AgendaとProfit Loop（§88）の両方にデータ品質/リスク状態が伝搬する。
+
+### 91. Strategy Determinism & Replay Parity設計（FR-03/FR-04/FR-19/FR-48, AC-07/AC-08/AC-16, NFR-02/NFR-06/NFR-12）
+
+EP-02のゴールは「同じデータセット＋同じ設定→Backtest/Paper/Liveでバイトレベルまで一致」を保証し、回帰テストとHITL診断の再現性を確保すること。`FeaturePipeline`（§3.3）、`StrategyRegistry`（§3.5）、`ExecutionModel`（§5.2）が共有する決定論コンテキストを定義し、CLI/テレメトリ/Runbook/テスト/Evidenceを通じて差分を即時検出できるようにする。
+
+#### 91.1 Determinism Contextと種の配布
+
+- **`ModeContext.determinism`**: `{seed:int, feature_version:str, data_manifest_hash:str, replay_window:ISO8601 interval}`を保持。`SessionManager`はモードごとに`seed = base_seed + mode_offset`を算出し、Backtest/Paper/Liveで衝突しないようにする。
+- **Seed伝播**:
+  1. `FeaturePipeline.run`に`DeterminismHandle`を渡し、`np.random.default_rng(seed + feature_offset)`を生成。
+  2. `StrategyRegistry.execute_all`は各Strategy Manifestの`determinism_key`（必須）を読み取り、`seed + hash(determinism_key)`を`StrategyContext.seed`に設定。
+  3. `ExecutionModel`は`seed + execution_seed_offset`を用いてヒューマン遅延やスリッページ擬似乱数を生成。`execution_model.yaml`に`default_seed_offset`を追加。
+- **Manifest要件**:
+  - `strategies.<id>.determinism_key`（32文字以内の文字列）を必須化。欠落時は`StrategyConfigurationError`.
+  - `feature_version`衝突防止のため、`strategy_manifest.yaml`更新時に`docs/change_requests/STRAT-DET-<date>.md`を生成し、`data_manifest`との整合を記載。
+- **Replay Window**: `Workflow Orchestrator`はBacktest範囲とPaper/Live差分を`replay_window`として記録し、CLI `tradectl determinism replay`に引き渡す。
+
+#### 91.2 FeaturePipeline決定論
+
+- **キャッシュキー**: `feature_cache_key = f"{pair}:{tf}:{feature_version}:{data_manifest_hash}"`。`FeatureCacheStore`はヒット率を`metrics/feature_cache.jsonl`に`hit/miss`で記録。
+- **欠損補完ルール**: 乱数が絡む補完（例: gap-filling jitter）は`rng.normal(...)`ではなく`rng.standard_normal(size=<fixed>)`＋決定論アルゴリズムで構築。欠損スタンプと補完結果は`feature.trace`イベントで`EventBus`へ送信。
+- **Feature Versioning**: `config/features/feature_versions.yaml`を新設し、各Featureごとに`version`, `inputs`, `release_notes`を定義。変更時は`feature_version`を必ず更新し、旧バージョンは`deprecated_after`を設定。
+
+#### 91.3 Strategy Registry & Diagnostics
+
+- **`strategy.determinism`イベント**: payload=`{strategy_id, determinism_hash, feature_version, manifest_hash, mode}`。`determinism_hash = blake2b(features + outputs + params)`で生成。
+- **Diagnostics View**: `tradectl board --view diagnostics`に`determinism_hash`, `seed`, `feature_version`, `data_manifest_hash`を表示。BacktestとPaperでハッシュ差異がある場合は`status=diverged`を表示し、Exit code 76を返す。
+- **Registry Hooks**: `StrategyRegistry.execute_all`は各Strategyの戻り値に`diagnostics`を付与し、`StrategyResult` dataclassへ`seed`, `feature_version`, `determinism_hash`を明記する。
+
+#### 91.4 Execution Model統一とヒューマン遅延
+
+- **Human Delay**: `ExecutionModel.apply_human_delay`は`Triangular(low, mode, high)`ではなく`rng.uniform`で生成した`u`から逆変換し、Backtest/Paper/Liveで一致させる。`execution_model.yaml`で`human_delay_profile`を定義し、Profileごとにseed offsetを設定。
+- **Slippage/Protect**: `protect_pips`補正やスリッページ試算も決定論seedから計算。`ExecutionTrace`に`slippage_simulated`と`seed_used`を追加し、`metrics/execution_determinism.jsonl`で集計。
+- **Ticket TTL**: `TicketBuilder`へのTTL提供は`ExecutionModel`の決定論関数`compute_ttl(seed, volatility)`を利用し、Board表示とBacktestログで同じ値になるようにする。
+
+#### 91.5 CLI/ツール/Evidence
+
+- **`tradectl determinism replay`**:
+  - 引数: `--since/--until`, `--mode backtest|paper`, `--strategy <id>`, `--window 1000bars`, `--output <path>`.
+  - 出力: 差分テーブル（columns: `bar_ts`, `feature_hash`, `strategy_hash`, `ticket_hash`, `latency_ms`）。差異がある場合は`diff_report.md`を生成し、`reports/determinism/<date>/<strategy>.md`へ保存。
+- **`tools/replay_signals.py`**: Backtest/Paper/Liveの`SignalRecord`を読み込み、`determinism_hash`が一致しない場合に最小限のJSON差分を`reports/tests/determinism_diffs/<strategy>.json`へ出力。
+- **Evidence**:
+  - `reports/validation_log/AC-07_determinism_<date>.md`: データハッシュ、seed、差分サマリ、Runbookリンク。
+  - `evidence/determinism/replays/<date>/<strategy>.parquet`: 差分対象バーを保存し、再解析できるようにする。
+
+#### 91.6 テレメトリ・監査・Runbook
+
+- **メトリクス**:
+  - `metrics/determinism.jsonl`: `mode`, `strategy_id`, `feature_version`, `determinism_hash`, `status`, `latency_ms`.
+  - `metrics/replay_jobs.jsonl`: `job_id`, `window`, `diff_count`, `max_latency_ms`, `seed`.
+  - `metrics/execution_determinism.jsonl`: `ticket_id`, `slippage_simulated`, `human_delay_ms`, `seed`.
+- **監査**:
+  - `audit.strategy_determinism`: `{strategy_id, determinism_hash, feature_version, manifest_hash, data_manifest_hash, mode}`。
+  - `audit.determinism_replay`: `{job_id, strategy_id, window, diff_count, evidence_paths}`。
+  - `audit.execution_seed`: `{ticket_id, seed, delay_ms, profile}`。
+- **Runbook**:
+  - `RUN-DET-01 Determinism Replay`: CLIコマンド、Evidence添付、Ops/Quantサイン手順。
+  - `RUN-DET-02 Manifest Drift Review`: Strategy Manifest変更時に`alpha_profiles`/`feature_versions`と同期させる手順。
+  - `RUN-DET-03 Seed Rotation`: base seed更新時の影響評価と再計測フロー。
+
+#### 91.7 Codex Packet & テスト計画（EP02-P1/P2/P3）
+
+| Packet ID | スコープ | 成果物 | テスト | 受入条件 |
+| --- | --- | --- | --- | --- |
+| `EP02-P1` | FeaturePipeline種管理/キャッシュキー/Feature Versioning | `src/features/pipeline.py`, `src/features/cache.py`, `config/features/feature_versions.yaml`, `tests/unit/test_feature_pipeline_determinism.py` | `pytest -k feature_pipeline`, `tools/replay_signals.py --mode backtest --window 500` | 同一データでFeature出力が完全一致し、キャッシュキーが`feature_version`と`data_manifest`を含む |
+| `EP02-P2` | StrategyRegistry determinism hash & diagnostics CLI | `src/strategies/registry.py`, `src/strategies/context.py`, `src/interfaces/cli/board_diagnostics.py`, `tests/unit/test_strategy_registry_determinism.py`, `tests/cli/test_board_diagnostics.py` | `pytest -k strategy_registry`, CLIスナップショット | `determinism_hash`がEventBus/CLIへ露出し、差分時にExit code 76を返す |
+| `EP02-P3` | ExecutionModel seed統一・Human Delay/Slippage決定論、`tradectl determinism replay` | `src/execution/model.py`, `src/interfaces/cli/determinism.py`, `tools/replay_signals.py`, `tests/unit/test_execution_determinism.py`, `tests/integration/test_determinism_replay.py` | `pytest -k execution_determinism`, `poetry run tradectl determinism replay --since -2d --mode paper` | Human Delay/Slippageがseedベースで再現し、Replay CLIがEvidenceを生成 |
+
+- **追加テスト**:
+  - `tests/fault/test_determinism_seed_rotation.py`: base seed更新時にBacktest/Paperが再同期されることを確認。
+  - `tests/approval/determinism/*.json`: CLI diff出力のSnapshot。
+  - `make regression-determinism`: Backtest+Paper 5,000バーを再実行し、`metrics/determinism.jsonl`差分を評価。Nightlyで自動実行。
+
+- **受入基準**:
+  1. Backtest/Paper/Liveで`determinism_hash`が一致し、差異発生時にCLI/GUI/Evidenceで即座に検知できる。
+  2. Feature/Strategy/Executionの種とバージョン情報がManifest/Config/Runbookと整合し、監査ログで追跡可能。
+  3. Replay CLIとテストスイートが`RUN-DET-01`/`RUN-DET-02`の証跡テンプレに沿って実行・保存される。
+
+### 92. Ticket Clarity & HITL UX強化設計（FR-07/FR-38/FR-39/FR-44, AC-02/AC-10/AC-20/AC-37, NFR-11/NFR-15）
+
+EP-04では、チケットのJSON構造・CLI/GUI・監査ログ・Runbookを一貫させ、ヒューマン承認の迷いを排除する。Ticket Builder→CLI Board→StageGuard/Tauri→Audit/Reporterまでを一本のデータ契約で結び、Reduce-Only/Kill Switch/Spread異常などの背景情報を即時に伝えることを目的とする。
+
+#### 92.1 Ticketデータモデル（`TicketRecord v2`）
+
+```
+TicketRecord:
+  ticket_id: UUID
+  issued_at: datetime
+  pair: str
+  timeframe: str
+  strategy_id: str
+  regime_context: { regime: str, conviction: float, volatility_score: float }
+  position: { direction: "long"|"short", size_lot: float, size_hint: {min, max}, reduce_only: bool }
+  protect: { stop_loss: float, take_profit: float, trailing: float|null, ttl_seconds: int }
+  entry: { type: "market"|"limit", price: float|null, spread_pips: float, spread_badge: "ok"|"wide"|"blocked" }
+  risk_summary: { r_multiple: float, account_risk_pct: float, exposure_bucket: str, risk_disclosure: "pending"|"signed" }
+  checklist: [
+    { id: "spread_window_clear", label: "...", status: "pending"|"ok"|"warn", ack_by: str|null },
+    ...
+  ]
+  badges: ["news_block", "manual_csv", "reduce_only_required", ...]
+  notes: { trader_comment: str|null, ops_hint: str|null }
+  audit_refs: { manifest_hash: str, feature_version: str, determinism_hash: str }
+  board_mode: "normal"|"guarded"|"halted"
+  guardrails: { kill_switch: "none"|"soft_stop"|"hard_stop", spread_status: "normal"|"cooldown"|"block", health_state: str }
+```
+
+- Checklist順序とIDは§3.16で定義済みの`HumanErrorChecklist`を参照し、CLI/GUI/Auditで同一英字ラベルを使う。
+- `spread_badge`はSpread Guard（§90.3）と連動。`blocked`の場合は承認操作を禁止し、`reduce_only`を強制。
+- `audit_refs`は§91で定義した決定論情報を埋め込み、Ticket単位でBacktestとの突合を可能にする。
+
+#### 92.2 CLI `tradectl board/ticket` UX
+
+- **ボード表示**:
+
+```
+┌ Ticket tkt_20250318_001 (USDJPY H1, Strategy: breakout_v2, Board: guarded)
+│ Regime: Trend (Conviction 0.74)  Volatility: 1.08x   Determinism: 8c4a..1f
+│ Size: 0.85 lot (hint 0.60-0.95)  Reduce-Only: REQUIRED (Kill Switch soft_stop)
+│ Risk: +1.4R (0.52% equity)  Exposure: JPY-Long 2.1%  RiskDisclosure: PENDING
+│ Entry: Market (Spread 0.9p, badge=WIDE)  TTL: 18m  Protect: SL 149.20 / TP 149.95
+│ Badges: news_block, manual_csv, degrad_guarded
+│ Checklist:
+│   [ ] spread_window_clear        [ ] double_entry_confirmed
+│   [ ] sl_tp_verified             [ ] lot_round_ok
+│   [ ] price_decimals_ok          [ ] oco_ack_received
+│   [ ] manual_comment_logged
+│ Commands: approve --id ... --double-entry <user> | defer | reject | edit | open --json
+└──────────────────────────────────────────────────────────────────────────────
+```
+
+- **新オプション**:
+  - `tradectl board --view badges`: バッジ/ガードレールを強調し、チェックリストは折りたたむ。
+  - `tradectl board --json`: `TicketRecord`をそのまま出力（監査ツールやGUIとの連携用）。
+  - `tradectl ticket edit --change size=0.7 --change reduce_only=true`: 差分パッチを適用し、`TicketDiff`を表示してから確認プロンプト。
+  - `--double-entry <user>`: `GateState.human.double_entry_required`時に必須。CLIは自動で`TicketChecklist.double_entry_confirmed`へ署名を追加。
+- **Exit code**:
+  - 0=success, 61=RiskDisclosure未承諾で承認不可, 62=Spread block, 63=Kill Switch hard stop。
+- **CLI Snapshot/Evidence**: `tests/approval/board/*.txt`を更新し、`reports/snapshots/board_guarded_<date>.md`へ貼付。
+
+#### 92.3 GUI/Tauriシンク
+
+- StageGuard（§86）で以下のUI変更を適用:
+  - チケットカードヘッダに`badges`と`guardrails`を表示。
+  - チェックリストは進行状況バーを追加し、ダブルエントリー未完時に赤枠＋Ops連絡先バナー。
+  - `CommandPalette`で`ticket approve`を呼ぶ際に、CLIと同じ確認ダイアログ（Reduce-Only警告、Spread block警告）を表示。
+  - GUI操作でも`TicketRecord`のJSONを`AuditWriter`へ渡すため、`command_handler.rs`に`TicketPayloadSerializer`を導入。
+
+#### 92.4 監査・Evidence・Reporter
+
+- **監査**:
+  - `audit.ticket_action.v2`: `{ticket_id, action, actor, board_mode, guardrails, checklist_before, checklist_after, diff_before_after, consent_reference_id, determinism_hash, runbook_ref}`。
+  - `audit.ticket_diff`: 差分パッチ（JSON Patch形式）を保存し、後続のReporter/Complianceで参照。
+- **Evidence**:
+  - `reports/ops/ticket_guarded_<date>.md`: Guardedモード中の承認ログとCLIスクリーンショットを1ファイルに集約。
+  - `reports/trader_signoff/EP04-P1.md`: トレーダー受入チェックリスト（TR-03）をテンプレート化。
+- **Reporter連携**:
+  - 週次レポート（§9.3）へ`TicketSummary`セクションを追加し、Reduce-Only推奨やManual CSV依存、ガードモード中のチケット数を記載。`reports/templates/weekly_m1_core.md`に`{{ ticket_summary }}`ブロックを追加。
+
+#### 92.5 テレメトリ・Ops負荷
+
+- `metrics/tickets.jsonl`: `ticket_id`, `action`, `board_mode`, `guardrails`, `checklist_status`, `latency_ms`, `user_id`.
+- `metrics/hitlx.jsonl`: HITL操作時間・再承認回数・手動編集件数を記録し、Ops負荷を可視化。
+- `metrics/checklist_progress.jsonl`: チェックリストの未完率をトラックし、M1 KPI（未完<5%）を監視。
+- `ops_worklog.jsonl`に`ticket_action_minutes`を追加し、`OpsAgendaService`がダブルエントリー未完タスクを自動生成。
+
+#### 92.6 Runbook/トレーダー受入
+
+- `RUN-HITL-01 Ticket Approval`: 新チェックリスト・ダブルエントリー手順・Runbookリンク挿入位置を更新。
+- `RUN-HITL-02 Ticket Edit/Override`: CLI `ticket edit`のテンプレ、監査/Runbook記録要件を追記。
+- トレーダー受入シナリオ:
+  - `TR-03`: Guardedモードでの承認可否テスト（既存を更新）。
+  - `TR-04`: Reduce-Only強制ケースでのUX確認。
+  - `TR-05`: Manual CSV依存時のバナー/Runbookリンク確認。
+
+#### 92.7 Codex Packet & テスト計画（EP04-P1/P2/P3）
+
+| Packet ID | スコープ | 成果物 | テスト | 受入条件 |
+| --- | --- | --- | --- | --- |
+| `EP04-P1` | TicketRecord v2データモデル、`TicketBuilder`/`TicketChecklist`更新 | `src/ticket/builder.py`, `src/ticket/models.py`, `tests/unit/test_ticket_builder.py` | `pytest -k ticket_builder`, JSON Schema検証 | Ticket JSONが`regime_context`/`risk_summary`/`guardrails`を含み、チェックリスト順序が固定 |
+| `EP04-P2` | CLI `tradectl board/ticket` UX更新、Snapshot/Evidenceテンプレ | `src/interfaces/cli/board.py`, `src/interfaces/cli/ticket.py`, `tests/approval/board/`, `tests/cli/test_ticket_cli.py`, `docs/reports/templates/board_snapshot.md` | `pytest-approvaltests -k board`, CLIユニット | Spread/KillSwitch/ReduceOnlyバナーとチェックリストが正しく描画され、Exit codeポリシーが守られる |
+| `EP04-P3` | Audit/Reporter連携、GUIシリアライザ、Metrics | `src/persistence/audit.py`, `src/interfaces/gui/tauri_app/command_handler.rs`, `src/reporter/templates/weekly_m1_core.md`, `tests/integration/test_ticket_audit.py` | `pytest -k audit_ticket`, GUI単体テスト, `tradectl report weekly --dry-run` | `audit.ticket_action.v2`にdiff/guardrailsが記録され、週次レポートがTicket Summaryを表示 |
+
+- **追加テスト**:
+  - `tests/cli/test_ticket_edit.py`: 差分パッチと確認プロンプトのE2E。
+  - `tests/gui/test_ticket_badges.ts`: Tauriカードのバッジ表示。
+  - `make regression-hitl`: CLI/GUIスナップショットと`metrics/tickets.jsonl`整合を夜間で検証。
+
+- **受入基準**:
+  1. Ticket JSON/CLI/GUI/監査/Reporterが同じフィールド名・順序で表現し、差分が一箇所で把握できる。
+  2. Reduce-Only/Kill Switch/Spread異常などの背景が即座に表示され、RunbookやOps Agendaとの連携が途切れない。
+  3. TR-03〜TR-05トレーダー受入シナリオを実施し、UX改善が確認できる（チェックリスト未完率<5%、承認時間中央値-10%目標）。
