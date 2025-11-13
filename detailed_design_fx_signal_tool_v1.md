@@ -129,6 +129,34 @@
 2. リリース後7日間は該当機能のメトリクスを重点監視し、異常時は`feedback_loop.md`に記録。Codexへの再依頼時はこのログを添付する。
 3. KPIが改善した場合は`reports/weekly/<YYYYWW>.md`に成果を記載し、反対に悪化した場合はリスクレビュー（`docs/risk_review/<YYYYMMDD>.md`）で原因と暫定対応をまとめる。
 
+#### 0.6.7 Codex開始前ゲーティング
+- **目的**: Codexへ作業を委譲する前に、依頼単位での着手条件と環境健全性を確認する。`board_mode=guarded`または`health_state in {degraded, soft_stop, hard_stop}`の場合はOpsリードが解除手順と証跡をRunbookに記録するまでゲートを解除しない。
+- **着手条件**:
+  1. `make ci-lite`成功ログが24時間以内に存在し、`docs/prompt_packages/<date>_baseline.md`へ貼付済みであること。
+  2. `reports/validation_log/AC-45_sla_20250220.md`等の既存インシデントログに未解消アクションが残っていないこと。
+  3. `docs/runbooks/daily_agenda/backlog.md`に`status=open`の項目がある場合は担当者/期限を再確認し、Codex依頼の範囲から除外する。
+
+#### 0.6.8 証跡アーカイブポリシー
+- **保管場所**: Codex関連証跡は以下へ集約する。CIログは`reports/ci/`、Runbookアジェンダは`docs/runbooks/daily_agenda/`、バリデーション結果は`reports/validation_log/`。
+- **命名規則**: `reports/validation_log/<CHECK_ID>-<slug>.md`、`docs/runbooks/daily_agenda/notes/<YYYYMMDD>.md`、`reports/ci/<tool>_<YYYYMMDD>.xml`。Git履歴に残らないSlack/メールは必ずMarkdown化して当該ディレクトリへ保存する。
+- **レビューフロー**: 証跡追加時はPR説明に対象CHECK IDを明記し、`docs/review_log.md`へ要約を残す。削除や改訂時はOpsリードとPOのダブルサインを`reports/validation_log/`内の該当ファイルに追記する。
+
+#### 0.6.9 Codex開始チェックリスト（CHK-0.6.9）
+Codexと共同開発を開始する際は以下7項目を必ず実施し、`reports/validation_log/CHK-0.6.9-run.md`へ記録する。
+
+| チェックID | 目的 | 主な検証手順 | 必須証跡 | 更新責任 |
+| --- | --- | --- | --- | --- |
+| CHK-0.6.9-1 | CIテンプレ整合性 | `ci/templates/python_smoke.yml`の差分と`on.workflow_call`引数をレビューし、現行ブランチで実行可能か確認する。 | `ci/templates/python_smoke.yml`, `reports/ci/README.md` | 開発リード |
+| CHK-0.6.9-2 | Smokeテスト実行証跡 | GitHub Actionsまたはローカルで`python_smoke`を実行し、`reports/ci/python_smoke.xml`を生成。失敗時は再実行計画をログ化。 | `reports/ci/python_smoke.xml`（最新 run）、`reports/validation_log/CHK-0.6.9-run.md` | DevOps |
+| CHK-0.6.9-3 | 日次アジェンダ同期 | `docs/runbooks/daily_agenda/CODEX_DAILY_START.md`のチェックを当日分で完了し、必要なノートを`notes/<date>.md`へ残す。 | `docs/runbooks/daily_agenda/CODEX_DAILY_START.md`, `docs/runbooks/daily_agenda/notes/<date>.md` | Opsリード |
+| CHK-0.6.9-4 | Runbook状態確認 | `RUN-DATA-05`, `RUN-RISK-01`等の関連Runbookに未完了項目が無いか確認し、あれば解消計画を明記する。 | `docs/runbooks/RUN-DATA-05.md`, `docs/runbooks/RUN-RISK-01.md`, `docs/runbooks/daily_agenda/backlog.md` | Opsチーム |
+| CHK-0.6.9-5 | メトリクス健全性 | `metrics/data_ingestion_sla.jsonl`, `logs/audit/ticket.jsonl`から主要指標を抽出し、閾値逸脱時はAcceptable Degradation判定を実施。 | `metrics/data_ingestion_sla.jsonl`, `logs/audit/ticket.jsonl`, `reports/validation_log/AC-45_sla_20250220.md` | Data-Ops |
+| CHK-0.6.9-6 | Promptパッケージ整備 | `docs/prompt_packages/`内の対象ファイルにテスト指示とRunbook/Validation Logのリンクが含まれるか確認する。 | `docs/prompt_packages/<date>_<epic>.md`, `reports/validation_log/CHK-0.6.9-run.md` | プロダクトオーナー |
+| CHK-0.6.9-7 | 役割アサイン | 当日のOps責任者とCodexレビュワーを決定し、署名を`reports/validation_log/CHK-0.6.9-run.md`に残す。 | `reports/validation_log/CHK-0.6.9-run.md` | Opsリード＋Codex窓口 |
+
+- **運用ノート**: チェック結果が`pending`の場合は`docs/runbooks/daily_agenda/notes/<date>.md`にフォローアップ期限を記載し、翌営業日のアジェンダで再確認する。
+- **エスカレーション**: 2営業日連続で`CHK-0.6.9-2`または`CHK-0.6.9-5`が`fail/pending`の場合、Opsマネージャーが`RUN-OPS-02`に沿って緊急レビューを開催する。
+
 ### 0.7 Codex実装アクセラレーションパック（v2.0追加）
 
 Codexへ実装を委任する際の成果物粒度・レビュー観点・トレーサビリティをさらに明確にするため、以下の運用ルールとテンプレートを追加する。これらは将来のM1.1/M2機能追加時にも再利用できるよう設計しており、エピックを跨いだ再帰的改善サイクルを可能にする。

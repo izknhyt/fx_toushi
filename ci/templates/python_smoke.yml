@@ -1,0 +1,60 @@
+name: Python smoke tests
+
+on:
+  workflow_call:
+    inputs:
+      python-version:
+        required: false
+        type: string
+        default: "3.11"
+      poetry-version:
+        required: false
+        type: string
+        default: "1.8.3"
+    secrets:
+      GH_TOKEN:
+        required: false
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ inputs.python-version }}
+
+      - name: Install Poetry
+        run: |
+          pip install poetry==${{ inputs.poetry-version }}
+
+      - name: Install dependencies
+        run: |
+          poetry install --sync
+
+      - name: Lint critical rules
+        run: |
+          poetry run ruff check --select E,F,I src tests
+
+      - name: Type check hot paths
+        run: |
+          poetry run pyright
+
+      - name: Run focused smoke tests
+        run: |
+          poetry run pytest -k "smoke or board_renderer" --maxfail=1 --disable-warnings -q
+
+      - name: Persist smoke summary
+        if: always()
+        run: |
+          mkdir -p reports/ci
+          poetry run pytest -k "smoke" --maxfail=1 --disable-warnings -q --junitxml=reports/ci/python_smoke.xml
+
+      - name: Upload smoke summary artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-smoke-${{ github.run_number }}
+          path: reports/ci/python_smoke.xml
