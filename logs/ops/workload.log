@@ -1,0 +1,3 @@
+2025-03-04T09:15:22+09:00 | guard_release_pending | RUN-DATA-05 stage-4 checklist awaiting Ops signature
+2025-03-04T17:42:11+09:00 | guard_release_reviewed | Ops double-check completed for stage-4 checklist
+2025-03-05T08:55:03+09:00 | guard_release_pending | RUN-DATA-05 stage-5 follow-up required (CHK-0.6.9-4)

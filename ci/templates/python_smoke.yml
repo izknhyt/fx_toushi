@@ -1,0 +1,66 @@
+name: Python smoke validation
+
+on:
+  workflow_call:
+    inputs:
+      ref:
+        required: false
+        type: string
+      python-version:
+        required: false
+        type: string
+        default: '3.11'
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 'Git ref to validate'
+        required: false
+      python-version:
+        description: 'Python runtime'
+        required: false
+        default: '3.11'
+
+jobs:
+  smoke:
+    name: Run smoke tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ inputs.python-version }}
+
+      - name: Install Poetry
+        run: |
+          python -m pip install --upgrade pip
+          pip install poetry
+
+      - name: Install project dependencies
+        run: |
+          poetry install --no-root
+          poetry run pip install ruff pyright
+
+      - name: Run smoke tests
+        run: |
+          poetry run pytest -k smoke --maxfail=1 --disable-warnings
+
+      - name: Static checks (minimal)
+        run: |
+          poetry run ruff check --select E,F,I src tests
+          poetry run pyright
+
+      - name: Archive artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-smoke-${{ github.run_number }}
+          path: |
+            .pytest_cache
+            reports/validation_log
+            logs
+          if-no-files-found: warn

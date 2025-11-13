@@ -129,6 +129,23 @@
 2. リリース後7日間は該当機能のメトリクスを重点監視し、異常時は`feedback_loop.md`に記録。Codexへの再依頼時はこのログを添付する。
 3. KPIが改善した場合は`reports/weekly/<YYYYWW>.md`に成果を記載し、反対に悪化した場合はリスクレビュー（`docs/risk_review/<YYYYMMDD>.md`）で原因と暫定対応をまとめる。
 
+#### 0.6.9 Codex開始チェックリスト（v2.7追加）
+
+Codexへ新規タスクを委譲する際は、着手日の朝会で以下のチェックを完了し、証跡を`reports/validation_log/`に残す。チェック実施用のテンプレートは`docs/runbooks/daily_agenda/CODEX_KICKOFF.md`に整理しており、Ops/PO/Devの三者が参加する。
+
+| チェックID | 観点 | 完了条件 | 証跡/格納先 | 更新責任 |
+| --- | --- | --- | --- | --- |
+| CHK-0.6.9-1 | CIスモーク基盤 | `ci/templates/python_smoke.yml`に`pytest -k smoke`と`ruff check`/`pyright`実行が含まれていることを確認し、必要に応じて対象ブランチでワークフローを起動する。 | `ci/templates/python_smoke.yml`, GitHub Actions実行ログ（任意） | 開発（Codex） |
+| CHK-0.6.9-2 | プロンプト準備 | `docs/prompt_packages/<date>_<epic>.md`に差分概要・参照セクション・I/O契約・テスト指示が揃っている。欠損があれば朝会で補完してからCodexへ共有する。 | 例: `docs/prompt_packages/20250304_ep03.md` | PO |
+| CHK-0.6.9-3 | Runbook整合 | Acceptable Degradation関連Runbook（`RUN-DATA-05`, `RUN-RISK-01`等）の更新履歴を確認し、影響手順に差分がないかレビューする。 | `docs/runbooks/RUN-DATA-05.md`, `docs/runbooks/RUN-RISK-01.md` | Ops |
+| CHK-0.6.9-4 | 運用ログ | `logs/ops/workload.log`の直近24時間エントリを確認し、Guard解除pendingがあればフォローアップ担当を明確化する。 | `logs/ops/workload.log` | Ops |
+| CHK-0.6.9-5 | 前回フォローアップ | `reports/validation_log/CHK-0.6.9_<date>.md`に前回未完了項目が残っていないか確認し、本日の追跡メモを更新する。 | `reports/validation_log/CHK-0.6.9_20250305.md`など | PO＋Ops |
+| CHK-0.6.9-6 | チェックリスト維持 | `docs/runbooks/daily_agenda/CODEX_KICKOFF.md`を diff し、必要に応じてチェック内容/スケジュールを更新。変更は同日の検証ログへ記録する。 | `docs/runbooks/daily_agenda/CODEX_KICKOFF.md` | Ops（Runbook管理） |
+| CHK-0.6.9-7 | レビュー体制 | `docs/review_log.md`に当日の担当レビュア/承認者を明記し、Codexへ渡すIssue/PRリンクを添付。未指定の場合はタスク着手を保留する。 | `docs/review_log.md` | PO |
+
+- 直近のチェック結果は`reports/validation_log/CHK-0.6.9_<date>.md`で管理し、`python_smoke`ワークフロー実行ログがある場合はアーティファクトを添付する。
+- CHK-0.6.9-4でpendingが検出された場合、Opsは同日12:00 JSTまでに`logs/ops/workload.log`へフォローアップ結果を追記し、POへ共有する。
+
 ### 0.7 Codex実装アクセラレーションパック（v2.0追加）
 
 Codexへ実装を委任する際の成果物粒度・レビュー観点・トレーサビリティをさらに明確にするため、以下の運用ルールとテンプレートを追加する。これらは将来のM1.1/M2機能追加時にも再利用できるよう設計しており、エピックを跨いだ再帰的改善サイクルを可能にする。
