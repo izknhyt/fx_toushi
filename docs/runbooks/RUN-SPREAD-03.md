@@ -1,8 +1,8 @@
 # RUN-SPREAD-03: スプレッド監視とフェイルオーバー手順
 
 > **ACカバレッジ**: AC-22, AC-45（スプレッド関連）
-> **Runbook版数**: v0.1
-> **最終更新日**: 2025-03-10
+> **Runbook版数**: v0.2
+> **最終更新日**: 2025-03-12
 > **最終更新者**: Risk Manager (Doc Maintainer)
 
 ## 目的
@@ -18,16 +18,17 @@
 ## 事前準備
 - `data/spread_metrics.parquet`の最新スナップショットを取得し、ハッシュを控える。
 - `spread_provider_health.jsonl`と`reports/performance/spread/<date>.md`の直近記録を確認。
+- フェイルオーバー証跡を格納する`logs/ops/<YYYYMMDD>_spread/`ディレクトリを用意し、CLI/メトリクス出力をJSONLで保存する。
 - `docs/runbooks/RUN-RISK-01.md`と`docs/runbooks/OPS-READINESS-01.md`を参照できるよう準備。
 - `tradectl spread` CLIへのアクセス権があることを確認。
 
 ## 手順
-1. Ops Managerがアラートを受信したら`tradectl spread status --window 1h`を実行し、影響範囲と直近の閾値を確認。
-2. `python tools/spread_diff.py --base data/spread_metrics.parquet --target data/spread_metrics_latest.parquet`で差分を算出し、結果を`reports/performance/spread/spread_diff_<date>.md`へ保存。
-3. フェイルオーバーが必要な場合は`tradectl spread switch --to <provider>`を実行し、理由・時間帯・承認者を`reports/audit/spread/<date>.md`に記録。
-4. Reduce-Onlyへ切り替える場合は`tradectl spread ack --provider <name> --mode reduce-only`を実行し、`docs/runbooks/RUN-RISK-01.md`に従ってKill Switch状態を監視。
-5. 影響が解消したら`tradectl spread resume --provider <name>`で通常運用へ戻し、`HealthMonitor`のイベントが`resolved`になったことを確認。
-6. `reports/validation_log/AC-22_<date>.md`および`reports/validation_log/AC-45_sla_<date>.md`に結果を追記し、担当者サインを残す。
+1. Ops Managerがアラートを受信したら`tradectl spread status --window 1h`を実行し、影響範囲と直近の閾値を確認。コマンド結果は`logs/ops/<YYYYMMDD>_spread/status_window.jsonl`へ保存する。
+2. `python tools/spread_diff.py --base data/spread_metrics.parquet --target data/spread_metrics_latest.parquet`で差分を算出し、結果を`reports/performance/spread/spread_diff_<date>.md`へ保存。差分コマンドの標準出力は`logs/ops/<YYYYMMDD>_spread/diff_result.jsonl`にエクスポートする。
+3. フェイルオーバーが必要な場合は`tradectl spread switch --to <provider>`を実行し、理由・時間帯・承認者を`reports/audit/spread/<date>.md`に記録。実行ログは`logs/ops/<YYYYMMDD>_spread/failover_commands.jsonl`へ保存する。
+4. Reduce-Onlyへ切り替える場合は`tradectl spread ack --provider <name> --mode reduce-only`を実行し、`docs/runbooks/RUN-RISK-01.md`に従ってKill Switch状態を監視。Guard関連のCLI出力は`logs/ops/<YYYYMMDD>_spread/guard_sequence.jsonl`で管理する。
+5. 影響が解消したら`tradectl spread resume --provider <name>`で通常運用へ戻し、`HealthMonitor`のイベントが`resolved`になったことを確認。`logs/ops/<YYYYMMDD>_spread/resume.jsonl`へ結果を保存する。
+6. `reports/validation_log/AC-22_<date>.md`および`reports/validation_log/AC-45_sla_<date>.md`に結果を追記し、担当者サインを残す。必要に応じて`reports/validation_log/RISK-REGISTER_<date>.md`へリンクを追加し、リスクログへ反映する。
 
 ## チェックリスト
 - [ ] `tradectl spread status`の結果確認

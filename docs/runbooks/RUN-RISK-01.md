@@ -1,8 +1,8 @@
 # RUN-RISK-01: Kill Switch・リスク監視運用手順
 
 > **ACカバレッジ**: AC-03, AC-09  
-> **Runbook版数**: v1.1
-> **最終更新日**: 2025-03-09
+> **Runbook版数**: v1.2
+> **最終更新日**: 2025-03-12
 > **最終更新者**: Risk Manager (Doc Maintainer)
 
 ## 目的
@@ -19,15 +19,16 @@
 ## 事前準備
 - `risk_policy.yaml`と`ops_schedule.yaml`が最新コミットと一致していること。
 - `reports/audit/drawdown_guard/`と`reports/performance/paper/latency_stats.json`への書き込み権限を確認する。
+- Guardコマンドの証跡を保存する`logs/ops/<YYYYMMDD>_guard/`ディレクトリを事前に作成し、CLI出力をJSONL形式で収集できるようにする。
 - Kill Switch解除権限を持つプロダクトオーナーがSlack/電話で即応できる体制。
 
 ## 手順
 
 ### 1. 日次リスクサマリ確認（平常時）
-1. `tradectl status --history kill-switch --limit 7` を実行し、直近7日間のKill Switchイベントを確認。`state=armed`のままになっていないかチェックする。
-2. `tradectl diagnostics risk --from -7d --mode paper` を実行し、`per_trade_R_stdev`が`0.70〜0.80`に収まっているか、`max_concurrent`違反が0件かを確認する。
-3. `tradectl metrics latency --mode paper --from -1d`で承認→OCOレイテンシの中央値/p90を確認し、AC-09の閾値内であることを記録する。
-4. 結果を`reports/validation_log/AC-09_<date>.md`へ追記し、担当者サインを残す。
+1. `tradectl status --history kill-switch --limit 7` を実行し、直近7日間のKill Switchイベントを確認。`state=armed`のままになっていないかチェックする。出力ログは`logs/ops/<YYYYMMDD>_guard/kill_switch_history.jsonl`へ保存する。
+2. `tradectl diagnostics risk --from -7d --mode paper` を実行し、`per_trade_R_stdev`が`0.70〜0.80`に収まっているか、`max_concurrent`違反が0件かを確認する。メトリクスJSONは`logs/ops/<YYYYMMDD>_guard/risk_diagnostics.jsonl`として保管する。
+3. `tradectl metrics latency --mode paper --from -1d`で承認→OCOレイテンシの中央値/p90を確認し、AC-09の閾値内であることを記録する。`metrics_latency.jsonl`を同ディレクトリに保存する。
+4. 結果を`reports/validation_log/AC-09_<date>.md`へ追記し、担当者サインを残す。四半期レビュー時は`reports/validation_log/RISK-REGISTER_<date>.md`へもリンクを追記し、リスクログ更新に利用する。
 
 ### 2. ドローダウン閾値到達時の対応（AC-03）
 1. `HealthMonitor`またはアラートで`drawdown_daily>=2.5%`または`drawdown_weekly>=5%`が通知されたら、即座に`tradectl risk limits show --mode paper`で現在値を確認する。
@@ -37,7 +38,7 @@
    - シンボル別損失内訳
    - 閾値判定ログ（`logs/events/risk.kill_switch_*.jsonl`）
    - Kill Switch操作の実行者・理由
-   を記録する。
+   を記録する。併せて手順で実行したCLIログ（`logs/ops/<YYYYMMDD>_guard/kill_switch_engage.jsonl`・`logs/ops/<YYYYMMDD>_guard/kill_switch_release.jsonl`）をエビデンスとして保存する。
 4. Risk Managerが原因分析（戦略別寄与、想定外スリッページ有無）を行い、緩和アクション（Reduce-Only、サイズ縮小等）を提示する。
 5. プロダクトオーナーおよびOps Managerが復帰判断会議を開催し、議事録を上記Markdownへ追記する。再開までに以下を満たすこと:
    - `tradectl diagnostics risk --from -30d`でR分布/同時保有数が基準内
@@ -48,13 +49,13 @@
 ### 3. R_eff監視とアラート処理（AC-09）
 1. `tradectl diagnostics risk --from -1d --mode paper --detail`で`R_eff`のピーク値を確認し、`max_r_eff`が`≤2.5`であることを確認する。Signal Boardヘッダの`R_eff`バナー（Risk Metrics Snapshot）が同値であるか突合する。
 2. `R_eff`が閾値を超過した場合は`tradectl risk override --block --reason r_eff_breach --duration 60m`で新規シグナル投入を停止し、Ticket Builderへ通知する。Signal Boardの赤バナーが消えるまで（連続2バー≒10分）Kill Switchを維持し、解除時は`reason=r_eff_guard`で記録する。
-3. `reports/diagnostics/risk/<YYYYMMDD>.json`を更新し、閾値逸脱のグラフ/統計と`RiskMetricsSnapshot`のハッシュを添付する。`reports/validation_log/AC-09_<date>.md`にエビデンスを追記。
+3. `reports/diagnostics/risk/<YYYYMMDD>.json`を更新し、閾値逸脱のグラフ/統計と`RiskMetricsSnapshot`のハッシュを添付する。`logs/ops/<YYYYMMDD>_guard/r_eff_guard.jsonl`にアラート前後のメトリクスをエクスポートし、`reports/validation_log/AC-09_<date>.md`およびリスクレビュー台帳（`reports/validation_log/RISK-REGISTER_<date>.md`）にエビデンスを追記する。
 4. 逸脱原因を調査し、ポジションサイズの異常・設定不整合があれば`risk_policy.yaml`修正を提案。対応完了までKill Switchを保持する。
 
 ### 4. 週次レビュー
-1. `tradectl risk summary --week`を実行し、週次ドローダウン・R_eff・同時保有率をレポートにまとめる。
+1. `tradectl risk summary --week`を実行し、週次ドローダウン・R_eff・同時保有率をレポートにまとめる。出力は`logs/ops/<YYYYMMDD>_guard/risk_weekly_summary.jsonl`へ保存する。
 2. 週次Ops会議でRunbook手順の完了チェックリストを確認し、未完了項目があれば`reports/governance/ops_readiness_<YYYYWW>.md`に記載する。
-3. `reports/validation_log/AC-03_<date>.md`に週次レビュー結果と参加者サインを残す。
+3. `reports/validation_log/AC-03_<date>.md`に週次レビュー結果と参加者サインを残す。リスクログ更新を行った場合は`reports/validation_log/RISK-REGISTER_<date>.md`と相互にリンクさせる。
 
 ### 5. 通貨バケット・相関データセット更新（週次 / Paper運用期間）
 1. 日曜JST 22:00（マーケットクローズ後）に`tradectl correlation snapshot --window 30d --out data/correlation/$(date +%G%V)_correlation.parquet --heatmap data/correlation/$(date +%G%V)_heatmap.png`を実行する。成功終了コードを確認し、生成ファイルのSHA256を`reports/validation_log/AC-09_<date>.md`に追記する。
