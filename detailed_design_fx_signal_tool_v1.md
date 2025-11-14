@@ -1928,9 +1928,10 @@ Flag切替時は`ConfigChanged`イベントに`flag_delta`が記録され、Repo
 3. **再計算戦略**: `build_index`は`source_hash`を計算し、変更がない場合はキャッシュ（`reports/evidence_graph/cache/<window>.json`）を返す。キャッシュヒット時も`graph build --force`で再生成可能とする。
 4. **Prompt Bundle連携**: `PromptBundleService.build`（§20）にグラフAPIを注入し、対象`change_ids`のノード要約を`PromptSection(kind='existing_design')`末尾へ自動追記する。
 5. **Ops Review統合**: `OpsReviewDigestBuilder`（§19）が`EvidenceQueryResult`から`RiskHighlight`と`ActionItem`を補強。孤立ノードは`impact_score`を引き上げ、レビューで優先的にチェックする。
-6. **セキュリティ/プライバシー**: ノード`metadata`から個人名/メールを削除し、`actor`はイニシャルまたは`CLI_ACTOR`に置換。`args_hash`のみを保持し、生ログへの直接リンクは`artifact://`スキームで参照。
-7. **性能**: ノード数500件、エッジ3000件を想定。`networkx`等の外部依存を避け、`igraph`導入はM2検討。M1は純PythonでDFS/BFSを実装し、`O(N+E)`でクエリ処理できるようにする。
-8. **エラーハンドリング**: 欠損ファイルは`EvidenceNode`に`status='orphan'`を付与し、`evidence audit`で検出。致命的エラー時は`EvidenceGraphError`をRaiseし、CLIは`ERROR evidence.graph_build_failed`で終了。
+6. **証跡テンプレ連携**: `docs/ux_feedback.md`（`ux_feedback/<YYYYMMDD>_<slug>`）、`docs/templates/degradation_report.md`（`degradation_episode/<id>`）、`docs/validation/strategy_determinism.md`（`strategy_validation/<strategy>/<YYYYMMDD>`）、`docs/knowledge_packs/README.md`（`knowledge_pack/<category>/<case_id>`）をEvidence Graphへ自動リンクする。Change Ledgerは`category in {'feedback','degradation','strategy_validation','knowledge_pack'}`を必須化し、Release Readiness (§30) のEvidence Pointer生成時にこの命名規約を利用する。
+7. **セキュリティ/プライバシー**: ノード`metadata`から個人名/メールを削除し、`actor`はイニシャルまたは`CLI_ACTOR`に置換。`args_hash`のみを保持し、生ログへの直接リンクは`artifact://`スキームで参照。
+8. **性能**: ノード数500件、エッジ3000件を想定。`networkx`等の外部依存を避け、`igraph`導入はM2検討。M1は純PythonでDFS/BFSを実装し、`O(N+E)`でクエリ処理できるようにする。
+9. **エラーハンドリング**: 欠損ファイルは`EvidenceNode`に`status='orphan'`を付与し、`evidence audit`で検出。致命的エラー時は`EvidenceGraphError`をRaiseし、CLIは`ERROR evidence.graph_build_failed`で終了。
 
 ### 23.6 テスト計画
 | テストID | 目的 | 内容 |
@@ -1961,6 +1962,18 @@ Flag切替時は`ConfigChanged`イベントに`flag_delta`が記録され、Repo
 - **M1.1**: `graphviz`プラグインを追加し、`tradectl evidence query --format graphviz --open`でPNGを自動生成。CLIに`--open`でPreviewを開く機能を追加。
 - **M2**: `EvidenceInferenceService`を追加し、孤立ノードや重複ケースに対する自動アクション提案を行う。Graphベースの類似度計算に`networkx`を導入し、計算負荷をテレメトリに記録。
 - **M2+**: 外部監査提出用に`evidence_graph.export(standard='audit_v1')`を実装し、CSV/PDF化。外部レビュー向けに個人情報マスキングを自動適用する。
+
+### 23.9 証跡資産整備状況（2025-03-05更新）
+
+| 参照ラベル | 作成済みパス | テンプレ更新日 | 命名規約/備考 |
+| --- | --- | --- | --- |
+| UX Feedback Log | `docs/ux_feedback.md` | 2025-03-05 | Evidenceノード: `ux_feedback/<YYYYMMDD>_<slug>`。`ChangeLedger.category='feedback'`で登録し、Release Readinessの`open_feedback`へ供給。 |
+| AD Episode Report Template | `docs/templates/degradation_report.md` | 2025-03-05 | Evidenceノード: `degradation_episode/<id>`。`tradectl degradation report`出力のベース。`ChangeLedger.category='degradation'`必須。 |
+| Strategy Determinism Playbook | `docs/validation/strategy_determinism.md` | 2025-03-05 | Evidenceノード: `strategy_validation/<strategy>/<YYYYMMDD>`。Runbook `STRAT-M1-VALIDATION`と同期。`ChangeLedger.category='strategy_validation'`を利用。 |
+| Knowledge Pack Operations Guide | `docs/knowledge_packs/README.md` | 2025-03-05 | Evidenceノード: `knowledge_pack/<category>/<case_id>`。`index.json`と連動し、`ChangeLedger.category='knowledge_pack'`で棚卸し記録。 |
+
+- `tradectl evidence link ...` コマンド群は上記命名規約に従い、Evidence Graph (§23.5) とRelease Readiness (§30) の`EvidencePointer`へ同一IDを提供する。
+- Delivery Control Tower (§25) とOps Review Hub (§19) は本表を参照し、テンプレ更新日が30日を超過した場合に`DeliveryAlert(kind='evidence_template_stale')`を出す。
 
 ## 24. Acceptable Degradation Analytics & Recovery Toolkit（v2.6追加）
 
@@ -2031,7 +2044,7 @@ Acceptable Degradation（以下AD）発生時の定量把握と復旧計画立�
 3. `RecoveryPlanBuilder`はScenario RunnerとGame EngineをOptional依存としてDI。Feature Flagで無効な場合は代替手順を`manual_actions`に追加する。
 4. Evidence Graph連携は`EvidenceGraphService.link_artifact(node, edge)`のみ使用し、内部Graph構造へ直接アクセスしない。`link_artifact`失敗時はエラーログを残しつつ処理を継続（ベストエフォート）。
 5. CLIは`Typer`のサブアプリとして登録し、既存`register_command(CommandSpec)` API（§0.7.5）を利用。`CommandSpec`に`category='ops'`、`requires_profile=False`を設定。
-6. レポート出力はMarkdownテンプレ `docs/templates/degradation_report.md`（新設）を利用し、`jinja2`ではなく`string.Template`で軽量に生成（依存追加回避）。
+6. レポート出力はMarkdownテンプレ `docs/templates/degradation_report.md`（2025-03-05更新）を利用し、`jinja2`ではなく`string.Template`で軽量に生成（依存追加回避）。
 7. `manual_hours_saved`計算では`automation_effect.jsonl`（§6.8.3）と比較し、差分が負の場合はWARNログ `degradation.manual_savings_negative` を出力してRunbookレビューを促す。
 
 ### 24.7 テスト計画
@@ -2171,6 +2184,7 @@ Signal Board/チケット承認フローで収集したヒューマンフィー�
 
 ### 26.4 フィードバック処理フロー
 1. `Collector`が`logs/audit/ticket.jsonl`（承認/却下コメント）、`metrics/cli_perf.jsonl`（Board滞在時間）、`docs/ux_feedback.md`（手動記録）を読み込み、`FeedbackItem`を生成。
+   - **作成済みパス**: `docs/ux_feedback.md`（2025-03-05更新）を参照し、Runbook `RUN-HITL-01`記録と同期する。
 2. `FeedbackRouter`が`tags`・`strategy_id`・`severity`に応じて複数ルートへ分配。
    - 例: `tags=['spread','ux-copy']`→`destination=['risk','ux']`。
    - `degradation_case_id`が紐づく場合は必ず`ops`宛に含め、復旧フローで確認できるようにする。
@@ -3568,7 +3582,7 @@ M1 Coreの優先エピック（EP-01〜EP-04）を段階的にハードニング
 ### 89.1 運用境界と依存モジュール
 - Feature Pipeline（§3.3）とStrategy Registry（§3.4）の決定論保証をRunbook `STRAT-M1-VALIDATION`の手順1〜5に結び付け、`dataset_hash`/`config_hash`の整合を`reports/data_manifest.json`で一元管理する。
 - 再承認フローで生成される`reports/research/m1_baseline/metrics_<date>.json`と`validation_<date>.md`を`EvidenceGraph`に取り込み、`ChangeLedger.record_change(category='strategy_validation')`の必須化を維持する。
-- `docs/validation/strategy_determinism.md`は未整備のため、Runbookの「チェックリスト」節を暫定参照とし、ドキュメント化が完了したら本節の依存一覧を更新する（追跡: `docs/prompt_packages/20250318_packet_backlog.md#3-...`).
+- `docs/validation/strategy_determinism.md`（2025-03-05更新）を参照し、Runbookの「チェックリスト」節とEvidence Graphノード`strategy_validation/<strategy>/<YYYYMMDD>`を同期させる（追跡: `docs/prompt_packages/20250318_packet_backlog.md#3-...`).
 
 ### 89.2 CLIシーケンスとRunbook突合
 | Runbook手順 | CLI/スクリプト | 証跡ファイル | 備考 |
@@ -3607,7 +3621,7 @@ M1 Coreの優先エピック（EP-01〜EP-04）を段階的にハードニング
 
 ### 91.1 運用境界と依存モジュール
 - Ticket Builder（§3.16）とBoard CLI（§6.2）のUI要件を`RUN-HITL-01`のチェックリストおよび日次アジェンダ`docs/runbooks/daily_agenda/CODEX_DAILY_START.md`の「Boardレビュー」節に合わせ、`HumanErrorChecklist`結果とRisk Disclosureバナー表示をRunbookに一致させる。
-- `docs/ux_feedback.md`は未作成のため、HITLフィードバックの仮置きとして`docs/prompt_packages/20250318_packet_backlog.md#5-...`と`reports/validation_log/AC-10_<date>.md`を参照し、正式なUXフィードバックログ作成時に本節を更新する。
+- `docs/ux_feedback.md`（2025-03-05更新）を参照し、HITLフィードバックの正式ログを`ux_feedback/<YYYYMMDD>_<slug>`でEvidence Graphへ登録する。旧来の仮置き（`docs/prompt_packages/20250318_packet_backlog.md#5-...`、`reports/validation_log/AC-10_<date>.md`）はアーカイブへ移行する。
 - CLIテレメトリ（§15）で`command='board'`の`qa_tags`に`['baseline','degraded','manual_csv']`が付与されているか確認し、`metrics/cli_perf.jsonl`に承認レイテンシを記録する。
 
 ### 91.2 CLIシーケンスとRunbook突合
@@ -3626,6 +3640,7 @@ M1 Coreの優先エピック（EP-01〜EP-04）を段階的にハードニング
 ## 92. 証跡・Runbookトレーサビリティ統合（EP-01〜EP-04）
 
 - エピック横断の証跡状況は`reports/validation_log/`配下のAC-02/03/07/09/10/11/45ファイルと`CHK-0.6.9-run.md`を基準に、Evidence Graph（§23）で`evidence_tags=['ep01','ep02','ep03','ep04']`を付与して集約する。
+- UX/AD/Strategy/Knowledge資産は`docs/ux_feedback.md`、`docs/templates/degradation_report.md`、`docs/validation/strategy_determinism.md`、`docs/knowledge_packs/README.md`に基づき、`ChangeLedger.category in {'feedback','degradation','strategy_validation','knowledge_pack'}`で登録された証跡のみを有効とみなす。
 - Runbook改訂時は`reports/governance/runbook_changelog.md`に版数とエピック対応を追記し、本節の表（§87）とRunbook参照列を同時に更新する運用を`Codexデリバリーコントロールタワー`（§25）へ登録する。
 - Packet依頼前のチェック: `docs/prompt_packages/20250318_packet_backlog.md`各節にRunbookリンク・CLIコマンド・Evidenceパスを明示することを必須とし、欠損がある場合は`ChangeLedger`へ`status='blocked'`を記録。解除時に本節へ追記する。
 - CI/CLIログの整合: `docs/change_requests/20250318_packet_backlog.md §4`のpytestログと、将来的に追加されるCLIログ（`scripts/qa/manual_csv_smoke.sh`等）のハッシュを`reports/ci/`へ保存し、Runbookエビデンス欄とリンクする。欠落時はOps Review Hub（§19）の`DeliveryAlert`で可視化する。
