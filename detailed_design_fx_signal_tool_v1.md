@@ -1730,28 +1730,28 @@ Flag切替時は`ConfigChanged`イベントに`flag_delta`が記録され、Repo
 ## 11. リスクと未解決課題
 
 ### 11.1 技術的リスク
-- **執行モデルの実績データ不足**: ブローカーAPI未連携のため、滑り・ヒューマン遅延パラメータの検証が限定的。Paper/LIVE実績から`execution_model.yaml`を半月ごとに更新する運用手順をRunbookに追記予定。
-- **Reduce-Only運用負荷**: Spread/相関異常時に提案が集中する可能性。M1では手動レビューだが、M2で優先度キューとバッチ操作UIを設計する。
-- **SPRTチューニング**: 戦略追加時にSPRT閾値が不安定。ウォームアップ期間とベイズ更新をM2バックログに登録。
-- **データ供給レイテンシ**: macOSローカル運用でネットワーク品質が不安定な場合、Catch-up時間が延びる。`provider.timeout`と`retry`を調整し、長時間停止時はバックフィルを分割する。
+- **[継続中] 執行モデルの実績データ不足**: ブローカーAPI未連携のため滑り・ヒューマン遅延パラメータの検証が限定的。Paper/LIVE実績から`execution_model.yaml`を半月ごとに更新し、結果を`logs/ops/20250311_guard_rehearsal/`に保管する。Runbook更新: [RUN-RISK-01](docs/runbooks/RUN-RISK-01.md)、証跡: [RISK-REGISTER 2025-03-12](reports/validation_log/RISK-REGISTER_20250312.md)。
+- **[継続中] Reduce-Only運用負荷**: Spread/相関異常時に提案が集中する可能性。`logs/ops/<date>_guard/guard_sequence.jsonl`でGuard操作を保存し、Spread対応は[RUN-SPREAD-03](docs/runbooks/RUN-SPREAD-03.md)のフェイルオーバー手順に統合。M2で優先度キューとバッチ操作UIを設計する。
+- **[継続中] SPRTチューニング**: 戦略追加時にSPRT閾値が不安定。ウォームアップ期間とベイズ更新をM2バックログに登録し、パラメータ変更の証跡を`reports/validation_log/RISK-REGISTER_20250312.md`へ追記する。
+- **[継続中] データ供給レイテンシ**: macOSローカル運用でネットワーク品質が不安定な場合、Catch-up時間が延びる。`logs/ops/<date>_latency/`に`health_probe.jsonl`と`catch_up.jsonl`を保存し、[RUN-DATA-05](docs/runbooks/RUN-DATA-05.md)改訂版で再開条件と`reports/validation_log/AC-45_sla_<date>.md`へのリンクを義務化した。
 
 ### 11.2 運用課題
-- Spread/Funding CSVの手動更新頻度が高い場合、Human Errorが発生しやすい。将来的に自動取得スクリプトを追加し、`logs/ops`へ自動記録する計画。
-- Snapshot破損や`hard_stop`後の復旧訓練を四半期ごとに実施し、Runbookの精度を高める必要がある。
-- `tradectl` CLIのUX向上（検索/絞り込み）とGUI化（M2）を段階的に検討。
+- **[継続中] Spread/Funding CSVの手動更新**: 手動更新頻度が高い場合にHuman Errorが発生しやすい。フェイルオーバー時に`logs/ops/<date>_spread/`へコマンドログを保存し、[RUN-SPREAD-03](docs/runbooks/RUN-SPREAD-03.md)で`reports/validation_log/AC-22_<date>.md`と連携。
+- **[継続中] Snapshot破損・`hard_stop`復旧訓練**: 四半期ドリルを継続実施し、復旧手順ログを`logs/ops/<date>_guard/`へ集約。次回演習は2025-03-25予定（[RISK-REGISTER 2025-03-12](reports/validation_log/RISK-REGISTER_20250312.md)参照）。
+- **[新規対策] `tradectl` CLI UX向上/GUI化準備**: CLI検索・フィルタのプロトタイプをM1.1レビューで決定。操作ログを[logs/ops/README.md](logs/ops/README.md)に従って整理し、後続のGUI要件定義に活用する。
 
-### 11.3 リスクログ (2025-02時点)
-| ID | リスク概要 | 影響 | 発生確率 | 緩和策 | ステータス |
-| --- | --- | --- | --- | --- | --- |
-| R-01 | API仕様変更によるデータ取得停止 | 中 | 中 | API監視/代替CSV準備 | 監視中 |
-| R-02 | 運用者不在時のアラート未対応 | 高 | 中 | RACI整備、代替手順、Kill Switch STOP | 対策中 |
-| R-03 | ローカル端末故障で運用停止 | 高 | 低 | 予備端末準備、バックアップ/BCPテスト | 監視中 |
-| R-04 | コンフィグ誤編集 | 中 | 中 | Configレビュー、dangerousキー遅延適用 | 監視中 |
-| R-05 | 監査ログ肥大化 | 低 | 中 | 週次アーカイブ、自動圧縮 | 対策中 |
-| R-06 | セキュリティインシデント（端末盗難） | 高 | 低 | FileVault, 画面ロック, Keychain管理 | 監視中 |
-| R-07 | KPI未達（Sharpe/MaxDD） | 中 | 中 | 戦略評価会、最適化、Feature Flag | 監視中 |
+### 11.3 リスクログ (2025-03時点)
+| ID | リスク概要 | 影響 | 発生確率 | 緩和策 | 対応状況 | エビデンス |
+| --- | --- | --- | --- | --- | --- | --- |
+| R-01 | API仕様変更によるデータ取得停止 | 中 | 中 | API監視/代替CSV準備、[RUN-DATA-05](docs/runbooks/RUN-DATA-05.md)でフェイルオーバー記録 | 継続中 | [RISK-REGISTER 2025-03-12](reports/validation_log/RISK-REGISTER_20250312.md) / `logs/ops/20250310_latency_drill/`
+| R-02 | 運用者不在時のアラート未対応 | 高 | 中 | RACI整備、OPS待機表、Kill Switch STOP（[RUN-RISK-01](docs/runbooks/RUN-RISK-01.md)） | 継続中 | [OPS-READINESS-01](docs/runbooks/OPS-READINESS-01.md) / `logs/ops/20250311_guard_rehearsal/`
+| R-03 | ローカル端末故障で運用停止 | 高 | 低 | 予備端末準備、バックアップ/BCPテスト | 継続中 | [RISK-REGISTER 2025-03-12](reports/validation_log/RISK-REGISTER_20250312.md)
+| R-04 | コンフィグ誤編集 | 中 | 中 | Configレビュー、dangerousキー遅延適用、`tradectl config diff --require-signed` | 継続中 | [CHK-0.6.9-run](reports/validation_log/CHK-0.6.9-run.md)
+| R-05 | 監査ログ肥大化 | 低 | 中 | 週次アーカイブ、自動圧縮ジョブ`ci/log-archival` | 完了 | [RISK-REGISTER 2025-03-12](reports/validation_log/RISK-REGISTER_20250312.md)
+| R-06 | セキュリティインシデント（端末盗難） | 高 | 低 | FileVault, 画面ロック, Keychain管理、端末監査Runbook更新 | 継続中 | [RISK-REGISTER 2025-03-12](reports/validation_log/RISK-REGISTER_20250312.md)
+| R-07 | KPI未達（Sharpe/MaxDD） | 中 | 中 | 戦略評価会、最適化、Feature Flag管理（`strategy_manifest.yaml`レビュー） | 継続中 | [RISK-REGISTER 2025-03-12](reports/validation_log/RISK-REGISTER_20250312.md)
 
-- リスクログは月次レビュー時に更新し、閾値を超えたリスクはIssue Trackerへ登録する。
+- リスクログは月次レビュー時に更新し、閾値を超えたリスクはIssue Trackerへ登録する。レビュー結果は`reports/validation_log/RISK-REGISTER_<date>.md`と`logs/ops/<date>_*`の証跡に連携する。
 
 ---
 
