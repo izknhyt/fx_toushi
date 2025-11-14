@@ -3527,3 +3527,107 @@ src/ops_dashboard/
 - レビュー時は`git diff --stat`で変更が`src/release/`, `interfaces/cli/release.py`, `tests/`, `docs/`に収まっているか確認。`config/release/`やRunbook差分がある場合は`ChangeLedger`記録を必須とする。
 - `ReleaseDecision`が`hold`または`no_go`の場合、`tradectl release blockers --export`のMarkdownを`docs/runbooks/RUN-REL-01.md`へ貼り付け、改善タスクをチケット化する。
 
+## 87. EP-01〜EP-04強化ブロック整合ハブ（v2.7追加）
+
+M1 Coreの優先エピック（EP-01〜EP-04）を段階的にハードニングするため、Runbook／CLI仕様／証跡導線を再確認し、Codex依頼時に欠損が出ないよう統合テーブルを設ける。本節は`basic_design_fx_signal_tool_v1.md §12.1`およびPacketバックログ（`docs/change_requests/20250318_packet_backlog.md`）と同一ID体系を共有し、Runbook更新や証跡配置の差異が即座に検出できるようにする。
+
+| ブロック | Runbook基準 | 主要CLI/自動化 | 証跡・依存ファイル | 詳細セクション |
+| --- | --- | --- | --- | --- |
+| **EP-01 DataLag Mitigation** | `docs/runbooks/RUN-DATA-05.md`（v1.2）, `docs/runbooks/RUN-DATA-06.md`（v1.2） | `tradectl data health`, `tradectl data failover --mode manual`, `tradectl data rate-limit stage inspect|set`, `make sla-report`, `scripts/qa/manual_csv_smoke.sh`（準備中） | `reports/validation_log/AC-45_sla_20250220.md`, `data/manual_fallback/templates/fallback_template_{op,review}.csv`, `metrics/data_ingestion_sla.jsonl`, `metrics/rate_limit_window.jsonl` | §88 |
+| **EP-02 Strategy Determinism** | `docs/runbooks/STRAT-M1-VALIDATION.md`（v1.0） | `python tools/check_dataset_hash.py`, `tradectl backtest run`, `tradectl report ack`, `tradectl report status`, `pytest -k strategy_determinism`, `pytest -k feature_pipeline` | `reports/data_manifest.json`, `reports/research/m1_baseline/validation_<date>.md`, `reports/validation_log/AC-07_<date>.md`, `docs/prompt_packages/20250318_packet_backlog.md#3-packet-ep02-p1--strategy-determinism` | §89 |
+| **EP-03 Guardrails** | `docs/runbooks/RUN-RISK-01.md`（v1.1）, `docs/runbooks/RUN-SPREAD-03.md`（補助） | `tradectl diagnostics risk`, `tradectl kill-switch engage|release`, `tradectl risk summary`, `tradectl correlation snapshot`, `tradectl status --history kill-switch`, `pytest -k health_state`, `pytest -k risk_manager` | `reports/audit/drawdown_guard/<YYYYMMDD>.md`, `reports/validation_log/AC-03_<date>.md`, `reports/validation_log/AC-09_<date>.md`, `logs/events/risk.kill_switch_*.jsonl`, `metrics/health_state_transitions.jsonl` | §90 |
+| **EP-04 Ticket Clarity** | `docs/runbooks/RUN-HITL-01.md`（v1.0）, `docs/runbooks/daily_agenda/CODEX_DAILY_START.md`（日次Ops整合） | `tradectl board --guarded`, `tradectl ticket simulate|approve|inspect|checklist`, `tradectl ticket queue --summary`, `tradectl metrics latency --mode paper`, `pytest -k ticket_builder`, `pytest -k board_renderer`, `pytest --snapshot-update` | `reports/validation_log/AC-02_<date>.md`, `reports/validation_log/AC-10_<date>.md`, `reports/validation_log/AC-11_<date>.md`, `logs/audit/ticket.jsonl`, `metrics/cli_perf.jsonl`, `docs/prompt_packages/20250318_packet_backlog.md#5-packet-ep04-p1--ticket-clarity` | §91 |
+
+### 87.1 整合確認フロー
+- Packetバックログ（`docs/change_requests/20250318_packet_backlog.md §2`）のステータスが`未着手`のままでも、Runbook版数と証跡テンプレが設計通り揃っているかを四半期ごとに棚卸しする。差分は`ChangeLedger`に`category='epic_alignment'`で記録し、Evidence Graph（§23）へハッシュリンクを送る。
+- 各ブロックのCLIコマンドは`§6`のインターフェース表とRunbook手順に一致することをQAレビューで確認し、バージョン差異がある場合はRunbook改訂と同時に本節のテーブルを更新する。
+- テストコマンドは`pytest` deselect ログ（`docs/change_requests/20250318_packet_backlog.md §4.2〜§4.5`）と突合し、実装後にGREENへ移行したら本表の備考列を更新し、`reports/validation_log/`配下に成功ログをリンクする。
+
+## 88. EP-01 DataLag Mitigation強化ブロック
+
+### 88.1 運用境界と依存モジュール
+- データ取得ワークフロー（§3.1）とRateLimit Guard（§3.1.1）の責務をRunbook `RUN-DATA-05`/`RUN-DATA-06`のステップ順に再配置し、`board_mode=guarded`遷移〜解除条件をRunbookのダブルサインと一致させる。
+- 手動CSV投入テンプレートは`data/manual_fallback/templates/fallback_template_{op,review}.csv`をソースとし、`tradectl data manual-template`→`tradectl data validate-csv`→`tradectl data jobs enqueue --task manual_csv`の順で運用する。テンプレート差し替え時はRunbook§「照合作業チェックリスト」と`ChangeLedger`を同時更新する。
+- RateLimit Stage調整（`tradectl data rate-limit stage set`）は`metrics/rate_limit_window.jsonl`に`stage`, `429_window`, `manual_override`を記録し、`RUN-DATA-05`のチェックリストと二重化する。429緩和条件（Stage退行→復帰）は`reports/validation_log/AC-45_sla_20250220.md`へ証跡として残す。
+
+### 88.2 CLIシーケンスとRunbook突合
+| Runbook手順 | CLI/スクリプト | 証跡ファイル | 備考 |
+| --- | --- | --- | --- |
+| `RUN-DATA-05` Step1〜2（遅延検知・Board Guard確認） | `tradectl data health --symbol <pair>`, `tradectl status --detail` | `metrics/data_ingestion_sla.jsonl`, `logs/ops/cli.log` | Guarded遷移時は`board_guard`セクションの`reduce_only`=trueを記録 |
+| `RUN-DATA-05` Step3（フェイルオーバー） | `tradectl data failover --mode manual --to <provider>` | `reports/audit/rates/<date>.md`, `reports/validation_log/AC-45_sla_<date>.md` | 代替プロバイダの承認ログを`degraded_ack`と紐付け |
+| `RUN-DATA-06` Step2〜3（手動CSV投入・Resync） | `tradectl data jobs enqueue --task manual_csv ...`, `tradectl resync --since <ts>` | `reports/audit/data_diff/<date>.md`, `reports/audit/resync/<date>.md` | `scripts/qa/manual_csv_smoke.sh`の整備後はCIログも添付 |
+| `RUN-DATA-06` Step6（Board解除） | `tradectl board guard --release`, `tradectl data ack --provider <name>` | `reports/validation_log/AC-45_sla_<date>.md`, `logs/audit/reduce_only/<date>.md` | `degraded_ack`イベントIDと解除時刻をRunbookへ転記 |
+
+### 88.3 テストと証跡
+- ユニット/統合テスト: `pytest -k data_pipeline`, `pytest -k rate_limit_guard`, `IT-RL-01`（§9）を必須とし、deselect状態のログ（`docs/change_requests/20250318_packet_backlog.md §4.2`）が解消されたら本節を更新する。
+- CLI/手動演習: `SCN-ING-01`（§5.3）および`OPS-DEG-01`（付録H）をRunbookに紐付け、`tradectl data failover --mode manual`→`tradectl data manual-template`→`tradectl data jobs enqueue`の一連ログを`reports/validation_log/AC-45_sla_<date>.md`へ貼り付ける。
+- 証跡チェックリスト: `metrics/data_ingestion_sla.jsonl`最新ハッシュ、`data/manual_fallback/`投入CSVのSHA256、`logs/audit/manual_csv.log`（生成予定）を照合し、Evidence Graph（§23）へ`node.type='data_episode'`として登録する。
+
+## 89. EP-02 Strategy Determinism強化ブロック
+
+### 89.1 運用境界と依存モジュール
+- Feature Pipeline（§3.3）とStrategy Registry（§3.4）の決定論保証をRunbook `STRAT-M1-VALIDATION`の手順1〜5に結び付け、`dataset_hash`/`config_hash`の整合を`reports/data_manifest.json`で一元管理する。
+- 再承認フローで生成される`reports/research/m1_baseline/metrics_<date>.json`と`validation_<date>.md`を`EvidenceGraph`に取り込み、`ChangeLedger.record_change(category='strategy_validation')`の必須化を維持する。
+- `docs/validation/strategy_determinism.md`は未整備のため、Runbookの「チェックリスト」節を暫定参照とし、ドキュメント化が完了したら本節の依存一覧を更新する（追跡: `docs/prompt_packages/20250318_packet_backlog.md#3-...`).
+
+### 89.2 CLIシーケンスとRunbook突合
+| Runbook手順 | CLI/スクリプト | 証跡ファイル | 備考 |
+| --- | --- | --- | --- |
+| 手順1 ドリフト検知 | `python tools/check_dataset_hash.py --manifest reports/data_manifest.json --strategy m1_baseline_ma_rsi` | `reports/research/m1_baseline/validation_<date>.md` | 差分の原因をRunbookのヘッダへ記録 |
+| 手順2 データセット再生成 | `make data-build symbol=<symbol> ...`, `python tools/verify_parquet.py ...` | `reports/data_manifest.json`, `reports/data_manifest.sig` | 生成物のSHA256をValidation Data Playbookへ転記 |
+| 手順3 指標再計算 | `tradectl backtest run --strategy m1_baseline_ma_rsi ...`, `python tools/evaluate_metrics.py ...` | `reports/research/m1_baseline/metrics_<date>.json`, `reports/research/m1_baseline/validation_<date>.md` | KPI閾値（PF_all, Sharpe, MaxDD）をRunbook記述と一致させる |
+| 手順4 承認 | `tradectl report status --strategy m1_baseline_ma_rsi`, `tradectl report ack --strategy ... --state approved` | `reports/validation_log/AC-07_<date>.md`, `reports/governance/runbook_changelog.md` | ダブルサインと`metric_state`変更を監査ログへ連携 |
+
+### 89.3 テストと証跡
+- `pytest -k strategy_determinism`, `pytest -k feature_pipeline`（`docs/change_requests/20250318_packet_backlog.md §4.3`）をグリーンにするため、決定論スナップショット（`tests/snapshots/strategy/*.snap`）を更新し、CIでハッシュ検証を追加する。
+- Backtest再現性: `tradectl backtest run --seed 123`→`tradectl backtest run --seed 123`で一致する`StrategyReplay`ハッシュを`metrics/strategy_replay.jsonl`へ書き込み、`reports/validation_log/AC-07_<date>.md`に貼り付ける。
+- Evidence連携: `docs/prompt_packages/20250318_packet_backlog.md#3-...`にRunbook参照とテストログを追加し、Evidence Graph（§23）で`strategy_manifest`バージョン差分と紐付ける。
+
+## 90. EP-03 Guardrails強化ブロック
+
+### 90.1 運用境界と依存モジュール
+- Health Monitor（§3.9）とRisk Manager（§3.8）のKill Switchポリシーを`RUN-RISK-01`の手順と一致させ、`soft_stop`/`hard_stop`トリガーを`reports/audit/drawdown_guard/<date>.md`で記録する。
+- Spread Guard補助Runbook `RUN-SPREAD-03.md`の閾値を`Risk Manager`構成と同期し、`board_mode=guarded(reason='spread')`が`tradectl board --guarded --reason spread`と一致するようにする。
+- R_eff監視とCorrelation Snapshotの週次実行結果は`metrics/health_state_transitions.jsonl`および`reports/diagnostics/risk/<YYYYMMDD>.json`に保存し、Ops Readiness Evaluator（§18）へ供給する。
+
+### 90.2 CLIシーケンスとRunbook突合
+| Runbook手順 | CLI/スクリプト | 証跡ファイル | 備考 |
+| --- | --- | --- | --- |
+| 日次サマリ | `tradectl diagnostics risk --from -7d --mode paper`, `tradectl status --history kill-switch --limit 7` | `reports/validation_log/AC-09_<date>.md`, `logs/events/risk.kill_switch_*.jsonl` | Kill Switch履歴とR_eff統計をRunbookチェックリストに転記 |
+| ドローダウン対応 | `tradectl kill-switch engage --mode paper --reason drawdown`, `tradectl risk limits show --mode paper` | `reports/audit/drawdown_guard/<YYYYMMDD>.md`, `reports/validation_log/AC-03_<date>.md` | `ChangeLedger`へ`category='risk_action'`を記録し、解除条件をRunbookへ反映 |
+| R_eff逸脱 | `tradectl risk override --block --reason r_eff_breach --duration 60m`, `tradectl risk summary --week` | `reports/diagnostics/risk/<YYYYMMDD>.json`, `reports/validation_log/AC-09_<date>.md` | ブロック期間と再開判定をEvidence Graphへ登録 |
+| 相関データ更新 | `tradectl correlation snapshot --window 30d --out ...`, `tradectl correlation diff --base ...` | `data/correlation/<YYYYWW>_correlation.parquet`, `reports/validation_log/AC-09_<date>.md` | Validation Data Playbook（要件定義§8.2）と照合 |
+
+### 90.3 テストと証跡
+- `pytest -k health_state`, `pytest -k risk_manager`（`docs/change_requests/20250318_packet_backlog.md §4.4`）とIT-KILL-01（§9）を必須。Kill Switch CLIスナップショットは`tests/snapshots/risk/`に格納し、変更時はRunbook改訂を伴う。
+- シナリオ演習: `RISK-KS-05`（付録H）および`SCN-SPR-02`（§5.3）を`tradectl kill-switch engage`→`tradectl board --guarded`→`tradectl kill-switch release`の順で再現し、`logs/audit/kill_switch.jsonl`とRunbookダブルサインを突合する。
+- Evidence整備: `reports/validation_log/AC-03_<date>.md`と`AC-09_<date>.md`には`Kill Switch`発火ログ、`R_eff`逸脱の統計、復旧会議議事録のリンクを添付し、Ops Review Hub（§19）で自動集約する。
+
+## 91. EP-04 Ticket Clarity強化ブロック
+
+### 91.1 運用境界と依存モジュール
+- Ticket Builder（§3.16）とBoard CLI（§6.2）のUI要件を`RUN-HITL-01`のチェックリストおよび日次アジェンダ`docs/runbooks/daily_agenda/CODEX_DAILY_START.md`の「Boardレビュー」節に合わせ、`HumanErrorChecklist`結果とRisk Disclosureバナー表示をRunbookに一致させる。
+- `docs/ux_feedback.md`は未作成のため、HITLフィードバックの仮置きとして`docs/prompt_packages/20250318_packet_backlog.md#5-...`と`reports/validation_log/AC-10_<date>.md`を参照し、正式なUXフィードバックログ作成時に本節を更新する。
+- CLIテレメトリ（§15）で`command='board'`の`qa_tags`に`['baseline','degraded','manual_csv']`が付与されているか確認し、`metrics/cli_perf.jsonl`に承認レイテンシを記録する。
+
+### 91.2 CLIシーケンスとRunbook突合
+| Runbook手順 | CLI/スクリプト | 証跡ファイル | 備考 |
+| --- | --- | --- | --- |
+| シフト開始前チェック | `tradectl status --mode paper --detail`, `tradectl ticket queue --summary` | `reports/validation_log/AC-02_<date>.md`, `logs/audit/ticket.jsonl` | 未処理チケットと`manual_source`状態をRunbookへ記録 |
+| OCO常駐検証 | `tradectl ticket simulate --symbol USDJPY ...`, `tradectl ticket approve --id ...`, `tradectl ticket monitor --id ...` | `reports/performance/paper/sample_orders.parquet`, `reports/validation_log/AC-02_<date>.md` | `oco_ack`イベントのタイムスタンプをRunbookへ転記 |
+| 人的エラーチェック | `tradectl ticket checklist --id <ticket_id>` | `reports/validation_log/AC-10_<date>.md` | `HumanErrorChecklist`未充足項目0件を証跡化 |
+| 丸め・最小ロット検証 | `tradectl ticket check-size --pair <pair> --size <lot> --account paper`, `tradectl ticket check-batch --csv tests/fixtures/broker_rounding_cases.csv` | `reports/validation_log/AC-11_<date>.md`, `tests/fixtures/broker_rounding_cases.csv` | 精度/丸め差異があればIssue起票 |
+
+### 91.3 テストと証跡
+- `pytest -k ticket_builder`, `pytest -k board_renderer`、必要に応じて`pytest --snapshot-update`（`docs/change_requests/20250318_packet_backlog.md §4.5`）を実施し、`tests/snapshots/board/*.snap`の承認をPOレビューへ添付する。
+- CLIスナップショット: `tradectl board --filter symbol=USDJPY`の出力を`docs/prompt_packages/20250318_packet_backlog.md#5-...`へ貼付し、Boardバナー/チェックリスト表示をRunbook`RUN-HITL-01`に整合させる。
+- Evidence整備: `reports/validation_log/AC-02_<date>.md`/`AC-10_<date>.md`/`AC-11_<date>.md`へ承認ログとスクリーンショット参照（将来は`artifacts://`リンク）を追記し、Ops Review Hub（§19）とRelease Readiness（§30）で再利用する。
+
+## 92. 証跡・Runbookトレーサビリティ統合（EP-01〜EP-04）
+
+- エピック横断の証跡状況は`reports/validation_log/`配下のAC-02/03/07/09/10/11/45ファイルと`CHK-0.6.9-run.md`を基準に、Evidence Graph（§23）で`evidence_tags=['ep01','ep02','ep03','ep04']`を付与して集約する。
+- Runbook改訂時は`reports/governance/runbook_changelog.md`に版数とエピック対応を追記し、本節の表（§87）とRunbook参照列を同時に更新する運用を`Codexデリバリーコントロールタワー`（§25）へ登録する。
+- Packet依頼前のチェック: `docs/prompt_packages/20250318_packet_backlog.md`各節にRunbookリンク・CLIコマンド・Evidenceパスを明示することを必須とし、欠損がある場合は`ChangeLedger`へ`status='blocked'`を記録。解除時に本節へ追記する。
+- CI/CLIログの整合: `docs/change_requests/20250318_packet_backlog.md §4`のpytestログと、将来的に追加されるCLIログ（`scripts/qa/manual_csv_smoke.sh`等）のハッシュを`reports/ci/`へ保存し、Runbookエビデンス欄とリンクする。欠落時はOps Review Hub（§19）の`DeliveryAlert`で可視化する。
+- Release Readiness（§30）との連携: `ReleaseReadinessSnapshot`生成時に、本節のテーブルからエピック別`required_evidence`を参照し、欠損がある場合はGate判定`warn`または`no_go`へ自動反映する。Codex PRでは`Summary`に対象エピックとRunbook IDを明記し、レビュワーがRunbook整合を即座に検証できるようにする。
+
