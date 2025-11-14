@@ -2068,7 +2068,7 @@ Acceptable Degradation（以下AD）発生時の定量把握と復旧計画立�
 - Board Guard (`§3.8`) が`guarded`に遷移した回数と実行時間をEpisodeに紐付け、HITLトレーダーが承認したチケット数/Reject理由を`TicketBuilder`ログと照合。UX改善タスク起票時に`manual_hours_saved`の改善余地を明示する。
 - Acceptable Degradation解除後24時間以内に`tradectl degradation recommend --severity high --push-to-bundle`を実施し、Codexへ再発防止タスクを連続で依頼できるフローを定着させる。
 
-## 25. Codexデリバリーコントロールタワー（v2.7ドラフト）
+## 25. Codexデリバリーコントロールタワー（v2.7）
 
 Codexへ委譲した開発タスクの進行状況・品質指標・運用影響を一元可視化し、トレーダー/PO/運用が合意したSLAを満たしているかを迅速に判断するための統合モジュールを新設する。既存のQAスコアカード（§0.10）、Ops Review Hub（§19）、Prompt Bundle自動生成（§20）と密接に連携し、Acceptable Degradation下でも改善タスクの優先度付けを誤らないようにする。
 
@@ -2112,9 +2112,12 @@ Codexへ委譲した開発タスクの進行状況・品質指標・運用影響
    - 基準値（Runbook作業時間）× `open_alerts`係数。
    - Acceptable Degradation中は`guard_release_eta`を`HealthMonitor`の推奨アクション（§3.8）と連携し、解除条件までの予測時間を返す。
 5. `detect_alerts`は以下のルールを評価:
-   - `QA-05`が`pending`で`WorkPackageStatus.status in {'review','blocked'}`→`severity='critical'`, `related_runbook_steps=['RUN-DATA-05#guard_release']`。
-   - `PromptGap.missing_sections`に`'test_plan'`が含まれ、`tests_run`に当該テストが存在しない→`severity='major'`。
-   - `ChangeLedger`連携が3日以上遅延→`severity='major'`, `recommended_followup='log_change ledger missing'`。
+    - `QA-05`が`pending`で`WorkPackageStatus.status in {'review','blocked'}`→`severity='critical'`, `related_runbook_steps=['RUN-DATA-05#guard_release']`。
+    - `PromptGap.missing_sections`に`'test_plan'`が含まれ、`tests_run`に当該テストが存在しない→`severity='major'`。
+    - `ChangeLedger`連携が3日以上遅延→`severity='major'`, `recommended_followup='log_change ledger missing'`。
+    - `ops_impact.guard_release_eta>=30`→`severity='warn'`、`>=45`→`severity='critical'`として`guard_release_delay`を生成。
+    - `ops_impact.data_ingestion_sla_p95>24`→`severity='major'`、`>=30`→`severity='critical'`として`data_sla_drift`を生成。
+    - `qa_summary['KPI'].Sharpe_recent<0.85`→`severity='warn'`、`<0.80`→`severity='critical'`として`kpi_regression`を生成。
 6. `DeliverySnapshot`は`EventBus.publish('delivery.snapshot.generated', snapshot)`で配信。Ops Review Hub（§19）が週次レポートへ組み込む。
 
 ### 25.5 CLI仕様 (`tradectl delivery ...`)
@@ -2151,7 +2154,17 @@ Codexへ委譲した開発タスクの進行状況・品質指標・運用影響
 - Ops担当はGuard解除手順の前に`delivery forecast`で`expected_manual_minutes`を確認し、必要な人員をアサイン。Runbookに実測値を追記し予測モデルを改善。
 - Acceptable Degradation復旧後の事後レビューで、`alerts`履歴を`OpsReviewDigest`に貼り付け、再発防止策（例: Prompt Gap補完、QA-03自動化）をアクションアイテム化。
 
-## 26. トレーダーフィードバック循環エンジン（v2.7ドラフト）
+### 25.9 KPIベースラインとアラート閾値
+
+| メトリクス | 観測値（直近演習/実績） | Warn | No-Go | データソースとDeliveryAlert対応 |
+| --- | --- | --- | --- | --- |
+| Guard復旧MTTR | 25分（`01:20`検知→`01:45`解除） | ≥30分（`catch_up_lag_minutes<30`逸脱） | ≥45分（Guard中ピーク42分超） | `docs/templates/degradation_report.md`、`DeliveryAlert.kind='guard_release_delay'`で`warn/critical`に連携【F:docs/templates/degradation_report.md†L24-L36】【F:docs/runbooks/RUN-DATA-05.md†L12-L23】 |
+| `data_ingestion_sla_p95` | 18分 | >24分（Runbook閾値の80%で早期検知） | ≥30分（デイリーアジェンダ閾値） | `reports/validation_log/CHK-0.6.9-run.md`、`docs/runbooks/daily_agenda/CODEX_DAILY_START.md`。`DeliveryAlert.kind='data_sla_drift'`で`major/critical`に割当【F:reports/validation_log/CHK-0.6.9-run.md†L5-L9】【F:docs/runbooks/daily_agenda/CODEX_DAILY_START.md†L16-L18】 |
+| `Sharpe_recent` (90d OOS) | 0.88±0.07 | <0.85 | <0.80 | `detailed_design_fx_signal_tool_v1.md §9.4.3`、`basic_design_fx_signal_tool_v1.md §6.5`。`DeliveryAlert.kind='kpi_regression'`で`warn/fail`判定【F:detailed_design_fx_signal_tool_v1.md†L1655-L1657】【F:basic_design_fx_signal_tool_v1.md†L166-L167】【F:detailed_design_fx_signal_tool_v1.md†L1603-L1603】 |
+
+- `warn`/`no_go`閾値はRunbook必須条件と実測値から逆算して設定し、`DeliverySnapshot.alerts`は同テーブルを参照して`severity`を決定する。`detect_alerts`ロジックは`guard_release_eta>=30`で`warn`、`>=45`で`critical`、`data_ingestion_sla_p95>24`で`major`、`>=30`で`critical`、`Sharpe_recent<0.85`で`warn`、`<0.80`で`critical`を返す。
+- `OpsImpactEstimate.expected_manual_minutes`はGuard復旧MTTRと`manual_hours`を組み合わせて算出し、`>=120`分で`DeliveryAlert.kind='manual_capacity_risk'`を上げる。`manual_hours`はAcceptable Degradationテンプレの実測（発生中0.8h）を既定値とし、倍増した場合にアラートを出す。【F:docs/templates/degradation_report.md†L31-L36】
+## 26. トレーダーフィードバック循環エンジン（v2.7）
 
 Signal Board/チケット承認フローで収集したヒューマンフィードバックを、戦略改善・UX向上・Codexタスクに即時還元する仕組みを定義する。`docs/ux_feedback.md`・`logs/audit/ticket.jsonl`・`metrics/cli_perf.jsonl`を統合し、改善優先度を定量化する。
 
@@ -2223,6 +2236,11 @@ Signal Board/チケット承認フローで収集したヒューマンフィー�
 - Prompt Bundle作成時に`<section id="feedback">`として`PrioritizedFeedback`のトップ3を添付。Codexはワークパッケージに沿って対応し、完了時に`tradectl feedback ack`でChangeLedger更新。
 - `FeedbackRoute.destination='strategy'`の場合は研究フレームワーク（§21）と連携し、再現データセット/パラメータ差分をIssueテンプレートへ自動挿入する。
 - `destination='ux'`のタスクはUI文言/CLIレイアウト変更が主であるため、テスト指示に`pytest --snapshot-update --maxfail=1`を必ず含める。Codex出力でスナップショット更新が無い場合は差戻し。
+
+### 26.8 KPIと優先度閾値
+
+- CLI滞在時間の分布は`decision_delay_triangular=[30,45,75]`秒を基準にし、`avg_time_to_decision`が90秒を超えるとペナルティを加算する。`p90≤120s`がAcceptable Degradation演習での上限値のため、`PrioritizedFeedback.priority_score`は`avg_time_to_decision>=90`で`warn`、`>=120`で`fail`を付与し、Delivery Control Towerの`kpi_regression`と連動させる。【F:detailed_design_fx_signal_tool_v1.md†L1645-L1659】【F:detailed_design_fx_signal_tool_v1.md†L2192-L2194】
+- `reject_rate`はBacktest/Paper検証の`HitRate=48〜55%`（Reject率45〜52%）をベースラインとし、`reject_rate>0.52`で`warn`、`>0.55`で`fail`扱いにする。`priority_score`は該当閾値で+20/+40を加点し、Release Readinessの`Feedback`ゲートに同一ステータスを伝搬する。【F:detailed_design_fx_signal_tool_v1.md†L1655-L1659】
 
 ### 26.8 Acceptable Degradation/トレーダー連携
 - Guarded状態でRejectが急増した場合、`feedback summarize`が`severity='high'`の項目をハイライト。Delivery Control Towerが`alerts`を発火し、Opsレビューで即時対応を検討。
@@ -3162,7 +3180,7 @@ Acceptable Degradation対応やTelemetry/シナリオ演習の成果を**単一�
 
 ---
 
-## 27. 流動性・スリッページ診断ラボ（v2.7ドラフト）
+## 27. 流動性・スリッページ診断ラボ（v2.7）
 
 Paper→Live移行を見据えて、ヒューマン承認フローのまま実効スリッページと流動性リスクを定量化する分析モジュール群を追加する。M1 CoreではPaper fills/手動入力CSVを対象に実装し、M1.1でブローカーAPIに拡張してもインターフェース互換性が維持されるよう抽象化する。
 
@@ -3257,7 +3275,12 @@ Paper→Live移行を見据えて、ヒューマン承認フローのまま実�
 - **戦略停止判断**: 特定戦略/シンボルで`sample_size>=50`かつ`mean_slippage > config.slippage.stop_threshold`の場合、Risk Managerが`strategy.watchlist`をトリガーし、Strategy Scoreboard（付録G.1）と合わせて戦略OFF判定を行う。
 - **教育/ナレッジ蓄積**: Opsシミュレーションゲーム（§22）のイベントに`slippage_spike`カードを追加し、ゲーム終了後に`SlippageDistribution`比較をKnowledge Packへ記録。Evidence Graph（§23）でトレーニングケースと実運用エピソードをリンクする。
 
-## 28. 緊急対応オーケストレータ（v2.7ドラフト）
+### 27.9 ベースライン指標と閾値
+
+- `config/execution_model.yaml`のサンプル値ではEURUSDトレンド時の`p50=0.8`pips、`p90=1.6`pips、レンジ時の`p90=1.2`pipsが定義されている。`SlippageLabService`はこれらを基準に、`bias_threshold=0.5`pips（トレンド`p90-p50`の62.5%）で`SlippageBiasDetected`を`warn`、`>=0.8`pipsで`critical`とし、`stop_threshold=1.2`pips（レンジ上限）超で`strategy.watchlist`を発火させる。【F:basic_design_fx_signal_tool_v1.md†L448-L466】
+- `drift_score`はRolling30サンプルのzスコアを使用し、`>=2.0`で`warn`、`>=3.0`で`critical`に分類する。これにより、通常の標準偏差内（約95%信頼区間）を逸脱したケースのみが緊急オーケストレータ（§28）へ伝搬する。
+
+## 28. 緊急対応オーケストレータ（v2.7）
 
 ### 28.1 目的
 - **対象要件**: FR-47, AC-34, AC-38, AC-43。
@@ -3344,7 +3367,12 @@ src/emergency/
 - **異常スリッページ**: §27の`drift_score`が閾値超過で`execution.slippage_spike`イベントを送出。`EmergencyPlan`が`tradectl liquidity analyze`/`tradectl board --guarded`の順序を提示し、リカバリタイムをChange Ledgerへ記録。
 - **演習ドリル**: 月次Ops演習でScenario Runner（§22）を用い、過去のインシデントを`tradectl emergency simulate`で再現。Knowledge Pack（§23）へ演習結果を自動記録し、評価メトリクス（MTTA, MTTR）を`reports/ops/drill/<YYYYMM>.md`に集計。
 
-## 29. 運用健全性ダッシュボード（v2.7ドラフト）
+### 28.9 MTTA/MTTRターゲット
+
+- 直近のデータ遅延ケースでは検知から初動（Manual CSV投入）まで12分、Guard解除まで25分を要した。Emergency Orchestratorはこの実績と設計ゴール（24分以内の初動着手、60分以内の暫定復旧）を組み合わせ、`IncidentLedger`で`MTTA_warn>=15分`、`MTTA_fail>=24分`、`MTTR_warn>=30分`、`MTTR_fail>=60分`を評価する。【F:docs/templates/degradation_report.md†L24-L36】【F:detailed_design_fx_signal_tool_v1.md†L3262-L3265】
+- `IncidentLedger`サマリはDelivery Control TowerおよびRelease Readinessへ共有され、`MTTR_warn`超過で`DeliveryAlert.kind='guard_release_delay'`へ`severity='major'`を付与、`MTTR_fail`超過で`severity='critical'`とする。
+
+## 29. 運用健全性ダッシュボード（v2.7）
 
 ### 29.1 目的
 - **対象要件**: FR-48, AC-03, AC-34, AC-52。
@@ -3433,6 +3461,11 @@ src/ops_dashboard/
 - **トレーダーフィードバック共有**: `journal_highlight`ウィジェットの`actions`から`tradectl feedback ack <id>`（§26）を開き、トレーダーコメントをOps会議で追跡。Evidence Graphノードとリンクしナレッジ蓄積を促進。
 - **監査/証跡**: 週次で`tradectl ops dashboard snapshot --summary`を実行し、`reports/weekly/<YYYYWW>.md`へ貼り付け。監査時は`ops dashboard diff`でGuarded期間の短縮効果を証明。
 
+### 29.10 KPIウィジェット閾値
+
+- `WidgetState`はDelivery Control Towerの閾値テーブル（§25.9）を共有し、`guard_recovery`ウィジェットで`MTTR_warn`/`MTTR_fail`を、`data_sla`ウィジェットで`24/30`分の帯域を色分け表示する。
+- `kpi_summary`ウィジェットは`Sharpe_recent`を`0.85`/`0.80`で3段階表示し、`Release Readiness`のKPIゲート（§30.4）と同じ判定を返却する。
+
 
 ## 30. Release Readinessスコアカード＆ゲートキーパー（v2.7追加）
 
@@ -3485,6 +3518,14 @@ src/ops_dashboard/
    3. **Delivery Alerts**: `severity >= major`が存在する場合`hold`、`critical`で`no_go`。
    4. **KPIトレンド**: `ReadinessMetric`で`Sharpe_recent`、`data_ingestion_sla_p95`等が閾値外なら`warn`。
    5. **Checklist完了率**: `completion_rate>=0.95`が必須。未完了アイテムを`warnings`へ格納。
+
+    | Gate ID | 評価対象 | Warn | Fail/No-Go | 参照ソース |
+    | --- | --- | --- | --- | --- |
+    | `Gate-KPI-Sharpe` | `Sharpe_recent` (90d) | `<0.85` | `<0.80` | Backtest実績・要件閾値【F:detailed_design_fx_signal_tool_v1.md†L1655-L1657】【F:basic_design_fx_signal_tool_v1.md†L166-L167】【F:detailed_design_fx_signal_tool_v1.md†L1603-L1603】 |
+    | `Gate-OPS-MTTR` | Guard復旧`MTTR` | `>=30`分 | `>=45`分 | ADテンプレート／Runbook閾値【F:docs/templates/degradation_report.md†L24-L36】【F:docs/runbooks/RUN-DATA-05.md†L12-L23】 |
+    | `Gate-DATA-SLA` | `data_ingestion_sla_p95` | `>24`分 | `>=30`分 | CHKログ・デイリーアジェンダ【F:reports/validation_log/CHK-0.6.9-run.md†L5-L9】【F:docs/runbooks/daily_agenda/CODEX_DAILY_START.md†L16-L18】 |
+    | `Gate-FEEDBACK-Latency` | `avg_time_to_decision` / `reject_rate` | `>=90s` or `>0.52` | `>=120s` or `>0.55` | フィードバックKPI設定【F:detailed_design_fx_signal_tool_v1.md†L1645-L1659】【F:detailed_design_fx_signal_tool_v1.md†L2192-L2194】 |
+
 3. `score`は`GateCriterion`ごとに重み付け（例: QA=40%、AD=25%、Delivery=15%、KPI=10%、Feedback=10%）。`pass=weight`, `warn=weight×0.5`, `fail=0`で合計。
 4. `evaluate`は`status`を決定し、`EventBus.publish('release.readiness.evaluated', decision, snapshot)`で通知。Delivery Control Towerはこのイベントを取り込み`alerts`と同期する。
 5. `ChangeLedger.record_change(category='release', status=decision.status, score=...)`を必須化。Evidence Graph（§23）へ`EvidenceNode(type='release')`を登録し、監査検索性を高める。
