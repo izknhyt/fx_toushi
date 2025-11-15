@@ -170,7 +170,7 @@ Codexへ実装を委任する際の成果物粒度・レビュー観点・トレ
 | Hardening | `hardening/<epic>-<fix>` | Codex＋開発 | Acceptable Degradation解除、回帰修正。 | `pytest`, `poetry run mypy`（対象モジュール） | `logs/audit/hardening.log`（SLA値） |
 | Release | `release/<version>` | 開発 | リリースノート生成、タグ付け、bundle。 | `make ci-lite` | `reports/release/<version>.md` |
 
-- `feature_flags/<epic>.yaml`はBuildフェーズでレビュー、Releaseフェーズで既定値を決定する。`docs/release_checklist.md`へ各レーン完了条件を追記済み。
+- `feature_flags/<epic>.yaml`はBuildフェーズでレビュー、Releaseフェーズで既定値を決定する。[docs/release_checklist.md](docs/release_checklist.md)へ各レーン完了条件を追記済み。
 
 #### 0.7.2 プロンプト/アーティファクト構成
 - **Prompt Bundle**: `docs/prompt_packages/<YYYYMMDD>_<epic>_<story>.md`に以下を収録する。
@@ -1529,7 +1529,7 @@ Flag切替時は`ConfigChanged`イベントに`flag_delta`が記録され、Repo
 | --- | --- | --- |
 | 事前準備 | `git flow`でリリースブランチ作成 (`release/x.y`)。`poetry version`更新。 | リリースノート草案。 |
 | 検証 | `pytest -m "m1 or m2plus"`、`tradectl backtest`(基準期間)、`tradectl preflight`。 | テストレポート、Backtest結果。 |
-| 承認 | PO+運用担当が`docs/release_checklist.md`を承認。 | 承認サイン（`logs/ops/release.log`）。 |
+| 承認 | PO+運用担当が[docs/release_checklist.md](docs/release_checklist.md)を承認。 | 承認サイン（`logs/ops/release.log`）。 |
 | デプロイ | `git tag vx.y.z`, `poetry export --format requirements.txt --output requirements.lock`。 | タグ、ロックファイル。 |
 | 配布 | Releaseパッケージ（zip）作成→外部ストレージへ配置。 | `dist/tradectl-vx.y.z.zip`。 |
 | ポストリリース | 24hモニタリング。異常があれば即ロールバック（タグ戻し＋設定復旧）。 | Postmortemレポート。 |
@@ -2115,7 +2115,7 @@ Acceptable Degradation（以下AD）発生時の定量把握と復旧計画立�
 Codexへ委譲した開発タスクの進行状況・品質指標・運用影響を一元可視化し、トレーダー/PO/運用が合意したSLAを満たしているかを迅速に判断するための統合モジュールを新設する。既存のQAスコアカード（§0.10）、Ops Review Hub（§19）、Prompt Bundle自動生成（§20）と密接に連携し、Acceptable Degradation下でも改善タスクの優先度付けを誤らないようにする。
 
 ### 25.1 目的と適用範囲
-- **進捗監視**: 各エピック/ストーリーの完了率・残タスク・SLA逸脱を日次で把握し、Runbook `RUN-OPS-05`のステータスレビューに反映する。
+- **進捗監視**: 各エピック/ストーリーの完了率・残タスク・SLA逸脱を日次で把握し、Runbook [RUN-OPS-05](docs/runbooks/RUN-OPS-05.md)のステータスレビューに反映する。
 - **品質早期警戒**: テスト失敗・スコープ逸脱・Runbook未更新といった逸脱を自動集約し、トレーダー判断に必要な背景情報（KPI影響/保留リスク）を提示する。
 - **Codex協働高速化**: Prompt Bundleに不足情報がある場合に警告し、必要な証跡ファイル（テストログ/スクリーンショット/CLI出力）をテンプレ化する。
 - **対象スコープ**: M1 CoreエピックおよびAcceptable Degradation復旧タスク。M1.1以降のGUI/自動化タスクも拡張可能なデータモデルとする。
@@ -2171,7 +2171,7 @@ Codexへ委譲した開発タスクの進行状況・品質指標・運用影響
 | `tradectl delivery export` | `--window`, `--out <path>`, `--format markdown|json` | Prompt Bundle添付用サマリと不足チェックリスト。 | `ChangeLedger`記録を自動実行。 |
 
 - CLIは`CommandTelemetryRecord`へ`component='delivery'`を記録。Acceptable Degradation時は`qa_tags`に`'degraded'`を付与。
-- `alerts`コマンドは`AlertDispatcher`（§6.7）と連携し、`--notify`指定時にメール送信。Runbook`RUN-OPS-05`のステップにCLI出力を貼り付ける。
+- `alerts`コマンドは`AlertDispatcher`（§6.7）と連携し、`--notify`指定時にメール送信。Runbook [RUN-OPS-05](docs/runbooks/RUN-OPS-05.md)のステップにCLI出力を貼り付ける。
 
 ### 25.6 テスト計画
 | テストID | 目的 | 内容 |
@@ -2731,7 +2731,7 @@ Flag切替時は`ConfigChanged`イベントに`flag_delta`が記録され、Repo
 | --- | --- | --- |
 | 事前準備 | `git flow`でリリースブランチ作成 (`release/x.y`)。`poetry version`更新。 | リリースノート草案。 |
 | 検証 | `pytest -m "m1 or m2plus"`、`tradectl backtest`(基準期間)、`tradectl preflight`。 | テストレポート、Backtest結果。 |
-| 承認 | PO+運用担当が`docs/release_checklist.md`を承認。 | 承認サイン（`logs/ops/release.log`）。 |
+| 承認 | PO+運用担当が[docs/release_checklist.md](docs/release_checklist.md)を承認。 | 承認サイン（`logs/ops/release.log`）。 |
 | デプロイ | `git tag vx.y.z`, `poetry export --format requirements.txt --output requirements.lock`。 | タグ、ロックファイル。 |
 | 配布 | Releaseパッケージ（zip）作成→外部ストレージへ配置。 | `dist/tradectl-vx.y.z.zip`。 |
 | ポストリリース | 24hモニタリング。異常があれば即ロールバック（タグ戻し＋設定復旧）。 | Postmortemレポート。 |
@@ -3317,7 +3317,7 @@ Acceptable Degradation（以下AD）発生時の定量把握と復旧計画立�
 Codexへ委譲した開発タスクの進行状況・品質指標・運用影響を一元可視化し、トレーダー/PO/運用が合意したSLAを満たしているかを迅速に判断するための統合モジュールを新設する。既存のQAスコアカード（§0.10）、Ops Review Hub（§19）、Prompt Bundle自動生成（§20）と密接に連携し、Acceptable Degradation下でも改善タスクの優先度付けを誤らないようにする。
 
 ### 25.1 目的と適用範囲
-- **進捗監視**: 各エピック/ストーリーの完了率・残タスク・SLA逸脱を日次で把握し、Runbook `RUN-OPS-05`のステータスレビューに反映する。
+- **進捗監視**: 各エピック/ストーリーの完了率・残タスク・SLA逸脱を日次で把握し、Runbook [RUN-OPS-05](docs/runbooks/RUN-OPS-05.md)のステータスレビューに反映する。
 - **品質早期警戒**: テスト失敗・スコープ逸脱・Runbook未更新といった逸脱を自動集約し、トレーダー判断に必要な背景情報（KPI影響/保留リスク）を提示する。
 - **Codex協働高速化**: Prompt Bundleに不足情報がある場合に警告し、必要な証跡ファイル（テストログ/スクリーンショット/CLI出力）をテンプレ化する。
 - **対象スコープ**: M1 CoreエピックおよびAcceptable Degradation復旧タスク。M1.1以降のGUI/自動化タスクも拡張可能なデータモデルとする。
@@ -3373,7 +3373,7 @@ Codexへ委譲した開発タスクの進行状況・品質指標・運用影響
 | `tradectl delivery export` | `--window`, `--out <path>`, `--format markdown|json` | Prompt Bundle添付用サマリと不足チェックリスト。 | `ChangeLedger`記録を自動実行。 |
 
 - CLIは`CommandTelemetryRecord`へ`component='delivery'`を記録。Acceptable Degradation時は`qa_tags`に`'degraded'`を付与。
-- `alerts`コマンドは`AlertDispatcher`（§6.7）と連携し、`--notify`指定時にメール送信。Runbook`RUN-OPS-05`のステップにCLI出力を貼り付ける。
+- `alerts`コマンドは`AlertDispatcher`（§6.7）と連携し、`--notify`指定時にメール送信。Runbook [RUN-OPS-05](docs/runbooks/RUN-OPS-05.md)のステップにCLI出力を貼り付ける。
 
 ### 25.6 テスト計画
 | テストID | 目的 | 内容 |
@@ -4612,7 +4612,7 @@ Acceptable Degradation（以下AD）発生時の定量把握と復旧計画立�
 Codexへ委譲した開発タスクの進行状況・品質指標・運用影響を一元可視化し、トレーダー/PO/運用が合意したSLAを満たしているかを迅速に判断するための統合モジュールを新設する。既存のQAスコアカード（§0.10）、Ops Review Hub（§19）、Prompt Bundle自動生成（§20）と密接に連携し、Acceptable Degradation下でも改善タスクの優先度付けを誤らないようにする。
 
 ### 25.1 目的と適用範囲
-- **進捗監視**: 各エピック/ストーリーの完了率・残タスク・SLA逸脱を日次で把握し、Runbook `RUN-OPS-05`のステータスレビューに反映する。
+- **進捗監視**: 各エピック/ストーリーの完了率・残タスク・SLA逸脱を日次で把握し、Runbook [RUN-OPS-05](docs/runbooks/RUN-OPS-05.md)のステータスレビューに反映する。
 - **品質早期警戒**: テスト失敗・スコープ逸脱・Runbook未更新といった逸脱を自動集約し、トレーダー判断に必要な背景情報（KPI影響/保留リスク）を提示する。
 - **Codex協働高速化**: Prompt Bundleに不足情報がある場合に警告し、必要な証跡ファイル（テストログ/スクリーンショット/CLI出力）をテンプレ化する。
 - **対象スコープ**: M1 CoreエピックおよびAcceptable Degradation復旧タスク。M1.1以降のGUI/自動化タスクも拡張可能なデータモデルとする。
@@ -4668,7 +4668,7 @@ Codexへ委譲した開発タスクの進行状況・品質指標・運用影響
 | `tradectl delivery export` | `--window`, `--out <path>`, `--format markdown|json` | Prompt Bundle添付用サマリと不足チェックリスト。 | `ChangeLedger`記録を自動実行。 |
 
 - CLIは`CommandTelemetryRecord`へ`component='delivery'`を記録。Acceptable Degradation時は`qa_tags`に`'degraded'`を付与。
-- `alerts`コマンドは`AlertDispatcher`（§6.7）と連携し、`--notify`指定時にメール送信。Runbook`RUN-OPS-05`のステップにCLI出力を貼り付ける。
+- `alerts`コマンドは`AlertDispatcher`（§6.7）と連携し、`--notify`指定時にメール送信。Runbook [RUN-OPS-05](docs/runbooks/RUN-OPS-05.md)のステップにCLI出力を貼り付ける。
 
 ### 25.6 テスト計画
 | テストID | 目的 | 内容 |
@@ -6070,7 +6070,7 @@ src/ops_dashboard/
 | `GateCriterion` | `id`, `description`, `status: Literal['pass','warn','fail']`, `weight`, `related_requirement: list[str]`, `auto_fix: bool`, `recommended_action: str` | 判定基準。例:`QA-03 Runbook 更新`, `AD Episode 未解決`。 |
 | `ReleaseDecision` | `status: Literal['go','hold','no_go']`, `score: Decimal`, `failed_criteria: list[GateCriterion]`, `warnings: list[GateCriterion]`, `next_review_at: datetime`, `owner: str` | リリース可否。 |
 | `ReleaseRiskEstimate` | `residual_risk_score`, `manual_hours_remaining`, `expected_guarded_hours`, `kpi_at_risk`, `notes` | Delivery Control Tower/ADツールキット情報から算出。 |
-| `ReleaseChecklistState` | `profile`, `items: list[ChecklistItemState]`, `completion_rate`, `last_updated`, `change_id` | Runbook `docs/release_checklist.md`との整合。 |
+| `ReleaseChecklistState` | `profile`, `items: list[ChecklistItemState]`, `completion_rate`, `last_updated`, `change_id` | Runbook [docs/release_checklist.md](docs/release_checklist.md)との整合。 |
 | `EvidencePointer` | `kind: Literal['runbook','change_ledger','prompt_bundle','metric','qa','scenario']`, `path`, `hash`, `summary` | 証跡へのリンク。 |
 
 - `ReadinessMetric`は`metric_id`, `value`, `target`, `trend`, `source`を保持（例: `data_ingestion_sla_p95=14.2s` vs 目標12s）。
@@ -6118,7 +6118,7 @@ src/ops_dashboard/
 ### 30.6 Codex実装契約
 1. `ReleaseReadinessService`は純粋ロジックを保持し、外部I/Oは`repository`に委譲。テストでは`FakeRepository`で差し替え可能とする。
 2. `GateCriterion`評価ルールは`config/release/gates.yaml`で設定可能にし、閾値変更をコード変更無しで行えるようにする。M1 Coreでは以下の必須キーを定義：`qa_pass_required`, `ad_resolved_within_days`, `delivery_alert_max_severity`, `feedback_max_priority`, `checklist_min_completion`。
-3. `ReleaseChecklistState`は`docs/release_checklist.md`のハッシュを保持。ファイル変更時は`ChangeLedger`へ自動登録。`validate_completion`はRunbookに存在しない項目があれば`ChecklistMismatch`で失敗させる。
+3. `ReleaseChecklistState`は[docs/release_checklist.md](docs/release_checklist.md)のハッシュを保持。ファイル変更時は`ChangeLedger`へ自動登録。`validate_completion`はRunbookに存在しない項目があれば`ChecklistMismatch`で失敗させる。
 4. `ReleaseRiskEstimate`計算では`DeliverySnapshot.ops_impact.expected_manual_minutes`と`DegradationSummary.mttr_minutes`を参照し、`expected_guarded_hours`を出力。Guarded解除までの想定時間を`HealthMonitor`の推奨アクション（§3.9）と突合。
 5. Evidence Graph連携は`EvidencePointer`を通じて行い、`EvidenceGraphService.link_artifact`のみ利用する。直接ファイル操作は禁止。
 6. Codexは`ReleaseScope`ごとのデフォルトテンプレを`config/release/readiness_<scope>.yaml`に実装し、`poetry run mypy src/release`を通過させる。
@@ -6133,7 +6133,7 @@ src/ops_dashboard/
 | IT-REL-01 | CLI出力 | `tests/integration/test_release_cli.py::test_release_readiness_markdown_snapshot`でCLI出力のスナップショットを固定。 |
 | IT-REL-02 | Prompt連携 | `tests/integration/test_prompt_cli.py::test_release_push_to_bundle`で`--push-to-bundle`がテンプレ追加することを検証。 |
 | IT-REL-03 | Delivery連動 | `tests/integration/test_delivery_release_hook.py::test_release_event_updates_delivery_alerts`でDelivery Control Towerとのイベント循環を検証。 |
-| SC-REL-01 | Go/No-Go演習 | `tradectl release readiness --scope live --window 7d`→`tradectl release checklist --profile live-core`→`tradectl release blockers --severity fail`をRunbook `RUN-REL-01`に沿って実施。 |
+| SC-REL-01 | Go/No-Go演習 | `tradectl release readiness --scope live --window 7d`→`tradectl release checklist --profile live-core`→`tradectl release blockers --severity fail`をRunbook [RUN-REL-01](docs/runbooks/RUN-REL-01.md)に沿って実施。 |
 
 - `make ci-lite`に`pytest -k release_readiness`を追加。CLIスナップショットは`tests/snapshots/release/`で管理し、文言変更時はPO承認必須。
 - `ReleaseReadinessSnapshot`スキーマは`tests/contracts/test_release_snapshot_schema.py`で固定し、Breaking Changeは`docs/change_requests/`を経由。
@@ -6152,7 +6152,7 @@ src/ops_dashboard/
   3. 関連する`ChangeLedger`/`EvidenceGraph`ID。
   4. 実行必須テスト（`pytest -k release_readiness`, `tradectl release readiness --dry-run`など）。
 - レビュー時は`git diff --stat`で変更が`src/release/`, `interfaces/cli/release.py`, `tests/`, `docs/`に収まっているか確認。`config/release/`やRunbook差分がある場合は`ChangeLedger`記録を必須とする。
-- `ReleaseDecision`が`hold`または`no_go`の場合、`tradectl release blockers --export`のMarkdownを`docs/runbooks/RUN-REL-01.md`へ貼り付け、改善タスクをチケット化する。
+- `ReleaseDecision`が`hold`または`no_go`の場合、`tradectl release blockers --export`のMarkdownを[RUN-REL-01](docs/runbooks/RUN-REL-01.md)へ貼り付け、改善タスクをチケット化する。
 
 
 ### 30.8 実装状況メモ（2025-03-13）
