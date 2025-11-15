@@ -6222,7 +6222,7 @@ M1 Coreの優先エピック（EP-01〜EP-04）を段階的にハードニング
 ### 89.1 運用境界と依存モジュール
 - Feature Pipeline（§3.3）とStrategy Registry（§3.4）の決定論保証をRunbook `STRAT-M1-VALIDATION`の手順1〜5に結び付け、`dataset_hash`/`config_hash`の整合を`reports/data_manifest.json`で一元管理する。
 - 再承認フローで生成される`reports/research/m1_baseline/metrics_<date>.json`と`validation_<date>.md`を`EvidenceGraph`に取り込み、`ChangeLedger.record_change(category='strategy_validation')`の必須化を維持する。
-- `docs/validation/strategy_determinism.md`（2025-03-05更新）を参照し、Runbookの「チェックリスト」節とEvidence Graphノード`strategy_validation/<strategy>/<YYYYMMDD>`を同期させる（追跡: `docs/prompt_packages/20250318_packet_backlog.md#3-...`).
+- `docs/validation/strategy_determinism.md`（2025-03-05更新）を参照し、Runbookの「チェックリスト」節とEvidence Graphノード`strategy_validation/<strategy>/<YYYYMMDD>`を同期させる（追跡: `docs/prompt_packages/20250318_packet_backlog.md#3-packet-ep02-p1--strategy-determinism`).
 
 ### 89.2 CLIシーケンスとRunbook突合
 | Runbook手順 | CLI/スクリプト | 証跡ファイル | 備考 |
@@ -6235,7 +6235,7 @@ M1 Coreの優先エピック（EP-01〜EP-04）を段階的にハードニング
 ### 89.3 テストと証跡
 - `pytest -k strategy_determinism`, `pytest -k feature_pipeline`（`docs/change_requests/20250318_packet_backlog.md §4.3`）をグリーンにするため、決定論スナップショット（`tests/snapshots/strategy/*.snap`）を更新し、CIでハッシュ検証を追加する。
 - Backtest再現性: `tradectl backtest run --seed 123`→`tradectl backtest run --seed 123`で一致する`StrategyReplay`ハッシュを`metrics/strategy_replay.jsonl`へ書き込み、`reports/validation_log/AC-07_<date>.md`に貼り付ける。
-- Evidence連携: `docs/prompt_packages/20250318_packet_backlog.md#3-...`にRunbook参照とテストログを追加し、Evidence Graph（§23）で`strategy_manifest`バージョン差分と紐付ける。
+- Evidence連携: `docs/prompt_packages/20250318_packet_backlog.md#3-packet-ep02-p1--strategy-determinism`にRunbook参照とテストログを追加し、Evidence Graph（§23）で`strategy_manifest`バージョン差分と紐付ける。
 
 
 ### 89.3 実装状況メモ（2025-03-13）
@@ -6278,7 +6278,7 @@ M1 Coreの優先エピック（EP-01〜EP-04）を段階的にハードニング
 
 ### 91.1 運用境界と依存モジュール
 - Ticket Builder（§3.16）とBoard CLI（§6.2）のUI要件を`RUN-HITL-01`のチェックリストおよび日次アジェンダ`docs/runbooks/daily_agenda/CODEX_DAILY_START.md`の「Boardレビュー」節に合わせ、`HumanErrorChecklist`結果とRisk Disclosureバナー表示をRunbookに一致させる。
-- `docs/ux_feedback.md`（2025-03-05更新）を参照し、HITLフィードバックの正式ログを`ux_feedback/<YYYYMMDD>_<slug>`でEvidence Graphへ登録する。旧来の仮置き（`docs/prompt_packages/20250318_packet_backlog.md#5-...`、`reports/validation_log/AC-10_<date>.md`）はアーカイブへ移行する。
+- `docs/ux_feedback.md`（2025-03-05更新）を参照し、HITLフィードバックの正式ログを`ux_feedback/<YYYYMMDD>_<slug>`でEvidence Graphへ登録する。旧来の仮置き（`docs/prompt_packages/20250318_packet_backlog.md#5-packet-ep04-p1--ticket-clarity`、`reports/validation_log/AC-10_<date>.md`）はアーカイブへ移行する。
 - CLIテレメトリ（§15）で`command='board'`の`qa_tags`に`['baseline','degraded','manual_csv']`が付与されているか確認し、`metrics/cli_perf.jsonl`に承認レイテンシを記録する。
 
 ### 91.2 CLIシーケンスとRunbook突合
@@ -6291,7 +6291,7 @@ M1 Coreの優先エピック（EP-01〜EP-04）を段階的にハードニング
 
 ### 91.3 テストと証跡
 - `pytest -k ticket_builder`, `pytest -k board_renderer`、必要に応じて`pytest --snapshot-update`（`docs/change_requests/20250318_packet_backlog.md §4.5`）を実施し、`tests/snapshots/board/*.snap`の承認をPOレビューへ添付する。
-- CLIスナップショット: `tradectl board --filter symbol=USDJPY`の出力を`docs/prompt_packages/20250318_packet_backlog.md#5-...`へ貼付し、Boardバナー/チェックリスト表示をRunbook`RUN-HITL-01`に整合させる。
+- CLIスナップショット: `tradectl board --filter symbol=USDJPY`の出力を`docs/prompt_packages/20250318_packet_backlog.md#5-packet-ep04-p1--ticket-clarity`へ貼付し、Boardバナー/チェックリスト表示をRunbook`RUN-HITL-01`に整合させる。
 - Evidence整備: `reports/validation_log/AC-02_<date>.md`/`AC-10_<date>.md`/`AC-11_<date>.md`へ承認ログとスクリーンショット参照（将来は`artifacts://`リンク）を追記し、Ops Review Hub（§19）とRelease Readiness（§30）で再利用する。
 
 
