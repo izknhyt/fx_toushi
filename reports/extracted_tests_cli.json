@@ -1,0 +1,390 @@
+{
+  "9": {
+    "tests": [
+      "FUT-SCORE-01",
+      "FUT-SCORE-02",
+      "FUT-SPRT-01",
+      "IT-COR-01",
+      "IT-FUND-01",
+      "IT-GAME-01",
+      "IT-KILL-01",
+      "IT-PIPE-01",
+      "IT-RESYNC-01",
+      "IT-RISK-02",
+      "IT-RL-01",
+      "IT-SPREAD-01",
+      "MVP-FR-01",
+      "PT-BT-01",
+      "PT-CLI-01",
+      "UT-CFG-01",
+      "UT-EXEC-01",
+      "UT-FEAT-01",
+      "UT-GAME-01",
+      "UT-ING-01",
+      "UT-RISK-01",
+      "UT-RL-01",
+      "UT-SIZE-01",
+      "UT-STR-01",
+      "UT-TKT-01"
+    ],
+    "cli": [
+      "make qa-report",
+      "make qa-report --ci",
+      "pytest -m \"not m2plus\"",
+      "pytest tests/integration/test_pipeline_end_to_end.py",
+      "pytest tests/unit/test_rate_limit_guard.py",
+      "pytest-approvaltests",
+      "tools/make_fixture.py",
+      "tradectl backtest run --strategy m1_baseline_ma_rsi --profile paper-m1-baseline --from 2021-01-01 --to 2023-06-30 --out reports/backtest/m1_baseline/is",
+      "tradectl backtest run --strategy m1_baseline_ma_rsi --profile paper-m1-baseline --from 2023-07-01 --to 2024-12-31 --out reports/backtest/m1_baseline/oos",
+      "tradectl backtest run ... --what-if spread=1.5,slip=1.5",
+      "tradectl board",
+      "tradectl data rate-limit stage",
+      "tradectl diagnostics risk --strategy m1_baseline_ma_rsi --from 2023-07-01 --to 2024-12-31 --mode backtest",
+      "tradectl game run --seed 123",
+      "tradectl metrics latency --mode paper --from 2024-01-01 --to 2024-12-31",
+      "tradectl preflight",
+      "tradectl report weekly --since 7d",
+      "tradectl scenario run --id AC-45 --profile paper-m1-core"
+    ]
+  },
+  "22": {
+    "tests": [],
+    "cli": [
+      "make game-audit",
+      "make game-smoke",
+      "pytest -k game",
+      "pytest-approvaltests",
+      "tradectl game run",
+      "tradectl game run --seed 123 --days 3 --dry-run",
+      "tradectl game run --seed 42 --days 3 --dry-run",
+      "tradectl review degraded"
+    ]
+  },
+  "23": {
+    "tests": [
+      "IT-EVG-01",
+      "IT-EVG-02",
+      "IT-EVG-03",
+      "IT-EVG-04",
+      "UT-EVG-01",
+      "UT-EVG-02",
+      "UT-EVG-03",
+      "UT-EVG-04"
+    ],
+    "cli": [
+      "make ci-lite",
+      "make evidence-audit",
+      "pytest -k evidence_graph",
+      "tradectl degradation report",
+      "tradectl evidence",
+      "tradectl evidence ...",
+      "tradectl evidence audit",
+      "tradectl evidence export",
+      "tradectl evidence graph build",
+      "tradectl evidence graph build --window <...> --dry-run",
+      "tradectl evidence inspect",
+      "tradectl evidence link ...",
+      "tradectl evidence query",
+      "tradectl evidence query --format graphviz --open"
+    ]
+  },
+  "24": {
+    "tests": [
+      "IT-DEG-01",
+      "IT-DEG-02",
+      "IT-DEG-03",
+      "OPS-DEG-01",
+      "OPS-RL-03",
+      "UT-DEG-01",
+      "UT-DEG-02",
+      "UT-DEG-03"
+    ],
+    "cli": [
+      "make ci-lite",
+      "pytest -k degradation",
+      "tradectl degradation",
+      "tradectl degradation ...",
+      "tradectl degradation episode list",
+      "tradectl degradation episode show <id>",
+      "tradectl degradation recommend",
+      "tradectl degradation recommend --severity high --push-to-bundle",
+      "tradectl degradation report",
+      "tradectl degradation report --window 1d --format json --push-to-bundle --dry-run",
+      "tradectl degradation report --window 1d --include-evidence",
+      "tradectl degradation report --window 7d",
+      "tradectl degradation sync-evidence",
+      "tradectl review digest",
+      "tradectl scenario run --id OPS-DEG-01 --dry-run"
+    ]
+  },
+  "25": {
+    "tests": [
+      "IT-DEL-01",
+      "IT-DEL-02",
+      "UT-DEL-01",
+      "UT-DEL-02",
+      "UT-DEL-03"
+    ],
+    "cli": [
+      "make ci-lite",
+      "pytest -k delivery",
+      "tradectl delivery ...",
+      "tradectl delivery alerts",
+      "tradectl delivery export",
+      "tradectl delivery forecast",
+      "tradectl delivery forecast --include-degradation --window 3d",
+      "tradectl delivery status",
+      "tradectl delivery status --include-alerts"
+    ]
+  },
+  "26": {
+    "tests": [
+      "IT-FB-01",
+      "IT-FB-02",
+      "IT-FB-03",
+      "UT-FB-01",
+      "UT-FB-02",
+      "UT-FB-03"
+    ],
+    "cli": [
+      "pytest --snapshot-update --maxfail=1",
+      "pytest -k feedback",
+      "tradectl feedback ...",
+      "tradectl feedback ack",
+      "tradectl feedback export",
+      "tradectl feedback export --include-degradation",
+      "tradectl feedback route",
+      "tradectl feedback route --destination ux",
+      "tradectl feedback summarize",
+      "tradectl feedback summarize --window 1d --strategy core_ma_rsi"
+    ]
+  },
+  "27": {
+    "tests": [
+      "IT-SLP-01",
+      "IT-SLP-02",
+      "IT-SLP-03",
+      "IT-SLP-04",
+      "OPS-DEG-01",
+      "PT-SLP-01",
+      "UT-SLP-01",
+      "UT-SLP-02",
+      "UT-SLP-03"
+    ],
+    "cli": [
+      "make ci-lite",
+      "pytest -k \"slippage or liquidity\"",
+      "tradectl account import",
+      "tradectl liquidity",
+      "tradectl liquidity ...",
+      "tradectl liquidity analyze",
+      "tradectl liquidity analyze --format json --push-evidence",
+      "tradectl liquidity analyze --window 14d",
+      "tradectl liquidity analyze --window 14d --format table",
+      "tradectl liquidity analyze --window 7d",
+      "tradectl liquidity analyze --window 7d --format markdown --include-news",
+      "tradectl liquidity export-samples",
+      "tradectl liquidity replay",
+      "tradectl liquidity suggest-adjustment",
+      "tradectl scenario run OPS-DEG-01 --step-to slippage_review"
+    ]
+  },
+  "28": {
+    "tests": [
+      "IT-EMG-01",
+      "IT-EMG-02",
+      "IT-EMG-03",
+      "PT-EMG-01",
+      "UT-EMG-01",
+      "UT-EMG-02",
+      "UT-EMG-03"
+    ],
+    "cli": [
+      "make ci-lite",
+      "pytest -k \"emergency\"",
+      "src/emergency/\n  orchestrator.py        # EmergencyOrchestrator (Facade)\n  detectors.py           # DataStop/FillDrift/ProviderOutage検知器\n  actions.py             # ReduceOnlyProposal, AlertDispatch, ManualCsvDrill 等\n  registry.py            # Feature Flag判定とDIハンドラ\n  plans.py               # EmergencyPlanテンプレ/Runbookマッピング\n  cli.py                 # tradectl emergency ...\n  persistence.py         # IncidentLedger JSONL",
+      "tradectl board --guarded",
+      "tradectl broker report",
+      "tradectl broker report --status down",
+      "tradectl emergency ack <id> --board-mode guarded",
+      "tradectl emergency ack <incident_id>",
+      "tradectl emergency execute <incident_id> <action_id>",
+      "tradectl emergency export <incident_id>",
+      "tradectl emergency list",
+      "tradectl emergency show <incident_id>",
+      "tradectl emergency simulate",
+      "tradectl emergency simulate <scenario_id>",
+      "tradectl emergency simulate EMG-DATA-01 --with-scenario-runner",
+      "tradectl liquidity analyze"
+    ]
+  },
+  "29": {
+    "tests": [
+      "IT-DASH-01",
+      "IT-DASH-02",
+      "IT-DASH-03",
+      "OPS-BENCH-01",
+      "PT-DASH-01",
+      "UT-DASH-01",
+      "UT-DASH-02",
+      "UT-DASH-03"
+    ],
+    "cli": [
+      "make ci-lite",
+      "pytest -k \"ops_dashboard\"",
+      "src/ops_dashboard/\n  service.py            # OpsDashboardService\n  widgets.py            # WidgetBaseと具体ウィジェット実装\n  layout.py             # Widget配置ロジック/レイアウトテンプレ\n  telemetry.py          # メトリクス/イベントフェッチャ\n  cli.py                # tradectl ops dashboard\n  renderer.py           # Rich Table/Panel生成",
+      "tradectl benchmark compare",
+      "tradectl board --guarded",
+      "tradectl degradation summarize",
+      "tradectl feedback ack <id>",
+      "tradectl ops dashboard",
+      "tradectl ops dashboard --format markdown",
+      "tradectl ops dashboard --format table",
+      "tradectl ops dashboard --watch",
+      "tradectl ops dashboard diff",
+      "tradectl ops dashboard snapshot",
+      "tradectl ops dashboard snapshot --summary",
+      "tradectl ops dashboard widget-info <widget_id>",
+      "tradectl runbook lint"
+    ]
+  },
+  "30": {
+    "tests": [
+      "IT-REL-01",
+      "IT-REL-02",
+      "IT-REL-03",
+      "UT-REL-01",
+      "UT-REL-02",
+      "UT-REL-03",
+      "UT-REL-04"
+    ],
+    "cli": [
+      "make ci-lite",
+      "pytest -k release_readiness",
+      "tradectl release ...",
+      "tradectl release blockers",
+      "tradectl release blockers --export",
+      "tradectl release blockers --severity fail",
+      "tradectl release checklist",
+      "tradectl release checklist --profile live-core",
+      "tradectl release export",
+      "tradectl release export --scope live --include-ci --out reports/release/readiness/live_<date>.md",
+      "tradectl release readiness",
+      "tradectl release readiness --dry-run",
+      "tradectl release readiness --scope live --window 7d",
+      "tradectl release readiness --scope paper --format markdown --include-evidence",
+      "tradectl release simulate"
+    ]
+  },
+  "87": {
+    "tests": [],
+    "cli": [
+      "make sla-report",
+      "pytest",
+      "pytest --snapshot-update",
+      "pytest -k board_renderer",
+      "pytest -k feature_pipeline",
+      "pytest -k health_state",
+      "pytest -k risk_manager",
+      "pytest -k strategy_determinism",
+      "pytest -k ticket_builder",
+      "tradectl backtest run",
+      "tradectl board --guarded",
+      "tradectl correlation snapshot",
+      "tradectl data failover --mode manual",
+      "tradectl data health",
+      "tradectl data rate-limit stage inspect|set",
+      "tradectl diagnostics risk",
+      "tradectl kill-switch engage|release",
+      "tradectl metrics latency --mode paper",
+      "tradectl report ack",
+      "tradectl report status",
+      "tradectl risk summary",
+      "tradectl status --history kill-switch",
+      "tradectl ticket queue --summary",
+      "tradectl ticket simulate|approve|inspect|checklist"
+    ]
+  },
+  "88": {
+    "tests": [
+      "IT-RL-01",
+      "OPS-DEG-01",
+      "SCN-ING-01"
+    ],
+    "cli": [
+      "pytest -k data_pipeline",
+      "pytest -k rate_limit_guard",
+      "tradectl board guard --release",
+      "tradectl data ack --provider <name>",
+      "tradectl data failover --mode manual",
+      "tradectl data failover --mode manual --to <provider>",
+      "tradectl data health --symbol <pair>",
+      "tradectl data jobs enqueue",
+      "tradectl data jobs enqueue --task manual_csv",
+      "tradectl data jobs enqueue --task manual_csv ...",
+      "tradectl data manual-template",
+      "tradectl data rate-limit stage set",
+      "tradectl data validate-csv",
+      "tradectl resync --since <ts>",
+      "tradectl status --detail"
+    ]
+  },
+  "89": {
+    "tests": [],
+    "cli": [
+      "make data-build symbol=<symbol> ...",
+      "pytest -k feature_pipeline",
+      "pytest -k strategy_determinism",
+      "tradectl backtest run --seed 123",
+      "tradectl backtest run --strategy m1_baseline_ma_rsi ...",
+      "tradectl report ack --strategy ... --state approved",
+      "tradectl report status --strategy m1_baseline_ma_rsi"
+    ]
+  },
+  "90": {
+    "tests": [
+      "RISK-KS-05",
+      "SCN-SPR-02"
+    ],
+    "cli": [
+      "pytest -k health_state",
+      "pytest -k risk_manager",
+      "tradectl board --guarded",
+      "tradectl board --guarded --reason spread",
+      "tradectl correlation diff --base ...",
+      "tradectl correlation snapshot --window 30d --out ...",
+      "tradectl diagnostics risk --from -7d --mode paper",
+      "tradectl kill-switch engage",
+      "tradectl kill-switch engage --mode paper --reason drawdown",
+      "tradectl kill-switch release",
+      "tradectl risk limits show --mode paper",
+      "tradectl risk override --block --reason r_eff_breach --duration 60m",
+      "tradectl risk summary --week",
+      "tradectl status --history kill-switch --limit 7"
+    ]
+  },
+  "91": {
+    "tests": [],
+    "cli": [
+      "pytest --snapshot-update",
+      "pytest -k board_renderer",
+      "pytest -k ticket_builder",
+      "tradectl board --filter symbol=USDJPY",
+      "tradectl status --mode paper --detail",
+      "tradectl ticket approve --id ...",
+      "tradectl ticket check-batch --csv tests/fixtures/broker_rounding_cases.csv",
+      "tradectl ticket check-size --pair <pair> --size <lot> --account paper",
+      "tradectl ticket checklist --id <ticket_id>",
+      "tradectl ticket monitor --id ...",
+      "tradectl ticket queue --summary",
+      "tradectl ticket simulate --symbol USDJPY ..."
+    ]
+  },
+  "92": {
+    "tests": [],
+    "cli": [
+      "のpytestログと、将来的に追加されるCLIログ（"
+    ]
+  }
+}

@@ -155,6 +155,7 @@ Codexと共同開発を開始する際は以下7項目を必ず実施し、`repo
 | CHK-0.6.9-7 | 役割アサイン | 当日のOps責任者とCodexレビュワーを決定し、署名を`reports/validation_log/CHK-0.6.9-run.md`に残す。 | `reports/validation_log/CHK-0.6.9-run.md` | Opsリード＋Codex窓口 |
 
 - **運用ノート**: チェック結果が`pending`の場合は`docs/runbooks/daily_agenda/notes/<date>.md`にフォローアップ期限を記載し、翌営業日のアジェンダで再確認する。
+- **CIレシピ更新**: `CHK-0.6.9-1/2`実施時に`make ci-lite`ターゲットへ最新のテストセレクタ（`docs/change_requests/CR-20250313-test_cli_gap.md`参照）を反映し、`reports/validation_log/CHK-0.6.9-run.md`へ更新結果を記録する。
 - **エスカレーション**: 2営業日連続で`CHK-0.6.9-2`または`CHK-0.6.9-5`が`fail/pending`の場合、Opsマネージャーが`RUN-OPS-02`に沿って緊急レビューを開催する。
 
 ### 0.7 Codex実装アクセラレーションパック（v2.0追加）
@@ -1679,6 +1680,17 @@ Flag切替時は`ConfigChanged`イベントに`flag_delta`が記録され、Repo
 - **自動収集**: `make qa-report`が上表のテスト結果を集約し、`reports/qa/<date>.md`へ出力する。CIでは`make qa-report --ci`を週次で回し、合格証跡を残す。
 - **Codexハンドオーバー**: PRマージ前にCodexへ`qa-report`の要約と`feedback_loop.md`の該当行をフィードバックし、次回プロンプト改善へ反映する。
 
+### 9.6 実装状況メモ（2025-03-13）
+
+| 区分 | 対象 | 実装状況 | 依頼元Runbook | 証跡ファイル |
+| --- | --- | --- | --- | --- |
+| テスト（M1） | UT-GAME-01, IT-GAME-01, PT-CLI-01 | 予定（M1整備） | RUN-OPS-02, RUN-HITL-01 | `docs/change_requests/CR-20250313-test_cli_gap.md`（§9） |
+| CLI（M1） | `tradectl game run --seed 123`, `tradectl board`, `make game-smoke`, `pytest -k game` | 予定（M1整備） | RUN-OPS-02, RUN-HITL-01 | 同上 |
+| バックログ | 上記以外の§9対象テスト/CLI | M1.1以降バックログ | CHK-0.6.9 | 同上 |
+
+- 詳細なギャップ表と証跡の追跡は`docs/change_requests/CR-20250313-test_cli_gap.md`に集約した。
+- CI反映メモ: `make ci-lite`へ`pytest -k game`追加、`make qa-report`レシピ新設（M1.1以降）。
+
 ## 10. 要件トレーサビリティ
 
 | 要件ID | 本書記載箇所 |
@@ -1869,6 +1881,16 @@ Flag切替時は`ConfigChanged`イベントに`flag_delta`が記録され、Repo
 - `make game-audit`スクリプトを用意し、直近N件のゲームログについてRunbook/Change Ledgerリンクが存在するか、`knowledge_case_id`が`index.json`に登録されているかを検証。CIでは週次で実行し、欠損があれば`WARN game.audit_missing`を出す。
 - Acceptable Degradation解除判定では、直近30日以内に`ACT-MANUAL-CSV`/`ACT-GUARDED-BOARD`を含むゲーム演習を最低1回実施していることを確認し、未実施なら`HealthMonitor.raise('warning','game_training_stale')`を発火する。
 
+### 22.13 実装状況メモ（2025-03-13）
+
+| 区分 | 対象 | 実装状況 | 依頼元Runbook | 証跡ファイル |
+| --- | --- | --- | --- | --- |
+| CLI（M1） | `tradectl game run`, `tradectl game run --seed 123 --days 3 --dry-run`, `make game-smoke`, `pytest -k game` | 予定（M1整備） | RUN-OPS-02 | `docs/change_requests/CR-20250313-test_cli_gap.md`（§22） |
+| バックログ | 上記以外の§22 CLI | M1.1以降バックログ | RUN-OPS-02 | 同上 |
+
+- CLIギャップとRunbook整合の詳細は`docs/change_requests/CR-20250313-test_cli_gap.md`に記録した。
+- CI反映メモ: `make ci-lite`へ`game-smoke`ジョブを追加し、`tradectl game run --seed 123 --days 3 --dry-run`を実行する。
+
 ---
 
 ## 23. リサーチ/運用エビデンスグラフ統合（v2.5ドラフト）
@@ -1975,6 +1997,16 @@ Flag切替時は`ConfigChanged`イベントに`flag_delta`が記録され、Repo
 - `tradectl evidence link ...` コマンド群は上記命名規約に従い、Evidence Graph (§23.5) とRelease Readiness (§30) の`EvidencePointer`へ同一IDを提供する。
 - Delivery Control Tower (§25) とOps Review Hub (§19) は本表を参照し、テンプレ更新日が30日を超過した場合に`DeliveryAlert(kind='evidence_template_stale')`を出す。
 
+### 23.10 実装状況メモ（2025-03-13）
+
+| 区分 | 対象 | 実装状況 | 依頼元Runbook | 証跡ファイル |
+| --- | --- | --- | --- | --- |
+| テスト | UT/IT-EVG-01〜04 | 未実装（M1.1+） | RUN-GOV-01 | `docs/change_requests/CR-20250313-test_cli_gap.md`（§23） |
+| CLI | `tradectl evidence ...`コマンド群 | 未実装（M1.1+） | RUN-GOV-01 | 同上 |
+
+- CI反映メモ: `make ci-lite`へ`pytest -k evidence_graph`と`make evidence-audit`の追加をM1.1で実施予定。
+- ギャップ詳細とRunbookリンクは`docs/change_requests/CR-20250313-test_cli_gap.md`を参照。
+
 ## 24. Acceptable Degradation Analytics & Recovery Toolkit（v2.6追加）
 
 Acceptable Degradation（以下AD）発生時の定量把握と復旧計画立案を半自動化するモジュール群を追加し、Board Guard/Scenario Runner/QAスコアカード/Change Ledgerの循環を強化する。Codexが再発防止タスクを実装する際に必要な証跡とI/O契約を事前に整備し、トレーダーは復旧後の改善効果を定量評価できるようにする。
@@ -2067,6 +2099,1234 @@ Acceptable Degradation（以下AD）発生時の定量把握と復旧計画立�
 - GameEngine (§22) の演習結果で`loss:data_latency_breach`が一定回数を超えた場合、`DegradationRecommendation`に「トレーニング不足」タグを付与し、Runbook更新または追加演習を提案。
 - Board Guard (`§3.8`) が`guarded`に遷移した回数と実行時間をEpisodeに紐付け、HITLトレーダーが承認したチケット数/Reject理由を`TicketBuilder`ログと照合。UX改善タスク起票時に`manual_hours_saved`の改善余地を明示する。
 - Acceptable Degradation解除後24時間以内に`tradectl degradation recommend --severity high --push-to-bundle`を実施し、Codexへ再発防止タスクを連続で依頼できるフローを定着させる。
+
+### 24.9 実装状況メモ（2025-03-13）
+
+| 区分 | 対象 | 実装状況 | 依頼元Runbook | 証跡ファイル |
+| --- | --- | --- | --- | --- |
+| テスト | UT/IT-DEG-01〜03, OPS-DEG-01, OPS-RL-03 | 未実装（M1.1+） | RUN-DATA-05 / RUN-RISK-01 | `docs/change_requests/CR-20250313-test_cli_gap.md`（§24） |
+| CLI | `tradectl degradation ...`コマンド群 | 未実装（M1.1+） | RUN-DATA-05 / RUN-RISK-01 | 同上 |
+
+- CI反映メモ: `make ci-lite`へ`pytest -k degradation`を追加予定。`tradectl degradation report --window 1d --format json --push-to-bundle --dry-run`を週次ジョブに編成。
+- 詳細ギャップとRunbook整合は`docs/change_requests/CR-20250313-test_cli_gap.md`参照。
+
+## 25. Codexデリバリーコントロールタワー（v2.7）
+
+Codexへ委譲した開発タスクの進行状況・品質指標・運用影響を一元可視化し、トレーダー/PO/運用が合意したSLAを満たしているかを迅速に判断するための統合モジュールを新設する。既存のQAスコアカード（§0.10）、Ops Review Hub（§19）、Prompt Bundle自動生成（§20）と密接に連携し、Acceptable Degradation下でも改善タスクの優先度付けを誤らないようにする。
+
+### 25.1 目的と適用範囲
+- **進捗監視**: 各エピック/ストーリーの完了率・残タスク・SLA逸脱を日次で把握し、Runbook `RUN-OPS-05`のステータスレビューに反映する。
+- **品質早期警戒**: テスト失敗・スコープ逸脱・Runbook未更新といった逸脱を自動集約し、トレーダー判断に必要な背景情報（KPI影響/保留リスク）を提示する。
+- **Codex協働高速化**: Prompt Bundleに不足情報がある場合に警告し、必要な証跡ファイル（テストログ/スクリーンショット/CLI出力）をテンプレ化する。
+- **対象スコープ**: M1 CoreエピックおよびAcceptable Degradation復旧タスク。M1.1以降のGUI/自動化タスクも拡張可能なデータモデルとする。
+
+### 25.2 モジュール構成と責務
+| パス | 役割 | 主な公開API/機能 | 備考 |
+| --- | --- | --- | --- |
+| `src/delivery/control_tower.py` | 集約サービス。各種ソース（ChangeLedger, QA Scorecard, Prompt Bundle, Telemetry）から情報収集。 | `build_snapshot(window: ReviewWindow) -> DeliverySnapshot`, `detect_alerts(snapshot) -> list[DeliveryAlert]` | 非同期I/O対応。`AsyncAggregator`を内部利用。 |
+| `src/delivery/models.py` | `DeliverySnapshot`, `WorkPackageStatus`, `QualitySignal`, `OpsImpactEstimate`, `PromptGap` dataclass。 | `DeliverySnapshot`は`window`, `work_packages`, `qa_summary`, `ops_impact`, `alerts`を保持。 | `@dataclass(slots=True, frozen=True)`で不変性を確保。 |
+| `src/delivery/repository.py` | ChangeLedger/QAログ/Prompt Bundle/CIログからのデータ読み出し。 | `fetch_work_packages(window)`, `fetch_qa_scores(window)`, `fetch_prompt_bundles(window)`, `fetch_ci_logs(window)` | `pathlib.Path`と`pydantic`で入力検証。 |
+| `src/delivery/forecaster.py` | OPSインパクト予測（ヒューマンレビュー所要時間/Guard解除見込み）。 | `estimate_ops_impact(snapshot) -> OpsImpactEstimate` | 統計モデルはM1で線形回帰ベース。M1.1でベイズ更新を追加。 |
+| `src/interfaces/cli/delivery.py` | `tradectl delivery ...` CLI。 | `tradectl delivery status`, `tradectl delivery forecast`, `tradectl delivery alerts`, `tradectl delivery export` | Typer登録は`interfaces/cli/__init__.py`経由。 |
+| `src/review/renderers.py` | Review Hub共通のリッチテーブル出力。 | `render_delivery_snapshot(snapshot)` | 既存§19で定義済みのコンポーネントを拡張。 |
+
+### 25.3 データモデル詳細
+| モデル | 主フィールド | 説明 | 生成元 |
+| --- | --- | --- | --- |
+| `WorkPackageStatus` | `id`, `epic`, `story`, `status: Literal['planned','in_progress','review','blocked','done']`, `owner`, `qa_gate`, `tests_run`, `scope_paths`, `last_prompt_bundle`, `change_ids` | Codex実装チケットの粒度で進行状況を保持。`qa_gate`はQA-01〜05の達成状況。 | ChangeLedger（`category='work_package'`）、Prompt Bundle index、CIログ。 |
+| `QualitySignal` | `qa_id`, `status`, `evidence_path`, `owner`, `updated_at`, `notes` | QAスコアカードの個別項目状態。 | `docs/review_log.md`, `metrics/qa_scorecard.jsonl`。 |
+| `OpsImpactEstimate` | `expected_manual_minutes`, `guard_release_eta`, `risk_score`, `kpi_at_risk`, `recommended_action` | Ops負荷とリスクの見積り。`risk_score`は0〜100。 | `forecaster.estimate_ops_impact`。 |
+| `PromptGap` | `bundle_id`, `missing_sections`, `stale_snippets`, `required_files` | Prompt Bundleに不足している情報。 | Prompt Bundle diff（§20）。 |
+| `DeliveryAlert` | `alert_id`, `severity`, `summary`, `related_work_packages`, `related_runbook_steps`, `recommended_followup` | コントロールタワーが検知した逸脱。 | `control_tower.detect_alerts`。 |
+
+- `DeliverySnapshot`は`work_packages: list[WorkPackageStatus]`, `qa_summary: dict[str, QualitySignal]`, `ops_impact: OpsImpactEstimate`, `prompt_gaps: list[PromptGap]`, `alerts: list[DeliveryAlert]`を保持。
+- `scope_paths`は設計書内の参照（例: `§3.1`, `src/data/service.py`）を持つ。Acceptable Degradation復旧タスクは`degradation_case_id`を追加。
+- `change_ids`はChangeLedgerの記録IDリスト。差分追跡と監査ログ連携に利用。
+
+### 25.4 フローとアルゴリズム
+1. `DeliveryControlTower.build_snapshot(window)`が`repository`各メソッドで入力データを収集。`window`は`ReviewWindow`（§19.2）と共通。
+2. `WorkPackageStatus`生成時に以下を評価:
+   - `status`は`ChangeLedger`の最新レコード＋Prompt Bundle `status`タグから算出。PRマージ済みかどうかは`git`ログ（`logs/audit/build.log`）を参照。
+   - `tests_run`はCIログ解析で`make ci-lite`の結果を抽出し、失敗テストを`QualitySignal.notes`へリンク。
+   - `scope_paths`はPrompt Bundle `io_contract`セクションから抽出、設計書セクション番号との整合をチェック。欠損時は`PromptGap`に追加。
+3. `qa_summary`はQAスコアカード（§0.10）を取り込み、未完了項目は`severity='warn'`以上の`DeliveryAlert`を生成。
+4. `forecaster.estimate_ops_impact(snapshot)`が`expected_manual_minutes`を以下で推定:
+   - 基準値（Runbook作業時間）× `open_alerts`係数。
+   - Acceptable Degradation中は`guard_release_eta`を`HealthMonitor`の推奨アクション（§3.8）と連携し、解除条件までの予測時間を返す。
+5. `detect_alerts`は以下のルールを評価:
+    - `QA-05`が`pending`で`WorkPackageStatus.status in {'review','blocked'}`→`severity='critical'`, `related_runbook_steps=['RUN-DATA-05#guard_release']`。
+    - `PromptGap.missing_sections`に`'test_plan'`が含まれ、`tests_run`に当該テストが存在しない→`severity='major'`。
+    - `ChangeLedger`連携が3日以上遅延→`severity='major'`, `recommended_followup='log_change ledger missing'`。
+    - `ops_impact.guard_release_eta>=30`→`severity='warn'`、`>=45`→`severity='critical'`として`guard_release_delay`を生成。
+    - `ops_impact.data_ingestion_sla_p95>24`→`severity='major'`、`>=30`→`severity='critical'`として`data_sla_drift`を生成。
+    - `qa_summary['KPI'].Sharpe_recent<0.85`→`severity='warn'`、`<0.80`→`severity='critical'`として`kpi_regression`を生成。
+6. `DeliverySnapshot`は`EventBus.publish('delivery.snapshot.generated', snapshot)`で配信。Ops Review Hub（§19）が週次レポートへ組み込む。
+
+### 25.5 CLI仕様 (`tradectl delivery ...`)
+| コマンド | 主なフラグ | 出力 | 備考 |
+| --- | --- | --- | --- |
+| `tradectl delivery status` | `--window <N|date range>`, `--epic`, `--include-alerts` | 現在の`DeliverySnapshot`表と警告一覧。 | デフォルトは過去7日。警告は色分け表示。 |
+| `tradectl delivery forecast` | `--window`, `--include-degradation`, `--format json|markdown` | `OpsImpactEstimate`をテーブル表示。 | Acceptable Degradation中は`guard_release_eta`を強調。 |
+| `tradectl delivery alerts` | `--severity warn|major|critical`, `--export` | `DeliveryAlert`一覧。`--export`でJSON。 | `qa_tags=['delivery','qa']`を自動付与。 |
+| `tradectl delivery export` | `--window`, `--out <path>`, `--format markdown|json` | Prompt Bundle添付用サマリと不足チェックリスト。 | `ChangeLedger`記録を自動実行。 |
+
+- CLIは`CommandTelemetryRecord`へ`component='delivery'`を記録。Acceptable Degradation時は`qa_tags`に`'degraded'`を付与。
+- `alerts`コマンドは`AlertDispatcher`（§6.7）と連携し、`--notify`指定時にメール送信。Runbook`RUN-OPS-05`のステップにCLI出力を貼り付ける。
+
+### 25.6 テスト計画
+| テストID | 目的 | 内容 |
+| --- | --- | --- |
+| UT-DEL-01 | Snapshot生成検証 | `tests/unit/test_delivery_control_tower.py::test_build_snapshot_merges_sources`。複数ソースのマージとソート順を確認。 |
+| UT-DEL-02 | アラート検知ロジック | `tests/unit/test_delivery_control_tower.py::test_detect_alerts_rules`。QA/Prompt Gap/ChangeLedger遅延に対するアラート生成。 |
+| UT-DEL-03 | Opsインパクト予測 | `tests/unit/test_delivery_forecaster.py::test_estimate_ops_impact_scaling`。警告件数に応じた所要時間推定を検証。 |
+| IT-DEL-01 | CLI統合 | `tests/integration/test_delivery_cli.py::test_status_and_forecast`。Typer CLIとレンダリングの決定論性を確認。 |
+| IT-DEL-02 | Ops Review連携 | `tests/integration/test_review_cli.py::test_delivery_snapshot_hook`。Ops Review HubがSnapshotを取り込むか検証。 |
+| SC-DEL-01 | Acceptable Degradation演習 | `tradectl delivery forecast --include-degradation --window 3d`実行後、Scenario Runner（§14）とKnowledge Pack（§16）に警告を反映する手動シナリオ。 |
+
+- `make ci-lite`に`pytest -k delivery`を追加し、CIでの逸脱検知を義務付ける。
+- Snapshot JSON Schemaは`tests/contracts/test_delivery_snapshot_schema.py`で固定化し、Breaking Change時は`docs/change_requests/`経由で承認。
+
+### 25.7 Codexプロンプト指針
+- Prompt Bundleへは`DeliverySnapshot`の抜粋（`alerts`, `ops_impact`）を`<section id="delivery_control_tower">`として貼り付ける。
+- Codexタスクには必ず`scope_paths`と`qa_summary`を引用し、レビュー観点（QA-01〜05のどれに影響するか）を明示する。
+- `PromptGap`が検出された場合、Issue起票時に「不足セクション」「期待する証跡」「関連Runbook」を表形式で提示。Codex出力で補完されたら`delivery export`で再評価し、`ChangeLedger.category='prompt_gap'`として記録。
+
+### 25.8 トレーダー/運用活用シナリオ
+- トレーダーは朝会で`tradectl delivery status --include-alerts`を実行し、Board Guard状態と合わせて承認可否を判断。`risk_score>70`の場合はスプリントプランを再調整。
+- Ops担当はGuard解除手順の前に`delivery forecast`で`expected_manual_minutes`を確認し、必要な人員をアサイン。Runbookに実測値を追記し予測モデルを改善。
+- Acceptable Degradation復旧後の事後レビューで、`alerts`履歴を`OpsReviewDigest`に貼り付け、再発防止策（例: Prompt Gap補完、QA-03自動化）をアクションアイテム化。
+
+### 25.9 KPIベースラインとアラート閾値
+
+| メトリクス | 観測値（直近演習/実績） | Warn | No-Go | データソースとDeliveryAlert対応 |
+| --- | --- | --- | --- | --- |
+| Guard復旧MTTR | 25分（`01:20`検知→`01:45`解除） | ≥30分（`catch_up_lag_minutes<30`逸脱） | ≥45分（Guard中ピーク42分超） | `docs/templates/degradation_report.md`、`DeliveryAlert.kind='guard_release_delay'`で`warn/critical`に連携【F:docs/templates/degradation_report.md†L24-L36】【F:docs/runbooks/RUN-DATA-05.md†L12-L23】 |
+| `data_ingestion_sla_p95` | 18分 | >24分（Runbook閾値の80%で早期検知） | ≥30分（デイリーアジェンダ閾値） | `reports/validation_log/CHK-0.6.9-run.md`、`docs/runbooks/daily_agenda/CODEX_DAILY_START.md`。`DeliveryAlert.kind='data_sla_drift'`で`major/critical`に割当【F:reports/validation_log/CHK-0.6.9-run.md†L5-L9】【F:docs/runbooks/daily_agenda/CODEX_DAILY_START.md†L16-L18】 |
+| `Sharpe_recent` (90d OOS) | 0.88±0.07 | <0.85 | <0.80 | `detailed_design_fx_signal_tool_v1.md §9.4.3`、`basic_design_fx_signal_tool_v1.md §6.5`。`DeliveryAlert.kind='kpi_regression'`で`warn/fail`判定【F:detailed_design_fx_signal_tool_v1.md†L1655-L1657】【F:basic_design_fx_signal_tool_v1.md†L166-L167】【F:detailed_design_fx_signal_tool_v1.md†L1603-L1603】 |
+
+- `warn`/`no_go`閾値はRunbook必須条件と実測値から逆算して設定し、`DeliverySnapshot.alerts`は同テーブルを参照して`severity`を決定する。`detect_alerts`ロジックは`guard_release_eta>=30`で`warn`、`>=45`で`critical`、`data_ingestion_sla_p95>24`で`major`、`>=30`で`critical`、`Sharpe_recent<0.85`で`warn`、`<0.80`で`critical`を返す。
+- `OpsImpactEstimate.expected_manual_minutes`はGuard復旧MTTRと`manual_hours`を組み合わせて算出し、`>=120`分で`DeliveryAlert.kind='manual_capacity_risk'`を上げる。`manual_hours`はAcceptable Degradationテンプレの実測（発生中0.8h）を既定値とし、倍増した場合にアラートを出す。【F:docs/templates/degradation_report.md†L31-L36】
+## 26. トレーダーフィードバック循環エンジン（v2.7）
+
+Signal Board/チケット承認フローで収集したヒューマンフィードバックを、戦略改善・UX向上・Codexタスクに即時還元する仕組みを定義する。`docs/ux_feedback.md`・`logs/audit/ticket.jsonl`・`metrics/cli_perf.jsonl`を統合し、改善優先度を定量化する。
+
+### 26.1 目的
+- **UX改善の即応**: チケット承認/却下時のコメント、バナー参照時間、Spread理由確認の有無を集計し、UI/Runbook改善を優先順位付けする。
+- **戦略改善連携**: Reject理由をStrategy/Feature/リスク要因にマッピングし、研究タスクとPrompt Bundleに自動添付する。
+- **Codex開発最適化**: フィードバックから直接アクション化できる粒度（例: ボタン配置、メッセージ文言）を抽出し、差分が小さいワークパッケージへ分解する。
+
+### 26.2 モジュール構成
+| パス | 役割 | 主な機能 |
+| --- | --- | --- |
+| `src/feedback/collector.py` | CLI/ログ/Runbookからフィードバックを収集。 | `collect_ticket_feedback(window)`, `collect_cli_metrics(window)`, `collect_runbook_notes(window)` |
+| `src/feedback/models.py` | `FeedbackItem`, `FeedbackAggregate`, `FeedbackImpact`, `FeedbackRoute` dataclass。 | `FeedbackItem`は`source`, `event`, `strategy`, `ticket_id`, `tags`, `comment`, `severity`等を保持。 |
+| `src/feedback/router.py` | フィードバックを戦略/UX/リスク等に振り分け。 | `route(feedback: FeedbackItem) -> list[FeedbackRoute]` |
+| `src/feedback/prioritizer.py` | 優先順位付けアルゴリズム。 | `prioritize(aggregates) -> list[PrioritizedFeedback]` |
+| `src/interfaces/cli/feedback.py` | `tradectl feedback ...` CLI。 | `tradectl feedback summarize`, `tradectl feedback route`, `tradectl feedback export`, `tradectl feedback ack` |
+| `src/prompt/linker.py` | Prompt Bundle（§20）へのフィードバック差し込み。 | `attach_feedback(bundle_id, feedback_items)` | 既存機能を拡張。 |
+
+### 26.3 データモデル詳細
+| モデル | フィールド | 説明 |
+| --- | --- | --- |
+| `FeedbackItem` | `id`, `source: Literal['cli','board','runbook','manual']`, `timestamp`, `actor`, `strategy_id`, `ticket_id`, `tags`, `comment`, `severity: Literal['low','medium','high']`, `recommendation`, `degradation_case_id?` | 個別フィードバック。`tags`には`['spread','news','ux-copy']`等。 |
+| `FeedbackAggregate` | `key`（`strategy_id`+`tag`等）, `count`, `unique_actors`, `avg_time_to_decision`, `reject_rate`, `related_signals`, `related_metrics` | 集約情報。 | `collector`が生成。 |
+| `FeedbackRoute` | `destination: Literal['ux','strategy','risk','ops','training']`, `priority_score`, `justification`, `recommended_issue_template` | ルーティング結果。 |
+| `PrioritizedFeedback` | `aggregate`, `routes`, `suggested_work_packages`, `impact_estimate`, `qa_implications` | 優先順位付け後の成果物。 |
+
+- `impact_estimate`はトレーダー作業時間削減、リスク低減、勝率影響などを0〜100スケールで保持。
+- `qa_implications`はQAスコアカードへの影響（例: `QA-03`Runbook未更新）を表す。
+- フィードバックは`ChangeLedger.category='feedback'`で記録し、Ops Review（§19）とEvidence Graph（§23）にリンクする。
+
+### 26.4 フィードバック処理フロー
+1. `Collector`が`logs/audit/ticket.jsonl`（承認/却下コメント）、`metrics/cli_perf.jsonl`（Board滞在時間）、`docs/ux_feedback.md`（手動記録）を読み込み、`FeedbackItem`を生成。
+   - **作成済みパス**: `docs/ux_feedback.md`（2025-03-05更新）を参照し、Runbook `RUN-HITL-01`記録と同期する。
+2. `FeedbackRouter`が`tags`・`strategy_id`・`severity`に応じて複数ルートへ分配。
+   - 例: `tags=['spread','ux-copy']`→`destination=['risk','ux']`。
+   - `degradation_case_id`が紐づく場合は必ず`ops`宛に含め、復旧フローで確認できるようにする。
+3. `Prioritizer`は以下の指標で`priority_score`を算出:
+   - `reject_rate`（高いほど優先）
+   - `avg_time_to_decision`（閾値>90秒でペナルティ）
+   - Acceptable Degradation発生頻度（`degradation_case_id`有無で加点）
+   - `strategy_manifest`の重要度（`Tier`属性）
+4. `prioritize`結果は`PrioritizedFeedback`リストとなり、各アイテムは`suggested_work_packages`（Codex向けチケット草案）を含む。
+5. `EventBus.publish('feedback.prioritized', payload)`で通知。Delivery Control Tower（§25）が`PromptGap`と照合し、必要なワークパッケージを生成。
+6. `tradectl feedback export`がMarkdown/JSONレポートを生成し、`docs/ux_feedback.md`へリンク追記。Prompt Bundle生成時に`attach_feedback`で該当節を挿入する。
+
+### 26.5 CLI仕様 (`tradectl feedback ...`)
+| コマンド | 主な引数/フラグ | 出力 | 備考 |
+| --- | --- | --- | --- |
+| `tradectl feedback summarize` | `--window`, `--strategy`, `--tag`, `--format table|json` | `FeedbackAggregate`表。 | 週次Opsレビューで使用。 |
+| `tradectl feedback route` | `--window`, `--destination`, `--min-priority` | ルーティング結果を表示し、Issueテンプレリンクを出力。 | `qa_tags=['feedback','ux']`などタグ自動付与。 |
+| `tradectl feedback export` | `--window`, `--out`, `--format markdown|json`, `--include-prompts` | Prompt Bundle添付用レポート。`ChangeLedger`記録を自動化。 | Acceptable Degradation時は`--include-degradation`で関連ケースを強調。 |
+| `tradectl feedback ack` | `--id`, `--note`, `--change-id` | 対応完了を記録し、`ChangeLedger`へ書き戻す。 | Ops/PO承認が必要。 |
+
+### 26.6 テスト計画
+| テストID | 目的 | 内容 |
+| --- | --- | --- |
+| UT-FB-01 | コレクタ検証 | `tests/unit/test_feedback_collector.py::test_collect_ticket_feedback`。CLIログからFeedbackItem生成。 |
+| UT-FB-02 | ルーティング | `tests/unit/test_feedback_router.py::test_route_multi_destination`。タグに応じた複数宛先振分け。 |
+| UT-FB-03 | 優先度計算 | `tests/unit/test_feedback_prioritizer.py::test_prioritize_scores`。Reject率/滞在時間/重要度によるスコア。 |
+| IT-FB-01 | CLI統合 | `tests/integration/test_feedback_cli.py::test_summarize_and_route`。Typer CLIの出力決定論性。 |
+| IT-FB-02 | Prompt Bundle連携 | `tests/integration/test_prompt_cli.py::test_feedback_attach_to_bundle`。`--include-prompts`で抜粋が追加されること。 |
+| IT-FB-03 | Delivery Control Tower連携 | `tests/integration/test_delivery_feedback_hook.py::test_feedback_alerts_generated`。フィードバックから`PromptGap`が作成されるか検証。 |
+| SC-FB-01 | トレーダーUX演習 | `tradectl feedback summarize --window 1d --strategy core_ma_rsi`→`tradectl feedback route --destination ux`を実施し、ゲーム（§22）で得たUX課題と突合する手動演習。 |
+
+- `pytest -k feedback`をCIに追加。`tests/snapshots/feedback/*.snap`でCLI出力を固定化し、文章変更時はPO承認を必須化する。
+- `FeedbackItem` Schemaは`tests/contracts/test_feedback_schema.py`で維持。Breaking Changeは`docs/change_requests/CR-FEEDBACK-*.md`で承認。
+
+### 26.7 Codexハンドオフ指針
+- Prompt Bundle作成時に`<section id="feedback">`として`PrioritizedFeedback`のトップ3を添付。Codexはワークパッケージに沿って対応し、完了時に`tradectl feedback ack`でChangeLedger更新。
+- `FeedbackRoute.destination='strategy'`の場合は研究フレームワーク（§21）と連携し、再現データセット/パラメータ差分をIssueテンプレートへ自動挿入する。
+- `destination='ux'`のタスクはUI文言/CLIレイアウト変更が主であるため、テスト指示に`pytest --snapshot-update --maxfail=1`を必ず含める。Codex出力でスナップショット更新が無い場合は差戻し。
+
+### 26.8 KPIと優先度閾値
+
+- CLI滞在時間の分布は`decision_delay_triangular=[30,45,75]`秒を基準にし、`avg_time_to_decision`が90秒を超えるとペナルティを加算する。`p90≤120s`がAcceptable Degradation演習での上限値のため、`PrioritizedFeedback.priority_score`は`avg_time_to_decision>=90`で`warn`、`>=120`で`fail`を付与し、Delivery Control Towerの`kpi_regression`と連動させる。【F:detailed_design_fx_signal_tool_v1.md†L1645-L1659】【F:detailed_design_fx_signal_tool_v1.md†L2192-L2194】
+- `reject_rate`はBacktest/Paper検証の`HitRate=48〜55%`（Reject率45〜52%）をベースラインとし、`reject_rate>0.52`で`warn`、`>0.55`で`fail`扱いにする。`priority_score`は該当閾値で+20/+40を加点し、Release Readinessの`Feedback`ゲートに同一ステータスを伝搬する。【F:detailed_design_fx_signal_tool_v1.md†L1655-L1659】
+
+### 26.8 Acceptable Degradation/トレーダー連携
+- Guarded状態でRejectが急増した場合、`feedback summarize`が`severity='high'`の項目をハイライト。Delivery Control Towerが`alerts`を発火し、Opsレビューで即時対応を検討。
+- トレーダーは日次のBoardレビュー後に`tradectl feedback export --include-degradation`を実行し、復旧計画（§24）と照合。改善策がPrompt Bundleへ反映されているか確認。
+- スナップショットは`reports/feedback/<YYYYWW>.md`に保存し、Ops Review Hubが週次ダッシュボードに統合。改善効果は`manual_hours_saved`指標で評価し、6週間継続して改善が見られない場合は追加タスクを起票する。
+
+---
+
+本詳細設計は要件定義・基本設計に基づき、M1リリースの実装に必要なインターフェース・データモデル・フロー・テスト計画を整備した。拡張機能はFeature Flagとガバナンス手順を通じて安全に段階導入できるよう設計している。
+
+## 12. 付録
+
+### 付録A: Health/Kill Switch状態遷移簡易図
+```
+ok ──(spread degrade / data warn)──▶ degraded
+▲                                   │
+│  (auto recovery)                  │ (drawdown / heartbeat timeout / manual stop)
+└──────────────▶ soft_stop ──(audit failure / snapshot corruption)──▶ hard_stop
+                                   │                                     │
+                                   └────(cause resolved + ack)───────────┘
+```
+- 各遷移は`HealthStateChanged`イベントでログに残り、`alert_id`でRunbookと紐付く。
+
+### 付録B: Feature Flag導入チェックリスト
+| Flag | 有効化前提テスト | ロールバック手順 |
+| --- | --- | --- |
+| `sprt_guard` | IT-KILL-01, FUT-SPRT-01, Paperモードで2営業日連続稼働 | Flagをfalseに戻し、`HealthMonitor.reset_kill_switch()`後Resync。 |
+| `reduce_only_advisor` | Spread異常シナリオ再現、Runbookトレーニング完了 | Flagをfalseに、Reduce-Onlyキューを手動クリア。 |
+| `slack_alert` | SMTP併用試験、Webhook疎通テスト | Flag false、`Dispatcher`をSMTPへ戻す。 |
+| `gui_ws` | `/ws/signals`負荷テスト、GUI利用トライアル | Flag false、CLIのみで運用。 |
+
+### 付録C: CLI操作例
+```
+$ tradectl board --filter symbol=USDJPY
+[12:05:00][ticket_issued] id=TK-20250220-001 score=84.2 TTL=14:59 spread_ok✓ news_ok✓
+
+$ tradectl ticket approve --id TK-20250220-001 --note "追随"
+[INFO] ticket.approve: Ticket TK-20250220-001 approved, audit logged.
+
+$ tradectl status --verbose
+Mode: LIVE | Health: degraded(data_quality) | KillSwitch: STOP
+SpreadCooldown: cooldown (ETA 12:15) | Snapshot hash: a1c3...
+```
+- エラー時ログは`logs/ops/cli.log`に二重化し、Runbookのトラブルシュート手順と連携する。
+
+
+### 付録D: エラーコードと通知マッピング
+| エラーコード | 重大度 | 発火元 | 通知チャネル | Runbook参照 |
+| --- | --- | --- | --- | --- |
+| ERROR-C01 (データ欠損) | WARN/MAJOR | DataQualityGuard | CLI + メール(WARN) | Runbook §2.1 |
+| ERROR-C02 (指標計算失敗) | CRITICAL | FeaturePipeline | CLI + メール(CRITICAL) | Runbook §2.2 |
+| ERROR-C03 (Config検証NG) | WARN | ConfigRegistry | CLI | Runbook §3.1 |
+| ERROR-C04 (監査ログ書込失敗) | CRITICAL | AuditWriter | CLI + メール(CRITICAL) | Runbook §4.3 |
+| ERROR-C05 (Spread欠損) | WARN | SpreadMonitor | CLI + メール(WARN) | Runbook §2.3 |
+| ERROR-C06 (Funding未更新) | WARN | FundingService | CLI | Runbook §2.4 |
+| ERROR-C07 (Heartbeat停止) | MAJOR | HealthMonitor | CLI + メール(MAJOR) | Runbook §5.1 |
+| ERROR-C08 (Snapshot破損) | CRITICAL | SnapshotManager | CLI + メール(CRITICAL) | Runbook §4.1 |
+| ERROR-C09 (Account CSV不整合) | MAJOR | AccountService | CLI + メール(MAJOR) | Runbook §3.2 |
+| ERROR-C10 (Scheduler遅延) | WARN | Scheduler | CLI | Runbook §2.3 |
+
+- `AlertDispatcher`は重大度ごとに件名 `[tradectl][<SEVERITY>] <reason>` を付与する。Slack/Webhook有効時は同じpayloadを送信。
+- Runbook参照欄は対応手順を示し、アフターアクションレビューで更新する。
+
+### 付録D: エラーコードと通知マッピング
+| エラーコード | 重大度 | 発火元 | 通知チャネル | Runbook参照 |
+| --- | --- | --- | --- | --- |
+| ERROR-C01 (データ欠損) | WARN/MAJOR | DataQualityGuard | CLI + メール(WARN) | Runbook §2.1 |
+| ERROR-C02 (指標計算失敗) | CRITICAL | FeaturePipeline | CLI + メール(CRITICAL) | Runbook §2.2 |
+| ERROR-C03 (Config検証NG) | WARN | ConfigRegistry | CLI | Runbook §3.1 |
+| ERROR-C04 (監査ログ書込失敗) | CRITICAL | AuditWriter | CLI + メール(CRITICAL) | Runbook §4.3 |
+| ERROR-C05 (Spread欠損) | WARN | SpreadMonitor | CLI + メール(WARN) | Runbook §2.3 |
+| ERROR-C06 (Funding未更新) | WARN | FundingService | CLI | Runbook §2.4 |
+| ERROR-C07 (Heartbeat停止) | MAJOR | HealthMonitor | CLI + メール(MAJOR) | Runbook §5.1 |
+| ERROR-C08 (Snapshot破損) | CRITICAL | SnapshotManager | CLI + メール(CRITICAL) | Runbook §4.1 |
+| ERROR-C09 (Account CSV不整合) | MAJOR | AccountService | CLI + メール(MAJOR) | Runbook §3.2 |
+| ERROR-C10 (Scheduler遅延) | WARN | Scheduler | CLI | Runbook §2.3 |
+
+- `AlertDispatcher`は重大度ごとに件名 `[tradectl][<SEVERITY>] <reason>` を付与する。Slack/Webhook有効時は同じpayloadを送信。
+- Runbook参照欄は対応手順を示し、アフターアクションレビューで更新する。
+
+### 付録E: ログ/メトリクスタグ規約
+| タグ | 対象ログ | 意味 | 例 |
+| --- | --- | --- | --- |
+| `signal.*` | `logs/events` | シグナル生成/評価プロセス | `signal.generated`, `signal.rejected.low_score` |
+| `risk.*` | `logs/events` | リスク評価/Kill Switch関連 | `risk.reject.margin`, `risk.kill_switch.soft_stop` |
+| `report.generated` | `reports/` | レポート生成 | `weekly_report` |
+| `governance.action_item` | `reports/meetings/` | アクションアイテム | `ops_automation` |
+| `validation.playbook` | `reports/validation_log/` | Validation Data Playbookエントリ | `AC-45_20250301` |
+| `rate_limit.*` | `metrics/rate_limit_window.jsonl`, `logs/audit/rate_limit.jsonl` | RateLimitステージ評価/手動操作ログ | `rate_limit.stage_suggest`, `rate_limit.stage_set` |
+
+### 付録F: Validation Data Playbookテンプレート
+```
+---
+id: AC-XX-<YYYYMMDD>
+requirement: <FR/AC番号>
+dataset: <データセット名 or ファイルパス>
+hash: <SHA256>
+source: <取得元URL/Runbook手順>
+owner: <記録者>
+reviewer: <サイン者>
+due_date: <YYYY-MM-DD>
+status: pending | provisional | confirmed
+fallback_applied: true | false
+fallback_reason: <欠損補完理由>
+linked_runbook: docs/runbooks/RUN-XXXX-YY.md
+---
+
+## 1. 受け入れ条件
+- [ ] データ期間: <例: 2024-01-01〜2024-01-31>
+- [ ] 欠損率 ≤ <閾値>
+- [ ] 二重入力ハッシュ一致
+
+## 2. 検証ログ
+| チェック | 実施者 | 実施日時 | 結果 | 証跡 |
+| --- | --- | --- | --- | --- |
+| レコード件数検証 |  |  |  |  |
+| スキーマ検証 (`tools/validate_schema.py`) |  |  |  |  |
+| ハッシュ再計算 (`tradectl data hash`) |  |  |  |  |
+
+## 3. コメント
+-
+
+## 4. サインオフ
+- 運用者: <署名/日時>
+- PO: <署名/日時>
+
+```
+- テンプレートは`reports/validation_log/templates/playbook_entry.md`として保管し、`tradectl validation new`が本雛形をもとにエントリを生成する。`due_date`超過で`status∈{pending,provisional}`の場合は`tradectl validation audit`が`severity=warn`イベントを発行する。
+| `ticket.*` | `logs/audit` | HITL操作 | `ticket.approve`, `ticket.edit.sl` |
+| `cfg.*` | `logs/events` | 設定変更/検証 | `cfg.change.safe`, `cfg.reject.schema` |
+| `spread.*` | `metrics/network.jsonl` | スプレッド監視 | `spread.cooldown.start`, `spread.cooldown.clear` |
+| `preflight.*` | `logs/ops/preflight.log` | プレフライト結果 | `preflight.fail.ntp` |
+| `backup.*` | `logs/ops/backup.log` | バックアップ実行情報 | `backup.weekly.ok` |
+| `perf.*` | `metrics/pipeline.jsonl` | パフォーマンス指標 | `perf.step.feature_update` |
+| `alert.*` | `logs/events`, メール | アラート通知 | `alert.warn.network`, `alert.critical.audit` |
+
+- ログは`orjson`で出力し、`tag`フィールドを必須化。タグプレフィックスでフィルタリングを容易にする。
+- メトリクスはJSONLのほか、M2でPrometheus Exporterを実装する際に同タグをラベルに使用する。
+
+### 3.30 RiskDisclosureService (`src/compliance/risk_disclosure.py`)
+- **公開API**: `fetch_state()`（最新承諾ステータス取得）、`prompt(current_state)`（CLI対話の起動）、`record_consent(decision, metadata)`（承諾/拒否イベントの保存）、`link_event(consent_id, event_payload)`（監査イベントへの紐付けヘルパ）。
+- **データモデル**: `ConsentState`は`status∈{accepted,pending,expired,warning}`、`consent_version_hash`, `accepted_at`, `expires_at`, `device_fingerprint`, `last_prompted_at`を保持。永続化は`consent_state.json`（ローカル）と`logs/audit/risk_consent_*.jsonl`（イベント）。
+- **M1 Core実装**: `fetch_state()`で期限切れ/未承諾の場合は`status=pending`を返し、Signal Boardは読み取り専用モードへ切り替える。`prompt()`は承諾文面を表示せずRunbookリンクとTODOを出すのみで、ユーザーが`--ack`オプションで暫定承諾時刻を記録できる。`record_consent()`は`consent_state.json`更新と`audit`イベントへ`consent_warning=true`フラグを付与するが、高リスク操作はブロックしない。`link_event()`は`consent_reference_id=None`のまま警告を残す。
+- **M1.1以降の拡張**: `prompt()`がMarkdownダイアログ（投資助言禁止・主要リスク・損失可能性・利用範囲・約款リンク・前回承諾ログ）を描画し、承諾完了までは`ConsentRequiredError`を発生させてCLI制御を停止。`record_consent()`は`audit`イベントストアへ`risk_consent`エントリをWORM保存し、`consent_reference_id`と`consent_version_hash`を返却。`link_event()`は各操作イベントへ上記IDを付与し、週次ガバナンスレポートと`tradectl audit export --type risk_consent`に連携する。拒否時は`status=warning`を維持し、Signal Boardは高リスク操作を不可・低リスク閲覧もロックする。
+- **異常系**: `consent_state.json`破損→`ConsentStateCorrupted`例外で`BoardMode=halted(consent)`へ遷移。`audit`書き込み失敗時はM1 CoreではWARNログのみ、M1.1では`HealthMonitor.soft_stop(consent_audit)`でKill Switchを保持し再承諾を禁止する。
+- **設定**: `config/compliance/risk_disclosure.yaml`に承諾有効期間（日数）、文面ファイルパス、端末識別子算出方式（シリアル+MACハッシュ）、四半期レビュー週定義、Runbookリンクを定義。M1 Coreでは`enforce=false`、M1.1以降は`enforce=true`として同一コードパスで切り替える。
+
+### 付録G: ガバナンスサービス（M2+実装ガイド）
+
+#### 付録G.1 Strategy Scoreboard Service (`src/scoreboard/service.py`)
+- **公開API**: `generate_weekly_snapshot(week_ending)`, `get_latest()`, `trigger_watchlist(strategy_id)`。
+- **入力データ**: `data/returns/returns_24w.parquet`, `metrics/kpi_cache.parquet`, `reports/research/alpha_score/<YYYYWW>.md`, 戦略ごとの`reports/strategy_review_<id>.md`。
+- **主要ロジック**: KPIキャッシュからPF/Sharpe/Stabilityを標準化→`decay_score`は24週リニア回帰から傾きを算出。`alpha_score`<`config.scoreboard.alpha_threshold`または`decay_score`>`config.scoreboard.decay_threshold`で`strategy.watchlist`イベントをEventBusへ送信（AC-49, FR-61）。
+- **イベント/連携**: `scoreboard.generated`でJSONサマリを`scoreboard/alpha/<YYYYWW>.json`と`reports/research/alpha_score/<YYYYWW>.md`へ書き込み。`strategy.watchlist`受信時にTicketBuilderへウォーニングバッジを追加、Model Risk Register Serviceへ`watchlist=true`を通知。
+- **異常系**: KPI計算失敗→`ScoreboardComputationFailed`イベント→`HealthMonitor.degraded(scoreboard)`。証跡Markdown欠損時は`evidence_missing`フラグを立て、Ops Readiness Evaluatorにも不足として反映。
+- **設定ファイル**: `config/scoreboard.yaml`（閾値、重み、対象戦略リスト、runbookリンク）。週次ジョブは`config.scheduler.jobs.scoreboard`で定義し、SessionManager起動時に`AsyncOneShotJob`として登録。
+
+#### 付録G.2 Idea Pipeline Manager (`src/ideas/manager.py`)
+- **公開API**: `load_manifest(idea_id)`, `transition_stage(idea_id, target_stage, actor)`, `validate_evidence(idea_id)`。
+- **入力データ**: `ideas/<id>/manifest.yaml`, `ideas/<id>/evidence/*.md`, `ideas/<id>/metrics/*.json`, チェックリストテンプレート`ideas/templates/checklists/<stage>.md`。
+- **主要ロジック**: `manifest`を`schema.py`で検証し、`stage`遷移要求ごとにチェックリスト完了率とPaper整合ログを評価。Paper移行には4週連続で`consistency_score`>=`config.ideas.paper_gate.min_consistency`を要求し、未達時は`stage.blocked`イベントを返却し`ideas/<id>/actions.md`へTODOを追記（FR-62, AC-49）。
+- **イベント/連携**: `stage.changed`でReporterに通知し、Strategy Scoreboard Serviceへ新規戦略登録を要求。Model Risk Register Serviceは`stage=live_candidate`到達時に初回評価タスクを起票。
+- **異常系**: 必須ファイル欠損→`IdeaEvidenceMissing`で`HealthMonitor.degraded(idea_pipeline)`、Ops Readiness Evaluatorにも不足が反映。`manifest`スキーマ違反は`ConfigRejected`同様に扱い、ステージはロールバック。
+- **設定ファイル**: `config/ideas.yaml`（ステージ順序、必須証跡種別、整合度閾値、Runbook ID）。CLI `tradectl research stage`は`manager.transition_stage`を呼び出し監査ログに記録。
+
+#### 付録G.3 Ops Readiness Evaluator (`src/ops_readiness/evaluator.py`)
+- **公開API**: `evaluate(period)`, `explain(period)`, `record_override(reason, actor)`。
+- **入力データ**: `reports/governance/ops_readiness_<YYYYWW>.md`, `logs/ops/backup.log`, `docs/runbook/*.md`, `ops_readiness/evidence/*.json`, バックアップ検証結果`reports/drill/*.md`。
+- **主要ロジック**: 証跡ファイルの存在・ハッシュを`evidence.py`で検証し、バックアップ整合度/Runbook更新率/演習完遂率/緊急プロトコル検証スコアを加重平均。`ops_readiness_score`<`config.ops_readiness.min_score`で`health.changed(status=degraded, reason="ops_readiness_low")`を発火しKill Switchを`soft_stop`へ誘導（FR-63, AC-51）。
+- **イベント/連携**: `ops_readiness.evaluated`でスコアと欠損証跡リストをEventBusに出力。ScoreboardジョブはOpsスコア<閾値の場合に`alpha_score`を最大70へクリップしリリースを防止。Idea Pipeline ManagerはOps低下中に新規Paper昇格を保留。
+- **異常系**: 証跡が404またはハッシュ不一致→該当項目スコア0かつ`OpsEvidenceMissing`イベント。評価実行中にIO例外が連続した場合は`health.changed(reason="ops_readiness_blocked")`でKill Switchを維持し、手動確認をRunbook `OPS-READINESS-01`に記録。
+- **設定ファイル**: `config/ops_readiness.yaml`（重み、閾値、必須証跡パス、Runbook ID、評価スケジュール）。週次自動実行ジョブをSchedulerに登録し、CLI `tradectl ops readiness --explain`で内訳を取得。
+
+#### 付録G.4 Model Risk Register Service (`src/governance/model_risk.py`)
+- **公開API**: `scan_register()`, `open_gap(strategy_id, reason)`, `resolve_gap(gap_id, evidence_paths)`。
+- **入力データ**: `model_risk_register.md`, `reports/model_risk/<strategy>.md`, `tickets/model_revalidate/*.md`, Scoreboardの`watchlist`フラグ。
+- **主要ロジック**: `scan_register`が`model_risk_register.md`をAST解析し、各戦略の最終評価日/担当/エビデンスリンクを抽出。未更新>90日、Explainability添付欠落、`watchlist=true`でタスク未完了の場合は`model_risk_gap`を生成しEventBusへ通知（FR-62, AC-49）。
+- **イベント/連携**: `model_risk.gap_opened`でOps Readiness Evaluatorへ通知しOpsスコアからペナルティ。`resolve_gap`完了時は`model_risk.gap_resolved`を発火し、Scoreboardへ解除を通知。Kill Switch解除条件に`gap_status=closed`が追加される。
+- **異常系**: Registerファイル解析失敗→`ModelRiskRegisterCorrupted`で`HealthMonitor.soft_stop(model_risk)`。証跡リンク無効時は`OpsEvidenceMissing`と同じ扱いでOpsスコアを強制減点。
+- **設定ファイル**: `config/model_risk.yaml`（評価周期、必須ドキュメント、担当者マッピング、ギャップ閾値）。CLI `tradectl model risk resolve <id>`は`resolve_gap`を呼び出し監査ログにエビデンスハッシュを記録。
+
+#### 付録G.5 Statement Reconciliation Service (`src/reconciliation/service.py`)
+- **公開API**: `reconcile(from_date, to_date, mode)`, `load_statement(path)`, `export_summary(result)`。
+- **入力データ**: ブローカーステートメント（CSV/PDF→CSV）、`logs/audit/*.jsonl`, `reports/audit/trade_log.parquet`, `account/balances.parquet`, Idea/Ticket履歴。
+- **主要ロジック**: `normalizer.py`でステートメント形式を標準化し、`matcher.py`でLive/Paperログと突合。残高差分> `config.reconciliation.max_balance_delta_r`または取引突合率<`config.reconciliation.min_match_pct`で`HealthMonitor.degraded(statement_gap)`および`reconciliation.discrepancy`イベントを発火（FR-64, AC-53）。
+- **イベント/連携**: 正常終了時は`reconciliation.completed`でOps Readiness Evaluatorへスコア加点、Reporterが`reports/audit/reconciliation/<date>.md`を生成。差分時はKill Switchを`soft_stop`に遷移し、Idea Pipeline Managerが新規昇格を停止。
+- **異常系**: ステートメントファイル欠損/解析失敗→`StatementImportError`でリトライ案内。差分特定不可の場合は`reconciliation.escalated`を発火しRunbook `AUD-REC-02`手順へ誘導。証跡出力失敗はOps Readiness Evaluatorの証跡欠損として扱う。
+- **設定ファイル**: `config/reconciliation.yaml`（ブローカー別カラムマッピング、差分閾値、フェイルセーフ条件、Kill Switchハンドリング）。CLI `tradectl reconcile statements --from <date>`が`reconcile`を呼び出し監査に結果を追記。
+
+### 付録H: トレーダー運用シナリオ（M1 Core運用ガイド）
+
+HITLトレーダーとCodex開発者が同じ前提でレビューできるよう、代表的な運用シナリオごとの「検知→判断→操作→検証」手順を以下に整理する。Runbook参照番号とCLIコマンド、必要メトリクスを明示し、Acceptable Degradation移行時の判断材料を平文化する。
+
+| シナリオ | トリガー指標 | トレーダーの判断ポイント | Codex実装フック | 推奨CLI/ツール | Runbook/Validationリンク | 復旧完了チェック |
+| --- | --- | --- | --- | --- | --- | --- |
+| 正常稼働 (`OPS-NOMINAL`) | `HealthState=ok`, `board_mode=normal`, `catch_up_lag_minutes<10` | 週次レビューまでにSharpe/最大DD/WinRateを記録し、KPI未達なら改善チケット起票 | Reporter (`§3.18`), KPI Snapshot (`§9.3`) | `tradectl board`, `tradectl status`, `tradectl report weekly --dry-run` | `RUN-OPS-04`, `reports/weekly/<YYYYWW>.md` | KPIサマリと`reports/kpi_snapshots`が最新、`logs/audit/ticket.jsonl`に異常なし |
+| Acceptable Degradation移行 (`OPS-DEG-01`) | `catch_up_lag_minutes≥30` or `HealthState=degraded(data_latency_*)` | Guardedへ切替えるか、手動CSV投入で凌ぐか。主要4ペアのデータ鮮度と429頻度を確認 | DataIngestionService (`§3.1`), RateLimitGuard (`§3.1.1`), Board Guard Policy (`§3.8`) | `tradectl board --guarded`, `tradectl data failover --mode manual`, `make sla-report` | `RUN-DATA-05`, `RUN-DATA-06`, `reports/validation_log/AC-45_sla_<date>.md` | `catch_up_lag_minutes<30`、`metrics/rate_limit_window.jsonl`で429率回復、`degraded_ack`イベントをRunbookでサイン |
+| Spread急拡大 (`RISK-SPREAD-02`) | `SpreadCooldownState=cooldown`, `spread_pips>threshold` | Reduce-Only運用に移行し、ニュース/カレンダーと矛盾がないか確認 | SpreadMonitor (`§3.6`), CalendarService (`§3.13`), Risk Manager (`§3.8`) | `tradectl spread status`, `tradectl board --guarded --reason spread`, `tradectl calendar upcoming --impact high` | `RUN-RISK-02`, `RUN-HITL-01` | Spreadが閾値内へ連続Nバー収束、`reports/performance/<mode>/spread_review.md`に結果記録、Kill Switch解除サイン取得 |
+| Rate Limit退行 (`OPS-RL-03`) | `metrics/rate_limit_window.jsonl`で`rolling_1h_429_rate>1.5%` or `consecutive_429≥3` | Stageを下げる/ポーリング停止/手動CSV投入の優先度を判断 | RateLimitGuard (`§3.1.1`), ManualCsvIngestionTask (`§3.1`) | `tradectl data rate-limit stage inspect`, `tradectl data rate-limit stage set 0 --provider yfinance`, `tradectl benchmark validate-manual` | `RUN-DATA-05`, `reports/validation_log/AC-45_sla_<date>.md` | `rolling_1h_429_rate<1.0%`に回復、Stage履歴とRunbookチェックが一致、`manual_csv.log`にダブルサイン |
+| Live fills取り込み (`OPS-ACCT-04`) | 取引実績CSVの新規行、`logs/audit/live.jsonl`未反映チケット | CSV整合→スリッページ評価→Journal更新。欠損時はKill Switch soft_stop検討 | AccountService (`§3.14`), Trade Journal (`§3.14.1`), Reporter (`§3.18`) | `tradectl account sync --path data/account/live_account.csv`, `tradectl journal summarize`, `tradectl audit export --type live` | `RUN-OPS-03`, `reports/validation_log/AC-44_live_fill_<date>.md` | `actual_fill_imported`イベントが全件生成、`unmatched_ticket`が0、週次レポートにスリッページ統計掲載 |
+| Kill Switch発動 (`RISK-KS-05`) | `daily_loss`/`weekly_loss`閾値超、`HealthMonitor`推奨`hard_stop` | 即時停止/Reduce-Only/再開判断。承認ログとスナップショット整合を確認 | Risk Manager (`§3.8`), Health Monitor (`§3.9`), SnapshotManager (`§3.15`) | `tradectl kill-switch engage --reason <code>`, `tradectl snapshot verify`, `tradectl health ack --reason hard_stop` | `RUN-RISK-01`, `RUN-POST-03`, `reports/ops/incidents/<date>_killswitch.md` | `kill_switch_events.jsonl`に承認者記録、`snapshot hash`一致、`tradectl board --normal`実行時にRunbook承認済 |
+
+#### 付録H.1 シナリオ遂行チェックリスト
+
+各シナリオ実行時は以下の共通チェックリストをRunbook添付で管理する。
+
+1. **検知証跡**: トリガーとなったメトリクス/イベントファイルのパスとハッシュをRunbookに記載。
+2. **オペレーションログ**: 実行したCLIコマンドと引数を`logs/ops/command.log`へ記録し、承認者を添付。
+3. **Codex差分レビュー**: 対応中に発生したコード/設定の変更点を`docs/prompt_packages/<date>_<scenario>.md`へ追記し、次回再発時のプロンプト準備を短縮。
+4. **事後レビュー**: `RUN-POST-03`のテンプレートに沿って原因分析・恒久対策・フォローアップIssueを整理。Acceptable Degradation時は「復旧目標時間」「実績時間」「差異理由」を必ず記録。
+5. **メトリクス確認**: 復旧後30分以内に`metrics/data_ingestion_sla.jsonl`・`metrics/rate_limit_window.jsonl`・`reports/weekly`の該当箇所をチェックし、未回復指標があれば`HealthMonitor`へ再通知。
+
+Codexは上記シナリオを前提にテストデータ/ログを準備し、PR説明時に「対象シナリオ」「操作ステップ」「検証結果」を必ず紐付ける。トレーダーはRunbookに沿った証跡をレビューし、承認サインを`reports/validation_log`系ドキュメントへ記録する。
+
+## 6. 外部インターフェース
+
+### 6.1 データプロバイダ
+| プロバイダ | プロトコル | 備考 |
+| --- | --- | --- |
+| YahooFinanceProvider | HTTPS (pandas-datareader) | Intraday保持期間短。`provider_priority`でフォールバック。 |
+| DukascopyProvider | HTTPS (`.bi5`バイナリ) | 1分バー→5分へ集約。認証不要。 |
+| CsvProvider | ローカルCSV | `timestamp, open, high, low, close, volume?`。
+| SpreadFeed | Parquet (`data/spread_metrics.parquet`) | Dukascopyティックから生成。M2でBroker API追加。 |
+| SwapRates | `config/swap_rates.csv` | 手動更新。`AlertDispatcher`が古い場合警告。 |
+
+### 6.2 CLI I/O
+- CLI出力はRichテーブル/JSON/CSV。`tradectl board`と`tradectl status`は人間可読。`tradectl export`は`reports/export/<date>/`に保存。
+- CLIは非同期EventBusを購読し、タイムアウト時は再購読する。
+
+### 6.3 通知
+- SMTP設定（`.env`: `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `ALERT_RECIPIENTS`）。
+- `AlertEvent`受信でメール送信。件名`[tradectl] <severity> <reason>`。
+- Slack/Webhookは`Dispatcher`差し替えでM2+対応。
+
+### 6.4 セキュリティ境界
+- 対外通信はHTTPSのみ。タイムアウト5秒、リトライ3回。
+- `config/`と`.env`は権限600。APIキーはmacOS Keychainから取得可能（M2課題）。
+- 監査ログはSHA256ハッシュを`logs/checksums/`に保存し改ざん検知。
+
+### 6.5 CLIコマンド仕様
+| コマンド | 主用途 | 主要引数/フラグ | 正常時挙動 | 代表的エラーと対応 |
+| --- | --- | --- | --- | --- |
+| `tradectl board` | Ticketストリームの監視/操作 | `--filter key=value`, `--view open_tickets`, `--format table|json`(将来) | EventBus購読→Rich Table更新、TTL/ドリフト残を強調表示 | EventBus断: 自動再購読→失敗時`WARN board.stream`。Resync中は`INFO board.catchup`表示。 |
+| `tradectl ticket approve|reject|edit` | HITL承認/却下/編集 | `--id`, `--field`(edit), `--note` | `TicketAction`イベントを記録し監査ログ追記。CLIは反映結果を表示 | バリデーションNG: `ERROR ticket.validation`＋失敗理由。監査書込失敗時は自動リトライ→`hard_stop(audit)`。 |
+| `tradectl status` | Health/Kill Switch/Snapshot確認 | `--verbose` | `HealthState`, `KillSwitch`, Spread/News gate、Snapshot hashを表示 | Health取得失敗で`WARN status.fetch`。`--verbose`時に内部例外を表示。 |
+| `tradectl events tail` | Domain/Auditイベントのリアルタイム追跡 | `--type`, `--since`, `--follow` | JSONL tailをストリーム表示 | ファイル存在なし: `ERROR events.tail`。`--follow`時にファイルローテーションで自動再open。 |
+| `tradectl export` | チケット/シグナル/アカウントのエクスポート | `--what`, `--format csv|json`, `--out` | `reports/export/<date>/`に出力しパスを表示 | 出力先書込不可: `ERROR export.write`。リトライ指示を表示。 |
+| `tradectl account import` | Live実績CSVの取り込み・突合 | `--csv <path>`, `--dry-run`, `--since` | `AccountService.sync_from_csv`を呼び出し、突合結果とスリッページ統計を表示。成功時は`actual_fill_imported`イベント数と`unmatched`件数をサマリ表示 | 必須列欠落: `ERROR account.csv_missing_columns`。監査書込失敗: `CRITICAL account.audit_failed`でKill Switch=hard_stop。 |
+| `tradectl resync` | Catch-up/バックフィル操作 | `--since <ts>`, `--force` | Resyncジョブ投入→進捗バー表示→完了時`ResyncCompleted`イベント確認 | 他ジョブ競合: `WARN resync.busy`。Resync失敗で`ERROR resync.failed`＋再試行提案。 |
+| `tradectl spread inspect` | Spreadメトリクス確認/解除条件確認 | `--window`, `--symbol` | `data/spread_metrics.parquet`統計を表示、クールダウン解除条件を提示 | ファイル欠損: `WARN spread.data_missing`→再計測を促す。 |
+| `tradectl reduce-only status|release`(M2+) | Reduce-Only提案の管理 | `--id`, `--all` | 対象ポジションと理由を表示/解除 | Reduce-Only未対応時は`INFO reduce_only.disabled`。 |
+| `tradectl research stage` (M2+) | Idea Pipeline | `--id`, `--stage`, `--note` | M1: Feature Flag既定`False`→`Feature disabled (M2+)`メッセージのみ。M2+: Appendix G.2記載の`manager.transition_stage`を呼び出し監査ログに記録 | M1: INFOログ`research.disabled`。M2+: バリデーションNGで`IdeaPromotionDenied`、Ops低下時は`IdeaPromotionDenied(ops_readiness_low)` |
+| `tradectl ops readiness --explain` (M2+) | Opsヘルス可視化 | `--period`, `--output` | M1: `OpsReadinessEvaluatorStub`が`status=not_assessed`を返し、CLIは`(M2+)`案内のみ表示。M2+: Appendix G.3記載の証跡内訳を表示 | M1: `ops_readiness.disabled`ログ。M2+: 証跡欠損時は`OpsEvidenceMissing`を列挙 |
+| `tradectl model risk resolve` (M2+) | モデルリスクギャップ対応 | `--id`, `--evidence` | M1: Feature Flag既定`False`で`Feature disabled (M2+)`のみ出力。M2+: Appendix G.4のギャップ解消フローを実行 | M1: `model_risk.disabled`ログ。M2+: 必須エビデンス欠落で`ModelRiskEvidenceMissing` |
+| `tradectl reconcile statements --from <date>` (M2+) | ステートメント突合 | `--to`, `--mode`, `--dry-run` | M1: `StatementReconciliationServiceStub`が`status=not_available`を返し、CLIは`Feature disabled (M2+)`とログのみ。M2+: Appendix G.5の照合処理を実行 | M1: `reconciliation.disabled`情報ログ。M2+: CSV欠損で`StatementImportError`、差分特定不可で`reconciliation.escalated` |
+| `tradectl game run` | Opsシミュレーションゲーム（トレーニング） | `--seed`, `--days`, `--profile training|paper`, `--log-dir`, `--dry-run` | 7日（既定）の3フェーズを順次実行し、イベント→アクション選択→日次まとめ→最終サマリをRichテーブルで表示。`--log-dir`指定時は`reports/training/game_runs/<timestamp>/`へJSON/Markdownを保存 | 入力検証エラーで`CLI-GAME-001`。イベント定義欠損で`GameDataMissing`、保存失敗で`GameLogWriteError`（警告＋代替パス案内）。 Acceptable Degradation対応で`--profile paper`時はKPI緩和を表示 |
+
+### 6.6 ネットワーク・セキュリティ制約
+| 項目 | 要件/制限 | 対応策 |
+| --- | --- | --- |
+| FW/Proxy | HTTP(S) outboundのみ許可。社内Proxy利用時は`config/provider.proxy`設定 | Preflightで疎通検査、Proxyエラー時はFail-Safe停止。 |
+| レートリミット | yfinance: 60 req/min、Dukascopy: 120 req/min想定 | Token bucket制御、超過時はクールダウンとWARN送信。 |
+| TLS証明書 | システムCAストア依存。失効/更新時は自動反映 | `requests`が失敗した場合は`ProviderError`で通知。 |
+| データ暗号化 | 通信はHTTPS、ローカルデータはFileVault上で保護 | 追加暗号化が必要な場合はM2で`cryptography`導入を検討。 |
+| APIキー | SMTP等の資格情報は`.env`/Keychain | Preflightで環境変数の存在を検査。 |
+| 時刻同期 | NTP失敗時はSpread/Resync精度に影響 | プレフライトでドリフト検知し、補正完了まで新規シグナル停止。 |
+
+- ネットワーク変更（ISP/ルーター交換等）の際は事前に接続テストを実施し、`logs/ops/network.log`に結果を記録する。
+- VPN利用中はIP変動によりAPIブロックの可能性があるため、`ProviderAdapter`が403/429を検出した場合はVPN解除を案内する。
+
+### 6.7 戦略ガバナンスと縮退手順
+| 状態 | トリガー | 自動アクション | レビュー/復帰条件 |
+| --- | --- | --- | --- |
+| 正常運用 | KPI達成、SPRT安定 | 通常提案、Performanceログ更新 | KPI週次レビュー継続 |
+| 注意 (Warning) | KPI乖離が閾値前後、SPRT警告域 | 提案頻度50%に縮小（`sprt_guard`）、警告をダッシュボード表示 | KPIが2週連続で回復または改善計画実施 |
+| 縮退 (Degraded) | KPI未達 (Sharpe<0.5/MaxDD>15%)、SPRT fail | 戦略Feature Flag OFF、サイズ0、アラートCRITICAL | Backtest/Paperで基準回復＋PO承認 |
+| 停止 (Halt) | Kill Switch発動、重大例外 | Kill Switch STOP、全提案停止 | 根本原因解消＋PO/運用/開発の合意 |
+
+- 戦略ごとのPerformance記録を`strategies/<id>/performance.json`で管理し、ON/OFF履歴と理由を監査ログへ出力する。
+- Feature Flag切替時は`reports/strategy_review_<id>.md`で評価結果をまとめ、POレビュー後に適用する。
+- 新規戦略追加はBacktest→WalkForward→Paper→Liveのゲートを順次通過し、QA/PO/運用の承認を必要とする。
+
+※詳細手順とCLIスクリーンショットはRunbook付録Gと相互参照。
+
+### 6.8 CLIテレメトリおよびコマンドログ設計（v2.4追加）
+
+CodexがCLI改善やUX回収タスクを効率的に実装できるよう、Typerベースの各コマンドに共通テレメトリフックを追加する。ヒューマン・トレーダーの操作痕跡をQA/Runbookと突合しやすくし、将来的なGUI/Tauri移行時にも同一スキーマを再利用できるようにする。
+
+- **対象モジュール**: `src/interfaces/cli/__init__.py`, `src/interfaces/cli/renderers.py`, 各コマンドモジュール（`board.py`, `status.py`, `tickets.py`, `events.py`, `export.py`, `resync.py`, `spread.py`, `data/rate_limit.py`, `report.py`, `benchmark.py`, `account.py`, `calendar.py`）。
+- **Feature Flag**: `telemetry.cli.enabled`（既定`True`）。M1で常時記録、プライバシー要件が変化した場合は`False`で完全停止できるようにする。
+
+#### 6.8.1 テレメトリデータモデル
+
+| モデル | フィールド | 説明 |
+| --- | --- | --- |
+| `CommandTelemetryRecord` | `ts: datetime`, `command: str`, `subcommand: str | None`, `args_hash: str`, `duration_ms: int`, `status: Literal['success','error','cancelled']`, `error_code: str | None`, `health_state: HealthStateSummary`, `board_mode: BoardMode`, `actor: str`, `session_id: UUID`, `context: Literal['backtest','paper','live']`, `qa_tags: list[str]` | 1コマンド実行ごとの記録。`args_hash`は非機微引数をソートしたJSONのSHA1。`actor`は`.env`の`CLI_ACTOR`またはmacOSユーザ名。 |
+| `HealthStateSummary` | `status: Literal['ok','degraded','soft_stop','hard_stop']`, `reason_codes: list[str]`, `kill_switch: Literal['RUNNING','STOP']` | コマンド開始時点の状態快照。`CommandTelemetryRecord`からインライン参照。 |
+| `TelemetryAggregation` | `command: str`, `period: date`, `count_success: int`, `count_error: int`, `p95_duration_ms: float`, `p99_duration_ms: float`, `median_duration_ms: float`, `error_codes: dict[str,int]`, `board_mode_distribution: dict[str,int]` | 日次バッチで生成する統計行。`reports/telemetry/cli/<YYYYMMDD>.json`に保存し週次レポートへ引用。 |
+
+- **格納先**: `metrics/cli_commands.jsonl`に逐次追記。日次ジョブ`TelemetryAggregatorJob`が`TelemetryAggregation`を生成し、`reports/telemetry/cli/<YYYYMMDD>.json`と`reports/telemetry/cli/<YYYYWW>.md`へ出力する。Runbook `RUN-OPS-02`のレビュー手順で参照する。
+- **匿名化ポリシー**: `args_hash`に含めるのは非個人情報のみに限定する。手動ノートやコメントを含む引数（例: `--note`）は`redacted_args`リストに登録し、`args_hash`から除外する。`actor`は`CLI_ACTOR`環境変数で明示したイニシャルに制限し、個人名をログへ出力しない。
+
+#### 6.8.2 実装ガイド
+
+1. `Typer`アプリ登録時に`@instrument_command`デコレータを挟み、`CommandContext`を生成する。
+   ```python
+   @instrument_command(command="board")
+   def board(...):
+       ...
+   ```
+2. デコレータは`async`/同期双方に対応し、`time.perf_counter_ns()`で実行時間を計測、例外捕捉で`status`/`error_code`を設定する。`error_code`は`ERROR-*`（§7）または`CLI-*`（新設）を使用する。
+3. `CommandTelemetryRecord`は`pydantic` v2モデルで定義し、`.model_dump(mode="json")`したものを`metrics/cli_commands.jsonl`へ追記。ファイルローテーションは1日単位で行い、`SessionManager`起動時に昨日のファイルを`gzip`圧縮する。
+4. CLIコマンド内で`HealthMonitor.snapshot()`と`BoardStateResolver.current_mode()`を呼び、`HealthStateSummary`と`board_mode`を記録する。`board_mode`取得で例外が発生した場合は`board_mode='unknown'`で記録し、`status='error'`扱いにする。
+5. Acceptable Degradation時に実行されたコマンドは`qa_tags`へ`['degraded','runbook:<id>']`を付与し、Runbook証跡検索を容易にする。`qa_tags`は`set[str]`として重複を許さず、将来GUIからも流用できるよう `List[str]`で保存する。
+
+#### 6.8.3 テストと可観測性
+
+- **ユニットテスト**: `tests/unit/test_cli_telemetry.py`
+  - `test_instrument_success_records_metrics`: 正常完了で`status='success'`, `duration_ms>0`が記録される。
+  - `test_instrument_error_records_error_code`: 例外発生で`status='error'`, `error_code`が捕捉される。
+  - `test_redacted_args_not_in_hash`: `--note`など機微引数がハッシュから除外される。
+- **統合テスト**: `tests/integration/test_cli_command_logging.py`
+  - `tradectl board --filter symbol=USDJPY`実行後に直近ログ行を解析し、`command='board'`, `board_mode`が期待値であることを確認。
+  - Acceptable Degradationシナリオ（`tradectl board --guarded`）で`qa_tags`に`degraded`が付与されることを検証。
+- **メトリクス監視**: `TelemetryAggregatorJob`は`metrics/cli_commands.jsonl`の最新24h分を読み込み、`reports/telemetry/cli/<YYYYWW>.md`に以下を出力する。
+  1. コマンド別実行回数/成功率。
+  2. `board`/`ticket`系のp95実行時間とAcceptable Degradation時の増分。
+  3. 重大エラーコード（`CRITICAL`）の一覧とRunbookリンク。
+- **アラート閾値**: `TelemetryAggregatorJob`は`command='board'`で`p95_duration_ms>4000`または`error_rate>0.1`を検出した場合に`AlertDispatcher`へ`telemetry.cli.performance` WARNを送信し、Runbook `RUN-OPS-02`のUX改善タスクを提示する。
+- **将来拡張**: GUI移行時は同一スキーマでWebSocket経由の操作を記録し、`context='gui'`を追加予定。Codexは`CommandTelemetryRecord`のバージョンを`__schema_version__=1`とし、互換性変更時に`tests/contracts/test_cli_telemetry_schema.py`で検知できるようにする。
+
+#### 6.8.4 Codexプロンプト指針
+
+- CLI改善の実装依頼時は、対象コマンドの直近テレメトリ抜粋（`metrics/cli_commands.jsonl`の10行）と`reports/telemetry/cli/<YYYYWW>.md`のサマリをPrompt Bundleへ添付する。
+- `instrument_command`デコレータの既存挙動を変更する場合は、`CommandTelemetryRecord`の互換性チェックリスト（`fields`, `types`, `qa_tags`）をIssue本文に明記し、`tests/contracts/test_cli_telemetry_schema.py`の更新手順を添付する。
+- Acceptable Degradation関連タスクでは`qa_tags`がRunbook整合性チェックに使用されることを明記し、PRに`tradectl telemetry report --command <cmd>`（将来実装予定、当面は`make telemetry-report`）の結果を添付する。
+
+## 7. エラーハンドリング / フェイルセーフ
+
+| ID | シナリオ | 検知 | アクション | 再開条件 |
+| --- | --- | --- | --- | --- |
+| ERROR-C01 | データ欠損閾値超過 | DataQualityGuard | 欠損区間除外・`soft_stop(data_quality)`・アラート | 再取得成功 or 手動承認 |
+| ERROR-C02 | 指標計算失敗 | FeaturePipeline | 直近nバー再計算→失敗で`hard_stop(indicator)` | 計算成功 + ack |
+| ERROR-C03 | コンフィグ検証NG | ConfigRegistry | ロールバック・`ConfigRejected`・メール通知 | 修正後再適用 |
+| ERROR-C04 | 監査ログ書込失敗 | AuditWriter | リトライ3回→`hard_stop(audit)` | 書込再成功 + ack |
+| ERROR-C05 | Spreadデータ欠損 | SpreadMonitor | `HealthState=degraded`, Spread guard無効化警告 | Spreadデータ復旧 |
+| ERROR-C06 | Fundingデータ未更新 | FundingService | `swap_penalty=0`, `FundingDegraded` | swap_rates更新 |
+| ERROR-C07 | Heartbeat停止 | HealthMonitor | 2分未受信で`soft_stop(heartbeat)` | heartbeat再開 + ack |
+| ERROR-C08 | Snapshot破損 | SnapshotManager | `hard_stop(snapshot)`・Resync要求 | 最新バックアップ復元 |
+| ERROR-C09 | Account CSV不整合 | AccountService | `soft_stop(account)`・詳細ログ | CSV修正 + 再同期 |
+| ERROR-C10 | Scheduler遅延 | Scheduler | `SchedulerLagWarning`→`degraded` | ラグ解消 + ack |
+
+#### 7.1 アラート重大度分類
+| 重大度 | 説明 | 主な発火イベント | オペレータ対応目標 | 通知経路 |
+| --- | --- | --- | --- | --- |
+| INFO | 状態遷移や参考情報 | `ResyncCompleted`, `ConfigChanged(safe)` | 監視のみ | CLIログ |
+| WARN | 軽微な劣化。即時停止不要 | `DataQualityAlert`(軽微), `SchedulerLagWarning`, `SpreadDataDegraded` | 30分以内に状況確認 | CLI + メール (件名`[tradectl][WARN]`) |
+| MAJOR | 新規シグナル停止またはデータ欠損 | `soft_stop(*)`, `TicketValidationError`連発, `FundingDegraded` | 10分以内に原因分析、必要なら手動再開 | CLI + メール (優先度高) |
+| CRITICAL | 処理継続不可。Kill Switch=STOP | `hard_stop(*)`, `AuditWriter failure`, `SnapshotCorrupted` | 即時（5分以内）に運用停止と復旧手順 | CLI + メール + 将来Slack |
+
+重大度は`AlertEvent.severity`としてEventBusに出力され、Reporterは拡張ブロック有効時（M1.1以降）に週次レポートへ集計結果を掲載する。Flagが無効なM1 CoreではオペレータがRunbookの重大度別チェックリストを直接参照し、レポートには手動コメントのみを残す。
+
+#### 7.2 BCP/DR指針
+| シナリオ | 目標RTO | 目標RPO | 対応概要 |
+| --- | --- | --- | --- |
+| macOS端末故障 | 8時間 | 1時間 (最新Snapshot) | 予備端末にPython/Poetry環境を構築→バックアップから`data/logs/snapshots`を復元→`tradectl preflight`→`resync`。 |
+| ネットワーク長期断 (>=24h) | 4時間 (接続復旧後) | 5分バー全復元 | オフライン中はKill Switch STOP。復旧後にDukascopyでバックフィル→Spread/Funding手動更新→プレフライト。 |
+| データ損失 (Parquet破損) | 6時間 | 15分 | バックアップ/再取得で復旧。損失バーは`data/recovery/`に差分保管し再計算。 |
+| 運用者不在 (急病等) | - | - | Kill Switch STOP、ポジションクローズ。Runbook contingencyで代替手順を提示。 |
+| 重大コンフィグ誤設定 | 2時間 | 5分 | `ConfigRegistry.rollback`(手動)または`git checkout`で復元後、`resync`と回帰テスト。 |
+
+- BCPテストは四半期ごとに机上演習＋年1回の実機復旧テストを実施し、結果を`docs/bcp_test_<YYYY>.md`に記録する。
+- DR対応中は`logs/ops/dr.log`へタイムラインを記録し、再開後にポストモーテムを作成する。
+
+#### 7.3 テスト計画（スコアボード/ガバナンス/照合サービス）
+| テストID | 対象サービス | カテゴリ | シナリオ/目的 | 関連FR/AC | 期待結果 |
+| --- | --- | --- | --- | --- | --- |
+| UT-SCB-Stub-01 | Strategy Scoreboard Stub | 単体 | `generate_weekly_snapshot`が副作用なしで終了することを確認 | M1 Scope Guard | 戻り値`None`、EventBus publish未発火、`logger`に`noop`が記録される |
+| UT-IDEA-Stub-01 | Idea Pipeline Stub | 単体 | `transition_stage`が`governance_disabled`理由で拒否することを確認 | M1 Scope Guard | `accepted=False`かつ`reason="governance_disabled"`、監査ログ書込を試みない |
+| UT-OPS-Stub-01 | Ops Readiness Stub | 単体 | `evaluate`/`explain`が`status="not_assessed"`を返すことを確認 | M1 Scope Guard | 戻り値が固定値、`HealthMonitor`やEventBusに通知しない |
+| UT-MR-Stub-01 | Model Risk Stub | 単体 | `scan_register`が空リストを返し、副作用が無いことを確認 | M1 Scope Guard | `[]`を返し、`model_risk.*`イベントが発火しない |
+| UT-REC-Stub-01 | Statement Reconciliation Stub | 単体 | `reconcile`が`status="not_available"`を返しファイルI/Oを行わないことを確認 | M1 Scope Guard | `StatementReconciliationResult.status == "not_available"`、ファイルアクセスがモック検証で0回 |
+| IT-GOV-Stub-FF-01 | Feature Flag Integration | 統合 | Feature Flag既定`False`でDIがスタブを注入しCLI/Workflowが`(M2+)`案内を表示することを確認 | M1 Scope Guard | `governance.enable_*`が`False`のとき、依存解決が`*Stub`型になり、CLIヘルプに`(M2+)`ラベルが出力される |
+
+- **M2+テスト**: Appendix G.1〜G.5に記載したシナリオ（FR-61/62/63/64, AC-49/51/53対応）は該当マイルストーン承認後に有効化する。
+- **テストデータ**: スタブ検証では軽量モックのみ使用。`tests/fixtures/scoreboard/returns_24w.parquet`等のデータセットはM2+用として保持し、M1ではロードしない。
+- **CIフック**: `pytest -k "governance_stub"`をPR必須テストに追加し、副作用ゼロを担保する。M2+テスト用コマンドは`pytest -k "(scoreboard or ideas or ops_readiness or model_risk or reconciliation)"`としてコメントアウト状態で`ci/config.yml`にプレースホルダ記載。
+- **回帰ライン**: M1期間中はFeature Flagを`False`で維持することを`docs/governance/feature_flag_register.md`で監査。承認後にFlagを切り替える際はAppendix G記載の統合テストを再実施する。
+## 8. 非機能要件への対応
+
+### 8.1 性能 (NFR-07, NFR-08)
+- バー処理は1.5秒以内を目標。各`PipelineStep`のp95を`metrics/pipeline.jsonl`に記録し、閾値超過でアラート。
+- DataIngestionはキャッシュ差分と並列取得（symbol分割）でパフォーマンス確保。
+- Backtestは`pyarrow`メモリマップ + マルチプロセス（将来）。
+
+### 8.2 信頼性・可観測性 (NFR-06, NFR-11)
+- Snapshotは`config.snapshot.interval_bars`毎＋Kill Switch発火時に保存。復元テストをRunbookに定義（月1）。
+- メトリクス/ログ/監査を分離し、`logs/checksums/`で改ざん検知。Heartbeat30秒周期。
+- Alertはメール + CLI表示。将来Prometheus Exporterで外部監視連携。
+
+| データセット | 保持ポリシー | バックアップ/アーカイブ | 備考 |
+| --- | --- | --- | --- |
+| `logs/events/*.jsonl` | 30日ローカル保持→月次で`archive/events/<YYYYMM>/`へgz圧縮 | 週次rsync (増分) + 月次フル | 改ざん防止に日次SHA256。 |
+| `logs/audit/*.jsonl` | 365日保持。月次でgz圧縮し暗号化（M2）予定 | 週次rsync + 四半期オフサイト | 監査要求に備え索引を付与。 |
+| `snapshots/latest/*` | 最新3世代を保持 | 日次フル（外部ドライブ） | 復元テスト結果をRunbookへ記録。 |
+| `data/raw/<provider>/` | 12ヶ月保持。古いバーは再生成可能なため半年でサマリのみ残す | 月次差分 | 再取得不可データは`immutable/`へ保護。 |
+| `data/cache/features/` | 30日保持。再計算可能 | バックアップ対象外 | キャッシュ破損時は再構築。 |
+| `reports/export/` | 12ヶ月保持→年次アーカイブ | 月次アーカイブzip | 実運用で共有用。 |
+| `metrics/*.jsonl` | 90日保持→月次アーカイブ | バックアップ対象外 | 外部監視導入後はPrometheusに移行想定。 |
+| `config/*.yaml` | 履歴がGit管理される | Gitリポジトリバックアップ | 秘密情報は`.env`/Keychain。 |
+
+### 8.3 セキュリティ/アクセス (NFR-04/05)
+- APIキーは`.env`またはmacOS Keychain（M2予定）で管理し、`.env`は`chmod 600`をRunbookで徹底。`config/`配下に秘密情報を含めない。
+- CLI実行は専用ユーザー権限（標準ユーザー）で行い、`sudo`禁止。CLI操作は`user`フィールド付きで監査ログに記録。
+- Kill Switch解除や危険操作はCLIで二段確認（Y/N + `--yes`）。`AlertEvent`の重大度に応じてWebhook（将来）を追加。
+- macOS端末はFileVault必須、画面ロック10分以内、共有端末での運用禁止。
+- 監査ログを1年保管、月次で圧縮アーカイブ。暗号化保管はM2ロードマップに登録。
+
+### 8.4 運用性・保守性
+- CLIコマンドは冪等に設計。`tradectl status`で必須情報を1画面に集約。
+- Runbookに日次/週次/障害対応手順を整備。`logs/ops/*.log`に人手操作を記録。
+- Runbookは詳細設計開始時点で`RUN-DATA-05`/`RUN-DATA-06`/`RUN-RISK-01`/`GOV-AUD-01`のテンプレート骨子（目的・トリガー・チェックリスト・ダブルサイン欄・証跡リンク欄）を`docs/runbooks/`配下にコミットし、レビュー結果を`reports/governance/runbook_templates/<YYYYMMDD>.md`へ記録する。Pull Requestテンプレートに「Runbook差分確認」項目を追加し、テンプレ更新が無い場合も`N/A`記入を必須とする。
+- コードはモジュール境界ごとに`tests/`へユニット/統合テストを配置し、CIで`pytest -m "not m2plus"`を実行。
+
+### 8.5 容量・パフォーマンス見積もり
+| コンポーネント | 想定データ量 (1年) | 計算コスト/必要リソース | 備考 |
+| --- | --- | --- | --- |
+| `data/raw/` 5分足 (4ペア) | 約3.5GB (Parquet圧縮後) | I/O帯域 5MB/s (Catch-up時) | Dukascopy: 再取得用に予備容量+2GB確保。 |
+| `data/cache/features/` | 約1.2GB | CPU 1.5コア相当 (rolling計算)、メモリ<1GB | キャッシュ再生成時に追加CPU負荷。 |
+| `logs/events/` | 約1.0GB (1日8MB想定) | 追記I/O軽微 | gz圧縮後は~200MB。 |
+| `logs/audit/` | 200MB | 追記I/O軽微 | JSONL→SQLite移行時は追加20MB。 |
+| `metrics/*.jsonl` | 100MB | --- | 90日保持後ローテーション。 |
+| Backtest結果 (`reports/optimizer/`) | セットごとに～50MB | CPU: 4コア想定 (マルチプロセス) | 長期最適化時は外部SSD推奨。 |
+| Spread/Funding CSV | 数MB | --- | 手動更新フォルダ。 |
+
+- 推奨ディスク空き: **最低20GB**（データ+アーカイブ+バックアップ一時領域）。
+- CPU: MacBook Pro M1クラスでバー処理p95 <1.2s、バックテスト4コア並列で月次走査が2時間以内を目標。
+- メモリ: ランタイム2GB以下。大規模Backtest時は4GB程度必要。
+
+### 8.6 Feature Flag管理
+| Flag key | 既定値 (M1) | 対象機能 | 切替手順 | 備考 |
+| --- | --- | --- | --- | --- |
+| `feature_flags.sprt_guard` | `false` | ライブSPRT健全性ガード | `config/profile`でtrueにし、`NextBarChangeQueue`で次バー適用 | M2で有効化想定。dangerous扱い。 |
+| `feature_flags.reduce_only_advisor` | `false` | Reduce-Only自動提案 | 同上 | Spread異常時の提案。運用訓練後に有効化。 |
+| `feature_flags.slack_alert` | `false` | Slack通知Dispatcher | `.env`設定後にtrue | safeキー。Slack webhook検証必要。 |
+| `feature_flags.gui_ws` | `false` | `/ws/signals`とGUIプレビュー | `tradectl cfg patch` (将来) | 実装済みでもM2+で段階的解放。 |
+
+Flag切替時は`ConfigChanged`イベントに`flag_delta`が記録され、ReporterはFeature Flag有効化後に週次レポートへ差分を掲載する（M1 Coreでは`not_applicable`表示）。Runbookは各Flagの前提テストを提示。
+
+### 8.7 検証環境・テストデータ管理
+- **ローカル環境**: `poetry shell`で仮想環境作成。`.env.test`にテスト用メール設定を定義し、本番用とは分離。
+- **テストデータ**:
+  - `tests/fixtures/market/`にローリング30日分の疑似OHLCVを保持。生成スクリプト`tools/gen_fixture.py`で再生成可。
+  - Spread/Fundingは`fixtures/spread.csv`, `fixtures/swap_rates.csv`。バージョン管理し、差分をPull Requestでレビュー。
+  - コンフィグ差分テスト用に`config/profile_test.yaml`を用意し、CIで利用。
+- **CI**: M1ではローカルGit hook (`pre-push`)で`pytest -m "not m2plus"`＋`black --check`（任意）を推奨。M2でGitHub Actions導入時はmacOS runnerを利用し、スナップショットテストの差分承認を自動化。
+- **データサニタイズ**: 監査ログ・レポートを共有する際は氏名/メールをマスク。`tools/redact_logs.py`で自動化。
+- **負荷テスト**: `tests/load/`（将来）でSignal 100件/日シナリオをリプレイする計画。準備が整い次第CI optionalジョブとして追加。
+
+### 8.8 リリース/デプロイプロセス
+| フェーズ | 手順 | 成果物 |
+| --- | --- | --- |
+| 事前準備 | `git flow`でリリースブランチ作成 (`release/x.y`)。`poetry version`更新。 | リリースノート草案。 |
+| 検証 | `pytest -m "m1 or m2plus"`、`tradectl backtest`(基準期間)、`tradectl preflight`。 | テストレポート、Backtest結果。 |
+| 承認 | PO+運用担当が`docs/release_checklist.md`を承認。 | 承認サイン（`logs/ops/release.log`）。 |
+| デプロイ | `git tag vx.y.z`, `poetry export --format requirements.txt --output requirements.lock`。 | タグ、ロックファイル。 |
+| 配布 | Releaseパッケージ（zip）作成→外部ストレージへ配置。 | `dist/tradectl-vx.y.z.zip`。 |
+| ポストリリース | 24hモニタリング。異常があれば即ロールバック（タグ戻し＋設定復旧）。 | Postmortemレポート。 |
+
+- バージョニングはSemVer準拠。設定変更は`config/CHANGELOG.md`で別途管理し、アプリバージョンとセットで運用する。
+- ロールバック時は最新スナップショット＋`requirements.lock`＋`config`を復元し、`tradectl preflight`→`resync`で整合を取る。
+- M2でCI/CD導入後はGitHub Actionsで自動テスト→手動承認→Artifacts配布を実施する計画。
+
+### 8.9 運用スループット計測と自動化準備
+- **ワークロードメトリクス**: `ops_worklog.jsonl`を新設し、CLI操作やRunbookステップ完了時に`{"task":"manual_fallback_review","duration_min":37,"owner":"ops","source":"tradectl data manual-report"}`の形式で記録する。Typerコマンドは`--log-duration`オプションで操作時間を入力できるようにし、既定は`config/ops/workload_defaults.yaml`の標準値を採用する。
+- **集計ジョブ**: `OpsWorkloadAggregator`を`src/app/telemetry.py`に追加し、毎日24:00に`ops_worklog.jsonl`を読み込んでカテゴリ別の総時間・中央値・標準偏差を計算。結果は`reports/ops/workload_<YYYYMM>.md`と`metrics/ops_workload.json`へ出力し、グラフは`tools/plot_ops_workload.py`で生成する。
+- **省力化トラッカー**: 自動化タスクの効果測定のため、`automation_effect.jsonl`に`{"task":"sla_review","before_min":60,"after_min":30,"effective_date":"2025-03-10"}`を記録。`tradectl ops automation log --task sla_review --before 60 --after 30`で更新し、削減時間が30分/週以上のものに`[PRIORITY]`タグを付与してバックログ管理する。
+- **アジェンダ生成**: `tradectl ops agenda --date <YYYY-MM-DD>`は`ops_worklog.jsonl`の最新値と未完了Runbook項目を組み合わせ、日次TODO Markdown（`docs/runbooks/daily_agenda/<date>.md`）とCLI出力を同時生成。Acceptable Degradation時は`HealthState`と連動して手動CSVチェックやKill Switchレビューを先頭に挿入する。
+- **将来拡張**: M2ではSlack通知へ`ops agenda`を送信できるようWebhook連携を追加し、作業ログ入力のリマインダを実装する。
+
+### 8.10 SLA閾値チューニングファクトリ
+- **プロファイル構造**: `config/sla_thresholds/<profile>.yaml`は`provider`×`metric`×`window`の三次元で`target`,`warning`,`critical`を定義し、`profile_version`と`generated_at`をメタデータに含める。`health.threshold_profile`でアクティブなプロファイルを指定し、未設定時は`default`を読み込む。
+- **生成スクリプト**: `tools/sla/generate_profile.py`は`metrics/data_ingestion_sla.jsonl`を入力に、(1) p50/p75/p95/p99算出、(2) 外れ値除外（IQR×1.5）、(3) 候補しきい値の提案（`warn = max(p95*1.15, p95+max(2,1σ))`、`critical = max(p99*1.25, p95+max(8,2σ))`）を行う。結果は`reports/ops/sla_review/<YYYYWW>.md`と`config/sla_thresholds/candidate_<YYYYWW>.yaml`として出力する。
+- **適用フロー**: `tradectl sla profile apply --file config/sla_thresholds/candidate_<YYYYWW>.yaml`でシンタックス・単調性（`target ≤ warning ≤ critical`）を検証後、`config/sla_thresholds/active.yaml`へコピー。適用時に`health.changed(reason=sla_profile_update)`を発火し、`metrics/data_ingestion_sla.jsonl`へ`profile_version`を追記する。
+- **逸脱検知**: `SlaDeviationMonitor`がローリング7日間で`observed_p95`が`warning`を連続3回超過した場合に`health.changed(reason=sla_threshold_mismatch)`を通知。通知には`current_profile_version`と直近のp95/p99値を含め、レビュー用URL（`reports/ops/sla_review/<YYYYWW>.md`）を添付する。
+- **将来オートチューニング**: M2ではベイズ更新で`warning`/`critical`を自動調整するために`metrics/data_ingestion_sla.jsonl`に`posterior_mean`/`posterior_std`フィールドを追加し、学習済み値との乖離を監視する。
+
+## 9. テスト計画とカバレッジ
+
+| テストID | 関連AC/FR | 内容 | カテゴリ |
+| --- | --- | --- | --- |
+| UT-ING-01 | FR-01/FR-02 | DataIngestionが欠損補完・フォールバックする | ユニット |
+| UT-FEAT-01 | FR-03 | FeaturePipeline差分更新の正当性 | ユニット |
+| UT-STR-01 | FR-04 | 戦略プラグイン出力検証（MA+RSI/Donchian） | ユニット |
+| UT-EXEC-01 | FR-27/FR-29 | ExecutionModelが滑り・TTLを補正 | ユニット |
+| UT-RISK-01 | FR-05/FR-36 | リスク閾値超過時のReject | ユニット |
+| UT-SIZE-01 | FR-06 | サイジング単調性・ロット丸め property | ユニット |
+| UT-TKT-01 | FR-07/FR-38 | TicketBuilderチェックリスト生成 | ユニット |
+| UT-CFG-01 | FR-14/FR-33 | Configホットリロード/遅延適用 | ユニット |
+| UT-RL-01 | FR-01/AC-45 | RateLimitGuardステージ遷移（429閾値・トークン計算・手動操作記録）の検証 (`tests/unit/test_rate_limit_guard.py`) | ユニット |
+| UT-GAME-01 | MVP-FR-01〜FR-04 | GameEngineが日次フェーズ進行・イベント適用・勝敗判定を正しく実行 | ユニット |
+| IT-PIPE-01 | AC-10 | データ→チケット統合フロー（モックデータ）＋Live実績CSV突合（`actual_fill_imported`/`summary`検証） | 統合 |
+| IT-RESYNC-01 | AC-04 | Resync後TTL/ドリフト整合 | 統合 |
+| IT-RL-01 | AC-45 | `tradectl data rate-limit stage` CLIと`metrics/rate_limit_window.jsonl`出力の整合（429シナリオ/Acceptable Degradation復帰） | 統合 |
+| IT-SPREAD-01 | AC-34 | Spread閾値→クールダウン→解除 | 統合 |
+| IT-KILL-01 | FR-05/FR-22 | Kill Switch遷移（soft/hard） | 統合 |
+| IT-RISK-02 | FR-05/FR-18 | `risk_summary`が`risk_policy`閾値とKill Switchイベントに一致するか検証 (`tradectl report weekly --since 7d`) | 統合 |
+| IT-FUND-01 | FR-28 | FundingService三倍日処理（CSV手動更新, 三倍日補正） | 統合 (M1 Core) |
+| IT-COR-01 | FR-37 | 相関閾値でシグナル抑制 | 統合 |
+| PT-CLI-01 | AC-G1/G2 | `tradectl board`操作100件連続 | CLI |
+| IT-GAME-01 | MVP-FR-01〜FR-05 | `tradectl game run --seed 123`で決定論的ログとサマリが生成されるか検証 | CLI |
+| PT-BT-01 | AC-13 | Backtest再現性（hash固定） | Property |
+| FUT-SPRT-01 | FR-22(M2) | SPRTしきい値で提案停止 | 拡張 |
+| FUT-SCORE-01 | AC-07/AC-08 (M2+) | `scoring.hybrid_enabled`時にPF_recent/PF_all/レジーム別PFが閾値を満たすか検証 | 拡張 |
+| FUT-SCORE-02 | AC-09/AC-16 (M2+) | Stabilityスコアと±5〜10%摂動時ランク反転率をリグレッションテスト | 拡張 |
+
+### 9.1 テストデータ戦略
+- `tests/fixtures/market/`に代表的OHLCVサンプル（高ボラ/低ボラ/欠損）を配置。
+- Spread/Fundingは`fixtures/spread.csv`, `fixtures/swap_rates.csv`で再現。
+- CLIスナップショットは`pytest-approvaltests`で管理し、必要に応じて`--approve`で更新。
+
+### 9.2 QAゲートと品質指標
+| ゲート | 適用フェーズ | 基準/メトリクス | 判定責任 | 備考 |
+| --- | --- | --- | --- | --- |
+| 単体テスト | 各PR | `pytest -m "not m2plus"`成功、カバレッジ>=70% (M1目標) | 開発 | Git hook推奨。 |
+| 統合テスト | スプリント末 | IT-PIPE/IT-RESYNC/IT-SPREAD/IT-KILL/IT-FUNDを通過 | 開発+運用 | CIで自動化予定。 |
+| 回帰テスト | リリース候補 | Backtest差分±0.1%、CLI snapshot差異なし | 開発 | リリースチェックリスト参照。 |
+| プレフライト | 本番起動前 | `tradectl preflight` OK、バックアップ確認、Kill Switch=RUNNING | 運用 | 失敗時は起動不可。 |
+| UAT | 主要機能追加時 | Paperモードで2週間評価、指標が基準内 | PO+運用 | KPI (Sharpe/MaxDD)を確認。 |
+| ポストリリース | リリース24h後 | 重大アラート0件、処理時間p95<1.5s | 開発+運用 | メトリクスで確認。 |
+
+- QA指標は`metrics/qa.json`に日次で集計し、週次レポートに掲載。達成未満の場合は改善タスクを`backlog/qa_improvements.md`に登録する。
+
+### 9.3 KPI検証とライブトラッキング
+| 段階 | KPI | 手法/データ | 判定基準 | 頻度 |
+| --- | --- | --- | --- | --- |
+| バックテスト | Sharpe, Sortino, 最大DD, WinRate, PF | `backtest/engine.py`で複数期間評価 (全体+直近6-12ヶ月) | Sharpe≥0.8, Sortino≥1.0, MaxDD≤15%, 年率+12% | リリース毎 |
+| ウォークフォワード | 同上 + Stability Score | Walk-Forward結果をヒートマップ化 | Stability Score≥0.7, 直近期間のSharpe差±0.2以内 | 四半期 |
+| PaperTrade | WinRate, Expected R, Hit Ratio | Paperログ vs Backtestの乖離分析 | WinRate乖離≤5pp, Expected R乖離≤0.2R | 月次 |
+| LiveTrade | Sharpe (累積/直近60日), SPRT, 偏差検定 | ライブ fills とバックテスト比較, SPRT閾値 | SPRT警告時は提案縮小、Sharpe<0.5で戦略レビュー | 週次 |
+| KPIレビュー会 | KPI総括, 改善Plan | Reporter週次＋ダッシュボード | KPI未達なら改善タスク→Feature Flag調整 | 月次 |
+
+- KPI成績は`metrics/performance.jsonl`と`reports/kpi_snapshot.md`に出力し、PO承認を得る。
+- KPI未達時のアクション: `sprt_guard`で提案頻度縮小→戦略OFF→パラメータ調整→Backtest再検証。決定はPO/運用/開発のレビューで確定。
+- KPI達成を維持するため、Paper/LIVE乖離が継続する場合は`walkforward`再評価とFeature Flagの切替を実施。
+
+### 9.4 M1ベース戦略データセット/パラメータ参照
+
+#### 9.4.1 データセット一覧
+| Dataset ID | パス | TF | 期間 | ソース/備考 | `data_manifest`キー |
+| --- | --- | --- | --- | --- | --- |
+| `usdjpy_m5_core` | `data/research/curated/usdjpy/usdjpy_m5_20210101_20241231.parquet` | 5m | 2021-01-01〜2024-12-31 | Dukascopyベース、欠損はyfinanceで補完 | `m1_baseline.usdjpy.m5` |
+| `eurusd_m5_core` | `data/research/curated/eurusd/eurusd_m5_20210101_20241231.parquet` | 5m | 同上 | Dukascopy+yfinance補完 | `m1_baseline.eurusd.m5` |
+| `gbpusd_m5_core` | `data/research/curated/gbpusd/gbpusd_m5_20210101_20241231.parquet` | 5m | 同上 | Dukascopy+yfinance補完 | `m1_baseline.gbpusd.m5` |
+| `eurjpy_m5_core` | `data/research/curated/eurjpy/eurjpy_m5_20210101_20241231.parquet` | 5m | 同上 | Dukascopy+yfinance補完 | `m1_baseline.eurjpy.m5` |
+| `major_h1_filter` | `data/research/curated/common/majors_h1_20210101_20241231.parquet` | 1h | 2021-01-01〜2024-12-31 | 5m→1h集計済みキャッシュ | `m1_baseline.majors.h1` |
+| `daily_bias` | `data/research/curated/common/majors_d1_bias.parquet` | 1d | 2020-01-01〜最新 | 日次終値Zスコア用、週次更新 | `m1_baseline.majors.d1` |
+| `spread_hist` | `data/research/curated/common/spread_hist_m5.json` | 5m | 2018-01-01〜2024-12-31 | 公開CSVから生成した分位テーブル | `m1_baseline.spread.hist` |
+
+> **保管ルール**: 生成時に`reports/data_manifest.json`へハッシュ/サイズ/取得コマンドを登録し、`reports/research/m1_baseline/validation_YYYYMMDD.md`へ`dataset_hash`を転載する。トレーダーと実装者は本表を照合して同一データセットで検証・ライブ監視を行う。
+
+#### 9.4.2 パラメータテーブル（`strategy_manifest.yaml::strategies.m1_baseline_ma_rsi.parameters`）
+> **PO/Ops合意メモ（2025-02-21）**: M1 Coreは**per-trade=0.75% / 日次=-2.5% / 週次=-5%**を正式基準とする。`risk_policy.yaml`、`config/profiles/*`, Runbook、および検証シナリオは同じ値で初期化し、逸脱時は`reports/governance/risk_policy_changes/`で承認ログを残す。
+| パラメータ | 値 | 説明 | 根拠/関連要件 |
+| --- | --- | --- | --- |
+| `entry_tf` | `5m` | トリガー足 | 要件§3.2, FR-16 |
+| `regime_tf` | `1h` | トレンドフィルタ用上位TF | 要件§3.2 |
+| `ema_fast` | 21 | 5m EMA(21) | 研究ノート `reports/research/m1_baseline/validation_*.md` |
+| `ema_slow` | 55 | 5m EMA(55) | 同上 |
+| `ema_slope_window` | 8 | 1h EMA傾き計算バー数 | 遅延ノイズ緩和 |
+| `rsi_period` | 14 | RSI基準期間 | 標準設定 |
+| `rsi_long_thresholds` | `[45, 55]` | ロング判定: 45→55クロス | 要件§3.2シグナル |
+| `rsi_short_thresholds` | `[55, 45]` | ショート判定: 55→45クロス | 同上 |
+| `atr_period` | 14 | ATRベースボラ計測 | 要件§3.2, FR-27 |
+| `atr_sl_mult` | 1.2 | 初期SL=ATR×1.2 | 要件§3.2リスク |
+| `tp_r_multiple` | 2.0 | TP=2R（ATR基準） | 要件§3.2, AC-07 |
+| `protect_pips` | 3.0 | Marketable Limit保護幅 | FR-39 |
+| `spread_guard_multiplier` | 2.0 | Spread許容=通常分位×2 | 要件§3.2フィルタ |
+| `decision_delay_triangular` | `[30,45,75]` | 手動遅延の三角分布(sec) | 要件§3.2, AC-09 |
+| `per_trade_risk_pct` | 0.75 | 1トレードリスク（口座残高比） | 要件§3.2リスク |
+| `daily_drawdown_stop_pct` | 2.5 | 日次Kill Switch | 要件§3.2 |
+| `weekly_drawdown_stop_pct` | 5.0 | 週次Kill Switch | 要件§3.2 |
+| `max_concurrent_positions` | `{bucket:2,total:4}` | 通貨バケット/全体上限 | 要件§3.2, AC-09 |
+| `r_eff_cap` | 2.5 | 相関合算R上限 | 要件§3.2 |
+
+#### 9.4.3 検証シナリオ（実装者/トレーダー共通）
+| Scenario ID | コマンド / ノート | 期待結果 | 対応AC |
+| --- | --- | --- | --- |
+| `BT-IS` | `tradectl backtest run --strategy m1_baseline_ma_rsi --profile paper-m1-baseline --from 2021-01-01 --to 2023-06-30 --out reports/backtest/m1_baseline/is` | `PF=1.20±0.05`, `Sharpe=0.90±0.05`, 取引数≈260（IS） | AC-07 |
+| `BT-OOS` | `tradectl backtest run --strategy m1_baseline_ma_rsi --profile paper-m1-baseline --from 2023-07-01 --to 2024-12-31 --out reports/backtest/m1_baseline/oos` | `PF≥1.10`, `Sharpe=0.88±0.07`, `MaxDD≤13%`, `HitRate=48〜55%` | AC-07 |
+| `STRESS-SPREAD+50` | `tradectl backtest run ... --what-if spread=1.5,slip=1.5` | レジーム別PF中央値≥1.0、`MaxDD`増分≤+3% | AC-08 |
+| `RISK-DIAG` | `tradectl diagnostics risk --strategy m1_baseline_ma_rsi --from 2023-07-01 --to 2024-12-31 --mode backtest` | `per_trade_R_stdev∈[0.70,0.80]`, `max_concurrent`違反0件、`R_eff_cap`違反0件 | AC-09 |
+| `LATENCY-PAPER` | `tradectl metrics latency --mode paper --from 2024-01-01 --to 2024-12-31` | 承認→OCO設定 `median≤60s`, `p90≤120s`, 遅延サンプル>200 | AC-09 |
+
+> **シナリオ運用メモ**: 各シナリオで生成された`metrics.json`/`stress_tests.json`/`latency_stats.json`は`reports/research/m1_baseline/validation_YYYYMMDD/`配下に保存し、週次レビューで`reports/weekly/<YYYY-WW>.md`へ転載する。閾値逸脱時は`strategy.watchlist`を付与し、再検証チケット（`tickets/strategy_revalidation/<date>.md`）を起票する。
+
+#### 9.4.4 データ品質・ガード連携
+- `multi_tf_joiner`はIS/OOS区間の欠損率・再計算範囲を`reports/research/m1_baseline/data_quality.json`へ出力し、欠損率>0.5%/日でAC-22のアラートテストを再実行する。
+- Spread分位テーブルは`reports/research/m1_baseline/spread_verification.md`に直近90営業日のp50/p95/p99を記録し、Spread Guard閾値2.0×が適切かを四半期レビューで確認する。
+- 手動遅延ログ（Paper/Live）は`logs/hitl/latency_samples.jsonl`に追記し、月次で`reports/performance/<mode>/latency_stats.json`へ集計する。90パーセンタイルが閾値を超えた場合はRunbook `HITL-LATENCY`の改善アクションを実施する。
+
+### 9.5 Codex QAハーモニクス（v2.0追加）
+- **3レイヤーQA**: Unit（高速）、Integration（実データ結合）、Scenario（Runbook追従）の3段階を必須化する。Codexは各PRで最低1件ずつサンプルを提出し、`docs/qa/results/<date>_<epic>.md`へ実行ログを貼付する。
+- **データ拘束条件**: `tests/fixtures/market/usdjpy_m5_sample.parquet`などの縮小版データを使用し、個人情報や機密ロジックを含まないことを確認する。必要に応じて`tools/make_fixture.py`で最新データから縮小サンプルを生成し、ハッシュを`reports/data_manifest.json`に登録する。
+- **しきい値追跡**: テストで使用する性能/SLA閾値は`tests/thresholds.yaml`に集約し、変更時は`docs/change_requests/threshold_update_<date>.md`へ理由と影響範囲を記録する。閾値変更はPO承認必須。
+
+| QAレイヤー | コマンド例 | 入力データ/モック | 合格基準 | 失敗時の処置 |
+| --- | --- | --- | --- | --- |
+| Unit | `pytest tests/unit/test_rate_limit_guard.py` | `tests/fixtures/rate_limit/log_stage0.jsonl` | Stage遷移ロジックが仕様通り、429率閾値判定が正しい | Prompt Bundleへ失敗ケース追記、`rate_limit_stage_eval`再現手順をRunbookに記載 |
+| Integration | `pytest tests/integration/test_pipeline_end_to_end.py` | `tests/fixtures/market/usdjpy_m5_sample.parquet`, `tests/fixtures/config/profile_paper.yaml` | Backtest/Paper/Live共通フローで同一チケットが生成される | データ差異は`reports/validation_log/<date>_integration.md`に記録し、`data_manifest`との差分を調査 |
+| Scenario | `tradectl scenario run --id AC-45 --profile paper-m1-core` | Runbook手順、`data/manual_fallback/*`双子CSV（サンプル） | Acceptable Degradationチェックリスト全項目パス、`degraded_ack`記録あり | Runbook更新と`feedback_loop.md`への反省点記録、Hardeningフェーズで再実行 |
+
+- **自動収集**: `make qa-report`が上表のテスト結果を集約し、`reports/qa/<date>.md`へ出力する。CIでは`make qa-report --ci`を週次で回し、合格証跡を残す。
+- **Codexハンドオーバー**: PRマージ前にCodexへ`qa-report`の要約と`feedback_loop.md`の該当行をフィードバックし、次回プロンプト改善へ反映する。
+
+### 9.6 実装状況メモ（2025-03-13）
+
+| 区分 | 対象 | 実装状況 | 依頼元Runbook | 証跡ファイル |
+| --- | --- | --- | --- | --- |
+| テスト（M1） | UT-GAME-01, IT-GAME-01, PT-CLI-01 | 予定（M1整備） | RUN-OPS-02, RUN-HITL-01 | `docs/change_requests/CR-20250313-test_cli_gap.md`（§9） |
+| CLI（M1） | `tradectl game run --seed 123`, `tradectl board`, `make game-smoke`, `pytest -k game` | 予定（M1整備） | RUN-OPS-02, RUN-HITL-01 | 同上 |
+| バックログ | 上記以外の§9対象テスト/CLI | M1.1以降バックログ | CHK-0.6.9 | 同上 |
+
+- 詳細なギャップ表と証跡の追跡は`docs/change_requests/CR-20250313-test_cli_gap.md`に集約した。
+- CI反映メモ: `make ci-lite`へ`pytest -k game`追加、`make qa-report`レシピ新設（M1.1以降）。
+
+## 10. 要件トレーサビリティ
+
+| 要件ID | 本書記載箇所 |
+| --- | --- |
+| FR-01, FR-02 | §3.1, §3.2, §4.1, §5.2 |
+| FR-03 | §3.3, §5.2 |
+| FR-04 | §3.5, §5.2 |
+| FR-05 | §3.8, §3.9, §5.3, §7 |
+| FR-06 | §3.11 |
+| FR-07, FR-38 | §3.16, §4.3, §5.5 |
+| FR-08 | §2.1, §2.2, §5.2 |
+| FR-09 | §3.17, §5.7 |
+| FR-10 | §3.18 |
+| FR-11 | §2.4, §3.20, §4.5 |
+| FR-12 | §3.9, §3.19, §7 |
+| FR-13 | §3.13, §5.2 |
+| FR-14, FR-33 | §3.19, §4.4, §5.6 |
+| FR-15 | §3.13 |
+| FR-16, FR-18 | §2.1, §2.4, §3.15, §5.1 |
+| FR-17 | §3.16, §5.5 |
+| FR-19, FR-21 | §3.7（M2+ハイブリッド設計）, §3.17 |
+| FR-20 | §3.4 |
+| FR-22 | §3.8, §3.9, §7 (M2フック含む) |
+| FR-23 | §3.19, §5.6 |
+| FR-24 | §3.11, §4.4 |
+| FR-25 | §8 |
+| FR-26 | §3.13, §5.2 |
+| FR-27 | §3.6, §5.2 |
+| FR-28 | §3.12 |
+| FR-29 | §3.6 |
+| FR-30 | §3.16 |
+| FR-31 | §3.14, §4.1 |
+| FR-32 | §2.4, §3.1, §5.1 |
+| FR-34 | §3.6, §5.4 |
+| FR-35 | §3.16, §3.17 |
+| FR-36 | §3.8 |
+| FR-37 | §3.10 |
+| FR-39 | §3.6, §3.16 |
+| FR-40 | §3.13, §5.2 |
+| FR-41 | §3.6, §5.4 |
+| FR-42 | §3.10 (M2+), §5.3 |
+| FR-61 | §1.3, §3.25, §5.11, §7.3 |
+| FR-62 | §1.3, §3.26, §3.28, §5.11, §7.3 |
+| FR-63 | §1.3, §3.27, §5.12, §7.3 |
+| FR-64 | §1.3, §3.29, §5.13, §7.3 |
+| AC-G1/G2 | §2.6, §5.5 |
+| NFR-04/05/06/07/08/11 | §8 |
+
+## 11. リスクと未解決課題
+
+### 11.1 技術的リスク
+- **[継続中] 執行モデルの実績データ不足**: ブローカーAPI未連携のため滑り・ヒューマン遅延パラメータの検証が限定的。Paper/LIVE実績から`execution_model.yaml`を半月ごとに更新し、結果を`logs/ops/20250311_guard_rehearsal/`に保管する。Runbook更新: [RUN-RISK-01](docs/runbooks/RUN-RISK-01.md)、証跡: [RISK-REGISTER 2025-03-12](reports/validation_log/RISK-REGISTER_20250312.md)。
+- **[継続中] Reduce-Only運用負荷**: Spread/相関異常時に提案が集中する可能性。`logs/ops/<date>_guard/guard_sequence.jsonl`でGuard操作を保存し、Spread対応は[RUN-SPREAD-03](docs/runbooks/RUN-SPREAD-03.md)のフェイルオーバー手順に統合。M2で優先度キューとバッチ操作UIを設計する。
+- **[継続中] SPRTチューニング**: 戦略追加時にSPRT閾値が不安定。ウォームアップ期間とベイズ更新をM2バックログに登録し、パラメータ変更の証跡を`reports/validation_log/RISK-REGISTER_20250312.md`へ追記する。
+- **[継続中] データ供給レイテンシ**: macOSローカル運用でネットワーク品質が不安定な場合、Catch-up時間が延びる。`logs/ops/<date>_latency/`に`health_probe.jsonl`と`catch_up.jsonl`を保存し、[RUN-DATA-05](docs/runbooks/RUN-DATA-05.md)改訂版で再開条件と`reports/validation_log/AC-45_sla_<date>.md`へのリンクを義務化した。
+
+### 11.2 運用課題
+- **[継続中] Spread/Funding CSVの手動更新**: 手動更新頻度が高い場合にHuman Errorが発生しやすい。フェイルオーバー時に`logs/ops/<date>_spread/`へコマンドログを保存し、[RUN-SPREAD-03](docs/runbooks/RUN-SPREAD-03.md)で`reports/validation_log/AC-22_<date>.md`と連携。
+- **[継続中] Snapshot破損・`hard_stop`復旧訓練**: 四半期ドリルを継続実施し、復旧手順ログを`logs/ops/<date>_guard/`へ集約。次回演習は2025-03-25予定（[RISK-REGISTER 2025-03-12](reports/validation_log/RISK-REGISTER_20250312.md)参照）。
+- **[新規対策] `tradectl` CLI UX向上/GUI化準備**: CLI検索・フィルタのプロトタイプをM1.1レビューで決定。操作ログを[logs/ops/README.md](logs/ops/README.md)に従って整理し、後続のGUI要件定義に活用する。
+
+### 11.3 リスクログ (2025-03時点)
+| ID | リスク概要 | 影響 | 発生確率 | 緩和策 | 対応状況 | エビデンス |
+| --- | --- | --- | --- | --- | --- | --- |
+| R-01 | API仕様変更によるデータ取得停止 | 中 | 中 | API監視/代替CSV準備、[RUN-DATA-05](docs/runbooks/RUN-DATA-05.md)でフェイルオーバー記録 | 継続中 | [RISK-REGISTER 2025-03-12](reports/validation_log/RISK-REGISTER_20250312.md) / `logs/ops/20250310_latency_drill/`
+| R-02 | 運用者不在時のアラート未対応 | 高 | 中 | RACI整備、OPS待機表、Kill Switch STOP（[RUN-RISK-01](docs/runbooks/RUN-RISK-01.md)） | 継続中 | [OPS-READINESS-01](docs/runbooks/OPS-READINESS-01.md) / `logs/ops/20250311_guard_rehearsal/`
+| R-03 | ローカル端末故障で運用停止 | 高 | 低 | 予備端末準備、バックアップ/BCPテスト | 継続中 | [RISK-REGISTER 2025-03-12](reports/validation_log/RISK-REGISTER_20250312.md)
+| R-04 | コンフィグ誤編集 | 中 | 中 | Configレビュー、dangerousキー遅延適用、`tradectl config diff --require-signed` | 継続中 | [CHK-0.6.9-run](reports/validation_log/CHK-0.6.9-run.md)
+| R-05 | 監査ログ肥大化 | 低 | 中 | 週次アーカイブ、自動圧縮ジョブ`ci/log-archival` | 完了 | [RISK-REGISTER 2025-03-12](reports/validation_log/RISK-REGISTER_20250312.md)
+| R-06 | セキュリティインシデント（端末盗難） | 高 | 低 | FileVault, 画面ロック, Keychain管理、端末監査Runbook更新 | 継続中 | [RISK-REGISTER 2025-03-12](reports/validation_log/RISK-REGISTER_20250312.md)
+| R-07 | KPI未達（Sharpe/MaxDD） | 中 | 中 | 戦略評価会、最適化、Feature Flag管理（`strategy_manifest.yaml`レビュー） | 継続中 | [RISK-REGISTER 2025-03-12](reports/validation_log/RISK-REGISTER_20250312.md)
+
+- リスクログは月次レビュー時に更新し、閾値を超えたリスクはIssue Trackerへ登録する。レビュー結果は`reports/validation_log/RISK-REGISTER_<date>.md`と`logs/ops/<date>_*`の証跡に連携する。
+
+---
+
+## 22. Opsシミュレーションゲーム設計（v2.5追加）
+
+`mvp_spec_v_1.md`で定義したFX Ops Simulation Gameを、既存ツールチェーンと整合するトレーニング/ドリル機能として取り込む。ヒューマン・トレーダーが運用判断やAcceptable Degradation対応を演習できること、Codexが実装しやすい明確なAPI境界を用意することを目的とする。
+
+### 22.1 運用目的と適用範囲
+- **トレーニング**: 7日間（既定）×3フェーズのシナリオでデータSLA/リスク/モラル/KPIバランスを体験し、Runbook整合やChange Ledger記録の練習を行う。
+- **回帰/ドリル**: Acceptable Degradation発生後に対応手順の振り返りとして利用し、`docs/knowledge_packs/acceptable_degradation/`のケースIDと紐付ける。
+- **Codexプロンプト材料**: 改善タスク起票時にゲームログを添付し、Codexに運用背景を短時間で共有する。
+- **スコープ**: M1ではCLIのみ。GUI/Tauri拡張はM2以降。外部依存なし（標準ライブラリ限定）。
+
+### 22.2 Feature FlagとDI
+- Feature Flag: `game.enabled`（既定True）。`False`時は`GameEngineStub`が`play(...)`を`logger.info("game disabled")`でスキップ。
+- `src/interfaces/cli/game.py`でTyperコマンド登録。DIは`infra/registry.py`に`GameEngineProvider`を追加し、`ModeContext`とは独立させる（ゲームは常にローカルトレーニング扱い）。
+- Telemetry: `instrument_command(command="game")`で`metrics/cli_commands.jsonl`に`qa_tags=['training']`を記録。Acceptable Degradation演習では`qa_tags`へ`'degraded'`を追記する。
+
+### 22.3 モジュール構成
+| パス | 役割 | 実装要点 |
+| --- | --- | --- |
+| `src/game/models.py` | `GameState`, `Phase`, `Incident`, `Action`, `Outcome`, `TimelineEntry` dataclass群 | `@dataclass(slots=True, frozen=True)`で不変性を確保。`GameState`は`day`, `phase`, `data_quality`, `risk_load`, `team_morale`, `profit_score`, `incident`, `timeline`を保持。 |
+| `src/game/actions.py` | 行動定義カタログ | `ActionDefinition`に`id`, `title`, `description`, `phase`, `delta`, `guard`（callable）を保持。`registry.load_defaults()`でJSON/YAMLからロード。 |
+| `src/game/events.py` | 日次イベント生成 | `EventDefinition`に`id`, `narrative`, `delta`, `guards`。RNGは`random.Random(seed)`をDI。 |
+| `src/game/engine.py` | メインループ (`GameEngine.play`) | `seed`・`days`・`profile`・`action_provider`（CLI or テスト）を受け取り、フェーズ毎にイベント適用→行動選択→ステート更新。 |
+| `src/game/persistence.py` | ログ/サマリ保存 | `persist_run(result, path)`がJSON/Markdownを出力し、`ChangeLedger`/Knowledge Pack連携用メタデータを付与。 |
+| `src/game/renderers.py` | CLI出力補助 | `render_status`, `render_menu`, `render_summary`。Rich Tableを返し、`pytest-approvaltests`でスナップショット検証。 |
+| `src/interfaces/cli/game.py` | CLIエントリ | `tradectl game run`コマンドを定義。`--seed`, `--days`, `--profile`, `--log-dir`, `--dry-run`をサポート。 |
+
+### 22.4 データモデル詳細
+- `GameState`の遷移は純関数`GameEngine._apply_action(state, action, event)`で実行。`clamp(value, min_value, max_value)`でKPIを0〜100に制約。
+- `Phase` Enum: `MORNING_OPS`, `MIDDAY_TRADING`, `EVENING_REVIEW`。`phase_order`リストで日内順序を明示。
+- `Incident`はイベント結果を保持し、`effect`（KPI delta）、`narrative`, `tags`（`['data', 'risk', 'morale']`など）を含む。`tags`はKnowledge PackやTelemetryで利用する。
+- `ActionResult`（`actions.py`）は`applied_delta`, `actual_delta`（Guardで縮小された場合）, `notes`を保持。タイムラインに記録。
+- `Outcome`は`status: Literal['win','loss','neutral']`, `reason_codes`, `final_state`, `timeline`。`reason_codes`はMVP仕様FR-04の閾値を文字列化（例:`"loss:data_quality_breach"`）。
+- `TimelineEntry`は`day`, `phase`, `incident_id`, `action_id`, `before_state`, `after_state`, `delta`を保持し、`pydantic`でJSONシリアライズ。
+
+### 22.5 エンジンフローとアルゴリズム
+1. `GameEngine.play`が`GameState.initial(profile)`を生成。`profile`は`training`（既定SLA）と`paper`（リスク閾値厳格）を提供。
+2. 各日について:
+   - `EventDeck.draw(state, phase)`でインシデントを決定。`guards`により状態上限/下限を尊重（例: モラル>=90で士気向上イベントを抑止）。
+   - `GameState.apply_incident`でKPIにデルタ適用し、`TimelineEntry`に`incident_delta`を保持。
+   - `action_provider.choose_action(state, available_actions)`がヒューマン入力/テストスタブを返却。CLIでは番号選択、テストでは決定論的リスト。
+   - `ActionRule.evaluate`で適用可否を検証（Guard: KPI上限/下限, `risk_load`高時のリスク増幅行動禁止など）。
+   - `GameState.apply_action`でステート更新→`TimelineEntry`追加。
+3. 日末判定: `OutcomeEvaluator.check_loss(state)`でFR-04条件（KPI閾値）を評価。`loss`の場合は残フェーズをスキップして終了。
+4. 最終日終了後に`OutcomeEvaluator.check_win(state)`を評価。いずれも満たさない場合は`neutral`とする。
+5. `GameRunResult`（`engine.py`）は`outcome`, `timeline`, `seed`, `profile`, `days`, `summary_stats`（日毎KPI）を保持し`persistence.persist_run`へ渡す。
+6. `summary_stats`には日次平均/最小/最大/終値、Acceptable Degradationタグ付き日の一覧を含める。`incident.tags`に`'degraded'`がある場合は該当日へタグ付与。
+
+### 22.6 CLI・テレメトリ・ナレッジ連携
+- CLI実行時、開始/終了に`CommandTelemetryRecord`を記録（§6.8）。`notes`へ`{"game_outcome":"win"|"loss"|"neutral"}`を追加。
+- `--log-dir`指定時は`reports/training/game_runs/<timestamp>/run.json`と`summary.md`を生成。`summary.md`は`reports/training/templates/run_summary.md.j2`テンプレート（新設）で整形し、Runbook `RUN-OPS-02`から参照。
+- `persistence`は`ChangeLedger.record_change(category='training', summary=...)`を自動実行し、ゲーム実施を監査。`accept_degradation_case`フィールドに対応するKnowledge Pack IDを記入可能にする。
+- Acceptable Degradation演習では`docs/knowledge_packs/.../case_<date>.md`へ`GameRunResult.summary`を追記。`tools/acceptable_deg/export_snapshot.py`にゲームログ抽出処理を追加し、Knowledge Pack更新と同期させる。
+
+### 22.7 テスト・QA
+- ユニットテスト:
+  - `tests/unit/test_game_engine.py::test_phases_progress`（フェーズ順序とKPIクランプ）。
+  - `tests/unit/test_game_events.py::test_event_guard_blocks_high_morale`。
+  - `tests/unit/test_game_actions.py::test_guard_limits_action`。
+- 統合テスト:
+  - `tests/integration/test_game_cli.py::test_run_seeded_game`で`--seed 123`実行→決定論的アウトカムと`summary.md`スナップショットを確認。
+  - `tests/integration/test_game_logging.py::test_persist_run_creates_artifacts`でログディレクトリ生成とChange Ledger登録を検証。
+- QAゲート: `make game-smoke`を新設し、CIで`pytest -k game`＋`tradectl game run --seed 42 --days 3 --dry-run`を実行。結果ログは`ci/game_smoke_<commit>.log`へ保存し、Prompt Bundle（§20）に添付する。
+
+### 22.8 Codexハンドオフ指針
+- Prompt Bundleには以下を必須添付:
+  1. `mvp_spec_v_1.md`抜粋（FR-01〜FR-05）。
+  2. 本節§22.3〜§22.6の引用（最大150行）。
+  3. 行動/イベント定義サンプル（JSON/YAML 5件以内）。
+  4. テストコマンド (`pytest -k game`, `tradectl game run --seed 123 --days 3 --dry-run`).
+- Codex出力レビューでは`GameEngine`の副作用境界（I/Oは`persistence`のみ）と`random.Random(seed)`の利用を確認し、決定論性が維持されているかを`tests/unit/test_game_engine.py`で検証する。
+- 運用担当はゲームログを`OpsReviewDigest`（§19）へ貼り付け、改善アクションが必要な場合は`ChangeLedger`へ`category='training'`で記録する。
+
+### 22.9 アクション/インシデント定義サンプル
+
+| 種別 | ID | フェーズ | 発動条件/Guard | KPIデルタ（基準プロファイル） | Runbookリンク | 備考 |
+| --- | --- | --- | --- | --- | --- | --- |
+| Incident | `INC-DATA-LAG` | `MORNING_OPS` | `data_quality≤65` または `rate_limit_stage∈{1,2}` | `data_quality:-15`, `risk_load:+10`, `team_morale:-5` | `RUN-DATA-05#guarded`, `RUN-DATA-06#manual_csv` | Acceptable Degradation演習の入口。`tags=['data','degraded']` |
+| Incident | `INC-NEWS-SHOCK` | `MIDDAY_TRADING` | `risk_load≤70` | `risk_load:+20`, `team_morale:-8`, `profit_score:-10` | `RUN-RISK-01#kill_switch`, `RUN-HITL-01#board_guard` | ニュース障害シナリオ。Kill Switch判断が必要。 |
+| Action | `ACT-MANUAL-CSV` | `MORNING_OPS` | `ManualCsvIngestionTask.pending>0` | `data_quality:+12`, `risk_load:+4`, `team_morale:-3` | `RUN-DATA-06#manual_csv` | 2段階入力→ハッシュ検証を要求。完了時にChange Ledgerへ記録。 |
+| Action | `ACT-GUARDED-BOARD` | `MORNING_OPS` | `board_mode!='guarded'` かつ `HealthState∈{'degraded','soft_stop'}` | `risk_load:-5`, `team_morale:-4` | `RUN-HITL-01#board_guard` | BoardをGuardedへ切替。Acceptable Degradation指標。 |
+| Action | `ACT-OPS-RETRO` | `EVENING_REVIEW` | `impact_events>=2` | `team_morale:+10`, `risk_load:-6` | `RUN-POST-03#retro` | 1日を振り返り、Knowledge Pack更新のTODOを付与。 |
+| Action | `ACT-CHANGE-LEDGER` | `EVENING_REVIEW` | `pending_change_records>0` | `profit_score:+3`, `risk_load:-2` | `RUN-GOV-01#change_ledger` | Change Ledger記録タスク。記入漏れ時は`qa_tags=['ledger_missing']`。 |
+
+- CodexはJSON/YAML定義ファイルに上表のID・ガード条件・Runbook参照を反映する。`tests/unit/test_game_catalog.py`で定義の整合性（重複IDなし、Runbookリンク有無）を検証する。
+- Guardロジックは`ActionDefinition.guard`に切り出し、`GameState`と`KnowledgePackContext`（必要時）を受け取るCallableとする。Acceptable Degradationシナリオでは`guarded_only=True`の行動を優先し、人手訓練に合わせた制約を再現する。
+
+### 22.10 スコアリングと評価メトリクス
+
+- **日次メトリクス**: `GameRunResult.summary_stats`に`day_metrics[day] = {"data_quality": {...}, "risk_load": {...}, "team_morale": {...}, "profit_score": {...}}`を格納。各値は`start`, `end`, `delta`, `min`, `max`, `threshold_breach: list[str]`を含む。
+- **勝敗判定**:
+  - `loss`条件: `data_quality<45`が連続2日、または`risk_load>85`、または`ChangeLedger`未記録イベント（`ledger_missing`タグ）を放置。
+  - `win`条件: 期間終了時に`profit_score≥70`かつ`risk_load≤60`かつ`data_quality≥65`、さらに全`impact_events`に対してRunbook承認済みフラグが立っていること。
+  - 上記以外は`neutral`。`neutral`でも`ActionItem`が残る場合は`review_required=True`でOps Reviewに連携する。
+- **Acceptable Degradation KPI**: `degradation_sessions`配列にGuarded移行〜解除までの所要時間（分）と対応アクションを記録し、`recovery_minutes_median`を算出。`TelemetryDigest`（§15）に`game.degradation_recovery_minutes`として統合する。
+- **トレーダースコア**: CLIは最終サマリで`Trader Score = 0.4·data_quality_avg + 0.3·team_morale_avg + 0.2·profit_score_end - 0.1·risk_load_avg`を表示。70以上で合格、50〜69は要フォロー、49以下は再演習。
+- **監査リンク**: `persist_run`は`ChangeRecord`を生成し、`summary_md`に`change_id`と`knowledge_case_id`を埋め込む。Runbook復習時に`tradectl review degraded`が自動で参照する。
+
+### 22.11 シナリオランナー・Telemetry連携
+
+1. `ScenarioRunner`（§14）が`game`シナリオを実行する場合、`ScenarioStep(kind='game', options={seed, profile, days, actions})`を使用。
+2. `ScenarioRunner`は`GameEngine.play`を`dry_run=True`で呼び出し、結果の`Outcome`を`scenario_runs.jsonl`へ追記。`qa_tags`に`['scenario','training']`を付与する。
+3. `TelemetryAggregator`は`metrics/scenario_runs.jsonl`から`kind='game'`エントリを抽出し、`ScenarioStats`に`game_outcome_distribution`と`recovery_minutes_distribution`を追加。週次レビューでゲーム演習の頻度/成果を可視化する。
+4. Acceptable Degradationケースと紐づくシナリオでは、`ScenarioRunner`が自動的に`KnowledgePackUpdater.attach_game_result(case_id, run_result)`を呼び出し、Knowledge Pack内の`game_runs`配列に追記する。
+5. Codexは`tests/integration/test_scenario_game_bridge.py`を実装し、`ScenarioRunner`経由でゲームが実行された際にTelemetryとKnowledge Packの両方へ記録されることを検証する。
+
+### 22.12 Runbook/Change Ledger 整合性チェック
+
+- `docs/runbooks/RUN-OPS-02.md`に「ゲーム演習記録」節を追加し、`tradectl game run`後に以下を確認するチェックリストを記載する。
+  1. `summary.md`を`docs/knowledge_packs/.../case_<date>.md`へリンクしたか。
+  2. `ChangeLedger.record_change(category='training')`の`change_id`をRunbookへ転記したか。
+  3. `OpsReviewDigest`次回更新で`training`セクションが生成されることを確認したか。
+- `make game-audit`スクリプトを用意し、直近N件のゲームログについてRunbook/Change Ledgerリンクが存在するか、`knowledge_case_id`が`index.json`に登録されているかを検証。CIでは週次で実行し、欠損があれば`WARN game.audit_missing`を出す。
+- Acceptable Degradation解除判定では、直近30日以内に`ACT-MANUAL-CSV`/`ACT-GUARDED-BOARD`を含むゲーム演習を最低1回実施していることを確認し、未実施なら`HealthMonitor.raise('warning','game_training_stale')`を発火する。
+
+### 22.13 実装状況メモ（2025-03-13）
+
+| 区分 | 対象 | 実装状況 | 依頼元Runbook | 証跡ファイル |
+| --- | --- | --- | --- | --- |
+| CLI（M1） | `tradectl game run`, `tradectl game run --seed 123 --days 3 --dry-run`, `make game-smoke`, `pytest -k game` | 予定（M1整備） | RUN-OPS-02 | `docs/change_requests/CR-20250313-test_cli_gap.md`（§22） |
+| バックログ | 上記以外の§22 CLI | M1.1以降バックログ | RUN-OPS-02 | 同上 |
+
+- CLIギャップとRunbook整合の詳細は`docs/change_requests/CR-20250313-test_cli_gap.md`に記録した。
+- CI反映メモ: `make ci-lite`へ`game-smoke`ジョブを追加し、`tradectl game run --seed 123 --days 3 --dry-run`を実行する。
+
+---
+
+## 23. リサーチ/運用エビデンスグラフ統合（v2.5ドラフト）
+
+リサーチ成果・運用ログ・ゲーム演習・Change Ledger記録を横断的に結び付け、トレーダー/POがAcceptable Degradation後や戦略更新前に必要な根拠へ即アクセスできるようにする。Codexがモジュールを実装する際に境界が明確になるよう、データモデル・API・テスト観点を以下に定義する。
+
+### 23.1 目的
+- **証跡の一元化**: `ChangeRecord`、`KnowledgeCase`、`GameRunResult`、`BacktestRunResult`、`QA Scorecard`をグラフ構造で連結し、Ops Review/研究レビューで欠損を即座に把握できるようにする。
+- **Codexハンドオフ効率化**: Prompt Bundle（§20）生成時に関連証跡を自動で抽出し、実装者が対象コンテキストを素早く理解できるようにする。
+- **将来の自動推論基盤**: M2以降でRecurrence分析や戦略ガバナンス自動提案へ拡張可能なGraph APIを先行整備する。
+
+### 23.2 モジュール構成
+| パス | 役割 | Codex実装ポイント |
+| --- | --- | --- |
+| `src/review/evidence_graph.py` | `EvidenceGraphService`本体。ノード/エッジ管理とクエリAPIを提供。 | `build_index(window: ReviewWindow)`, `link_artifact(node: EvidenceNode, edge: EvidenceEdge)`、`query(selector: EvidenceSelector)`を実装。|
+| `src/review/models.py` | `EvidenceNode`, `EvidenceEdge`, `EvidenceSelector`, `EvidenceQueryResult`などの`pydantic`モデル。 | 既存`review`モデル（§19）と同一モジュールで共存。`schema_version=1`。|
+| `src/review/ingestors/change_ledger.py` | Change Ledgerエントリをノード化するアダプタ。 | `ingest(records: Iterable[ChangeRecord]) -> list[EvidenceNode]`。|
+| `src/review/ingestors/knowledge_pack.py` | Knowledge Packケース/チェックリストを取り込む。 | `KnowledgeCase`に`node_tags=['knowledge','degraded']`などを付与。|
+| `src/review/ingestors/research.py` | Backtest/Validation成果をグラフへ登録。 | `link_parameter_change(change_id, run_result)`で差分ノード生成。|
+| `src/review/ingestors/game.py` | GameEngineの`GameRunResult`を登録。 | `attach_game_run(case_id, run)`でKnowledge Packと関連付け。|
+| `src/review/query_language.py` | ドメイン特化クエリ構文（YAML/JSON）→`EvidenceSelector`への変換。 | `parse(selector_text)`、`validate(selector)`。|
+| `src/interfaces/cli/evidence.py` | `tradectl evidence` CLI。 | テレメトリ（§6.8）対応、Rich表/グラフ描画。|
+
+### 23.3 データモデル
+- **EvidenceNode**:
+  - `id: str`（`<type>:<uuid>`）。
+  - `type: Literal['change','knowledge','game','research','qa','metric']`。
+  - `title`, `summary`, `tags: set[str]`, `created_at`, `source_path`, `hash`, `related_ids`。
+  - `metadata: dict[str, Any]`にRunbook参照、KPI、シナリオID等を格納。
+- **EvidenceEdge**:
+  - `from_id`, `to_id`, `relation: Literal['supports','blocks','duplicates','replaces','requires']`。
+  - `weight`（推奨度合い、0〜1の`Decimal`）。
+  - `annotations`（Runbookステップ、レビューコメント）。
+- **EvidenceSelector**:
+  - `kinds: set[str]`、`tags: set[str]`、`time_range: tuple[datetime, datetime]`、`relations: list[RelationFilter]`。
+  - `RelationFilter`は`relation`, `direction`（`'incoming'|'outgoing'`）, `depth`。
+- **EvidenceQueryResult**:
+  - `nodes: list[EvidenceNode]`, `edges: list[EvidenceEdge]`, `summary_stats`（ノード種別件数、孤立ノード件数、未リンクChange数など）。
+  - `action_items: list[ActionItemRef]`（§19の再利用）。
+- すべてのモデルに`schema_hash`を付与し、`tests/contracts/test_evidence_graph_schema.py`でリグレッション検知する。
+
+### 23.4 CLI仕様 (`tradectl evidence ...`)
+| コマンド | 用途 | 主な引数/フラグ | 出力 |
+| --- | --- | --- | --- |
+| `tradectl evidence graph build` | 指定ウィンドウのグラフ生成 | `--window <YYYYWW|date range>`, `--scope ops|research|degraded`, `--out` | `evidence_graph_<window>.json`とサマリMarkdownを生成。`ChangeLedger`/`Knowledge Pack`へのリンクを埋め込む。|
+| `tradectl evidence query` | クエリ実行 | `--selector <file|text>`, `--format table|json|graphviz`, `--limit` | ノード/エッジ表、Graphviz DOT出力。|
+| `tradectl evidence inspect` | 特定ノードの詳細確認 | `--id`, `--show-related`, `--depth` | ノードメタデータと関連証跡を表示。|
+| `tradectl evidence audit` | 欠損/未リンク検査 | `--window`, `--check orphan|stale|missing-change|missing-knowledge` | 欠損リストを赤字で表示しExit Code!=0。CI向け。|
+| `tradectl evidence export` | Ops Review/Prompt Bundle向けエクスポート | `--window`, `--format markdown|json`, `--include qa|metrics|game` | Prompt Bundle（§20）に添付可能な抜粋を生成。|
+
+- CLIコマンドは`CommandTelemetryRecord.qa_tags`に`['evidence_graph']`を設定。Acceptable Degradation期間中のエクスポートには`'degraded'`タグを追加する。
+- `graph build`完了時に`ChangeLedger.record_change(category='evidence_graph')`を自動記録し、生成ファイルのハッシュを保存する。
+
+### 23.5 実装ガイド
+1. **インデックス構築**: `EvidenceGraphService.build_index`は`ReviewWindow`に基づき、`ChangeLedger`, `KnowledgePack`, `PromptBundle`, `TelemetryDigest`, `GameRunResult`, `BacktestRunResult`, `QaScorecardSnapshot`から最新N日（既定: 30日）をロードする。ロード順序は`change → knowledge → research → game → qa → metrics`で安定化させ、ハッシュとタイムスタンプで重複排除。
+2. **ノード統合**: 同一`change_id`や`knowledge_case_id`を検出した場合はマージし、`related_ids`にすべての参照元を列挙する。`EvidenceEdge.relation='duplicates'`でリンクし、`ActionItem`には`resolution='merge'`を設定。
+3. **再計算戦略**: `build_index`は`source_hash`を計算し、変更がない場合はキャッシュ（`reports/evidence_graph/cache/<window>.json`）を返す。キャッシュヒット時も`graph build --force`で再生成可能とする。
+4. **Prompt Bundle連携**: `PromptBundleService.build`（§20）にグラフAPIを注入し、対象`change_ids`のノード要約を`PromptSection(kind='existing_design')`末尾へ自動追記する。
+5. **Ops Review統合**: `OpsReviewDigestBuilder`（§19）が`EvidenceQueryResult`から`RiskHighlight`と`ActionItem`を補強。孤立ノードは`impact_score`を引き上げ、レビューで優先的にチェックする。
+6. **証跡テンプレ連携**: `docs/ux_feedback.md`（`ux_feedback/<YYYYMMDD>_<slug>`）、`docs/templates/degradation_report.md`（`degradation_episode/<id>`）、`docs/validation/strategy_determinism.md`（`strategy_validation/<strategy>/<YYYYMMDD>`）、`docs/knowledge_packs/README.md`（`knowledge_pack/<category>/<case_id>`）をEvidence Graphへ自動リンクする。Change Ledgerは`category in {'feedback','degradation','strategy_validation','knowledge_pack'}`を必須化し、Release Readiness (§30) のEvidence Pointer生成時にこの命名規約を利用する。
+7. **セキュリティ/プライバシー**: ノード`metadata`から個人名/メールを削除し、`actor`はイニシャルまたは`CLI_ACTOR`に置換。`args_hash`のみを保持し、生ログへの直接リンクは`artifact://`スキームで参照。
+8. **性能**: ノード数500件、エッジ3000件を想定。`networkx`等の外部依存を避け、`igraph`導入はM2検討。M1は純PythonでDFS/BFSを実装し、`O(N+E)`でクエリ処理できるようにする。
+9. **エラーハンドリング**: 欠損ファイルは`EvidenceNode`に`status='orphan'`を付与し、`evidence audit`で検出。致命的エラー時は`EvidenceGraphError`をRaiseし、CLIは`ERROR evidence.graph_build_failed`で終了。
+
+### 23.6 テスト計画
+| テストID | 目的 | 内容 |
+| --- | --- | --- |
+| UT-EVG-01 | ノード統合 | `tests/unit/test_evidence_graph.py::test_merge_duplicate_change_records`で`change_id`重複のマージを確認。 |
+| UT-EVG-02 | エッジ生成 | `tests/unit/test_evidence_graph.py::test_link_game_to_knowledge_case`で`GameRunResult`→`KnowledgeCase`リンクを検証。 |
+| UT-EVG-03 | クエリ言語 | `tests/unit/test_evidence_query_language.py::test_parse_selector`でDSL→`EvidenceSelector`変換を検証。 |
+| UT-EVG-04 | キャッシュ制御 | `tests/unit/test_evidence_graph.py::test_build_index_uses_cache`でハッシュ一致時にキャッシュが再利用されるか確認。 |
+| IT-EVG-01 | CLIビルド | `tests/integration/test_evidence_cli.py::test_graph_build_and_inspect`で`graph build`→`inspect`→`query`の一連操作を検証。 |
+| IT-EVG-02 | Prompt Bundle連携 | `tests/integration/test_prompt_cli.py::test_bundle_includes_evidence_summary`を追加し、グラフ抜粋がプロンプトに挿入されることを確認。 |
+| IT-EVG-03 | Ops Review統合 | `tests/integration/test_review_cli.py::test_review_digest_includes_evidence_nodes`で孤立ノードがハイライトされることを検証。 |
+| IT-EVG-04 | Acceptable Degradationケース | `tests/integration/test_evidence_cli.py::test_degraded_case_audit`で`--scope degraded`指定時に必要ノードが揃っているか検証。 |
+
+- `pytest -k evidence_graph`を`make ci-lite`へ追加し、キャッシュ利用時でも決定論的にGREENとなることを保証する。
+- CLI `tradectl evidence audit`はCIジョブ`make evidence-audit`で日次実行し、欠損があればSlack（M2+）またはメールで通知する。
+
+### 23.7 Codexハンドオフ指針
+- Prompt Bundleに`EvidenceNode`定義と代表的クエリ例（`selector: tags=['degraded']`など）を抜粋して添付する。
+- Codexへは`docs/snippets/review/evidence_graph_service.py`（200行以内）を渡し、`EvidenceGraphService`のpublicメソッドシグネチャと主要テストを明記する。
+- Issueには以下を必須記載:
+  1. 対象ウィンドウ/スコープ。
+  2. 期待するノード種別と最低件数（例: `change>=5`, `knowledge>=3`）。
+  3. Acceptable Degradationケースとの関連（Knowledge Pack ID）。
+  4. 実行テストコマンド（`pytest -k evidence_graph`, `tradectl evidence graph build --window <...> --dry-run`）。
+- レビュー時は`git diff --stat`で`src/review/`/`tests/`/`docs/`のみに収まっているか確認し、`PromptBundle`出力の差分を`docs/prompt_packages/...`へ添付させる。
+
+### 23.8 将来拡張
+- **M1.1**: `graphviz`プラグインを追加し、`tradectl evidence query --format graphviz --open`でPNGを自動生成。CLIに`--open`でPreviewを開く機能を追加。
+- **M2**: `EvidenceInferenceService`を追加し、孤立ノードや重複ケースに対する自動アクション提案を行う。Graphベースの類似度計算に`networkx`を導入し、計算負荷をテレメトリに記録。
+- **M2+**: 外部監査提出用に`evidence_graph.export(standard='audit_v1')`を実装し、CSV/PDF化。外部レビュー向けに個人情報マスキングを自動適用する。
+
+### 23.9 証跡資産整備状況（2025-03-05更新）
+
+| 参照ラベル | 作成済みパス | テンプレ更新日 | 命名規約/備考 |
+| --- | --- | --- | --- |
+| UX Feedback Log | `docs/ux_feedback.md` | 2025-03-05 | Evidenceノード: `ux_feedback/<YYYYMMDD>_<slug>`。`ChangeLedger.category='feedback'`で登録し、Release Readinessの`open_feedback`へ供給。 |
+| AD Episode Report Template | `docs/templates/degradation_report.md` | 2025-03-05 | Evidenceノード: `degradation_episode/<id>`。`tradectl degradation report`出力のベース。`ChangeLedger.category='degradation'`必須。 |
+| Strategy Determinism Playbook | `docs/validation/strategy_determinism.md` | 2025-03-05 | Evidenceノード: `strategy_validation/<strategy>/<YYYYMMDD>`。Runbook `STRAT-M1-VALIDATION`と同期。`ChangeLedger.category='strategy_validation'`を利用。 |
+| Knowledge Pack Operations Guide | `docs/knowledge_packs/README.md` | 2025-03-05 | Evidenceノード: `knowledge_pack/<category>/<case_id>`。`index.json`と連動し、`ChangeLedger.category='knowledge_pack'`で棚卸し記録。 |
+
+- `tradectl evidence link ...` コマンド群は上記命名規約に従い、Evidence Graph (§23.5) とRelease Readiness (§30) の`EvidencePointer`へ同一IDを提供する。
+- Delivery Control Tower (§25) とOps Review Hub (§19) は本表を参照し、テンプレ更新日が30日を超過した場合に`DeliveryAlert(kind='evidence_template_stale')`を出す。
+
+### 23.10 実装状況メモ（2025-03-13）
+
+| 区分 | 対象 | 実装状況 | 依頼元Runbook | 証跡ファイル |
+| --- | --- | --- | --- | --- |
+| テスト | UT/IT-EVG-01〜04 | 未実装（M1.1+） | RUN-GOV-01 | `docs/change_requests/CR-20250313-test_cli_gap.md`（§23） |
+| CLI | `tradectl evidence ...`コマンド群 | 未実装（M1.1+） | RUN-GOV-01 | 同上 |
+
+- CI反映メモ: `make ci-lite`へ`pytest -k evidence_graph`と`make evidence-audit`の追加をM1.1で実施予定。
+- ギャップ詳細とRunbookリンクは`docs/change_requests/CR-20250313-test_cli_gap.md`を参照。
+
+## 24. Acceptable Degradation Analytics & Recovery Toolkit（v2.6追加）
+
+Acceptable Degradation（以下AD）発生時の定量把握と復旧計画立案を半自動化するモジュール群を追加し、Board Guard/Scenario Runner/QAスコアカード/Change Ledgerの循環を強化する。Codexが再発防止タスクを実装する際に必要な証跡とI/O契約を事前に整備し、トレーダーは復旧後の改善効果を定量評価できるようにする。
+
+### 24.1 目的
+- **復旧時間の短縮**: `metrics/data_ingestion_sla.jsonl`や`logs/ops/manual_csv.log`等からAD期間と復旧所要時間を自動抽出し、Runbook `RUN-DATA-05/06`のチェックリストと照合。
+- **根因分析の迅速化**: HealthMonitor理由コード、RateLimitステージ履歴、Scenario Runner結果を一元化してEvidence Graph (§23)へノード登録。
+- **Codexハンドオフ高速化**: Prompt Bundle (§20)へADエピソードのサマリ・再発防止アイデア・既存テストハーネスを自動添付し、再発防止タスクの着手時間を短縮。
+- **トレーダーUX改善**: Board Guard状態・Ticket遅延・ヒューマン作業ログ（`logs/ops/workload.log`）を組み合わせ、復旧後のUXインパクトを週次レポートに反映。
+
+### 24.2 モジュール構成
+| パス | 役割 | 実装要点 |
+| --- | --- | --- |
+| `src/ops/degradation/analytics.py` | ADエピソード抽出/集計サービス | `DegradationEpisodeExtractor`がメトリクス/ログ/Runbookチェックリストをスキャンし、`EpisodeWindow`設定に従って連続区間をエピソードへ変換。`EpisodeRepository`経由でファイルI/Oを抽象化。 |
+| `src/ops/degradation/recovery.py` | 復旧アクション推奨・再演計画生成 | `RecoveryPlanBuilder`がScenario Runner (§14)やGameEngine (§22)のシナリオを再利用し、推奨手順と想定所要時間を算出。 |
+| `src/ops/degradation/report.py` | レポート/ダッシュボード出力 | `DegradationReportGenerator`がMarkdown/JSON/HTML（将来）を生成し、`reports/ops/degradation/<date>.md`へ保存。 |
+| `src/ops/degradation/registry.py` | DI/Feature Flag制御 | Feature Flag `ops.degradation.enabled`（既定True）。`infra/registry.py`からサービスを解決。 |
+| `src/interfaces/cli/degradation.py` | `tradectl degradation`コマンド群 | CLIテレメトリ（§6.8）対応。`instrument_command(command="degradation")`を適用。 |
+| `tests/unit/test_degradation_*.py` | ユニットテスト | `DegradationEpisode`抽出、復旧計画生成、レポート整形を検証。 |
+| `tests/integration/test_degradation_cli.py` | CLI統合テスト | `tradectl degradation report --window 7d`の決定論性とEvidence Graph連携を検証。 |
+
+### 24.3 データモデル
+| モデル | 主フィールド | 説明 |
+| --- | --- | --- |
+| `DegradationEpisode` | `id`, `started_at`, `recovered_at`, `duration_minutes`, `board_mode_start`, `board_mode_end`, `health_reasons`, `rate_limit_stage`, `manual_csv_used: bool`, `impacted_symbols`, `qa_status: dict[str,str]`, `scenario_refs: list[ScenarioId]`, `change_ids: list[str]` | 1回のAD発生を表現。`duration_minutes`は欠損時`None`。`qa_status`はQAスコアカード (§0.10) の結果を格納。 |
+| `RecoveryAction` | `action_id`, `category` (`'manual'|'cli'|'automation'`), `runbook_ref`, `command`, `expected_duration_min`, `actual_duration_min`, `owner`, `evidence_paths` | エピソード内で実施した主要手順。`actual_duration_min`は`ops_worklog.jsonl`から取得。 |
+| `DegradationSummary` | `window`, `episodes: list[DegradationEpisode]`, `mttr_minutes`, `mtbf_days`, `manual_hours_saved`, `pending_followups`, `recommendations` | レポート出力用。`manual_hours_saved`は自動化タスク効果（§6.8.3）と比較。 |
+| `DegradationRecommendation` | `severity`, `owner`, `description`, `linked_prompt_bundle`, `linked_change_ids`, `target_tests` | Codexタスク化用の推奨事項。 |
+
+- すべて`pydantic` v2モデル。`tests/contracts/test_degradation_schema.py`を追加し、スキーマ変更を検知する。
+- `id`は`degrade-<YYYYMMDDHHMM>-<seq>`形式で生成し、Evidence GraphノードIDと突合しやすくする。
+
+### 24.4 データフローとアルゴリズム
+1. `DegradationEpisodeExtractor.scan(window)`が以下のデータソースから候補を抽出。
+   - `metrics/data_ingestion_sla.jsonl`, `metrics/cli_perf.jsonl`: `health_state`=`degraded|soft_stop`期間とBoard Mode遷移時刻を取得。
+   - `logs/ops/manual_csv.log`, `logs/audit/rate_limit.jsonl`: 手動CSV投入やStage変更を紐付け。
+   - `reports/validation_log/AC-45*`, `docs/runbooks/RUN-DATA-05.md`: Runbookチェックボックスのハッシュを読み、エピソードとの整合を確認。
+   - `ScenarioRunner`実行ログ（`reports/scenario_runs/*.json`）: `scenario_id`と結果を紐付け。
+2. Episode化ロジック:
+   - `health_reasons`が`data_latency_*`または`rate_limit_stage`を含む連続区間を1エピソードとみなし、Gap>45分で区切り。
+   - `manual_csv_used`は該当期間に`ManualCsvIngestionTask`成功ログが存在するかで判定。
+   - `impacted_symbols`は`metrics/data_ingestion_sla.jsonl`内の遅延シンボル上位N件（既定:4）を抽出。
+3. `RecoveryPlanBuilder.build(episode)`:
+   - Runbook参照に従い、必要なScenario Runnerシナリオ (`OPS-DEG-01`, `OPS-RL-03`) を列挙。
+   - `GameEngine`シミュレーション結果（`reports/training/game_runs`）で同様の事象が存在する場合はタイムラインを添付し、訓練不足タグを付与。
+   - `QA Scorecard`で`pending`が残るIDを`pending_followups`へ追加。
+4. `DegradationReportGenerator.generate(window)`:
+   - `DegradationSummary`をMarkdown/JSONLへ出力し、Evidence Graph Serviceへ`EvidenceNode(type='degradation')`として登録。
+   - Prompt Bundle Service (§20)へ `PromptSection(kind='degradation_episode')`を追加し、Codexが次回タスクの背景に利用。
+5. `ChangeLedger.record_change(category='degradation', ...)` を自動実行し、`logs/ops/workload.log`に復旧時間を追記。Ops Review Hub (§19) はこのサマリを取り込み週次ダッシュボードへ表示。
+
+### 24.5 CLI仕様 (`tradectl degradation ...`)
+| コマンド | 用途 | 主な引数/フラグ | 出力 | 代表エラー |
+| --- | --- | --- | --- | --- |
+| `tradectl degradation report` | 指定期間のADサマリ生成 | `--window 7d|30d`, `--format markdown|json`, `--include-evidence`, `--push-to-bundle` | `DegradationSummary`表示と`reports/ops/degradation/<window>.md`作成。`--push-to-bundle`でPrompt Bundleに自動添付。 | `DegradationDataMissing`, `EvidenceSyncError` |
+| `tradectl degradation episode list` | エピソード一覧表示 | `--window`, `--filter reason=data_latency_fetch`, `--qa` | Rich Table/JSON。`--qa`でQAステータス列を追加。 | `EpisodeNotFound` |
+| `tradectl degradation episode show <id>` | 詳細参照 | `--format table|json`, `--include-actions`, `--link-evidence` | Episode詳細、Recovery Actions、関連Runbook/Scenario/Evidenceノードを表示。 | `EpisodeLoadError`, `EvidenceLookupFailed` |
+| `tradectl degradation recommend` | Codex向け改善提案抽出 | `--window`, `--limit`, `--severity high|medium`, `--output` | `DegradationRecommendation`リストをMarkdown/JSONで出力し、Issue/Promptテンプレへ貼付可能。 | `RecommendationBuildError` |
+| `tradectl degradation sync-evidence` | Evidence Graph/Change Ledger同期 | `--window`, `--force` | 同期結果、追加/更新ノード数、欠損ノードを表示。 | `EvidenceSyncError`, `ChangeLedgerWriteError` |
+
+- すべてのコマンドはCLIテレメトリに`qa_tags`を付与（例: `['degradation','guarded']`）。Acceptable Degradation期間中の実行では`qa_tags`へ`degraded`を必ず含める。
+- `--push-to-bundle`指定時は`docs/prompt_packages/<date>_degradation.md`を自動生成し、`PromptBundle`モジュールへ差分追加する。
+
+### 24.6 実装ガイド（Codex向け契約）
+1. `DegradationEpisodeExtractor`はI/Oを純関数化し、データソースとのやり取りは`Repository`インターフェース経由で実装。ユニットテストではファイルシステムをモック。
+2. Episode抽出の閾値（例: Gap45分、429率1.5%）は`config/degradation.yaml`に集約し、Feature Flag `ops.degradation.auto_link_prompt`でPrompt Bundle連携のON/OFFを制御。
+3. `RecoveryPlanBuilder`はScenario RunnerとGame EngineをOptional依存としてDI。Feature Flagで無効な場合は代替手順を`manual_actions`に追加する。
+4. Evidence Graph連携は`EvidenceGraphService.link_artifact(node, edge)`のみ使用し、内部Graph構造へ直接アクセスしない。`link_artifact`失敗時はエラーログを残しつつ処理を継続（ベストエフォート）。
+5. CLIは`Typer`のサブアプリとして登録し、既存`register_command(CommandSpec)` API（§0.7.5）を利用。`CommandSpec`に`category='ops'`、`requires_profile=False`を設定。
+6. レポート出力はMarkdownテンプレ `docs/templates/degradation_report.md`（2025-03-05更新）を利用し、`jinja2`ではなく`string.Template`で軽量に生成（依存追加回避）。
+7. `manual_hours_saved`計算では`automation_effect.jsonl`（§6.8.3）と比較し、差分が負の場合はWARNログ `degradation.manual_savings_negative` を出力してRunbookレビューを促す。
+
+### 24.7 テスト計画
+| テストID | 目的 | 内容 |
+| --- | --- | --- |
+| UT-DEG-01 | Episode抽出 | `tests/unit/test_degradation_analytics.py::test_extracts_contiguous_health_reasons`で`health_reasons`連続区間からEpisodeを生成し、Gap>45分で分割されることを確認。 |
+| UT-DEG-02 | Recovery計画生成 | `tests/unit/test_degradation_recovery.py::test_build_plan_links_scenarios`でScenario Runner/QAスコアカードが適切に紐付くかを検証。 |
+| UT-DEG-03 | レポート整形 | `tests/unit/test_degradation_report.py::test_generate_markdown_snapshot`でテンプレ出力のスナップショットテストを実施。 |
+| IT-DEG-01 | CLIレポート | `tests/integration/test_degradation_cli.py::test_report_and_episode_show`で`tradectl degradation report --window 7d`→`episode show`が決定論的に動作するか確認。 |
+| IT-DEG-02 | Evidence同期 | `tests/integration/test_degradation_cli.py::test_sync_evidence_links_graph`でEvidence Graphへのノード追加をモック検証。 |
+| IT-DEG-03 | Prompt Bundle連携 | `tests/integration/test_prompt_cli.py::test_degradation_push_to_bundle`を追加し、`--push-to-bundle`指定でPrompt Bundleへ節が追加されるか検証。 |
+| SC-DEG-01 | シナリオ連携 | `tradectl scenario run --id OPS-DEG-01 --dry-run`後に`tradectl degradation report --window 1d --include-evidence`を実行し、Scenario IDとRunbookチェックが紐付いていることを確認（Scenario Runner統合テストに組み込み）。 |
+
+- `make ci-lite`へ`pytest -k degradation`を追加（CI設定ファイルに追補）。
+- CIで`tradectl degradation report --window 1d --format json --push-to-bundle --dry-run`を週次実行し、`reports/ops/degradation/latest.json`のハッシュをEvidence Graphテストと共有する。
+
+### 24.8 トレーダー/運用インサイト
+- Opsレビュー会議では`DegradationSummary`を`tradectl review digest`（§19）へ自動添付し、復旧時間とAutomation効果を同一スライドで確認できるようにする。
+- `reports/weekly/<YYYYWW>.md`の「Opsハイライト」節へ`mttr_minutes`、`manual_hours_saved`、`pending_followups`を要約し、POがリソース配分を判断できるようにする。
+- GameEngine (§22) の演習結果で`loss:data_latency_breach`が一定回数を超えた場合、`DegradationRecommendation`に「トレーニング不足」タグを付与し、Runbook更新または追加演習を提案。
+- Board Guard (`§3.8`) が`guarded`に遷移した回数と実行時間をEpisodeに紐付け、HITLトレーダーが承認したチケット数/Reject理由を`TicketBuilder`ログと照合。UX改善タスク起票時に`manual_hours_saved`の改善余地を明示する。
+- Acceptable Degradation解除後24時間以内に`tradectl degradation recommend --severity high --push-to-bundle`を実施し、Codexへ再発防止タスクを連続で依頼できるフローを定着させる。
+
+### 24.9 実装状況メモ（2025-03-13）
+
+| 区分 | 対象 | 実装状況 | 依頼元Runbook | 証跡ファイル |
+| --- | --- | --- | --- | --- |
+| テスト | UT/IT-DEG-01〜03, OPS-DEG-01, OPS-RL-03 | 未実装（M1.1+） | RUN-DATA-05 / RUN-RISK-01 | `docs/change_requests/CR-20250313-test_cli_gap.md`（§24） |
+| CLI | `tradectl degradation ...`コマンド群 | 未実装（M1.1+） | RUN-DATA-05 / RUN-RISK-01 | 同上 |
+
+- CI反映メモ: `make ci-lite`へ`pytest -k degradation`を追加予定。`tradectl degradation report --window 1d --format json --push-to-bundle --dry-run`を週次ジョブに編成。
+- 詳細ギャップとRunbook整合は`docs/change_requests/CR-20250313-test_cli_gap.md`参照。
 
 ## 25. Codexデリバリーコントロールタワー（v2.7）
 
@@ -3180,6 +4440,1355 @@ Acceptable Degradation対応やTelemetry/シナリオ演習の成果を**単一�
 
 ---
 
+## 23. リサーチ/運用エビデンスグラフ統合（v2.5ドラフト）
+
+リサーチ成果・運用ログ・ゲーム演習・Change Ledger記録を横断的に結び付け、トレーダー/POがAcceptable Degradation後や戦略更新前に必要な根拠へ即アクセスできるようにする。Codexがモジュールを実装する際に境界が明確になるよう、データモデル・API・テスト観点を以下に定義する。
+
+### 23.1 目的
+- **証跡の一元化**: `ChangeRecord`、`KnowledgeCase`、`GameRunResult`、`BacktestRunResult`、`QA Scorecard`をグラフ構造で連結し、Ops Review/研究レビューで欠損を即座に把握できるようにする。
+- **Codexハンドオフ効率化**: Prompt Bundle（§20）生成時に関連証跡を自動で抽出し、実装者が対象コンテキストを素早く理解できるようにする。
+- **将来の自動推論基盤**: M2以降でRecurrence分析や戦略ガバナンス自動提案へ拡張可能なGraph APIを先行整備する。
+
+### 23.2 モジュール構成
+| パス | 役割 | Codex実装ポイント |
+| --- | --- | --- |
+| `src/review/evidence_graph.py` | `EvidenceGraphService`本体。ノード/エッジ管理とクエリAPIを提供。 | `build_index(window: ReviewWindow)`, `link_artifact(node: EvidenceNode, edge: EvidenceEdge)`、`query(selector: EvidenceSelector)`を実装。|
+| `src/review/models.py` | `EvidenceNode`, `EvidenceEdge`, `EvidenceSelector`, `EvidenceQueryResult`などの`pydantic`モデル。 | 既存`review`モデル（§19）と同一モジュールで共存。`schema_version=1`。|
+| `src/review/ingestors/change_ledger.py` | Change Ledgerエントリをノード化するアダプタ。 | `ingest(records: Iterable[ChangeRecord]) -> list[EvidenceNode]`。|
+| `src/review/ingestors/knowledge_pack.py` | Knowledge Packケース/チェックリストを取り込む。 | `KnowledgeCase`に`node_tags=['knowledge','degraded']`などを付与。|
+| `src/review/ingestors/research.py` | Backtest/Validation成果をグラフへ登録。 | `link_parameter_change(change_id, run_result)`で差分ノード生成。|
+| `src/review/ingestors/game.py` | GameEngineの`GameRunResult`を登録。 | `attach_game_run(case_id, run)`でKnowledge Packと関連付け。|
+| `src/review/query_language.py` | ドメイン特化クエリ構文（YAML/JSON）→`EvidenceSelector`への変換。 | `parse(selector_text)`、`validate(selector)`。|
+| `src/interfaces/cli/evidence.py` | `tradectl evidence` CLI。 | テレメトリ（§6.8）対応、Rich表/グラフ描画。|
+
+### 23.3 データモデル
+- **EvidenceNode**:
+  - `id: str`（`<type>:<uuid>`）。
+  - `type: Literal['change','knowledge','game','research','qa','metric']`。
+  - `title`, `summary`, `tags: set[str]`, `created_at`, `source_path`, `hash`, `related_ids`。
+  - `metadata: dict[str, Any]`にRunbook参照、KPI、シナリオID等を格納。
+- **EvidenceEdge**:
+  - `from_id`, `to_id`, `relation: Literal['supports','blocks','duplicates','replaces','requires']`。
+  - `weight`（推奨度合い、0〜1の`Decimal`）。
+  - `annotations`（Runbookステップ、レビューコメント）。
+- **EvidenceSelector**:
+  - `kinds: set[str]`、`tags: set[str]`、`time_range: tuple[datetime, datetime]`、`relations: list[RelationFilter]`。
+  - `RelationFilter`は`relation`, `direction`（`'incoming'|'outgoing'`）, `depth`。
+- **EvidenceQueryResult**:
+  - `nodes: list[EvidenceNode]`, `edges: list[EvidenceEdge]`, `summary_stats`（ノード種別件数、孤立ノード件数、未リンクChange数など）。
+  - `action_items: list[ActionItemRef]`（§19の再利用）。
+- すべてのモデルに`schema_hash`を付与し、`tests/contracts/test_evidence_graph_schema.py`でリグレッション検知する。
+
+### 23.4 CLI仕様 (`tradectl evidence ...`)
+| コマンド | 用途 | 主な引数/フラグ | 出力 |
+| --- | --- | --- | --- |
+| `tradectl evidence graph build` | 指定ウィンドウのグラフ生成 | `--window <YYYYWW|date range>`, `--scope ops|research|degraded`, `--out` | `evidence_graph_<window>.json`とサマリMarkdownを生成。`ChangeLedger`/`Knowledge Pack`へのリンクを埋め込む。|
+| `tradectl evidence query` | クエリ実行 | `--selector <file|text>`, `--format table|json|graphviz`, `--limit` | ノード/エッジ表、Graphviz DOT出力。|
+| `tradectl evidence inspect` | 特定ノードの詳細確認 | `--id`, `--show-related`, `--depth` | ノードメタデータと関連証跡を表示。|
+| `tradectl evidence audit` | 欠損/未リンク検査 | `--window`, `--check orphan|stale|missing-change|missing-knowledge` | 欠損リストを赤字で表示しExit Code!=0。CI向け。|
+| `tradectl evidence export` | Ops Review/Prompt Bundle向けエクスポート | `--window`, `--format markdown|json`, `--include qa|metrics|game` | Prompt Bundle（§20）に添付可能な抜粋を生成。|
+
+- CLIコマンドは`CommandTelemetryRecord.qa_tags`に`['evidence_graph']`を設定。Acceptable Degradation期間中のエクスポートには`'degraded'`タグを追加する。
+- `graph build`完了時に`ChangeLedger.record_change(category='evidence_graph')`を自動記録し、生成ファイルのハッシュを保存する。
+
+### 23.5 実装ガイド
+1. **インデックス構築**: `EvidenceGraphService.build_index`は`ReviewWindow`に基づき、`ChangeLedger`, `KnowledgePack`, `PromptBundle`, `TelemetryDigest`, `GameRunResult`, `BacktestRunResult`, `QaScorecardSnapshot`から最新N日（既定: 30日）をロードする。ロード順序は`change → knowledge → research → game → qa → metrics`で安定化させ、ハッシュとタイムスタンプで重複排除。
+2. **ノード統合**: 同一`change_id`や`knowledge_case_id`を検出した場合はマージし、`related_ids`にすべての参照元を列挙する。`EvidenceEdge.relation='duplicates'`でリンクし、`ActionItem`には`resolution='merge'`を設定。
+3. **再計算戦略**: `build_index`は`source_hash`を計算し、変更がない場合はキャッシュ（`reports/evidence_graph/cache/<window>.json`）を返す。キャッシュヒット時も`graph build --force`で再生成可能とする。
+4. **Prompt Bundle連携**: `PromptBundleService.build`（§20）にグラフAPIを注入し、対象`change_ids`のノード要約を`PromptSection(kind='existing_design')`末尾へ自動追記する。
+5. **Ops Review統合**: `OpsReviewDigestBuilder`（§19）が`EvidenceQueryResult`から`RiskHighlight`と`ActionItem`を補強。孤立ノードは`impact_score`を引き上げ、レビューで優先的にチェックする。
+6. **証跡テンプレ連携**: `docs/ux_feedback.md`（`ux_feedback/<YYYYMMDD>_<slug>`）、`docs/templates/degradation_report.md`（`degradation_episode/<id>`）、`docs/validation/strategy_determinism.md`（`strategy_validation/<strategy>/<YYYYMMDD>`）、`docs/knowledge_packs/README.md`（`knowledge_pack/<category>/<case_id>`）をEvidence Graphへ自動リンクする。Change Ledgerは`category in {'feedback','degradation','strategy_validation','knowledge_pack'}`を必須化し、Release Readiness (§30) のEvidence Pointer生成時にこの命名規約を利用する。
+7. **セキュリティ/プライバシー**: ノード`metadata`から個人名/メールを削除し、`actor`はイニシャルまたは`CLI_ACTOR`に置換。`args_hash`のみを保持し、生ログへの直接リンクは`artifact://`スキームで参照。
+8. **性能**: ノード数500件、エッジ3000件を想定。`networkx`等の外部依存を避け、`igraph`導入はM2検討。M1は純PythonでDFS/BFSを実装し、`O(N+E)`でクエリ処理できるようにする。
+9. **エラーハンドリング**: 欠損ファイルは`EvidenceNode`に`status='orphan'`を付与し、`evidence audit`で検出。致命的エラー時は`EvidenceGraphError`をRaiseし、CLIは`ERROR evidence.graph_build_failed`で終了。
+
+### 23.6 テスト計画
+| テストID | 目的 | 内容 |
+| --- | --- | --- |
+| UT-EVG-01 | ノード統合 | `tests/unit/test_evidence_graph.py::test_merge_duplicate_change_records`で`change_id`重複のマージを確認。 |
+| UT-EVG-02 | エッジ生成 | `tests/unit/test_evidence_graph.py::test_link_game_to_knowledge_case`で`GameRunResult`→`KnowledgeCase`リンクを検証。 |
+| UT-EVG-03 | クエリ言語 | `tests/unit/test_evidence_query_language.py::test_parse_selector`でDSL→`EvidenceSelector`変換を検証。 |
+| UT-EVG-04 | キャッシュ制御 | `tests/unit/test_evidence_graph.py::test_build_index_uses_cache`でハッシュ一致時にキャッシュが再利用されるか確認。 |
+| IT-EVG-01 | CLIビルド | `tests/integration/test_evidence_cli.py::test_graph_build_and_inspect`で`graph build`→`inspect`→`query`の一連操作を検証。 |
+| IT-EVG-02 | Prompt Bundle連携 | `tests/integration/test_prompt_cli.py::test_bundle_includes_evidence_summary`を追加し、グラフ抜粋がプロンプトに挿入されることを確認。 |
+| IT-EVG-03 | Ops Review統合 | `tests/integration/test_review_cli.py::test_review_digest_includes_evidence_nodes`で孤立ノードがハイライトされることを検証。 |
+| IT-EVG-04 | Acceptable Degradationケース | `tests/integration/test_evidence_cli.py::test_degraded_case_audit`で`--scope degraded`指定時に必要ノードが揃っているか検証。 |
+
+- `pytest -k evidence_graph`を`make ci-lite`へ追加し、キャッシュ利用時でも決定論的にGREENとなることを保証する。
+- CLI `tradectl evidence audit`はCIジョブ`make evidence-audit`で日次実行し、欠損があればSlack（M2+）またはメールで通知する。
+
+### 23.7 Codexハンドオフ指針
+- Prompt Bundleに`EvidenceNode`定義と代表的クエリ例（`selector: tags=['degraded']`など）を抜粋して添付する。
+- Codexへは`docs/snippets/review/evidence_graph_service.py`（200行以内）を渡し、`EvidenceGraphService`のpublicメソッドシグネチャと主要テストを明記する。
+- Issueには以下を必須記載:
+  1. 対象ウィンドウ/スコープ。
+  2. 期待するノード種別と最低件数（例: `change>=5`, `knowledge>=3`）。
+  3. Acceptable Degradationケースとの関連（Knowledge Pack ID）。
+  4. 実行テストコマンド（`pytest -k evidence_graph`, `tradectl evidence graph build --window <...> --dry-run`）。
+- レビュー時は`git diff --stat`で`src/review/`/`tests/`/`docs/`のみに収まっているか確認し、`PromptBundle`出力の差分を`docs/prompt_packages/...`へ添付させる。
+
+### 23.8 将来拡張
+- **M1.1**: `graphviz`プラグインを追加し、`tradectl evidence query --format graphviz --open`でPNGを自動生成。CLIに`--open`でPreviewを開く機能を追加。
+- **M2**: `EvidenceInferenceService`を追加し、孤立ノードや重複ケースに対する自動アクション提案を行う。Graphベースの類似度計算に`networkx`を導入し、計算負荷をテレメトリに記録。
+- **M2+**: 外部監査提出用に`evidence_graph.export(standard='audit_v1')`を実装し、CSV/PDF化。外部レビュー向けに個人情報マスキングを自動適用する。
+
+### 23.9 証跡資産整備状況（2025-03-05更新）
+
+| 参照ラベル | 作成済みパス | テンプレ更新日 | 命名規約/備考 |
+| --- | --- | --- | --- |
+| UX Feedback Log | `docs/ux_feedback.md` | 2025-03-05 | Evidenceノード: `ux_feedback/<YYYYMMDD>_<slug>`。`ChangeLedger.category='feedback'`で登録し、Release Readinessの`open_feedback`へ供給。 |
+| AD Episode Report Template | `docs/templates/degradation_report.md` | 2025-03-05 | Evidenceノード: `degradation_episode/<id>`。`tradectl degradation report`出力のベース。`ChangeLedger.category='degradation'`必須。 |
+| Strategy Determinism Playbook | `docs/validation/strategy_determinism.md` | 2025-03-05 | Evidenceノード: `strategy_validation/<strategy>/<YYYYMMDD>`。Runbook `STRAT-M1-VALIDATION`と同期。`ChangeLedger.category='strategy_validation'`を利用。 |
+| Knowledge Pack Operations Guide | `docs/knowledge_packs/README.md` | 2025-03-05 | Evidenceノード: `knowledge_pack/<category>/<case_id>`。`index.json`と連動し、`ChangeLedger.category='knowledge_pack'`で棚卸し記録。 |
+
+- `tradectl evidence link ...` コマンド群は上記命名規約に従い、Evidence Graph (§23.5) とRelease Readiness (§30) の`EvidencePointer`へ同一IDを提供する。
+- Delivery Control Tower (§25) とOps Review Hub (§19) は本表を参照し、テンプレ更新日が30日を超過した場合に`DeliveryAlert(kind='evidence_template_stale')`を出す。
+
+### 23.10 実装状況メモ（2025-03-13）
+
+| 区分 | 対象 | 実装状況 | 依頼元Runbook | 証跡ファイル |
+| --- | --- | --- | --- | --- |
+| テスト | UT/IT-EVG-01〜04 | 未実装（M1.1+） | RUN-GOV-01 | `docs/change_requests/CR-20250313-test_cli_gap.md`（§23） |
+| CLI | `tradectl evidence ...`コマンド群 | 未実装（M1.1+） | RUN-GOV-01 | 同上 |
+
+- CI反映メモ: `make ci-lite`へ`pytest -k evidence_graph`と`make evidence-audit`の追加をM1.1で実施予定。
+- ギャップ詳細とRunbookリンクは`docs/change_requests/CR-20250313-test_cli_gap.md`を参照。
+
+## 24. Acceptable Degradation Analytics & Recovery Toolkit（v2.6追加）
+
+Acceptable Degradation（以下AD）発生時の定量把握と復旧計画立案を半自動化するモジュール群を追加し、Board Guard/Scenario Runner/QAスコアカード/Change Ledgerの循環を強化する。Codexが再発防止タスクを実装する際に必要な証跡とI/O契約を事前に整備し、トレーダーは復旧後の改善効果を定量評価できるようにする。
+
+### 24.1 目的
+- **復旧時間の短縮**: `metrics/data_ingestion_sla.jsonl`や`logs/ops/manual_csv.log`等からAD期間と復旧所要時間を自動抽出し、Runbook `RUN-DATA-05/06`のチェックリストと照合。
+- **根因分析の迅速化**: HealthMonitor理由コード、RateLimitステージ履歴、Scenario Runner結果を一元化してEvidence Graph (§23)へノード登録。
+- **Codexハンドオフ高速化**: Prompt Bundle (§20)へADエピソードのサマリ・再発防止アイデア・既存テストハーネスを自動添付し、再発防止タスクの着手時間を短縮。
+- **トレーダーUX改善**: Board Guard状態・Ticket遅延・ヒューマン作業ログ（`logs/ops/workload.log`）を組み合わせ、復旧後のUXインパクトを週次レポートに反映。
+
+### 24.2 モジュール構成
+| パス | 役割 | 実装要点 |
+| --- | --- | --- |
+| `src/ops/degradation/analytics.py` | ADエピソード抽出/集計サービス | `DegradationEpisodeExtractor`がメトリクス/ログ/Runbookチェックリストをスキャンし、`EpisodeWindow`設定に従って連続区間をエピソードへ変換。`EpisodeRepository`経由でファイルI/Oを抽象化。 |
+| `src/ops/degradation/recovery.py` | 復旧アクション推奨・再演計画生成 | `RecoveryPlanBuilder`がScenario Runner (§14)やGameEngine (§22)のシナリオを再利用し、推奨手順と想定所要時間を算出。 |
+| `src/ops/degradation/report.py` | レポート/ダッシュボード出力 | `DegradationReportGenerator`がMarkdown/JSON/HTML（将来）を生成し、`reports/ops/degradation/<date>.md`へ保存。 |
+| `src/ops/degradation/registry.py` | DI/Feature Flag制御 | Feature Flag `ops.degradation.enabled`（既定True）。`infra/registry.py`からサービスを解決。 |
+| `src/interfaces/cli/degradation.py` | `tradectl degradation`コマンド群 | CLIテレメトリ（§6.8）対応。`instrument_command(command="degradation")`を適用。 |
+| `tests/unit/test_degradation_*.py` | ユニットテスト | `DegradationEpisode`抽出、復旧計画生成、レポート整形を検証。 |
+| `tests/integration/test_degradation_cli.py` | CLI統合テスト | `tradectl degradation report --window 7d`の決定論性とEvidence Graph連携を検証。 |
+
+### 24.3 データモデル
+| モデル | 主フィールド | 説明 |
+| --- | --- | --- |
+| `DegradationEpisode` | `id`, `started_at`, `recovered_at`, `duration_minutes`, `board_mode_start`, `board_mode_end`, `health_reasons`, `rate_limit_stage`, `manual_csv_used: bool`, `impacted_symbols`, `qa_status: dict[str,str]`, `scenario_refs: list[ScenarioId]`, `change_ids: list[str]` | 1回のAD発生を表現。`duration_minutes`は欠損時`None`。`qa_status`はQAスコアカード (§0.10) の結果を格納。 |
+| `RecoveryAction` | `action_id`, `category` (`'manual'|'cli'|'automation'`), `runbook_ref`, `command`, `expected_duration_min`, `actual_duration_min`, `owner`, `evidence_paths` | エピソード内で実施した主要手順。`actual_duration_min`は`ops_worklog.jsonl`から取得。 |
+| `DegradationSummary` | `window`, `episodes: list[DegradationEpisode]`, `mttr_minutes`, `mtbf_days`, `manual_hours_saved`, `pending_followups`, `recommendations` | レポート出力用。`manual_hours_saved`は自動化タスク効果（§6.8.3）と比較。 |
+| `DegradationRecommendation` | `severity`, `owner`, `description`, `linked_prompt_bundle`, `linked_change_ids`, `target_tests` | Codexタスク化用の推奨事項。 |
+
+- すべて`pydantic` v2モデル。`tests/contracts/test_degradation_schema.py`を追加し、スキーマ変更を検知する。
+- `id`は`degrade-<YYYYMMDDHHMM>-<seq>`形式で生成し、Evidence GraphノードIDと突合しやすくする。
+
+### 24.4 データフローとアルゴリズム
+1. `DegradationEpisodeExtractor.scan(window)`が以下のデータソースから候補を抽出。
+   - `metrics/data_ingestion_sla.jsonl`, `metrics/cli_perf.jsonl`: `health_state`=`degraded|soft_stop`期間とBoard Mode遷移時刻を取得。
+   - `logs/ops/manual_csv.log`, `logs/audit/rate_limit.jsonl`: 手動CSV投入やStage変更を紐付け。
+   - `reports/validation_log/AC-45*`, `docs/runbooks/RUN-DATA-05.md`: Runbookチェックボックスのハッシュを読み、エピソードとの整合を確認。
+   - `ScenarioRunner`実行ログ（`reports/scenario_runs/*.json`）: `scenario_id`と結果を紐付け。
+2. Episode化ロジック:
+   - `health_reasons`が`data_latency_*`または`rate_limit_stage`を含む連続区間を1エピソードとみなし、Gap>45分で区切り。
+   - `manual_csv_used`は該当期間に`ManualCsvIngestionTask`成功ログが存在するかで判定。
+   - `impacted_symbols`は`metrics/data_ingestion_sla.jsonl`内の遅延シンボル上位N件（既定:4）を抽出。
+3. `RecoveryPlanBuilder.build(episode)`:
+   - Runbook参照に従い、必要なScenario Runnerシナリオ (`OPS-DEG-01`, `OPS-RL-03`) を列挙。
+   - `GameEngine`シミュレーション結果（`reports/training/game_runs`）で同様の事象が存在する場合はタイムラインを添付し、訓練不足タグを付与。
+   - `QA Scorecard`で`pending`が残るIDを`pending_followups`へ追加。
+4. `DegradationReportGenerator.generate(window)`:
+   - `DegradationSummary`をMarkdown/JSONLへ出力し、Evidence Graph Serviceへ`EvidenceNode(type='degradation')`として登録。
+   - Prompt Bundle Service (§20)へ `PromptSection(kind='degradation_episode')`を追加し、Codexが次回タスクの背景に利用。
+5. `ChangeLedger.record_change(category='degradation', ...)` を自動実行し、`logs/ops/workload.log`に復旧時間を追記。Ops Review Hub (§19) はこのサマリを取り込み週次ダッシュボードへ表示。
+
+### 24.5 CLI仕様 (`tradectl degradation ...`)
+| コマンド | 用途 | 主な引数/フラグ | 出力 | 代表エラー |
+| --- | --- | --- | --- | --- |
+| `tradectl degradation report` | 指定期間のADサマリ生成 | `--window 7d|30d`, `--format markdown|json`, `--include-evidence`, `--push-to-bundle` | `DegradationSummary`表示と`reports/ops/degradation/<window>.md`作成。`--push-to-bundle`でPrompt Bundleに自動添付。 | `DegradationDataMissing`, `EvidenceSyncError` |
+| `tradectl degradation episode list` | エピソード一覧表示 | `--window`, `--filter reason=data_latency_fetch`, `--qa` | Rich Table/JSON。`--qa`でQAステータス列を追加。 | `EpisodeNotFound` |
+| `tradectl degradation episode show <id>` | 詳細参照 | `--format table|json`, `--include-actions`, `--link-evidence` | Episode詳細、Recovery Actions、関連Runbook/Scenario/Evidenceノードを表示。 | `EpisodeLoadError`, `EvidenceLookupFailed` |
+| `tradectl degradation recommend` | Codex向け改善提案抽出 | `--window`, `--limit`, `--severity high|medium`, `--output` | `DegradationRecommendation`リストをMarkdown/JSONで出力し、Issue/Promptテンプレへ貼付可能。 | `RecommendationBuildError` |
+| `tradectl degradation sync-evidence` | Evidence Graph/Change Ledger同期 | `--window`, `--force` | 同期結果、追加/更新ノード数、欠損ノードを表示。 | `EvidenceSyncError`, `ChangeLedgerWriteError` |
+
+- すべてのコマンドはCLIテレメトリに`qa_tags`を付与（例: `['degradation','guarded']`）。Acceptable Degradation期間中の実行では`qa_tags`へ`degraded`を必ず含める。
+- `--push-to-bundle`指定時は`docs/prompt_packages/<date>_degradation.md`を自動生成し、`PromptBundle`モジュールへ差分追加する。
+
+### 24.6 実装ガイド（Codex向け契約）
+1. `DegradationEpisodeExtractor`はI/Oを純関数化し、データソースとのやり取りは`Repository`インターフェース経由で実装。ユニットテストではファイルシステムをモック。
+2. Episode抽出の閾値（例: Gap45分、429率1.5%）は`config/degradation.yaml`に集約し、Feature Flag `ops.degradation.auto_link_prompt`でPrompt Bundle連携のON/OFFを制御。
+3. `RecoveryPlanBuilder`はScenario RunnerとGame EngineをOptional依存としてDI。Feature Flagで無効な場合は代替手順を`manual_actions`に追加する。
+4. Evidence Graph連携は`EvidenceGraphService.link_artifact(node, edge)`のみ使用し、内部Graph構造へ直接アクセスしない。`link_artifact`失敗時はエラーログを残しつつ処理を継続（ベストエフォート）。
+5. CLIは`Typer`のサブアプリとして登録し、既存`register_command(CommandSpec)` API（§0.7.5）を利用。`CommandSpec`に`category='ops'`、`requires_profile=False`を設定。
+6. レポート出力はMarkdownテンプレ `docs/templates/degradation_report.md`（2025-03-05更新）を利用し、`jinja2`ではなく`string.Template`で軽量に生成（依存追加回避）。
+7. `manual_hours_saved`計算では`automation_effect.jsonl`（§6.8.3）と比較し、差分が負の場合はWARNログ `degradation.manual_savings_negative` を出力してRunbookレビューを促す。
+
+### 24.7 テスト計画
+| テストID | 目的 | 内容 |
+| --- | --- | --- |
+| UT-DEG-01 | Episode抽出 | `tests/unit/test_degradation_analytics.py::test_extracts_contiguous_health_reasons`で`health_reasons`連続区間からEpisodeを生成し、Gap>45分で分割されることを確認。 |
+| UT-DEG-02 | Recovery計画生成 | `tests/unit/test_degradation_recovery.py::test_build_plan_links_scenarios`でScenario Runner/QAスコアカードが適切に紐付くかを検証。 |
+| UT-DEG-03 | レポート整形 | `tests/unit/test_degradation_report.py::test_generate_markdown_snapshot`でテンプレ出力のスナップショットテストを実施。 |
+| IT-DEG-01 | CLIレポート | `tests/integration/test_degradation_cli.py::test_report_and_episode_show`で`tradectl degradation report --window 7d`→`episode show`が決定論的に動作するか確認。 |
+| IT-DEG-02 | Evidence同期 | `tests/integration/test_degradation_cli.py::test_sync_evidence_links_graph`でEvidence Graphへのノード追加をモック検証。 |
+| IT-DEG-03 | Prompt Bundle連携 | `tests/integration/test_prompt_cli.py::test_degradation_push_to_bundle`を追加し、`--push-to-bundle`指定でPrompt Bundleへ節が追加されるか検証。 |
+| SC-DEG-01 | シナリオ連携 | `tradectl scenario run --id OPS-DEG-01 --dry-run`後に`tradectl degradation report --window 1d --include-evidence`を実行し、Scenario IDとRunbookチェックが紐付いていることを確認（Scenario Runner統合テストに組み込み）。 |
+
+- `make ci-lite`へ`pytest -k degradation`を追加（CI設定ファイルに追補）。
+- CIで`tradectl degradation report --window 1d --format json --push-to-bundle --dry-run`を週次実行し、`reports/ops/degradation/latest.json`のハッシュをEvidence Graphテストと共有する。
+
+### 24.8 トレーダー/運用インサイト
+- Opsレビュー会議では`DegradationSummary`を`tradectl review digest`（§19）へ自動添付し、復旧時間とAutomation効果を同一スライドで確認できるようにする。
+- `reports/weekly/<YYYYWW>.md`の「Opsハイライト」節へ`mttr_minutes`、`manual_hours_saved`、`pending_followups`を要約し、POがリソース配分を判断できるようにする。
+- GameEngine (§22) の演習結果で`loss:data_latency_breach`が一定回数を超えた場合、`DegradationRecommendation`に「トレーニング不足」タグを付与し、Runbook更新または追加演習を提案。
+- Board Guard (`§3.8`) が`guarded`に遷移した回数と実行時間をEpisodeに紐付け、HITLトレーダーが承認したチケット数/Reject理由を`TicketBuilder`ログと照合。UX改善タスク起票時に`manual_hours_saved`の改善余地を明示する。
+- Acceptable Degradation解除後24時間以内に`tradectl degradation recommend --severity high --push-to-bundle`を実施し、Codexへ再発防止タスクを連続で依頼できるフローを定着させる。
+
+### 24.9 実装状況メモ（2025-03-13）
+
+| 区分 | 対象 | 実装状況 | 依頼元Runbook | 証跡ファイル |
+| --- | --- | --- | --- | --- |
+| テスト | UT/IT-DEG-01〜03, OPS-DEG-01, OPS-RL-03 | 未実装（M1.1+） | RUN-DATA-05 / RUN-RISK-01 | `docs/change_requests/CR-20250313-test_cli_gap.md`（§24） |
+| CLI | `tradectl degradation ...`コマンド群 | 未実装（M1.1+） | RUN-DATA-05 / RUN-RISK-01 | 同上 |
+
+- CI反映メモ: `make ci-lite`へ`pytest -k degradation`を追加予定。`tradectl degradation report --window 1d --format json --push-to-bundle --dry-run`を週次ジョブに編成。
+- 詳細ギャップとRunbook整合は`docs/change_requests/CR-20250313-test_cli_gap.md`参照。
+
+## 25. Codexデリバリーコントロールタワー（v2.7）
+
+Codexへ委譲した開発タスクの進行状況・品質指標・運用影響を一元可視化し、トレーダー/PO/運用が合意したSLAを満たしているかを迅速に判断するための統合モジュールを新設する。既存のQAスコアカード（§0.10）、Ops Review Hub（§19）、Prompt Bundle自動生成（§20）と密接に連携し、Acceptable Degradation下でも改善タスクの優先度付けを誤らないようにする。
+
+### 25.1 目的と適用範囲
+- **進捗監視**: 各エピック/ストーリーの完了率・残タスク・SLA逸脱を日次で把握し、Runbook `RUN-OPS-05`のステータスレビューに反映する。
+- **品質早期警戒**: テスト失敗・スコープ逸脱・Runbook未更新といった逸脱を自動集約し、トレーダー判断に必要な背景情報（KPI影響/保留リスク）を提示する。
+- **Codex協働高速化**: Prompt Bundleに不足情報がある場合に警告し、必要な証跡ファイル（テストログ/スクリーンショット/CLI出力）をテンプレ化する。
+- **対象スコープ**: M1 CoreエピックおよびAcceptable Degradation復旧タスク。M1.1以降のGUI/自動化タスクも拡張可能なデータモデルとする。
+
+### 25.2 モジュール構成と責務
+| パス | 役割 | 主な公開API/機能 | 備考 |
+| --- | --- | --- | --- |
+| `src/delivery/control_tower.py` | 集約サービス。各種ソース（ChangeLedger, QA Scorecard, Prompt Bundle, Telemetry）から情報収集。 | `build_snapshot(window: ReviewWindow) -> DeliverySnapshot`, `detect_alerts(snapshot) -> list[DeliveryAlert]` | 非同期I/O対応。`AsyncAggregator`を内部利用。 |
+| `src/delivery/models.py` | `DeliverySnapshot`, `WorkPackageStatus`, `QualitySignal`, `OpsImpactEstimate`, `PromptGap` dataclass。 | `DeliverySnapshot`は`window`, `work_packages`, `qa_summary`, `ops_impact`, `alerts`を保持。 | `@dataclass(slots=True, frozen=True)`で不変性を確保。 |
+| `src/delivery/repository.py` | ChangeLedger/QAログ/Prompt Bundle/CIログからのデータ読み出し。 | `fetch_work_packages(window)`, `fetch_qa_scores(window)`, `fetch_prompt_bundles(window)`, `fetch_ci_logs(window)` | `pathlib.Path`と`pydantic`で入力検証。 |
+| `src/delivery/forecaster.py` | OPSインパクト予測（ヒューマンレビュー所要時間/Guard解除見込み）。 | `estimate_ops_impact(snapshot) -> OpsImpactEstimate` | 統計モデルはM1で線形回帰ベース。M1.1でベイズ更新を追加。 |
+| `src/interfaces/cli/delivery.py` | `tradectl delivery ...` CLI。 | `tradectl delivery status`, `tradectl delivery forecast`, `tradectl delivery alerts`, `tradectl delivery export` | Typer登録は`interfaces/cli/__init__.py`経由。 |
+| `src/review/renderers.py` | Review Hub共通のリッチテーブル出力。 | `render_delivery_snapshot(snapshot)` | 既存§19で定義済みのコンポーネントを拡張。 |
+
+### 25.3 データモデル詳細
+| モデル | 主フィールド | 説明 | 生成元 |
+| --- | --- | --- | --- |
+| `WorkPackageStatus` | `id`, `epic`, `story`, `status: Literal['planned','in_progress','review','blocked','done']`, `owner`, `qa_gate`, `tests_run`, `scope_paths`, `last_prompt_bundle`, `change_ids` | Codex実装チケットの粒度で進行状況を保持。`qa_gate`はQA-01〜05の達成状況。 | ChangeLedger（`category='work_package'`）、Prompt Bundle index、CIログ。 |
+| `QualitySignal` | `qa_id`, `status`, `evidence_path`, `owner`, `updated_at`, `notes` | QAスコアカードの個別項目状態。 | `docs/review_log.md`, `metrics/qa_scorecard.jsonl`。 |
+| `OpsImpactEstimate` | `expected_manual_minutes`, `guard_release_eta`, `risk_score`, `kpi_at_risk`, `recommended_action` | Ops負荷とリスクの見積り。`risk_score`は0〜100。 | `forecaster.estimate_ops_impact`。 |
+| `PromptGap` | `bundle_id`, `missing_sections`, `stale_snippets`, `required_files` | Prompt Bundleに不足している情報。 | Prompt Bundle diff（§20）。 |
+| `DeliveryAlert` | `alert_id`, `severity`, `summary`, `related_work_packages`, `related_runbook_steps`, `recommended_followup` | コントロールタワーが検知した逸脱。 | `control_tower.detect_alerts`。 |
+
+- `DeliverySnapshot`は`work_packages: list[WorkPackageStatus]`, `qa_summary: dict[str, QualitySignal]`, `ops_impact: OpsImpactEstimate`, `prompt_gaps: list[PromptGap]`, `alerts: list[DeliveryAlert]`を保持。
+- `scope_paths`は設計書内の参照（例: `§3.1`, `src/data/service.py`）を持つ。Acceptable Degradation復旧タスクは`degradation_case_id`を追加。
+- `change_ids`はChangeLedgerの記録IDリスト。差分追跡と監査ログ連携に利用。
+
+### 25.4 フローとアルゴリズム
+1. `DeliveryControlTower.build_snapshot(window)`が`repository`各メソッドで入力データを収集。`window`は`ReviewWindow`（§19.2）と共通。
+2. `WorkPackageStatus`生成時に以下を評価:
+   - `status`は`ChangeLedger`の最新レコード＋Prompt Bundle `status`タグから算出。PRマージ済みかどうかは`git`ログ（`logs/audit/build.log`）を参照。
+   - `tests_run`はCIログ解析で`make ci-lite`の結果を抽出し、失敗テストを`QualitySignal.notes`へリンク。
+   - `scope_paths`はPrompt Bundle `io_contract`セクションから抽出、設計書セクション番号との整合をチェック。欠損時は`PromptGap`に追加。
+3. `qa_summary`はQAスコアカード（§0.10）を取り込み、未完了項目は`severity='warn'`以上の`DeliveryAlert`を生成。
+4. `forecaster.estimate_ops_impact(snapshot)`が`expected_manual_minutes`を以下で推定:
+   - 基準値（Runbook作業時間）× `open_alerts`係数。
+   - Acceptable Degradation中は`guard_release_eta`を`HealthMonitor`の推奨アクション（§3.8）と連携し、解除条件までの予測時間を返す。
+5. `detect_alerts`は以下のルールを評価:
+    - `QA-05`が`pending`で`WorkPackageStatus.status in {'review','blocked'}`→`severity='critical'`, `related_runbook_steps=['RUN-DATA-05#guard_release']`。
+    - `PromptGap.missing_sections`に`'test_plan'`が含まれ、`tests_run`に当該テストが存在しない→`severity='major'`。
+    - `ChangeLedger`連携が3日以上遅延→`severity='major'`, `recommended_followup='log_change ledger missing'`。
+    - `ops_impact.guard_release_eta>=30`→`severity='warn'`、`>=45`→`severity='critical'`として`guard_release_delay`を生成。
+    - `ops_impact.data_ingestion_sla_p95>24`→`severity='major'`、`>=30`→`severity='critical'`として`data_sla_drift`を生成。
+    - `qa_summary['KPI'].Sharpe_recent<0.85`→`severity='warn'`、`<0.80`→`severity='critical'`として`kpi_regression`を生成。
+6. `DeliverySnapshot`は`EventBus.publish('delivery.snapshot.generated', snapshot)`で配信。Ops Review Hub（§19）が週次レポートへ組み込む。
+
+### 25.5 CLI仕様 (`tradectl delivery ...`)
+| コマンド | 主なフラグ | 出力 | 備考 |
+| --- | --- | --- | --- |
+| `tradectl delivery status` | `--window <N|date range>`, `--epic`, `--include-alerts` | 現在の`DeliverySnapshot`表と警告一覧。 | デフォルトは過去7日。警告は色分け表示。 |
+| `tradectl delivery forecast` | `--window`, `--include-degradation`, `--format json|markdown` | `OpsImpactEstimate`をテーブル表示。 | Acceptable Degradation中は`guard_release_eta`を強調。 |
+| `tradectl delivery alerts` | `--severity warn|major|critical`, `--export` | `DeliveryAlert`一覧。`--export`でJSON。 | `qa_tags=['delivery','qa']`を自動付与。 |
+| `tradectl delivery export` | `--window`, `--out <path>`, `--format markdown|json` | Prompt Bundle添付用サマリと不足チェックリスト。 | `ChangeLedger`記録を自動実行。 |
+
+- CLIは`CommandTelemetryRecord`へ`component='delivery'`を記録。Acceptable Degradation時は`qa_tags`に`'degraded'`を付与。
+- `alerts`コマンドは`AlertDispatcher`（§6.7）と連携し、`--notify`指定時にメール送信。Runbook`RUN-OPS-05`のステップにCLI出力を貼り付ける。
+
+### 25.6 テスト計画
+| テストID | 目的 | 内容 |
+| --- | --- | --- |
+| UT-DEL-01 | Snapshot生成検証 | `tests/unit/test_delivery_control_tower.py::test_build_snapshot_merges_sources`。複数ソースのマージとソート順を確認。 |
+| UT-DEL-02 | アラート検知ロジック | `tests/unit/test_delivery_control_tower.py::test_detect_alerts_rules`。QA/Prompt Gap/ChangeLedger遅延に対するアラート生成。 |
+| UT-DEL-03 | Opsインパクト予測 | `tests/unit/test_delivery_forecaster.py::test_estimate_ops_impact_scaling`。警告件数に応じた所要時間推定を検証。 |
+| IT-DEL-01 | CLI統合 | `tests/integration/test_delivery_cli.py::test_status_and_forecast`。Typer CLIとレンダリングの決定論性を確認。 |
+| IT-DEL-02 | Ops Review連携 | `tests/integration/test_review_cli.py::test_delivery_snapshot_hook`。Ops Review HubがSnapshotを取り込むか検証。 |
+| SC-DEL-01 | Acceptable Degradation演習 | `tradectl delivery forecast --include-degradation --window 3d`実行後、Scenario Runner（§14）とKnowledge Pack（§16）に警告を反映する手動シナリオ。 |
+
+- `make ci-lite`に`pytest -k delivery`を追加し、CIでの逸脱検知を義務付ける。
+- Snapshot JSON Schemaは`tests/contracts/test_delivery_snapshot_schema.py`で固定化し、Breaking Change時は`docs/change_requests/`経由で承認。
+
+### 25.7 Codexプロンプト指針
+- Prompt Bundleへは`DeliverySnapshot`の抜粋（`alerts`, `ops_impact`）を`<section id="delivery_control_tower">`として貼り付ける。
+- Codexタスクには必ず`scope_paths`と`qa_summary`を引用し、レビュー観点（QA-01〜05のどれに影響するか）を明示する。
+- `PromptGap`が検出された場合、Issue起票時に「不足セクション」「期待する証跡」「関連Runbook」を表形式で提示。Codex出力で補完されたら`delivery export`で再評価し、`ChangeLedger.category='prompt_gap'`として記録。
+
+### 25.8 トレーダー/運用活用シナリオ
+- トレーダーは朝会で`tradectl delivery status --include-alerts`を実行し、Board Guard状態と合わせて承認可否を判断。`risk_score>70`の場合はスプリントプランを再調整。
+- Ops担当はGuard解除手順の前に`delivery forecast`で`expected_manual_minutes`を確認し、必要な人員をアサイン。Runbookに実測値を追記し予測モデルを改善。
+- Acceptable Degradation復旧後の事後レビューで、`alerts`履歴を`OpsReviewDigest`に貼り付け、再発防止策（例: Prompt Gap補完、QA-03自動化）をアクションアイテム化。
+
+### 25.9 KPIベースラインとアラート閾値
+
+| メトリクス | 観測値（直近演習/実績） | Warn | No-Go | データソースとDeliveryAlert対応 |
+| --- | --- | --- | --- | --- |
+| Guard復旧MTTR | 25分（`01:20`検知→`01:45`解除） | ≥30分（`catch_up_lag_minutes<30`逸脱） | ≥45分（Guard中ピーク42分超） | `docs/templates/degradation_report.md`、`DeliveryAlert.kind='guard_release_delay'`で`warn/critical`に連携【F:docs/templates/degradation_report.md†L24-L36】【F:docs/runbooks/RUN-DATA-05.md†L12-L23】 |
+| `data_ingestion_sla_p95` | 18分 | >24分（Runbook閾値の80%で早期検知） | ≥30分（デイリーアジェンダ閾値） | `reports/validation_log/CHK-0.6.9-run.md`、`docs/runbooks/daily_agenda/CODEX_DAILY_START.md`。`DeliveryAlert.kind='data_sla_drift'`で`major/critical`に割当【F:reports/validation_log/CHK-0.6.9-run.md†L5-L9】【F:docs/runbooks/daily_agenda/CODEX_DAILY_START.md†L16-L18】 |
+| `Sharpe_recent` (90d OOS) | 0.88±0.07 | <0.85 | <0.80 | `detailed_design_fx_signal_tool_v1.md §9.4.3`、`basic_design_fx_signal_tool_v1.md §6.5`。`DeliveryAlert.kind='kpi_regression'`で`warn/fail`判定【F:detailed_design_fx_signal_tool_v1.md†L1655-L1657】【F:basic_design_fx_signal_tool_v1.md†L166-L167】【F:detailed_design_fx_signal_tool_v1.md†L1603-L1603】 |
+
+- `warn`/`no_go`閾値はRunbook必須条件と実測値から逆算して設定し、`DeliverySnapshot.alerts`は同テーブルを参照して`severity`を決定する。`detect_alerts`ロジックは`guard_release_eta>=30`で`warn`、`>=45`で`critical`、`data_ingestion_sla_p95>24`で`major`、`>=30`で`critical`、`Sharpe_recent<0.85`で`warn`、`<0.80`で`critical`を返す。
+- `OpsImpactEstimate.expected_manual_minutes`はGuard復旧MTTRと`manual_hours`を組み合わせて算出し、`>=120`分で`DeliveryAlert.kind='manual_capacity_risk'`を上げる。`manual_hours`はAcceptable Degradationテンプレの実測（発生中0.8h）を既定値とし、倍増した場合にアラートを出す。【F:docs/templates/degradation_report.md†L31-L36】
+
+### 25.10 実装状況メモ（2025-03-13）
+
+| 区分 | 対象 | 実装状況 | 依頼元Runbook | 証跡ファイル |
+| --- | --- | --- | --- | --- |
+| テスト | UT/IT-DEL-01〜03 | 未実装（M1.1+） | RUN-OPS-02 | `docs/change_requests/CR-20250313-test_cli_gap.md`（§25） |
+| CLI | `tradectl delivery ...`コマンド群 | 未実装（M1.1+） | RUN-OPS-02 | 同上 |
+
+- CI反映メモ: `make ci-lite`へ`pytest -k delivery`を追加し、`tradectl delivery status`スモークを組み込む。
+- 詳細ギャップは`docs/change_requests/CR-20250313-test_cli_gap.md`を参照。
+## 26. トレーダーフィードバック循環エンジン（v2.7）
+
+Signal Board/チケット承認フローで収集したヒューマンフィードバックを、戦略改善・UX向上・Codexタスクに即時還元する仕組みを定義する。`docs/ux_feedback.md`・`logs/audit/ticket.jsonl`・`metrics/cli_perf.jsonl`を統合し、改善優先度を定量化する。
+
+### 26.1 目的
+- **UX改善の即応**: チケット承認/却下時のコメント、バナー参照時間、Spread理由確認の有無を集計し、UI/Runbook改善を優先順位付けする。
+- **戦略改善連携**: Reject理由をStrategy/Feature/リスク要因にマッピングし、研究タスクとPrompt Bundleに自動添付する。
+- **Codex開発最適化**: フィードバックから直接アクション化できる粒度（例: ボタン配置、メッセージ文言）を抽出し、差分が小さいワークパッケージへ分解する。
+
+### 26.2 モジュール構成
+| パス | 役割 | 主な機能 |
+| --- | --- | --- |
+| `src/feedback/collector.py` | CLI/ログ/Runbookからフィードバックを収集。 | `collect_ticket_feedback(window)`, `collect_cli_metrics(window)`, `collect_runbook_notes(window)` |
+| `src/feedback/models.py` | `FeedbackItem`, `FeedbackAggregate`, `FeedbackImpact`, `FeedbackRoute` dataclass。 | `FeedbackItem`は`source`, `event`, `strategy`, `ticket_id`, `tags`, `comment`, `severity`等を保持。 |
+| `src/feedback/router.py` | フィードバックを戦略/UX/リスク等に振り分け。 | `route(feedback: FeedbackItem) -> list[FeedbackRoute]` |
+| `src/feedback/prioritizer.py` | 優先順位付けアルゴリズム。 | `prioritize(aggregates) -> list[PrioritizedFeedback]` |
+| `src/interfaces/cli/feedback.py` | `tradectl feedback ...` CLI。 | `tradectl feedback summarize`, `tradectl feedback route`, `tradectl feedback export`, `tradectl feedback ack` |
+| `src/prompt/linker.py` | Prompt Bundle（§20）へのフィードバック差し込み。 | `attach_feedback(bundle_id, feedback_items)` | 既存機能を拡張。 |
+
+### 26.3 データモデル詳細
+| モデル | フィールド | 説明 |
+| --- | --- | --- |
+| `FeedbackItem` | `id`, `source: Literal['cli','board','runbook','manual']`, `timestamp`, `actor`, `strategy_id`, `ticket_id`, `tags`, `comment`, `severity: Literal['low','medium','high']`, `recommendation`, `degradation_case_id?` | 個別フィードバック。`tags`には`['spread','news','ux-copy']`等。 |
+| `FeedbackAggregate` | `key`（`strategy_id`+`tag`等）, `count`, `unique_actors`, `avg_time_to_decision`, `reject_rate`, `related_signals`, `related_metrics` | 集約情報。 | `collector`が生成。 |
+| `FeedbackRoute` | `destination: Literal['ux','strategy','risk','ops','training']`, `priority_score`, `justification`, `recommended_issue_template` | ルーティング結果。 |
+| `PrioritizedFeedback` | `aggregate`, `routes`, `suggested_work_packages`, `impact_estimate`, `qa_implications` | 優先順位付け後の成果物。 |
+
+- `impact_estimate`はトレーダー作業時間削減、リスク低減、勝率影響などを0〜100スケールで保持。
+- `qa_implications`はQAスコアカードへの影響（例: `QA-03`Runbook未更新）を表す。
+- フィードバックは`ChangeLedger.category='feedback'`で記録し、Ops Review（§19）とEvidence Graph（§23）にリンクする。
+
+### 26.4 フィードバック処理フロー
+1. `Collector`が`logs/audit/ticket.jsonl`（承認/却下コメント）、`metrics/cli_perf.jsonl`（Board滞在時間）、`docs/ux_feedback.md`（手動記録）を読み込み、`FeedbackItem`を生成。
+   - **作成済みパス**: `docs/ux_feedback.md`（2025-03-05更新）を参照し、Runbook `RUN-HITL-01`記録と同期する。
+2. `FeedbackRouter`が`tags`・`strategy_id`・`severity`に応じて複数ルートへ分配。
+   - 例: `tags=['spread','ux-copy']`→`destination=['risk','ux']`。
+   - `degradation_case_id`が紐づく場合は必ず`ops`宛に含め、復旧フローで確認できるようにする。
+3. `Prioritizer`は以下の指標で`priority_score`を算出:
+   - `reject_rate`（高いほど優先）
+   - `avg_time_to_decision`（閾値>90秒でペナルティ）
+   - Acceptable Degradation発生頻度（`degradation_case_id`有無で加点）
+   - `strategy_manifest`の重要度（`Tier`属性）
+4. `prioritize`結果は`PrioritizedFeedback`リストとなり、各アイテムは`suggested_work_packages`（Codex向けチケット草案）を含む。
+5. `EventBus.publish('feedback.prioritized', payload)`で通知。Delivery Control Tower（§25）が`PromptGap`と照合し、必要なワークパッケージを生成。
+6. `tradectl feedback export`がMarkdown/JSONレポートを生成し、`docs/ux_feedback.md`へリンク追記。Prompt Bundle生成時に`attach_feedback`で該当節を挿入する。
+
+### 26.5 CLI仕様 (`tradectl feedback ...`)
+| コマンド | 主な引数/フラグ | 出力 | 備考 |
+| --- | --- | --- | --- |
+| `tradectl feedback summarize` | `--window`, `--strategy`, `--tag`, `--format table|json` | `FeedbackAggregate`表。 | 週次Opsレビューで使用。 |
+| `tradectl feedback route` | `--window`, `--destination`, `--min-priority` | ルーティング結果を表示し、Issueテンプレリンクを出力。 | `qa_tags=['feedback','ux']`などタグ自動付与。 |
+| `tradectl feedback export` | `--window`, `--out`, `--format markdown|json`, `--include-prompts` | Prompt Bundle添付用レポート。`ChangeLedger`記録を自動化。 | Acceptable Degradation時は`--include-degradation`で関連ケースを強調。 |
+| `tradectl feedback ack` | `--id`, `--note`, `--change-id` | 対応完了を記録し、`ChangeLedger`へ書き戻す。 | Ops/PO承認が必要。 |
+
+### 26.6 テスト計画
+| テストID | 目的 | 内容 |
+| --- | --- | --- |
+| UT-FB-01 | コレクタ検証 | `tests/unit/test_feedback_collector.py::test_collect_ticket_feedback`。CLIログからFeedbackItem生成。 |
+| UT-FB-02 | ルーティング | `tests/unit/test_feedback_router.py::test_route_multi_destination`。タグに応じた複数宛先振分け。 |
+| UT-FB-03 | 優先度計算 | `tests/unit/test_feedback_prioritizer.py::test_prioritize_scores`。Reject率/滞在時間/重要度によるスコア。 |
+| IT-FB-01 | CLI統合 | `tests/integration/test_feedback_cli.py::test_summarize_and_route`。Typer CLIの出力決定論性。 |
+| IT-FB-02 | Prompt Bundle連携 | `tests/integration/test_prompt_cli.py::test_feedback_attach_to_bundle`。`--include-prompts`で抜粋が追加されること。 |
+| IT-FB-03 | Delivery Control Tower連携 | `tests/integration/test_delivery_feedback_hook.py::test_feedback_alerts_generated`。フィードバックから`PromptGap`が作成されるか検証。 |
+| SC-FB-01 | トレーダーUX演習 | `tradectl feedback summarize --window 1d --strategy core_ma_rsi`→`tradectl feedback route --destination ux`を実施し、ゲーム（§22）で得たUX課題と突合する手動演習。 |
+
+- `pytest -k feedback`をCIに追加。`tests/snapshots/feedback/*.snap`でCLI出力を固定化し、文章変更時はPO承認を必須化する。
+- `FeedbackItem` Schemaは`tests/contracts/test_feedback_schema.py`で維持。Breaking Changeは`docs/change_requests/CR-FEEDBACK-*.md`で承認。
+
+### 26.7 Codexハンドオフ指針
+- Prompt Bundle作成時に`<section id="feedback">`として`PrioritizedFeedback`のトップ3を添付。Codexはワークパッケージに沿って対応し、完了時に`tradectl feedback ack`でChangeLedger更新。
+- `FeedbackRoute.destination='strategy'`の場合は研究フレームワーク（§21）と連携し、再現データセット/パラメータ差分をIssueテンプレートへ自動挿入する。
+- `destination='ux'`のタスクはUI文言/CLIレイアウト変更が主であるため、テスト指示に`pytest --snapshot-update --maxfail=1`を必ず含める。Codex出力でスナップショット更新が無い場合は差戻し。
+
+### 26.8 KPIと優先度閾値
+
+- CLI滞在時間の分布は`decision_delay_triangular=[30,45,75]`秒を基準にし、`avg_time_to_decision`が90秒を超えるとペナルティを加算する。`p90≤120s`がAcceptable Degradation演習での上限値のため、`PrioritizedFeedback.priority_score`は`avg_time_to_decision>=90`で`warn`、`>=120`で`fail`を付与し、Delivery Control Towerの`kpi_regression`と連動させる。【F:detailed_design_fx_signal_tool_v1.md†L1645-L1659】【F:detailed_design_fx_signal_tool_v1.md†L2192-L2194】
+- `reject_rate`はBacktest/Paper検証の`HitRate=48〜55%`（Reject率45〜52%）をベースラインとし、`reject_rate>0.52`で`warn`、`>0.55`で`fail`扱いにする。`priority_score`は該当閾値で+20/+40を加点し、Release Readinessの`Feedback`ゲートに同一ステータスを伝搬する。【F:detailed_design_fx_signal_tool_v1.md†L1655-L1659】
+
+### 26.8 Acceptable Degradation/トレーダー連携
+- Guarded状態でRejectが急増した場合、`feedback summarize`が`severity='high'`の項目をハイライト。Delivery Control Towerが`alerts`を発火し、Opsレビューで即時対応を検討。
+- トレーダーは日次のBoardレビュー後に`tradectl feedback export --include-degradation`を実行し、復旧計画（§24）と照合。改善策がPrompt Bundleへ反映されているか確認。
+- スナップショットは`reports/feedback/<YYYYWW>.md`に保存し、Ops Review Hubが週次ダッシュボードに統合。改善効果は`manual_hours_saved`指標で評価し、6週間継続して改善が見られない場合は追加タスクを起票する。
+
+---
+
+本詳細設計は要件定義・基本設計に基づき、M1リリースの実装に必要なインターフェース・データモデル・フロー・テスト計画を整備した。拡張機能はFeature Flagとガバナンス手順を通じて安全に段階導入できるよう設計している。
+
+
+### 26.8 実装状況メモ（2025-03-13）
+
+| 区分 | 対象 | 実装状況 | 依頼元Runbook | 証跡ファイル |
+| --- | --- | --- | --- | --- |
+| テスト | UT/IT-FB-01〜03 | 未実装（M1.1+） | RUN-OPS-02 | `docs/change_requests/CR-20250313-test_cli_gap.md`（§26） |
+| CLI | `tradectl feedback ...`コマンド群 | 未実装（M1.1+） | RUN-OPS-02 | 同上 |
+
+- CI反映メモ: `pytest -k feedback`を`make ci-lite`へ追加予定。
+- ギャップとRunbook整合は`docs/change_requests/CR-20250313-test_cli_gap.md`参照。
+## 12. 付録
+
+### 付録A: Health/Kill Switch状態遷移簡易図
+```
+ok ──(spread degrade / data warn)──▶ degraded
+▲                                   │
+│  (auto recovery)                  │ (drawdown / heartbeat timeout / manual stop)
+└──────────────▶ soft_stop ──(audit failure / snapshot corruption)──▶ hard_stop
+                                   │                                     │
+                                   └────(cause resolved + ack)───────────┘
+```
+- 各遷移は`HealthStateChanged`イベントでログに残り、`alert_id`でRunbookと紐付く。
+
+### 付録B: Feature Flag導入チェックリスト
+| Flag | 有効化前提テスト | ロールバック手順 |
+| --- | --- | --- |
+| `sprt_guard` | IT-KILL-01, FUT-SPRT-01, Paperモードで2営業日連続稼働 | Flagをfalseに戻し、`HealthMonitor.reset_kill_switch()`後Resync。 |
+| `reduce_only_advisor` | Spread異常シナリオ再現、Runbookトレーニング完了 | Flagをfalseに、Reduce-Onlyキューを手動クリア。 |
+| `slack_alert` | SMTP併用試験、Webhook疎通テスト | Flag false、`Dispatcher`をSMTPへ戻す。 |
+| `gui_ws` | `/ws/signals`負荷テスト、GUI利用トライアル | Flag false、CLIのみで運用。 |
+
+### 付録C: CLI操作例
+```
+$ tradectl board --filter symbol=USDJPY
+[12:05:00][ticket_issued] id=TK-20250220-001 score=84.2 TTL=14:59 spread_ok✓ news_ok✓
+
+$ tradectl ticket approve --id TK-20250220-001 --note "追随"
+[INFO] ticket.approve: Ticket TK-20250220-001 approved, audit logged.
+
+$ tradectl status --verbose
+Mode: LIVE | Health: degraded(data_quality) | KillSwitch: STOP
+SpreadCooldown: cooldown (ETA 12:15) | Snapshot hash: a1c3...
+```
+- エラー時ログは`logs/ops/cli.log`に二重化し、Runbookのトラブルシュート手順と連携する。
+
+
+### 付録D: エラーコードと通知マッピング
+| エラーコード | 重大度 | 発火元 | 通知チャネル | Runbook参照 |
+| --- | --- | --- | --- | --- |
+| ERROR-C01 (データ欠損) | WARN/MAJOR | DataQualityGuard | CLI + メール(WARN) | Runbook §2.1 |
+| ERROR-C02 (指標計算失敗) | CRITICAL | FeaturePipeline | CLI + メール(CRITICAL) | Runbook §2.2 |
+| ERROR-C03 (Config検証NG) | WARN | ConfigRegistry | CLI | Runbook §3.1 |
+| ERROR-C04 (監査ログ書込失敗) | CRITICAL | AuditWriter | CLI + メール(CRITICAL) | Runbook §4.3 |
+| ERROR-C05 (Spread欠損) | WARN | SpreadMonitor | CLI + メール(WARN) | Runbook §2.3 |
+| ERROR-C06 (Funding未更新) | WARN | FundingService | CLI | Runbook §2.4 |
+| ERROR-C07 (Heartbeat停止) | MAJOR | HealthMonitor | CLI + メール(MAJOR) | Runbook §5.1 |
+| ERROR-C08 (Snapshot破損) | CRITICAL | SnapshotManager | CLI + メール(CRITICAL) | Runbook §4.1 |
+| ERROR-C09 (Account CSV不整合) | MAJOR | AccountService | CLI + メール(MAJOR) | Runbook §3.2 |
+| ERROR-C10 (Scheduler遅延) | WARN | Scheduler | CLI | Runbook §2.3 |
+
+- `AlertDispatcher`は重大度ごとに件名 `[tradectl][<SEVERITY>] <reason>` を付与する。Slack/Webhook有効時は同じpayloadを送信。
+- Runbook参照欄は対応手順を示し、アフターアクションレビューで更新する。
+
+### 付録D: エラーコードと通知マッピング
+| エラーコード | 重大度 | 発火元 | 通知チャネル | Runbook参照 |
+| --- | --- | --- | --- | --- |
+| ERROR-C01 (データ欠損) | WARN/MAJOR | DataQualityGuard | CLI + メール(WARN) | Runbook §2.1 |
+| ERROR-C02 (指標計算失敗) | CRITICAL | FeaturePipeline | CLI + メール(CRITICAL) | Runbook §2.2 |
+| ERROR-C03 (Config検証NG) | WARN | ConfigRegistry | CLI | Runbook §3.1 |
+| ERROR-C04 (監査ログ書込失敗) | CRITICAL | AuditWriter | CLI + メール(CRITICAL) | Runbook §4.3 |
+| ERROR-C05 (Spread欠損) | WARN | SpreadMonitor | CLI + メール(WARN) | Runbook §2.3 |
+| ERROR-C06 (Funding未更新) | WARN | FundingService | CLI | Runbook §2.4 |
+| ERROR-C07 (Heartbeat停止) | MAJOR | HealthMonitor | CLI + メール(MAJOR) | Runbook §5.1 |
+| ERROR-C08 (Snapshot破損) | CRITICAL | SnapshotManager | CLI + メール(CRITICAL) | Runbook §4.1 |
+| ERROR-C09 (Account CSV不整合) | MAJOR | AccountService | CLI + メール(MAJOR) | Runbook §3.2 |
+| ERROR-C10 (Scheduler遅延) | WARN | Scheduler | CLI | Runbook §2.3 |
+
+- `AlertDispatcher`は重大度ごとに件名 `[tradectl][<SEVERITY>] <reason>` を付与する。Slack/Webhook有効時は同じpayloadを送信。
+- Runbook参照欄は対応手順を示し、アフターアクションレビューで更新する。
+
+### 付録E: ログ/メトリクスタグ規約
+| タグ | 対象ログ | 意味 | 例 |
+| --- | --- | --- | --- |
+| `signal.*` | `logs/events` | シグナル生成/評価プロセス | `signal.generated`, `signal.rejected.low_score` |
+| `risk.*` | `logs/events` | リスク評価/Kill Switch関連 | `risk.reject.margin`, `risk.kill_switch.soft_stop` |
+| `report.generated` | `reports/` | レポート生成 | `weekly_report` |
+| `governance.action_item` | `reports/meetings/` | アクションアイテム | `ops_automation` |
+| `validation.playbook` | `reports/validation_log/` | Validation Data Playbookエントリ | `AC-45_20250301` |
+| `rate_limit.*` | `metrics/rate_limit_window.jsonl`, `logs/audit/rate_limit.jsonl` | RateLimitステージ評価/手動操作ログ | `rate_limit.stage_suggest`, `rate_limit.stage_set` |
+
+### 付録F: Validation Data Playbookテンプレート
+```
+---
+id: AC-XX-<YYYYMMDD>
+requirement: <FR/AC番号>
+dataset: <データセット名 or ファイルパス>
+hash: <SHA256>
+source: <取得元URL/Runbook手順>
+owner: <記録者>
+reviewer: <サイン者>
+due_date: <YYYY-MM-DD>
+status: pending | provisional | confirmed
+fallback_applied: true | false
+fallback_reason: <欠損補完理由>
+linked_runbook: docs/runbooks/RUN-XXXX-YY.md
+---
+
+## 1. 受け入れ条件
+- [ ] データ期間: <例: 2024-01-01〜2024-01-31>
+- [ ] 欠損率 ≤ <閾値>
+- [ ] 二重入力ハッシュ一致
+
+## 2. 検証ログ
+| チェック | 実施者 | 実施日時 | 結果 | 証跡 |
+| --- | --- | --- | --- | --- |
+| レコード件数検証 |  |  |  |  |
+| スキーマ検証 (`tools/validate_schema.py`) |  |  |  |  |
+| ハッシュ再計算 (`tradectl data hash`) |  |  |  |  |
+
+## 3. コメント
+-
+
+## 4. サインオフ
+- 運用者: <署名/日時>
+- PO: <署名/日時>
+
+```
+- テンプレートは`reports/validation_log/templates/playbook_entry.md`として保管し、`tradectl validation new`が本雛形をもとにエントリを生成する。`due_date`超過で`status∈{pending,provisional}`の場合は`tradectl validation audit`が`severity=warn`イベントを発行する。
+| `ticket.*` | `logs/audit` | HITL操作 | `ticket.approve`, `ticket.edit.sl` |
+| `cfg.*` | `logs/events` | 設定変更/検証 | `cfg.change.safe`, `cfg.reject.schema` |
+| `spread.*` | `metrics/network.jsonl` | スプレッド監視 | `spread.cooldown.start`, `spread.cooldown.clear` |
+| `preflight.*` | `logs/ops/preflight.log` | プレフライト結果 | `preflight.fail.ntp` |
+| `backup.*` | `logs/ops/backup.log` | バックアップ実行情報 | `backup.weekly.ok` |
+| `perf.*` | `metrics/pipeline.jsonl` | パフォーマンス指標 | `perf.step.feature_update` |
+| `alert.*` | `logs/events`, メール | アラート通知 | `alert.warn.network`, `alert.critical.audit` |
+
+- ログは`orjson`で出力し、`tag`フィールドを必須化。タグプレフィックスでフィルタリングを容易にする。
+- メトリクスはJSONLのほか、M2でPrometheus Exporterを実装する際に同タグをラベルに使用する。
+
+### 3.30 RiskDisclosureService (`src/compliance/risk_disclosure.py`)
+- **公開API**: `fetch_state()`（最新承諾ステータス取得）、`prompt(current_state)`（CLI対話の起動）、`record_consent(decision, metadata)`（承諾/拒否イベントの保存）、`link_event(consent_id, event_payload)`（監査イベントへの紐付けヘルパ）。
+- **データモデル**: `ConsentState`は`status∈{accepted,pending,expired,warning}`、`consent_version_hash`, `accepted_at`, `expires_at`, `device_fingerprint`, `last_prompted_at`を保持。永続化は`consent_state.json`（ローカル）と`logs/audit/risk_consent_*.jsonl`（イベント）。
+- **M1 Core実装**: `fetch_state()`で期限切れ/未承諾の場合は`status=pending`を返し、Signal Boardは読み取り専用モードへ切り替える。`prompt()`は承諾文面を表示せずRunbookリンクとTODOを出すのみで、ユーザーが`--ack`オプションで暫定承諾時刻を記録できる。`record_consent()`は`consent_state.json`更新と`audit`イベントへ`consent_warning=true`フラグを付与するが、高リスク操作はブロックしない。`link_event()`は`consent_reference_id=None`のまま警告を残す。
+- **M1.1以降の拡張**: `prompt()`がMarkdownダイアログ（投資助言禁止・主要リスク・損失可能性・利用範囲・約款リンク・前回承諾ログ）を描画し、承諾完了までは`ConsentRequiredError`を発生させてCLI制御を停止。`record_consent()`は`audit`イベントストアへ`risk_consent`エントリをWORM保存し、`consent_reference_id`と`consent_version_hash`を返却。`link_event()`は各操作イベントへ上記IDを付与し、週次ガバナンスレポートと`tradectl audit export --type risk_consent`に連携する。拒否時は`status=warning`を維持し、Signal Boardは高リスク操作を不可・低リスク閲覧もロックする。
+- **異常系**: `consent_state.json`破損→`ConsentStateCorrupted`例外で`BoardMode=halted(consent)`へ遷移。`audit`書き込み失敗時はM1 CoreではWARNログのみ、M1.1では`HealthMonitor.soft_stop(consent_audit)`でKill Switchを保持し再承諾を禁止する。
+- **設定**: `config/compliance/risk_disclosure.yaml`に承諾有効期間（日数）、文面ファイルパス、端末識別子算出方式（シリアル+MACハッシュ）、四半期レビュー週定義、Runbookリンクを定義。M1 Coreでは`enforce=false`、M1.1以降は`enforce=true`として同一コードパスで切り替える。
+
+### 付録G: ガバナンスサービス（M2+実装ガイド）
+
+#### 付録G.1 Strategy Scoreboard Service (`src/scoreboard/service.py`)
+- **公開API**: `generate_weekly_snapshot(week_ending)`, `get_latest()`, `trigger_watchlist(strategy_id)`。
+- **入力データ**: `data/returns/returns_24w.parquet`, `metrics/kpi_cache.parquet`, `reports/research/alpha_score/<YYYYWW>.md`, 戦略ごとの`reports/strategy_review_<id>.md`。
+- **主要ロジック**: KPIキャッシュからPF/Sharpe/Stabilityを標準化→`decay_score`は24週リニア回帰から傾きを算出。`alpha_score`<`config.scoreboard.alpha_threshold`または`decay_score`>`config.scoreboard.decay_threshold`で`strategy.watchlist`イベントをEventBusへ送信（AC-49, FR-61）。
+- **イベント/連携**: `scoreboard.generated`でJSONサマリを`scoreboard/alpha/<YYYYWW>.json`と`reports/research/alpha_score/<YYYYWW>.md`へ書き込み。`strategy.watchlist`受信時にTicketBuilderへウォーニングバッジを追加、Model Risk Register Serviceへ`watchlist=true`を通知。
+- **異常系**: KPI計算失敗→`ScoreboardComputationFailed`イベント→`HealthMonitor.degraded(scoreboard)`。証跡Markdown欠損時は`evidence_missing`フラグを立て、Ops Readiness Evaluatorにも不足として反映。
+- **設定ファイル**: `config/scoreboard.yaml`（閾値、重み、対象戦略リスト、runbookリンク）。週次ジョブは`config.scheduler.jobs.scoreboard`で定義し、SessionManager起動時に`AsyncOneShotJob`として登録。
+
+#### 付録G.2 Idea Pipeline Manager (`src/ideas/manager.py`)
+- **公開API**: `load_manifest(idea_id)`, `transition_stage(idea_id, target_stage, actor)`, `validate_evidence(idea_id)`。
+- **入力データ**: `ideas/<id>/manifest.yaml`, `ideas/<id>/evidence/*.md`, `ideas/<id>/metrics/*.json`, チェックリストテンプレート`ideas/templates/checklists/<stage>.md`。
+- **主要ロジック**: `manifest`を`schema.py`で検証し、`stage`遷移要求ごとにチェックリスト完了率とPaper整合ログを評価。Paper移行には4週連続で`consistency_score`>=`config.ideas.paper_gate.min_consistency`を要求し、未達時は`stage.blocked`イベントを返却し`ideas/<id>/actions.md`へTODOを追記（FR-62, AC-49）。
+- **イベント/連携**: `stage.changed`でReporterに通知し、Strategy Scoreboard Serviceへ新規戦略登録を要求。Model Risk Register Serviceは`stage=live_candidate`到達時に初回評価タスクを起票。
+- **異常系**: 必須ファイル欠損→`IdeaEvidenceMissing`で`HealthMonitor.degraded(idea_pipeline)`、Ops Readiness Evaluatorにも不足が反映。`manifest`スキーマ違反は`ConfigRejected`同様に扱い、ステージはロールバック。
+- **設定ファイル**: `config/ideas.yaml`（ステージ順序、必須証跡種別、整合度閾値、Runbook ID）。CLI `tradectl research stage`は`manager.transition_stage`を呼び出し監査ログに記録。
+
+#### 付録G.3 Ops Readiness Evaluator (`src/ops_readiness/evaluator.py`)
+- **公開API**: `evaluate(period)`, `explain(period)`, `record_override(reason, actor)`。
+- **入力データ**: `reports/governance/ops_readiness_<YYYYWW>.md`, `logs/ops/backup.log`, `docs/runbook/*.md`, `ops_readiness/evidence/*.json`, バックアップ検証結果`reports/drill/*.md`。
+- **主要ロジック**: 証跡ファイルの存在・ハッシュを`evidence.py`で検証し、バックアップ整合度/Runbook更新率/演習完遂率/緊急プロトコル検証スコアを加重平均。`ops_readiness_score`<`config.ops_readiness.min_score`で`health.changed(status=degraded, reason="ops_readiness_low")`を発火しKill Switchを`soft_stop`へ誘導（FR-63, AC-51）。
+- **イベント/連携**: `ops_readiness.evaluated`でスコアと欠損証跡リストをEventBusに出力。ScoreboardジョブはOpsスコア<閾値の場合に`alpha_score`を最大70へクリップしリリースを防止。Idea Pipeline ManagerはOps低下中に新規Paper昇格を保留。
+- **異常系**: 証跡が404またはハッシュ不一致→該当項目スコア0かつ`OpsEvidenceMissing`イベント。評価実行中にIO例外が連続した場合は`health.changed(reason="ops_readiness_blocked")`でKill Switchを維持し、手動確認をRunbook `OPS-READINESS-01`に記録。
+- **設定ファイル**: `config/ops_readiness.yaml`（重み、閾値、必須証跡パス、Runbook ID、評価スケジュール）。週次自動実行ジョブをSchedulerに登録し、CLI `tradectl ops readiness --explain`で内訳を取得。
+
+#### 付録G.4 Model Risk Register Service (`src/governance/model_risk.py`)
+- **公開API**: `scan_register()`, `open_gap(strategy_id, reason)`, `resolve_gap(gap_id, evidence_paths)`。
+- **入力データ**: `model_risk_register.md`, `reports/model_risk/<strategy>.md`, `tickets/model_revalidate/*.md`, Scoreboardの`watchlist`フラグ。
+- **主要ロジック**: `scan_register`が`model_risk_register.md`をAST解析し、各戦略の最終評価日/担当/エビデンスリンクを抽出。未更新>90日、Explainability添付欠落、`watchlist=true`でタスク未完了の場合は`model_risk_gap`を生成しEventBusへ通知（FR-62, AC-49）。
+- **イベント/連携**: `model_risk.gap_opened`でOps Readiness Evaluatorへ通知しOpsスコアからペナルティ。`resolve_gap`完了時は`model_risk.gap_resolved`を発火し、Scoreboardへ解除を通知。Kill Switch解除条件に`gap_status=closed`が追加される。
+- **異常系**: Registerファイル解析失敗→`ModelRiskRegisterCorrupted`で`HealthMonitor.soft_stop(model_risk)`。証跡リンク無効時は`OpsEvidenceMissing`と同じ扱いでOpsスコアを強制減点。
+- **設定ファイル**: `config/model_risk.yaml`（評価周期、必須ドキュメント、担当者マッピング、ギャップ閾値）。CLI `tradectl model risk resolve <id>`は`resolve_gap`を呼び出し監査ログにエビデンスハッシュを記録。
+
+#### 付録G.5 Statement Reconciliation Service (`src/reconciliation/service.py`)
+- **公開API**: `reconcile(from_date, to_date, mode)`, `load_statement(path)`, `export_summary(result)`。
+- **入力データ**: ブローカーステートメント（CSV/PDF→CSV）、`logs/audit/*.jsonl`, `reports/audit/trade_log.parquet`, `account/balances.parquet`, Idea/Ticket履歴。
+- **主要ロジック**: `normalizer.py`でステートメント形式を標準化し、`matcher.py`でLive/Paperログと突合。残高差分> `config.reconciliation.max_balance_delta_r`または取引突合率<`config.reconciliation.min_match_pct`で`HealthMonitor.degraded(statement_gap)`および`reconciliation.discrepancy`イベントを発火（FR-64, AC-53）。
+- **イベント/連携**: 正常終了時は`reconciliation.completed`でOps Readiness Evaluatorへスコア加点、Reporterが`reports/audit/reconciliation/<date>.md`を生成。差分時はKill Switchを`soft_stop`に遷移し、Idea Pipeline Managerが新規昇格を停止。
+- **異常系**: ステートメントファイル欠損/解析失敗→`StatementImportError`でリトライ案内。差分特定不可の場合は`reconciliation.escalated`を発火しRunbook `AUD-REC-02`手順へ誘導。証跡出力失敗はOps Readiness Evaluatorの証跡欠損として扱う。
+- **設定ファイル**: `config/reconciliation.yaml`（ブローカー別カラムマッピング、差分閾値、フェイルセーフ条件、Kill Switchハンドリング）。CLI `tradectl reconcile statements --from <date>`が`reconcile`を呼び出し監査に結果を追記。
+
+### 付録H: トレーダー運用シナリオ（M1 Core運用ガイド）
+
+HITLトレーダーとCodex開発者が同じ前提でレビューできるよう、代表的な運用シナリオごとの「検知→判断→操作→検証」手順を以下に整理する。Runbook参照番号とCLIコマンド、必要メトリクスを明示し、Acceptable Degradation移行時の判断材料を平文化する。
+
+| シナリオ | トリガー指標 | トレーダーの判断ポイント | Codex実装フック | 推奨CLI/ツール | Runbook/Validationリンク | 復旧完了チェック |
+| --- | --- | --- | --- | --- | --- | --- |
+| 正常稼働 (`OPS-NOMINAL`) | `HealthState=ok`, `board_mode=normal`, `catch_up_lag_minutes<10` | 週次レビューまでにSharpe/最大DD/WinRateを記録し、KPI未達なら改善チケット起票 | Reporter (`§3.18`), KPI Snapshot (`§9.3`) | `tradectl board`, `tradectl status`, `tradectl report weekly --dry-run` | `RUN-OPS-04`, `reports/weekly/<YYYYWW>.md` | KPIサマリと`reports/kpi_snapshots`が最新、`logs/audit/ticket.jsonl`に異常なし |
+| Acceptable Degradation移行 (`OPS-DEG-01`) | `catch_up_lag_minutes≥30` or `HealthState=degraded(data_latency_*)` | Guardedへ切替えるか、手動CSV投入で凌ぐか。主要4ペアのデータ鮮度と429頻度を確認 | DataIngestionService (`§3.1`), RateLimitGuard (`§3.1.1`), Board Guard Policy (`§3.8`) | `tradectl board --guarded`, `tradectl data failover --mode manual`, `make sla-report` | `RUN-DATA-05`, `RUN-DATA-06`, `reports/validation_log/AC-45_sla_<date>.md` | `catch_up_lag_minutes<30`、`metrics/rate_limit_window.jsonl`で429率回復、`degraded_ack`イベントをRunbookでサイン |
+| Spread急拡大 (`RISK-SPREAD-02`) | `SpreadCooldownState=cooldown`, `spread_pips>threshold` | Reduce-Only運用に移行し、ニュース/カレンダーと矛盾がないか確認 | SpreadMonitor (`§3.6`), CalendarService (`§3.13`), Risk Manager (`§3.8`) | `tradectl spread status`, `tradectl board --guarded --reason spread`, `tradectl calendar upcoming --impact high` | `RUN-RISK-02`, `RUN-HITL-01` | Spreadが閾値内へ連続Nバー収束、`reports/performance/<mode>/spread_review.md`に結果記録、Kill Switch解除サイン取得 |
+| Rate Limit退行 (`OPS-RL-03`) | `metrics/rate_limit_window.jsonl`で`rolling_1h_429_rate>1.5%` or `consecutive_429≥3` | Stageを下げる/ポーリング停止/手動CSV投入の優先度を判断 | RateLimitGuard (`§3.1.1`), ManualCsvIngestionTask (`§3.1`) | `tradectl data rate-limit stage inspect`, `tradectl data rate-limit stage set 0 --provider yfinance`, `tradectl benchmark validate-manual` | `RUN-DATA-05`, `reports/validation_log/AC-45_sla_<date>.md` | `rolling_1h_429_rate<1.0%`に回復、Stage履歴とRunbookチェックが一致、`manual_csv.log`にダブルサイン |
+| Live fills取り込み (`OPS-ACCT-04`) | 取引実績CSVの新規行、`logs/audit/live.jsonl`未反映チケット | CSV整合→スリッページ評価→Journal更新。欠損時はKill Switch soft_stop検討 | AccountService (`§3.14`), Trade Journal (`§3.14.1`), Reporter (`§3.18`) | `tradectl account sync --path data/account/live_account.csv`, `tradectl journal summarize`, `tradectl audit export --type live` | `RUN-OPS-03`, `reports/validation_log/AC-44_live_fill_<date>.md` | `actual_fill_imported`イベントが全件生成、`unmatched_ticket`が0、週次レポートにスリッページ統計掲載 |
+| Kill Switch発動 (`RISK-KS-05`) | `daily_loss`/`weekly_loss`閾値超、`HealthMonitor`推奨`hard_stop` | 即時停止/Reduce-Only/再開判断。承認ログとスナップショット整合を確認 | Risk Manager (`§3.8`), Health Monitor (`§3.9`), SnapshotManager (`§3.15`) | `tradectl kill-switch engage --reason <code>`, `tradectl snapshot verify`, `tradectl health ack --reason hard_stop` | `RUN-RISK-01`, `RUN-POST-03`, `reports/ops/incidents/<date>_killswitch.md` | `kill_switch_events.jsonl`に承認者記録、`snapshot hash`一致、`tradectl board --normal`実行時にRunbook承認済 |
+
+#### 付録H.1 シナリオ遂行チェックリスト
+
+各シナリオ実行時は以下の共通チェックリストをRunbook添付で管理する。
+
+1. **検知証跡**: トリガーとなったメトリクス/イベントファイルのパスとハッシュをRunbookに記載。
+2. **オペレーションログ**: 実行したCLIコマンドと引数を`logs/ops/command.log`へ記録し、承認者を添付。
+3. **Codex差分レビュー**: 対応中に発生したコード/設定の変更点を`docs/prompt_packages/<date>_<scenario>.md`へ追記し、次回再発時のプロンプト準備を短縮。
+4. **事後レビュー**: `RUN-POST-03`のテンプレートに沿って原因分析・恒久対策・フォローアップIssueを整理。Acceptable Degradation時は「復旧目標時間」「実績時間」「差異理由」を必ず記録。
+5. **メトリクス確認**: 復旧後30分以内に`metrics/data_ingestion_sla.jsonl`・`metrics/rate_limit_window.jsonl`・`reports/weekly`の該当箇所をチェックし、未回復指標があれば`HealthMonitor`へ再通知。
+
+Codexは上記シナリオを前提にテストデータ/ログを準備し、PR説明時に「対象シナリオ」「操作ステップ」「検証結果」を必ず紐付ける。トレーダーはRunbookに沿った証跡をレビューし、承認サインを`reports/validation_log`系ドキュメントへ記録する。
+
+## 13. Codex開発準備チェックリスト（v2.4追加）
+
+Codexへ実装タスクを引き渡す際に必要な準備作業を標準化し、スプリントごとの手戻りを防ぐ。以下のチェックリストはIssue/PRテンプレートにも紐付け、未完了項目がある場合は`status=blocked`として扱う。
+
+### 13.1 事前準備フロー
+
+1. **差分基準の明確化**
+   - `git status --short`がクリーンであることを確認し、`docs/prompt_packages/<date>_<epic>.md`にベースラインコミットハッシュを記録する。
+   - `make ci-lite`実行ログを`ci/baseline_<commit>.log`として保存。失敗時はCodexへ渡す前に原因を解決する。
+2. **プロンプト資材の整備**
+   - 必要ファイルの抜粋（最大200行）を`docs/snippets/<epic>/<module>.py`に更新。`# region`コメントで差分境界を明示する。
+   - テレメトリやメトリクスの抜粋（§6.8）を`docs/prompt_packages/...`の`Context`節に添付。Acceptable Degradation関連タスクでは`metrics/cli_commands.jsonl`と`reports/validation_log/AC-45*`を必ず含める。
+3. **Runbook・メトリクス整合**
+   - 影響するRunbook節番号とチェックボックスをIssue本文に列挙し、運用担当と整合する。
+   - `make sla-report`または該当スクリプトを実行し、最新メトリクスを`reports/validation_log/<date>_<topic>.md`へ貼り付ける。Codexはこれをベースラインとし、差分報告に活用する。
+4. **テスト指示の具体化**
+   - `pytest -k <keyword>`や`tradectl ... --dry-run`など、Codexが実行すべきコマンドをIssueに明示し、成功判定（閾値・期待出力）を表形式で記載。
+   - 追加で必要なフィクスチャ・モックは`tests/fixtures/README.md`と`docs/prompt_packages/...`へ追記し、生成スクリプトを併記する。
+5. **リスク通知**
+   - 既知のリスク（§11）やAcceptable Degradation発生履歴を`feedback_loop.md`から抜粋し、Issueに`Known Risks`セクションとして貼り付ける。
+   - 緊急度が高い場合は`AlertDispatcher`ログ（`logs/alerts/*.jsonl`）を添付し、Codexが原因トリアージを再現できるようにする。
+
+### 13.2 チェックリスト（Issue/PR用）
+
+| # | 項目 | 完了状態 | 証跡 |
+| --- | --- | --- | --- |
+| 1 | ベースラインCIログ（`make ci-lite`）を`ci/baseline_<commit>.log`へ保存した | ☐ | `ci/baseline_<commit>.log` |
+| 2 | Prompt Bundleに対象セクション引用・I/O契約表・テレメトリ抜粋を追加した | ☐ | `docs/prompt_packages/<date>_<epic>.md` |
+| 3 | 影響Runbook節とチェックボックスをIssue本文に列挙した | ☐ | Issue/PR本文 |
+| 4 | テストコマンドと判定基準を表形式で記載した | ☐ | Issue/PR本文（`<Tests>`節） |
+| 5 | 既知リスク/Acceptable Degradation履歴を添付した | ☐ | `feedback_loop.md`, `reports/validation_log/*` |
+| 6 | 必要なフィクスチャ/データ抜粋を更新し、生成スクリプトを明記した | ☐ | `tests/fixtures/README.md`, `tools/*` |
+| 7 | Feature Flag既定値と切替条件を明記した | ☐ | Issue/PR本文（`Feature Flags`節） |
+| 8 | Codex成果物レビュー用の`make <target>`コマンド（例:`make sla-report`）を指定した | ☐ | Issue/PR本文 |
+| 9 | 関連Runbook/Validationログの最新ハッシュを記録した | ☐ | `reports/validation_log/<date>_*.md` |
+| 10 | Codex再依頼時のフィードバック（`feedback_loop.md`該当行）を引用した | ☐ | Issue/PR本文 |
+
+### 13.3 Codex成果物受領後の確認
+
+1. `git diff --stat`で設計指定外ファイルが含まれていないか確認。逸脱があれば即差戻し。
+2. `make ci-lite`とIssueで指定したテストコマンドを再実行し、`ci/results/<date>_<epic>.log`へ保存。
+3. Acceptable Degradationが絡む場合は`tradectl telemetry report --window 1d`（実装前は`make telemetry-report`）でコマンドログ差分を確認し、Runbookサインオフに添付。
+4. `docs/prompt_packages/...`へレビューメモ（良かった点/改善点/想定外差分）を追記し、`feedback_loop.md`を更新。次回のPrompt改善に繋げる。
+5. `docs/change_requests/`や`reports/validation_log/`の該当ファイルへサインオフ者と日時を追記し、監査ログと整合させる。
+
+これらの手順を遵守することで、Codexとの反復速度を維持しつつ将来の仕様変更にも耐えられるドキュメント・証跡を確保する。
+
+## 14. シナリオランナーとRunbook自動演習設計（v2.4追加）
+
+### 14.1 目的と適用範囲
+
+- Acceptable Degradation手順やKill Switch演習など、Runbookで定義されたシナリオを**半自動的に再現**し、Codex成果物の検証とトレーダー教育を効率化する。
+- 対象モジュール: `src/scenario/runner.py`, `src/scenario/loader.py`, `src/scenario/models.py`, `src/scenario/validators.py`, `src/interfaces/cli/scenario.py`, `tests/unit/test_scenario_runner.py`, `tests/integration/test_scenario_cli.py`。
+- 運用環境: macOSローカルでのPaper/Backtestモード（Liveでは`dry-run`のみ許可）。Runbook参照: `docs/runbooks/RUN-DATA-05`, `RUN-DATA-06`, `RUN-RISK-01`, `RUN-HITL-01`, `RUN-POST-03`。
+
+### 14.2 ディレクトリ構成と成果物
+
+| パス | 役割 | 備考 |
+| --- | --- | --- |
+| `src/scenario/__init__.py` | シナリオパッケージ初期化 | Feature Flag `scenario.runner_enabled`が`False`の場合は`noop`実装を返す |
+| `src/scenario/models.py` | `ScenarioDefinition`, `ScenarioStep`, `ValidationRule`などの`pydantic`モデル | `__schema_version__ = 1`を定義し、`tests/contracts/test_scenario_schema.py`で互換性検証 |
+| `src/scenario/loader.py` | YAML/Markdownシナリオの読み込みと検証 | `docs/scenarios/<id>.yaml`/`docs/scenarios/<id>.md`を対象 |
+| `src/scenario/runner.py` | 実行エンジン（ステップ制御/リトライ/ドライラン） | `ScenarioRunner.run`がメインエントリ |
+| `src/scenario/validators.py` | CLI出力/メトリクスの検証ユーティリティ | Acceptable Degradation判定の閾値ロジックを集約 |
+| `src/interfaces/cli/scenario.py` | `tradectl scenario run/list/show`コマンド | `instrument_command`（§6.8）でテレメトリを記録 |
+| `docs/scenarios/` | シナリオ定義YAML + 参考Markdown（Runbook差分） | `OPS-DEG-01.yaml`, `RISK-KS-05.yaml`など |
+| `tests/fixtures/scenario/` | モックレスポンス（CLIログ/メトリクスJSON） | CLI整合性テストで使用 |
+
+- Codexは上記各ファイルを最大200行単位の抜粋としてPrompt Bundleへ添付する。`docs/scenarios/README.md`にシナリオ命名規約とRunbook対応表を追加予定（別タスク）。
+
+### 14.3 シナリオ定義モデル
+
+| フィールド | 型 | 説明 |
+| --- | --- | --- |
+| `id` | `ScenarioId`（`Literal` + 正規表現`^[A-Z0-9\-]+$`） | `OPS-DEG-01`, `RISK-KS-05`など。Runbookセクションと整合 |
+| `title` | `str` | Runbookでの見出しと一致させる |
+| `tags` | `list[str]` | `['acceptable_degradation','guarded']`等。`qa_tags`（§6.8）と同期 |
+| `mode` | `Literal['backtest','paper','live','dry-run']` | Liveでは`dry-run`のみ許可 |
+| `preconditions` | `list[Precondition]` | `config`/`metrics`/`health`などの前提チェック |
+| `steps` | `list[ScenarioStep]` | CLI実行/手動確認/メトリクス検証を順序付け |
+| `success_criteria` | `list[ValidationRule]` | `metrics.data_ingestion_sla.p95 <= 18`等 |
+| `rollback_plan` | `ScenarioRollback` | 失敗時の手動手順とRunbookリンク |
+| `artifacts` | `list[ArtifactSpec]` | 収集すべきログ/レポート（`reports/validation_log/...`） |
+| `prompt_notes` | `str | None` | Codexへ渡す際に注意する設計観点 |
+
+- `ScenarioStep`は`CommandStep`/`ManualStep`/`ValidationStep`の3種を`discriminator='kind'`で表現。`CommandStep`には`cmd`, `args`, `timeout`, `expected_exit_code`を保持し、`dry_run`時は実行をスキップして`note`を出力する。
+- `Precondition`は`type`に応じて`metrics`（JSONL照会）、`feature_flag`、`file_exists`等をサポート。未達成の場合は実行を停止し`ScenarioPreconditionError`を返す。
+
+### 14.4 CLI仕様 (`tradectl scenario ...`)
+
+| コマンド | 用途 | 主な引数/フラグ | 成功時挙動 | 代表エラー |
+| --- | --- | --- | --- | --- |
+| `tradectl scenario list` | 登録シナリオの列挙 | `--tag acceptable_degradation`, `--mode paper` | `ScenarioSummary`テーブルを表示。`--json`でJSON出力 | シナリオファイル不備→`ScenarioRegistryError` |
+| `tradectl scenario show <id>` | 詳細表示 | `--format yaml|table`, `--include-steps` | YAML整形出力＋Runbookリンク一覧 | `ScenarioNotFound` |
+| `tradectl scenario run <id>` | シナリオ実行 | `--profile`, `--dry-run`, `--step-from`, `--step-to`, `--auto-ack`, `--collect-artifacts` | ステップ毎にRichログ。成功で`ScenarioRunResult`サマリと収集アーティファクトパスを表示 | `ScenarioExecutionError`, `ValidationFailed`, `PreconditionFailed` |
+| `tradectl scenario run --plan <id>` | 実行プラン確認 | `--format table|json` | 実行コマンド/想定所要時間を表示 | 同上 |
+
+- CLIは`ScenarioRunner`をDIし、`instrument_command`デコレータで`metrics/cli_commands.jsonl`へ記録。Acceptable Degradation中の実行では`qa_tags`へシナリオIDを付与する。
+
+### 14.5 実行フロー
+
+1. CLIから`ScenarioRunner.run`呼び出し。
+2. `ScenarioLoader.load(id)`がYAMLを読み込み、`ScenarioDefinition`へパース。`docs/scenarios/<id>.md`（任意）を添付し、`prompt_notes`があればログに表示。
+3. `PreconditionEvaluator.evaluate(definition.preconditions, context)`で前提チェック。失敗時は例外を投げ、`--dry-run`でも実行しない。
+4. ステップごとに`StepExecutor`が種類に応じて処理。
+   - `CommandStep`: `subprocess`（同期）または`asyncio.create_subprocess_exec`（非同期）でコマンドを実行し、標準出力を`logs/scenario/<id>/step_<n>.log`に保存。
+   - `ManualStep`: 実行者へプロンプト表示。`--auto-ack`指定時は`note`をログ化のみ。
+   - `ValidationStep`: `validators.evaluate(metric_spec, tolerance)`で閾値判定し、失敗時に`ValidationFailed`を投げる。
+5. 全ステップ成功後、`SuccessCriteriaEvaluator`が`success_criteria`を検証。Passなら`ScenarioRunResult(status='success')`を返却し、`reports/validation_log/scenario/<id>_<timestamp>.md`を生成。
+6. 途中失敗した場合は`rollback_plan`を表示し、`--auto-rollback`（将来フラグ）未設定なら手動対応を要求。失敗時の状態は`ScenarioRunResult(status='failed', failed_step=<n>, reason=<error>)`として返す。
+
+### 14.6 Codex実装契約
+
+| 関数/クラス | シグネチャ | 主な例外/戻り値 | テスト観点 | 備考 |
+| --- | --- | --- | --- | --- |
+| `ScenarioLoader.load` | `def load(self, scenario_id: str) -> ScenarioDefinition` | `ScenarioNotFound`, `ScenarioSchemaError` | `pytest -k scenario_loader` | YAMLとMarkdown（任意）の整合を検証。`schema_version`不一致時は警告 |
+| `ScenarioRunner.run` | `async def run(self, definition: ScenarioDefinition, context: ScenarioContext) -> ScenarioRunResult` | `ScenarioExecutionError`, `ValidationFailed`, `ScenarioPreconditionError` | `pytest -k scenario_runner::test_run_success`, `test_run_validation_failure` | `context`には`mode`, `profile`, `dry_run`, `collect_artifacts`を含む |
+| `PreconditionEvaluator.evaluate` | `def evaluate(preconditions: Sequence[Precondition], context: ScenarioContext) -> None` | `ScenarioPreconditionError` | `pytest -k scenario_precondition` | メトリクス照会は`metrics.loaders.jsonl_reader`ユーティリティを利用 |
+| `StepExecutor.execute` | `async def execute(self, step: ScenarioStep, context: ScenarioContext) -> StepResult` | `StepExecutionError` | `pytest -k scenario_steps` | `CommandStep`は`timeout`/`expected_exit_code`を必須検証 |
+| `validators.evaluate` | `def evaluate(rule: ValidationRule, context: ScenarioContext) -> ValidationOutcome` | `ValidationFailed` | `pytest -k scenario_validators` | `ValidationRule`は`metric_path`, `comparator`, `threshold`, `window`などを保持 |
+
+- Codexは各実装で`pydantic` v2を使用し、`model_config = {'extra': 'forbid'}`を設定する。例外メッセージにはRunbook参照（例:`runbook:RUN-DATA-05#guarded_checklist`）を含め、運用者が即座に対処できるようにする。
+
+### 14.7 ロギングとテレメトリ
+
+- `ScenarioRunner`は`logs/scenario/<id>/<timestamp>/`配下に以下を保存する。
+  - `scenario_summary.json`: `ScenarioRunResult`のJSONシリアライズ。
+  - `step_<n>_stdout.log`/`step_<n>_stderr.log`: コマンド実行ログ。
+  - `artifacts.json`: 収集対象ファイルと保存先のリスト。
+- `metrics/scenario_runs.jsonl`に`{ts, id, status, duration_sec, failed_step, qa_tags}`を追記。`TelemetryAggregatorJob`が週次でCLI実行回数と結果を集計し、`reports/telemetry/cli/<YYYYWW>.md`へ転載。
+- Acceptable Degradation演習時は`qa_tags`へ`['scenario', <ScenarioId>, 'degraded']`を付与し、`CommandTelemetryRecord`と相互参照できるようにする。
+
+### 14.8 テスト・検証方針
+
+| テストID | 目的 | 内容 |
+| --- | --- | --- |
+| UT-SCN-01 | YAMLスキーマ検証 | `ScenarioLoader`が必須フィールド欠落を検出し`ScenarioSchemaError`を投げる |
+| UT-SCN-02 | ステップ実行成功 | `ScenarioRunner`で`CommandStep`/`ManualStep`/`ValidationStep`が順に成功するケース |
+| UT-SCN-03 | バリデーション失敗時のロールバック案内 | `ValidationFailed`で`rollback_plan`がログ出力される |
+| IT-SCN-01 | Acceptable Degradation演習 | `tradectl scenario run OPS-DEG-01 --dry-run`でCLI出力が期待と一致、`metrics/scenario_runs.jsonl`に記録 |
+| IT-SCN-02 | Kill Switch演習 | `tradectl scenario run RISK-KS-05 --profile paper-m1-core`実行後に`logs/scenario/...`へ証跡が作成される |
+
+- `pytest`マーカー: `@pytest.mark.scenario`を導入し、`pytest -m scenario`で集中実行可能とする。CIでは週次で`pytest -m "scenario and not slow"`を実施。
+- CLIスナップショットは`pytest-approvaltests`を用い、`tests/snapshots/scenario/`へ保存。更新時は`--approve`で承認し、`docs/prompt_packages/<date>_scenario_runner.md`へスクリーンショット差分を添付する。
+
+### 14.9 Runbook・メトリクス連携
+
+- 各シナリオYAMLは`runbook_refs`に`['RUN-DATA-05#guarded', 'RUN-POST-03#review']`のような節IDを列挙し、成功時に自動で`reports/validation_log/scenario/<id>_<timestamp>.md`へ引用を貼り付ける。
+- `ScenarioRunner`は成功時に`EventBus.publish('scenario.completed', payload)`を発火し、`payload`に`runbook_refs`, `artifacts`, `metrics_snapshot`を含める。Opsはこのイベントを監視し、Runbook更新漏れを検知できる。
+- メトリクス照会は`metrics`ディレクトリのJSONLを直接読むのではなく、`infra.metrics`モジュールの`load_window(metric_path, window)`ユーティリティを経由して取得し、将来Prometheus化してもAPI互換を維持する。
+
+### 14.10 将来拡張フック
+
+- `scenario.runner_enabled` Feature FlagでON/OFF制御。M1 Coreは`True`で提供するが、`dry-run`モードを既定とする。Liveモードでの実行は`config.scenario.allow_live=false`が既定で、M1.1で手動承認ステップを追加予定。
+- `ScenarioStep`に`WaitForEventStep`（EventBus待機）、`WebhookStep`（Slack通知検証）を追加できる余地を残し、`StepExecutor`は`match step.kind`構造で拡張しやすくする。
+- GUI/Tauri移行時には`scenario` APIをHTTP/IPC越しに再利用できるよう、`ScenarioRunner`のI/Oを`dataclass`ベースで整理し、シリアライズ可能に保つ。Codexは例外に`error_code`を付与し、将来GUIでハンドリングしやすいようにする。
+
+- 追加シナリオのレビュー手順として、`docs/scenarios/CHANGELOG.md`にID/目的/Runbookリンク/テスト結果を追記し、`docs/prompt_packages/<date>_scenario_runner.md`へ差分を保存する。これによりCodexが次回シナリオ改修を行う際に参照可能な履歴が整備される。
+
+## 15. CLIテレメトリアグリゲータとQAダッシュボード統合（v2.4追加）
+
+### 15.1 目的と適用範囲
+- CLIテレメトリ（§6.8）とシナリオランナー（§14）の計測データを**定期バッチで集約し、QA/運用レビューに直結するダッシュボード**を生成する。
+- Codexが実装する主モジュール: `src/telemetry/aggregator.py`, `src/telemetry/models.py`, `src/telemetry/repository.py`, `src/interfaces/cli/telemetry.py`, `src/reports/telemetry_renderer.py`, `tests/unit/test_telemetry_aggregator.py`, `tests/integration/test_cli_telemetry_report.py`。
+- 対象データソース: `metrics/cli_commands.jsonl`, `metrics/scenario_runs.jsonl`, `health_state_transitions.jsonl`, `logs/ops/command.log`, `reports/telemetry/cli/<YYYYWW>.md`（既存ファイルへの追記）。
+- 運用頻度: `TelemetryAggregatorJob`を**日次**で自動実行し、週次レビュー前に`tradectl telemetry report --window 7d`を人手で確認する。
+
+### 15.2 モジュール構成と責務
+| モジュール | 主責務 | Codex実装ガイド |
+| --- | --- | --- |
+| `src/telemetry/models.py` | `CliCommandSample`, `ScenarioRunSample`, `AggregationWindow`, `TelemetryDigest`等の`pydantic`モデル定義。 | `__schema_version__ = 1`を設定し、`tests/contracts/test_telemetry_schema.py`で互換性検証。浮動小数は`Decimal`で保持し丸めは表示段階に限定。 |
+| `src/telemetry/repository.py` | JSONL読み込み/ウィンドウ抽出/ローテーション確認。 | `load_cli_samples(window: AggregationWindow) -> Iterable[CliCommandSample]`などのAPIを提供し、ファイル欠損時は空イテレータを返す。将来S3移行時に差し替え可能な設計とする。 |
+| `src/telemetry/aggregator.py` | 集計ロジック。p95/p99計算、エラーレート算出、`qa_tags`別ブレークダウンを実装。 | `TelemetryAggregator.aggregate(window, *, include_scenarios: bool = True) -> TelemetryDigest`。p95/p99は最近傍補間で計算し、サンプル数<20件の場合は`insufficient_sample=True`を立てる。Acceptable Degradation時の実行(`qa_tags`に`degraded`)を別集計する。 |
+| `src/interfaces/cli/telemetry.py` | `tradectl telemetry report`コマンド。`--window`, `--command`, `--format`, `--qa-tag`等を受け取り、Richテーブル/Markdown/JSONで出力。 | `instrument_command`デコレータ適用。Markdown出力時は`reports/telemetry/cli/<YYYYMMDD>.md`へ保存し、週次モードでは`reports/telemetry/cli/<YYYYWW>.md`に追記。 |
+| `src/reports/telemetry_renderer.py` | Markdownテンプレ生成、スパークライン描画、QAサマリ挿入。 | `render_digest(digest: TelemetryDigest, *, profile: str, window: AggregationWindow) -> str`。`jinja2`テンプレート利用可。 |
+| `src/app/jobs/telemetry.py` | Scheduler登録。日次`02:15 JST`実行、失敗時は3回再試行。 | `TelemetryAggregatorJob`がDigest生成→Markdown/JSON書込→`EventBus.publish('telemetry.digest_generated', payload)`。 |
+
+### 15.3 データパイプライン
+1. `instrument_command`が`metrics/cli_commands.jsonl`へ逐次追記。シナリオランナーは`metrics/scenario_runs.jsonl`へ書込。
+2. `TelemetryAggregatorJob`が`AggregationWindow(start, end)`を決定（既定: 前日00:00〜23:59, `tz=UTC`）。
+3. `TelemetryRepository`がウィンドウ内サンプルを読み込み、`CliCommandSample`/`ScenarioRunSample`へ変換。欠損/破損行は`invalid_records.jsonl`へ退避し、`EventBus.publish('telemetry.invalid_record')`。
+4. `TelemetryAggregator.aggregate`が以下を計算:
+   - `command_stats[command] = {count_success, count_error, median_ms, p95_ms, p99_ms, error_codes}`。
+   - `qa_tag_stats[tag] = {count, success_rate, median_ms}`。
+   - `scenario_stats`（`scenario_id`, `status`, `duration_p95`, `artifact_count`）。
+   - `health_state_correlation`: コマンド実行時の`HealthStateSummary.status`分布。
+5. `TelemetryDigest`へまとめ、`TelemetryRenderer`がMarkdown/JSON/CSVを生成。
+6. CLI `tradectl telemetry report`はDigestを読み込み、必要に応じて`--persist`でファイル出力。
+
+### 15.4 CLI仕様 (`tradectl telemetry report`)
+| オプション | 説明 | 既定値 | 備考 |
+| --- | --- | --- | --- |
+| `--window <int>` | 過去n日（最大90日） | 7 | `AggregationWindow`に変換。`--since/--until`で明示指定も可能。 |
+| `--command board,status,...` | 対象コマンドをカンマ区切りで絞り込み | 全コマンド | `command_stats`からフィルタ。 |
+| `--qa-tag degraded,scenario` | `qa_tags`ベースで集計 | 全タグ | Acceptable Degradation影響を確認する際に使用。 |
+| `--format table|markdown|json` | 出力形式 | table | `markdown`で`reports/telemetry/cli/<window>.md`へ保存。 |
+| `--persist` | 出力ファイルを保存 | False | Markdown/JSONを所定パスに保存。 |
+| `--include-scenarios/--no-include-scenarios` | シナリオ集計の有無 | include | シナリオが多い週は集計除外可能。 |
+| `--threshold-profile <path>` | SLA閾値と比較 | `config/sla_thresholds/active.yaml` | `TelemetryAggregator`が閾値差分を計算し、逸脱をハイライト。 |
+
+- エラーコード: `TelemetryReportGenerationError`, `TelemetryDataMissing`。処理失敗時はExit code 121。
+- `--format markdown --persist`使用時は`reports/telemetry/cli/<YYYYWW>.md`をテンプレ更新し、週次レビューに添付する。
+
+### 15.5 TelemetryDigest スキーマ
+```python
+class TelemetryDigest(BaseModel):
+    schema_version: Literal[1]
+    window: AggregationWindow
+    generated_at: datetime
+    command_stats: dict[str, CommandStats]
+    qa_tag_stats: dict[str, QaTagStats]
+    scenario_stats: dict[str, ScenarioStats]
+    health_state_correlation: dict[str, HealthDistribution]
+    insufficient_sample_commands: list[str]
+    notes: list[str]
+```
+- `CommandStats`は`count_success`, `count_error`, `median_ms`, `p95_ms`, `p99_ms`, `error_codes: dict[str, int]`, `board_mode_distribution: dict[str, int]`。
+- `QaTagStats`は`count`, `success_rate`, `median_ms`, `p95_ms`, `health_state_distribution`。
+- `ScenarioStats`は`status_counts`, `duration_median_ms`, `duration_p95_ms`, `artifact_count_avg`, `last_run_at`。
+- `notes`にはサンプル不足や閾値逸脱を列挙し、Markdown出力時に`⚠️`バッジで強調。
+
+### 15.6 テスト計画
+| テストID | 目的 | 内容 |
+| --- | --- | --- |
+| UT-TEL-01 | コマンド集計の正確性 | `tests/unit/test_telemetry_aggregator.py::test_basic_stats`でサンプルを与え、p95/p99/エラーレートが期待値通りか検証。 |
+| UT-TEL-02 | `qa_tags`フィルタ | `test_qa_tag_breakdown`で`degraded`タグを分離集計できることを確認。 |
+| UT-TEL-03 | サンプル不足フラグ | サンプル<20件の場合に`insufficient_sample_commands`へ登録されるか検証。 |
+| UT-TEL-04 | スキーマ互換性 | `tests/contracts/test_telemetry_schema.py`で`TelemetryDigest`がバージョン1を維持するか確認。 |
+| IT-TEL-01 | CLI出力整合 | `tests/integration/test_cli_telemetry_report.py::test_table_output`でCLI出力がRichテーブル形式/ヘッダ一致を確認。 |
+| IT-TEL-02 | Markdown永続化 | `test_markdown_persist`で`--persist`指定時にファイルが生成され、テンプレヘッダ（週次サマリ/Acceptable Degradationログ）が埋まるか検証。 |
+| IT-TEL-03 | SLA閾値比較 | `test_threshold_profile_diff`で`config/sla_thresholds/sample.yaml`を読み込み、逸脱箇所に`⚠️`注記が表示されるか確認。 |
+
+### 15.7 Codex実装ハンドオフ要件
+1. Prompt Bundleに`metrics/cli_commands.jsonl`と`metrics/scenario_runs.jsonl`の最新10行を添付し、`CLI_ACTOR`や`qa_tags`の意味を注記する。
+2. `TelemetryAggregator.aggregate`の数式（p95/p99計算、エラーレート = `count_error / max(1, count_total)`）を明示し、浮動小数→`Decimal`変換の方針を記載。
+3. CLIテストでは`pytest-approvaltests`によるスナップショット更新手順を指定し、差分が発生した際の承認フローをIssueに追記。
+4. `reports/telemetry/cli/<YYYYWW>.md`のテンプレート断片（ヘッダ/サマリ/アクションアイテム）をPrompt Bundleへ添付し、Codexに整形ルールを明示。
+5. Runbook整合: `RUN-OPS-02`のレビュー手順に新しいレポートセクションを追記するタスクを併記し、Codex成果物レビュー時にRunbook更新漏れがないか確認する。
+
+### 15.8 運用/QAとの接続
+- `TelemetryDigest`生成後に`EventBus.publish('telemetry.digest_generated')`を発火し、`payload`へ`insufficient_sample_commands`や`notes`を含める。`HealthMonitor`は`p95_ms`が`config.telemetry.board.p95_warn_ms`を超えた場合に`health.changed(reason='cli_latency')`を発火する。
+- 週次レビューでは以下を行う:
+  1. `reports/telemetry/cli/<YYYYWW>.md`を開き、`Acceptable Degradation`タグ付きコマンドのp95/p99がRunbook許容内か確認。
+  2. `scenario_stats`で`OPS-DEG-01`など主要シナリオの成功率が100%か確認。未達の場合は`docs/prompt_packages/<date>_scenario_runner.md`へ追記し、次スプリントでハードニング。
+  3. `health_state_correlation`で`soft_stop/hard_stop`状態中に実行されたCLIが適切にRunbookサイン済みか、`logs/ops/command.log`と突合。
+- Acceptable Degradation解除時は`tradectl telemetry report --qa-tag degraded --window 3`の出力を`reports/validation_log/AC-45_sla_<date>.md`に添付し、オペレーション時間短縮効果を定量化する。
+
+### 15.9 将来拡張フック
+- `TelemetryDigest.schema_version`は`Feature Flag telemetry.digest_v2`で新フィールド追加に備える。Codex実装時はバージョンアップ手順（スキーマテスト更新、`reports`テンプレ更新、Runbook修正）をIssueへ記載する。
+- GUI/Tauri移行時にWebSocket操作を集計するため、`CliCommandSample`に`origin: Literal['cli','gui','api']`フィールドを追加する余地を残す。M1では`'cli'`固定。
+- `TelemetryAggregatorJob`は将来Prometheusプッシュゲートウェイをサポートするため、`ExporterAdapter`インターフェースを用意しておく（M2+）。
+
+---
+
+## 16. Acceptable Degradation ナレッジパックとCodex活用指針（v2.4追加）
+
+### 16.1 目的
+- Acceptable Degradation発生時の対応品質を高めるため、**運用証跡・シナリオ・計測値をCodex向けに体系化**し、再発時に即座に改善タスクへ落とし込めるようにする。
+- 成果物: `docs/knowledge_packs/acceptable_degradation/`配下のテンプレート、`metrics`タグリングルール、`tradectl`コマンド出力例、Codexプロンプト雛形。
+
+### 16.2 ディレクトリ/成果物構成
+| パス | 役割 | 形式 |
+| --- | --- | --- |
+| `docs/knowledge_packs/acceptable_degradation/README.md` | 運用ガイド、タグ定義、更新手順 | Markdown |
+| `docs/knowledge_packs/acceptable_degradation/case_<YYYYMMDD>.md` | 事例テンプレ（発生日・原因・対応・改善タスク） | Markdown |
+| `docs/knowledge_packs/acceptable_degradation/metrics_snapshot_<id>.json` | `metrics/data_ingestion_sla.jsonl`等から抽出した定量データ | JSON |
+| `docs/knowledge_packs/acceptable_degradation/prompt_context_<scenario>.md` | Codexへ渡す際の情報まとめ | Markdown |
+| `docs/knowledge_packs/acceptable_degradation/checklist.yaml` | 更新チェックリスト（Runbook整合、メトリクス抽出、教訓） | YAML |
+| `docs/knowledge_packs/acceptable_degradation/index.json` | 事例メタデータ（シナリオID、影響度、再発率） | JSON |
+
+### 16.3 ナレッジ更新フロー
+1. Acceptable Degradation発生時に`reports/validation_log/AC-45_sla_<date>.md`へ一次記録。
+2. 対応完了後24h以内に`docs/knowledge_packs/.../case_<date>.md`を作成し、以下を記載。
+   - `Scenario ID`（§14参照）、`board_mode`推移、`metrics`抜粋。
+   - 実行したCLI/Runbook手順、所要時間（分単位）。
+   - 恒久対策タスク（Issueリンク）と担当。
+3. `metrics_snapshot_<id>.json`を生成するスクリプト`tools/acceptable_deg/export_snapshot.py`を実行し、再現に必要なメトリクスを抽出。
+4. `prompt_context_<scenario>.md`にCodexへ渡すべきポイント（背景/現象/課題/期待する改善）を200〜300字でまとめ、対応する詳細設計セクション番号を列挙。
+5. `index.json`を更新し、`impact_score`（1〜5）、`recurrence`（例: `rare`, `occasional`）を記載。`impact_score≥4`は次スプリントのレビュー議題とする。
+
+### 16.4 Codex向けプロンプトテンプレ
+```
+<Scenario ID>: Acceptable Degradation Knowledge Pack
+背景:
+  - 発生日/状況/board_mode推移
+  - 既存実装の課題（セクション番号、例: §3.1.1 RateLimitGuard）
+  - メトリクス抜粋（p95遅延、429率など）
+要求:
+  - 修正対象モジュール（ファイルパス + 関数名）
+  - 期待する改善（例: 手動CSV投入ステップの自動化、TelemetryDigestへのタグ追加）
+  - Feature Flag有無・切替条件
+テスト:
+  - `pytest -k <case>`、`tradectl scenario run <ID>`、`tradectl telemetry report --qa-tag degraded`
+証跡:
+  - `reports/validation_log/AC-45_sla_<date>.md`
+  - `docs/knowledge_packs/.../metrics_snapshot_<id>.json`
+レビューポイント:
+  - トレーダーUX/Runbook整合/リスク影響/メトリクス差分
+```
+- テンプレは`docs/knowledge_packs/acceptable_degradation/prompt_template.md`として管理し、更新時は`CHANGELOG`を付与する。
+
+### 16.5 メトリクスとタグ規約
+| タグ | 対応メトリクス | 付与条件 | 参照Runbook |
+| --- | --- | --- | --- |
+| `degraded` | `HealthState.status` | `status in {'degraded','soft_stop','hard_stop'}`で自動付与 | `RUN-DATA-05`, `RUN-RISK-01` |
+| `manual_csv` | `metrics/data_ingestion_sla.jsonl`, `logs/ops/manual_csv.log` | 手動CSV投入ステップ実行時 | `RUN-DATA-06` |
+| `rate_limit_stage` | `metrics/rate_limit_window.jsonl` | Stage変更イベント時 | `RUN-DATA-05` |
+| `guarded_board` | `metrics/cli_commands.jsonl` | `tradectl board --guarded`実行時 | `RUN-HITL-01` |
+| `kill_switch` | `kill_switch_events.jsonl` | Kill Switch遷移 | `RUN-RISK-01` |
+
+- `TelemetryDigest`と`ScenarioRunner`は上記タグを共有し、Acceptable Degradationの頻度と復旧時間をクロス分析できるようにする。
+- `tools/acceptable_deg/tag_sync.py`が`metrics`/`logs`/`reports`からタグの整合性をチェックし、欠損があれば`health.changed(reason='knowledge_pack_desync')`で通知。
+
+### 16.6 QA/レビュー連携
+- 週次レビューでは`docs/knowledge_packs/.../index.json`を参照し、`impact_score≥3`のケースを優先的にハードニング対象へ割り当てる。
+- `tradectl scenario run <ID>`実行後に`--collect-artifacts`で得たログを`case_<date>.md`へ添付し、再現性を保証する。
+- `make qa-report`は`knowledge_packs`の更新有無をチェックし、未更新の場合は`WARN knowledge_pack.stale`を出力。CIで検知した場合はPRを`needs-knowledge-pack`ラベルでブロックする。
+
+### 16.7 将来拡張
+- M1.1でGUI通知を追加する際に、Knowledge PackからSlack用の要約を自動生成する`tools/acceptable_deg/render_slack_summary.py`を導入予定。
+- M2ではAcceptable Degradationからの復旧時間を自動計測し、`TelemetryDigest`に`recovery_time_minutes`を追加。`index.json`の`recovery_time_median`をダッシュボードへ出力する。
+- データストアは当面ローカルJSON/Markdownだが、将来は`docs/knowledge_packs`をGitサブモジュール化し、組織共有リポジトリでバージョン管理することを想定。
+
+---
+
+## 17. 変更管理と監査証跡の高度化（v2.4追加）
+
+Acceptable DegradationやTelemetry改善に伴い、変更管理の透明性をさらに高めるための仕組みを追補する。
+
+### 17.1 Change Ledger サービス
+- モジュール: `src/governance/change_ledger.py`（M1 Core: append-onlyロガー）。
+- API: `record_change(ChangeRecord)`, `list_changes(filter)`, `export_digest(window)`。
+- `ChangeRecord`フィールド: `change_id`, `timestamp`, `actor`, `category`（`code`, `config`, `runbook`, `knowledge_pack`）, `summary`, `related_artifacts`, `runbook_refs`, `accept_degradation_case`。
+- 実装方針: M1ではJSONL（`logs/governance/change_ledger.jsonl`）へ追記。M2で外部システム連携予定。Codex実装時は`pydantic`モデルで入力検証し、Runbook整合性を保つ。
+- CLI: `tradectl governance change log --window 30`で最近の変更を表示。`instrument_command`でテレメトリ記録。
+
+### 17.2 監査ログ相互参照
+- `ChangeLedger`は記録時に`AuditService.append`を呼び、`audit_ref`を返却。Ticket/Auditログ/Knowledge Packで相互リンクを作成する。
+- `TelemetryDigest`出力に直近`change_ledger`エントリ5件を添付し、CLI改善と運用変更の因果を把握できるようにする。
+- `ScenarioRunner`成功時は関連する`ChangeRecord` IDを付与し、再演習時の根拠を可視化。
+
+### 17.3 Codex実装チェックポイント
+- Prompt Bundleに`change_ledger`の最新10行と`ChangeRecord`スキーマを含める。
+- `tests/unit/test_change_ledger.py`を追加し、`record_change`が重複`change_id`を拒否すること、`export_digest`がウィンドウ境界を尊重することを確認。
+- `tests/integration/test_change_ledger_cli.py`でCLI出力のスナップショットを維持。
+- Runbook `RUN-GOV-01`に`change_ledger`追記手順を追加し、Acceptable Degradation後24h以内に記録するルールを明文化。
+
+### 17.4 将来拡張
+- M1.1: `change_ledger`を`docs/knowledge_packs`と同期し、ケースファイルに自動でリンクを挿入。
+- M2: ガバナンスサービス本実装と連携し、承認ワークフロー（承認者、署名ハッシュ）を追加。
+
+---
+
+これらの追補により、Codex実装チームはAcceptable Degradation対応とCLIテレメトリ改善を高速に反復でき、トレーダー/運用チームは一貫した証跡とレビュー材料を確保できる。今後の設計更新では、上記セクションを基準にPrompt Bundleとテスト計画を組み立て、将来の仕様変更にも耐えうる抽象化境界を維持する。
+
+## 18. メトリクススキーマガバナンスとCodex QA自動化（v2.4追加）
+
+### 18.1 目的
+
+- `metrics/*.jsonl`の命名・構造・閾値を**中央管理**し、Codexが新規メトリクスを追加する際のレビュー時間を短縮する。
+- Acceptable Degradation（§16）やTelemetry Digest（§15）と整合した**QAオートメーション**を用意し、ヒューマンレビューでは逸脱理由の解釈に集中できるようにする。
+- Runbook/Change Ledger（§17）と紐づけることで、メトリクス定義変更の根拠・承認プロセスを可視化する。
+
+### 18.2 成果物とモジュール構成
+
+| パス | 役割 | Codex実装ポイント |
+| --- | --- | --- |
+| `src/infra/metrics/schema_registry.py` | メトリクス定義の読み込み・検証・差分検出。 | `MetricsSchemaRegistry`クラスを定義し、`load()`, `validate(record)`, `diff(new_schema)` APIを提供。`pydantic` v2使用。 |
+| `src/infra/metrics/models.py` | `MetricDefinition`, `Threshold`, `AggregationRule`等のモデル。 | `schema_version=1`を保持。`Decimal`で閾値を管理し、`precision=4`を既定とする。 |
+| `scripts/qa/metrics_schema_check.py` | CI/ローカルQA向け検証スクリプト。 | `poetry run python scripts/qa/metrics_schema_check.py --changed metrics/data_ingestion_sla.jsonl`形式で実行。Codex成果物レビューで必須。 |
+| `src/interfaces/cli/metrics_schema.py` | `tradectl metrics schema ...` CLI。 | `list`, `show`, `diff`, `validate`サブコマンド。`instrument_command`適用。 |
+| `docs/metrics/SCHEMA_GUIDE.md` | 命名規約と更新手順。 | Runbook `RUN-OPS-02`とリンク。Acceptable Degradation関連メトリクスには`qa_tag`必須である旨を明記。 |
+| `metrics/schema_index.json` | スキーマカタログ（真実のソース）。 | `metrics/<name>.schema.json`へリンクを保持し、`hash`, `owner`, `runbook_refs`, `change_ledger_ids`を含める。 |
+| `metrics/<name>.schema.json` | 個別メトリクスのJSON Schema。 | Codexが増やす際はこのファイルを追加し、`schema_registry`が検証に使用。 |
+| `tests/unit/test_metrics_schema_registry.py` | レジストリ単体テスト。 | `pytest -k metrics_schema_registry`で実行。 |
+| `tests/integration/test_metrics_schema_cli.py` | CLI整合性テスト。 | Richテーブル/JSONスナップショットを保持。 |
+
+### 18.3 スキーマ定義
+
+`metrics/schema_index.json`は以下の構造を持つ。
+
+```json
+{
+  "schema_version": 1,
+  "metrics": [
+    {
+      "name": "data_ingestion_sla",
+      "path": "metrics/data_ingestion_sla.jsonl",
+      "schema_path": "metrics/data_ingestion_sla.schema.json",
+      "owner": "data_ops",
+      "qa_tags": ["acceptable_degradation", "sla"],
+      "runbook_refs": ["RUN-DATA-05#sla_check"],
+      "change_ledger_ids": ["CHG-20250301-001"],
+      "notes": "fetch_p95, processing_p95 を保持"
+    }
+  ]
+}
+```
+
+- `schema_version`は互換性管理に使用し、変更時は`tests/contracts/test_metrics_schema_index.py`を更新する。
+- 個別スキーマ（`*.schema.json`）はJSON Schema Draft 2020-12準拠。`$defs.threshold`を定義し、`warning`, `major`, `critical`といったレベル別閾値を規定する。
+- Telemetry Digest（§15）で利用する`metrics/cli_commands.jsonl`は`command`, `duration_ms`, `exit_code`, `qa_tags`, `board_mode`等を定義。`qa_tags`は`Enum`化し、`['baseline','degraded','scenario','manual_csv']`を初期値とする。
+
+### 18.4 運用ワークフロー
+
+1. **新規メトリクス追加**
+   - CodexはIssueで`<Metric Change>`テンプレートを使用し、`owner`, `runbook_refs`, `accept_degradation_case`（該当する場合）を記入。
+   - Prompt Bundleに既存メトリクスの抜粋、`metrics/schema_index.json`該当部分、テストコマンドを添付。
+   - 実装では`MetricDefinition`へ追加→JSON Schema作成→サンプルレコード生成（`metrics/samples/<name>_<date>.jsonl`）。
+2. **CI/QA**
+   - `scripts/qa/metrics_schema_check.py --changed <metric>`を実行し、スキーマと実データの差異、閾値未設定、Runbook参照欠落を検出。
+   - `make ci-lite`に同スクリプトを組み込み、差分に応じて対象メトリクスのみ検査する仕組みを採用。
+3. **レビュー**
+   - レビューアは`tradectl metrics schema diff --metric <name>`で旧版との差分を確認。警告レベルを上げる変更には`ChangeLedger`記録が必須。
+   - Acceptable Degradation関連の場合、`docs/knowledge_packs/<case>/index.json`へ`metric_refs`を追加し、トレーダーが背景を追跡できるようにする。
+4. **リリース後監視**
+   - Telemetry Aggregator（§15）が`schema_index`の`qa_tags`を参照し、自動的に`QA-04`ステータスを更新。逸脱は`TelemetryDigest.notes`へ反映される。
+
+### 18.5 CLI仕様 (`tradectl metrics schema ...`)
+
+| コマンド | 説明 | 主なオプション | 出力 |
+| --- | --- | --- | --- |
+| `tradectl metrics schema list` | 登録メトリクス一覧 | `--owner`, `--qa-tag`, `--format table|json` | Richテーブル/JSON。Acceptable Degradation関連は`🟠`バッジ表示。 |
+| `tradectl metrics schema show <name>` | 定義詳細 | `--include-schema`, `--include-sample` | JSON Schemaとサンプルレコードを表示。 |
+| `tradectl metrics schema diff <name>` | Git HEAD vs 作業コピー差分 | `--base <commit>` | フィールド追加/削除/閾値変更を色分け表示。 |
+| `tradectl metrics schema validate <path>` | 生JSONLの検証 | `--schema <name>` | レコード毎の結果と`metrics/invalid_records.jsonl`への出力状況を表示。 |
+
+- すべてのコマンドは`instrument_command`で計測し、`metrics/cli_commands.jsonl`に`command='metrics.schema.<subcommand>'`を記録する。
+- `validate`はExit code 0（成功）、110（警告：`insufficient_samples`）、120（失敗：バリデーションエラー）を使用する。
+
+### 18.6 テスト計画
+
+| テストID | 内容 | 対象 |
+| --- | --- | --- |
+| UT-MSC-01 | `MetricsSchemaRegistry.load`が`schema_index`不整合を検出し`MetricsSchemaError`を投げる | `tests/unit/test_metrics_schema_registry.py::test_load_invalid_index` |
+| UT-MSC-02 | `validate(record)`が閾値外れを検出し警告レベルを返す | `...::test_validate_thresholds` |
+| UT-MSC-03 | `diff`がJSON Schema差分を集計し`MetricSchemaDiff`を返す | `...::test_diff_detection` |
+| IT-MSC-01 | CLI `list/show/diff/validate`が期待するRich/JSON出力を生成 | `tests/integration/test_metrics_schema_cli.py` |
+| IT-MSC-02 | `scripts/qa/metrics_schema_check.py`が`git diff`から対象メトリクスを特定 | `tests/integration/test_metrics_schema_script.py` |
+| IT-MSC-03 | Telemetry Aggregatorが`schema_index`の`qa_tags`を参照し`TelemetryDigest`へ警告を追加 | `tests/integration/test_telemetry_aggregator.py::test_schema_tag_integration` |
+
+### 18.7 Codexプロンプト指針
+
+- Prompt Bundleには以下を含める。
+  - `metrics/schema_index.json`該当抜粋（20行以内）。
+  - 既存メトリクスのJSON Schema断片。
+  - Runbook参照とChange Ledger ID一覧。
+  - 期待するCLIコマンド出力の例（`tradectl metrics schema show data_ingestion_sla --format json`など）。
+- テスト指示例:
+  - `pytest -k metrics_schema_registry`
+  - `pytest -k metrics_schema_cli`
+  - `poetry run python scripts/qa/metrics_schema_check.py --changed metrics/data_ingestion_sla.jsonl`
+- レビュー時に確認すべき観点:
+  1. `schema_version`が変わっていないか（変更時は互換性レビュー必須）。
+  2. Runbook参照が最新か（`RUN-DATA-05`, `RUN-OPS-02`等）。
+  3. Acceptable Degradationケースへリンクされているか（必要な場合）。
+
+### 18.8 将来拡張
+
+- M1.1: `metrics/schema_index.json`と`ChangeLedger`を双方向リンクし、CLIで`--show-change-log`オプションを提供。`tradectl metrics schema show <name> --with-changes`が直近の変更履歴をテーブル表示する。
+- M2: Prometheus/Grafana移行を視野に`schema_registry`へ`export_prometheus()`を追加し、メトリクス定義を自動的にダッシュボードへ同期する。`TelemetryAggregator`はPrometheusバックエンドからも同一APIでデータ取得できるようアダプタ実装を追加。
+- Acceptable Degradation改善のため、`qa_tags`に`"playbook:RUN-DATA-06"`形式のRunbook識別子を許容し、Telemetry Digestで該当ステップの完了率を自動算出する。
+
+---
+
+## 19. 運用レビューハブとダッシュボード統合（v2.4追加）
+
+Acceptable Degradation対応やTelemetry/シナリオ演習の成果を**単一のレビュー導線**に集約し、PO・運用・トレーダーが同一ビューで状況判断できるようにする。Codex実装を前提とし、Runbook/Knowledge Pack/Change Ledgerと双方向にトレース可能な設計を定義する。
+
+### 19.1 モジュール構成と責務
+
+| モジュール | 役割 | 主なAPI | 備考 |
+| --- | --- | --- | --- |
+| `src/review/hub.py` | 集約サービス本体。Telemetry/Scenario/Knowledge Pack/Change Ledgerを統合。 | `build_digest(window: ReviewWindow) -> OpsReviewDigest`, `fetch_artifacts(digest) -> list[ArtifactRef]`, `list_pending_actions(window)` | `ReviewWindow`は`date`/`mode`/`scope`（`'ops'|'kpi'|'degraded'`）を保持。 |
+| `src/review/aggregators.py` | データソース別アグリゲータ（Telemetry/Scenario/Knowledge/ChangeLedger）。 | `collect_telemetry(window)`, `collect_scenarios(window)`, `collect_knowledge(window)`, `collect_changes(window)` | それぞれ`TelemetryDigest`, `ScenarioStats`, `KnowledgeCaseSummary`, `ChangeDigest`を返す。 |
+| `src/review/models.py` | `OpsReviewDigest`, `SectionSummary`, `ActionItem`, `RiskHighlight` 等の`pydantic`モデル。 | `schema_version = 1` | `tests/contracts/test_review_digest_schema.py`で互換性検証。 |
+| `src/interfaces/cli/review.py` | `tradectl review`コマンド群。 | `tradectl review weekly`, `tradectl review degraded`, `tradectl review export` | `instrument_command`適用、Richレンダリング。 |
+| `reports/review/templates/weekly.md` | Markdownテンプレート。 | 週次レビュー資料を自動生成。 | Telemetry/Scenario/Knowledge Packを所定セクションに配置。 |
+| `docs/review/playbook.md` | レビュー手順書。 | Runbook `RUN-OPS-04`補完。 | Acceptable Degradationケースの検証手順を明文化。 |
+
+- Feature Flag: `review.hub_enabled`（既定`True`）。`False`時は`OpsReviewDigest`ではなく静的テンプレを返す`StubReviewHub`をDIする。
+- 依存モジュール: Telemetry Digest (§15), シナリオランナー (§14), Knowledge Pack (§16), Change Ledger (§17), Metrics Schema (§18)。
+
+### 19.2 データモデル
+
+| モデル | 主フィールド | 説明 |
+| --- | --- | --- |
+| `OpsReviewDigest` | `window: ReviewWindow`, `sections: list[SectionSummary]`, `actions: list[ActionItem]`, `risks: list[RiskHighlight]`, `qa_status: QaScorecardSnapshot`, `artifacts: list[ArtifactRef]`, `generated_at`, `source_hash` | 週次/臨時レビューの集約結果。`source_hash`で再現性確保。 |
+| `SectionSummary` | `id`, `title`, `metrics: list[MetricPoint]`, `narrative`, `evidence_refs` | `id='telemetry'`, `id='scenario'` 等を想定。 |
+| `ActionItem` | `id`, `title`, `owner`, `due_date`, `source`, `status`, `related_runbooks`, `related_change_ids` | `source`に`'telemetry'|'scenario'|'knowledge_pack'`を記録。 |
+| `RiskHighlight` | `code`, `severity`, `description`, `recommended_action`, `runbook_ref`, `knowledge_case` | Acceptable Degradationケースと紐付くリスク。 |
+| `QaScorecardSnapshot` | `qa_checks: dict[str, Literal['pass','fail','pending']]`, `last_updated`, `notes` | §0.10 QAスコアカードの最新状態。 |
+| `ArtifactRef` | `path`, `hash`, `description`, `tags` | `reports/validation_log`, `metrics/*.jsonl`, `logs/ops/*.log` 等を指す。 |
+
+- `source_hash`はTelemetry/Scenario/Knowledge/ChangeLedger入力ファイルのSHA256を連結した値。再演算時に差分検出し、Runbookへ再レビューを促す。
+- `QaScorecardSnapshot.qa_checks`は`QA-01`〜`QA-05`の最新値を保持し、`review weekly` CLIで○/△/×表示する。
+
+### 19.3 データフロー
+
+1. `ReviewHub.build_digest(window)`
+   1. `TelemetryAggregator.collect(window)`から`TelemetryDigest`取得。
+   2. `ScenarioAggregator.collect(window)`が`ScenarioStats`（成功率/平均所要時間/失敗詳細）を返す。
+   3. `KnowledgePackAggregator.collect(window)`が`KnowledgeCaseSummary`（新規/更新/impact_score）を返す。
+   4. `ChangeLedgerAggregator.collect(window)`が`ChangeDigest`（カテゴリ別件数、Acceptable Degradationリンク）を返す。
+   5. `QaScorecardRegistry.snapshot()`でQA状況を読み取る。
+   6. 各セクションを`SectionSummaryFactory`で整形し、`ActionItem`と`RiskHighlight`を抽出。
+2. `fetch_artifacts(digest)`が各セクションから参照するファイル群の存在/ハッシュを検証し、欠損は`RiskHighlight`に`severity='warning'`で追記。
+3. 結果を`reports/review/<window>.json`と`reports/review/<window>.md`へ保存。Markdownはテンプレートに沿って`Sections`/`QA`/`Risks`/`Action Items`を埋める。
+4. EventBusへ`review.digest_generated`をpublishし、`payload`に`digest_path`, `actions_due`, `risk_codes`を含める。Health Monitorは重大リスクがある場合に`health.changed(reason='ops_review_risk')`を発火する。
+
+### 19.4 CLI仕様 (`tradectl review ...`)
+
+| コマンド | 用途 | 主な引数/フラグ | 出力 |
+| --- | --- | --- | --- |
+| `tradectl review weekly` | 週次Opsレビュー資料を生成/表示 | `--window <YYYYWW>`, `--profile`, `--format table|markdown|json`, `--open` | RichテーブルまたはMarkdown出力。`--open`でMarkdownをエディタ表示。 |
+| `tradectl review degraded` | Acceptable Degradationケースまとめ | `--since <date>`, `--limit`, `--export` | `knowledge_pack`の新規/再発ケースを表形式で表示。`--export`で`reports/review/degraded_<date>.md`生成。 |
+| `tradectl review actions` | 未完了アクション一覧 | `--status pending|overdue`, `--owner` | `ActionItem`リストと関連Runbook/Change IDを表示。 |
+| `tradectl review diff` | 過去ダイジェストとの差分確認 | `--window <YYYYWW> --compare-to <YYYYWW-1>` | セクション別にメトリクス差分/アクション進捗を色分け表示。 |
+
+- すべて`instrument_command`でテレメトリ記録。`qa_tags`に`['review']`、Acceptable Degradationケース含む場合は`['review','degraded']`を付与。
+- `--format markdown`時はテンプレートを適用し、`reports/review/<window>.md`へ保存。`--open`は`$EDITOR`起動（`.env`で指定）。
+
+### 19.5 テスト計画
+
+| テストID | 目的 | 内容 |
+| --- | --- | --- |
+| UT-REV-01 | Telemetry・シナリオ統合 | `tests/unit/test_review_hub.py::test_build_digest_basic`でモックデータから`OpsReviewDigest`を生成し、セクション/アクションが期待通りか確認。 |
+| UT-REV-02 | QAスナップショット整合 | `...::test_qascore_snapshot`で`QaScorecardSnapshot`が`qa_checks`を引き継ぐか検証。 |
+| UT-REV-03 | Artifact検証 | `...::test_fetch_artifacts_missing`で欠損ファイルを`RiskHighlight`に変換する挙動を確認。 |
+| IT-REV-01 | CLI weekly | `tests/integration/test_review_cli.py::test_weekly_output`でテーブル/Markdown出力の整合性とテンプレ適用を検証。 |
+| IT-REV-02 | CLI degraded | `...::test_degraded_export`でKnowledge Pack連携とタグ付けを確認。 |
+| IT-REV-03 | EventBus通知 | `...::test_eventbus_publish`で`review.digest_generated`が正しいpayloadで送信されるか確認。 |
+
+- `pytest -k review_hub`と`pytest -k review_cli`をCI必須テストに追加。`make ci-lite`へ統合する際は実行時間測定を`TelemetryDigest`に記録。
+
+### 19.6 Codexプロンプト指針
+
+- Prompt Bundleに含めるもの:
+  1. `OpsReviewDigest`モデル定義（200行以内）。
+  2. `TelemetryDigest`/`ScenarioStats`サンプルJSON（各5行）。
+  3. `reports/review/templates/weekly.md`抜粋と生成例。
+  4. 関連Runbook/Knowledge Packの節番号一覧（`RUN-OPS-04`, `docs/knowledge_packs/...`）。
+- Issue本文には`Target window`、`Expected actions`、`Must-link Knowledge Pack`（ID/パス）を明記し、`ChangeLedger`との紐付け要件（自動記録/手動追記）を表形式で提示する。
+- テスト指示例:
+  - `pytest -k review_hub`
+  - `pytest -k review_cli`
+  - `tradectl review weekly --window $(date +"%G%V") --format markdown --open --dry-run`
+- レビュー観点:
+  1. `OpsReviewDigest.source_hash`が入力ファイル更新時に変化し、Runbook確認漏れを防げるか。
+  2. `ActionItem.related_change_ids`が`ChangeLedger`記録と一致しているか。
+  3. Acceptable Degradationケースが`RiskHighlight`に正しく昇格し、Knowledge Packへのリンクが切れていないか。
+
+### 19.7 運用/ガバナンス連携
+
+- `RUN-OPS-04`週次レビュー手順に「`tradectl review weekly`実行→Markdown添付→PO/運用サイン」を追加。`docs/review/playbook.md`で手順を図解し、Acceptable Degradationケースの優先順位を`impact_score`で並べ替えるルールを記載する。
+- `ChangeLedger.record_change`は`category='review'`を新設し、ダイジェスト生成時に自動記録する。これにより、どの週次レビューでどの知見が共有されたか追跡できる。
+- `TelemetryDigest`と`ScenarioRunner`は`review_window`タグを追加し、レビュー資料と生ログの突合を容易にする。`make telemetry-report`と`tradectl scenario run`は実行時に`--review-window`引数を受け取り、ダイジェスト生成時のフィルタ条件に使用する。
+- `docs/knowledge_packs/.../checklist.yaml`へ「レビュー反映済」チェックを追加し、`tradectl review degraded --export`完了後に必ず更新する。
+
+### 19.8 将来拡張
+
+- M1.1: Ops ReviewダッシュボードをTauri UIへ拡張し、`OpsReviewDigest`をWebSocket配信。CLIとGUIで同一JSONを共有する。
+- M2: KPI自動判定とアクション提案を`ActionRecommendationEngine`（拡張ポイント）で実装し、`ActionItem`に`confidence`フィールドを追加。モデル再学習時は`ChangeLedger`へ記録し、リグレッションテストを追加する。
+- Acceptable Degradationケースの再発予測を`Knowledge Pack`/`Telemetry`から計算する`RecurrenceAnalyzer`を追加し、`RiskHighlight`へ`recurrence_probability`フィールドを追加する計画。Codex実装時は`tests/integration/test_recurrence_analyzer.py`を新設する。
+
+---
+
+## 20. Codexプロンプトバンドル自動生成フレームワーク（v2.5ドラフト）
+
+### 20.1 目的と背景
+- プロンプト資材準備の所要時間を30分→10分に短縮し、Codexへのハンドオフ遅延を最小化する。
+- Acceptable DegradationやTelemetry改善など複数ソースからの抜粋を正規化し、再利用可能なテンプレートを生成する。
+- `docs/prompt_packages/`配下のファイル構成・命名規則を強制し、変更履歴を`ChangeLedger`（§17）と同期させる。
+
+### 20.2 モジュール構成
+| パス | 役割 | Codex実装ポイント |
+| --- | --- | --- |
+| `src/prompting/__init__.py` | DIエントリ。Feature Flag `prompting.automation_enabled`（既定True）。 | False時は`PromptBundleServiceStub`を返し、副作用を発生させない。 |
+| `src/prompting/models.py` | `PromptBundle`, `PromptSection`, `ArtifactReference`, `SnippetExtract`, `MetricsExcerpt`などの`pydantic`モデル。 | `schema_version = 1`。`PromptSection.kind`は`overview|existing_design|change|tests|operations|metrics|risks`のEnum。 |
+| `src/prompting/collector.py` | 差分対象ファイル・メトリクス・Runbookを解析し`PromptSection`へ変換。 | `collect_from_git(diff_range)`, `collect_design_sections(refs)`, `collect_metrics(paths)`, `collect_runbook_refs(ids)`を提供。 |
+| `src/prompting/renderer.py` | Markdownテンプレート生成。 | `render(bundle: PromptBundle) -> str`。テンプレは`docs/prompt_packages/templates/bundle.md.j2`。 |
+| `src/prompting/summarizer.py` | 変更点/メトリクス差分を要約。M1はルールベース、M2でLLM拡張余地。 | `summarize_diff(diff_stat)`, `summarize_metrics(metrics_excerpt)`。 |
+| `src/prompting/service.py` | `PromptBundleService`。CLI/CIが利用するファサード。 | `build(epic_id, story_id, diff_range, profile)`など。 |
+| `src/interfaces/cli/prompt.py` | `tradectl prompt bundle`コマンド群。 | `instrument_command`（§6.8）でテレメトリ記録。 |
+| `docs/prompt_packages/templates/bundle.md.j2` | Jinja2テンプレ。 | Section順序・表形式・Runbook表記を統一。 |
+| `tests/unit/test_prompt_bundle.py` | モデル変換/テンプレ整形テスト。 | `pytest -k prompt_bundle`必須。 |
+| `tests/integration/test_prompt_cli.py` | CLIシナリオ（差分→Markdown生成）の検証。 | `pytest -k prompt_cli`。 |
+
+- 既存テンプレ（§0.6.2）を自動生成で再現するため、`PromptBundle`には以下のセクションを含める。
+  1. `Overview`: Epic/Story、背景、関連KPI、既知リスク。
+  2. `ExistingDesign`: 本詳細設計の該当セクション抜粋（最大200行）。
+  3. `Change`: 差分ファイル/関数のI/O契約表。`@dataclass`/例外/戻り値を明示。
+  4. `Tests`: `pytest`/CLIコマンド表、許容誤差、証跡の貼付先。
+  5. `Operations`: Runbookステップ、Acceptable Degradationケースとの紐付け。
+  6. `Metrics`: `metrics/*.jsonl`抜粋、QAタグ、現状値→期待値差分。
+  7. `Risks`: Known Risks（§11）や`feedback_loop.md`からの引用。
+
+### 20.3 データモデル
+- `PromptBundle`フィールド:
+  - `id: PromptBundleId` (`f"{epic}-{story}-{date}"`形式)。
+  - `epic_id`, `story_id`, `scenario_id`（シナリオ適用時）。
+  - `sections: list[PromptSection]`。
+  - `artifacts: list[ArtifactReference]`（`path`, `hash`, `description`, `tags`）。
+  - `change_ids: list[str]` (`ChangeLedger`参照)。
+  - `qa_checks: dict[str, Literal['required','optional']]`。
+  - `generated_at`, `generated_by`, `source_commit`。
+- `PromptSection`は`kind`, `title`, `content`, `metadata`を保持。`metadata`には`design_section_refs`, `runbook_refs`, `metrics_refs`を含める。
+- `MetricsExcerpt`は`path`, `qa_tags`, `summary_stats`, `window`, `notes`。`summary_stats`は`{'p50': Decimal, 'p95': Decimal, ...}`。
+- `SnippetExtract`は`path`, `region`, `content`, `hash`。`region`は`# region`コメント名と行番号範囲を保持。
+
+### 20.4 CLI仕様 (`tradectl prompt ...`)
+| コマンド | 用途 | 主な引数/フラグ | 出力 |
+| --- | --- | --- | --- |
+| `tradectl prompt bundle create` | 差分からPrompt Bundle生成 | `--epic`, `--story`, `--scenario`, `--diff-range <commit..HEAD>`, `--profile`, `--out`, `--dry-run` | Markdownを`docs/prompt_packages/<date>_<epic>_<story>.md`へ保存。`--dry-run`は標準出力。 |
+| `tradectl prompt bundle show` | 既存バンドル表示 | `--id <bundle_id>`, `--format markdown|json` | `PromptBundle`整形出力。 |
+| `tradectl prompt bundle audit` | 必須セクション/証跡の検査 | `--id`, `--check qa|runbook|metrics|change` | 欠損項目を赤色で表示し、`exit_code!=0`でCI失敗。 |
+| `tradectl prompt snippet sync` | `docs/snippets/`生成 | `--module src/...py`, `--region ClassName` | `SnippetExtract`を更新しハッシュを記録。 |
+
+- CLIは`CommandTelemetryRecord.qa_tags`に`['prompt_bundle']`を設定。Acceptable Degradationシナリオ指定時は`['prompt_bundle','degraded']`。
+- `bundle create`は生成直後に`ChangeLedger.record_change(category='prompt', summary=...)`を呼び出し、証跡リンクを作成する。
+
+### 20.5 実装ガイド
+1. **差分解析**: `collector.collect_from_git`は`pygit2`で`A/M/D/R`を取得。削除ファイルは`PromptSection(kind='change', metadata.removed=True)`で記録。
+2. **設計抜粋**: `collector.collect_design_sections`が`detailed_design_fx_signal_tool_v1.md`から該当§番号を正規表現で抽出。将来`<section id="...">`マーカー導入を検討。
+3. **Runbook整合**: `collect_runbook_refs`は`docs/runbooks/**/*.md`を探索し、`RunbookRef(id='RUN-DATA-05#stage_eval', path=...)`を生成。`scenario_id`指定時は該当Runbook節を優先。
+4. **Metrics抜粋**: `collect_metrics`は`metrics/schema_index.json`（§18）を参照。対象メトリクスの最新N行を抽出→`summary_stats`算出→`qa_tags`付与。`degraded`タグはKnowledge Pack（§16）へリンク。
+5. **テンプレ適用**: `renderer.render`はJinja2テンプレでMarkdown生成。ヘッダに`bundle_id`/`source_commit`/`generated_at`を記載し、`---`で区切る。
+6. **CI統合**: `make prompt-bundle CHECKOUT=<commit>`をCIに追加。差分があればPRコメントへMarkdownを添付し、レビューで利用。`prompt bundle audit`失敗時はCIをREDにする。
+
+### 20.6 テスト計画
+| テストID | 目的 | 内容 |
+| --- | --- | --- |
+| UT-PRM-01 | git差分抽出の正確性 | `tests/unit/test_prompt_collector.py::test_collect_from_git_added_modified`。 |
+| UT-PRM-02 | メトリクス抜粋計算 | `tests/unit/test_prompt_collector.py::test_collect_metrics_summary`。 |
+| UT-PRM-03 | Runbook参照解決 | `tests/unit/test_prompt_collector.py::test_collect_runbook_refs`。 |
+| UT-PRM-04 | テンプレ整形 | `tests/unit/test_prompt_renderer.py::test_render_markdown`。 |
+| IT-PRM-01 | CLI生成フロー | `tests/integration/test_prompt_cli.py::test_bundle_create_and_audit`。 |
+| IT-PRM-02 | Acceptable Degradationシナリオ統合 | `tests/integration/test_prompt_cli.py::test_bundle_with_scenario`。 |
+
+- `pytest -k prompt_bundle`を`make ci-lite`へ追加。`prompt bundle audit`は`docs/prompt_packages/`更新時のプリコミットで実行。
+
+### 20.7 Codexハンドオフ指針
+- Issueテンプレートに`<Prompt Bundle>`セクションを追加し、`tradectl prompt bundle create`出力を貼付する。
+- Prompt Bundleには`ScenarioRunner`（§14）、`TelemetryDigest`（§15）、`Knowledge Pack`（§16）、`ChangeLedger`（§17）の最新抜粋を含める。
+- Codex再依頼時は`prompt bundle audit --check change`で差分摘要を確認し、未解決事項を`ActionItem`（§19）に転記する。
+
+---
+
+## 21. リサーチ・バックテスト再現性フレームワーク強化（v2.5ドラフト）
+
+### 21.1 目的
+- 戦略リサーチとM1運用の差異を最小化し、Paper/Live移行時のギャップを可視化する。
+- Codexが研究タスクを担当する際の再現性を高め、トレーダーがKPIレビューで根拠を迅速に確認できるようにする。
+- Acceptable Degradation後の検証や戦略アップデート時に、定量的なエビデンスを自動収集する。
+
+### 21.2 モジュール構成
+| パス | 役割 | Codex実装ポイント |
+| --- | --- | --- |
+| `src/research/__init__.py` | Feature Flag `research.framework_enabled`（既定True）。 | False時はスタブを返し、副作用なし。 |
+| `src/research/databank.py` | データセット管理 (`DatasetRegistry`, `DatasetHandle`, `ManifestValidator`)。 | `dataset_manifest.json`（§9.4.1）を検証。ハッシュ/欠損チェックを行い、Runbookリンクを返す。 |
+| `src/research/parameter_store.py` | 戦略パラメータバージョン管理 (`ParameterProfile`, `ParameterDiff`)。 | `strategy_manifest.yaml`と同期し、差分は`ChangeLedger`記録。 |
+| `src/research/backtest_runner.py` | Backtest/WalkForward/Stressテスト実行。 | `run_backtest`, `run_walkforward`, `run_stress`, `compare_runs`を提供。 |
+| `src/research/reporting.py` | レポート生成 (`ResearchReportBuilder`)。 | `reports/research/<strategy>/<date>.md`を生成し、`OpsReviewDigest`へリンク。 |
+| `src/research/validation.py` | `ValidationScenario`モデルと期待値判定。 | `validate(run_result, expectations)`→`ValidationOutcome`。 |
+| `src/interfaces/cli/research.py` | `tradectl research` CLI。 | `instrument_command`適用。 |
+| `tests/unit/test_research_databank.py` | データセット検証テスト。 | `pytest -k research_databank`。 |
+| `tests/integration/test_research_cli.py` | CLI一連の流れ検証。 | `pytest -k research_cli`。 |
+
+### 21.3 データモデル
+- `DatasetRegistry`:
+  - `datasets: dict[str, DatasetHandle]`。
+  - `register(dataset_id, path, hash, timeframe, tags)`。
+  - `verify(dataset_id) -> DatasetVerification`（欠損/ハッシュ不一致/最終更新日）。
+- `ParameterProfile`:
+  - `strategy_id`, `version`, `parameters: dict[str, Any]`, `created_at`, `source` (`research|ops`)、`notes`。
+  - `diff(other_profile)`→`ParameterDiff` (`changed`, `added`, `removed`)。
+- `BacktestRunResult`:
+  - `scenario_id`, `dataset_id`, `parameter_version`, `metrics`（Sharpe/PF/DD/HitRate等）、`equity_curve_path`, `trades_path`, `stress_results`, `hash`。
+- `ValidationExpectation`:
+  - `metric`, `lower_bound`, `upper_bound`, `confidence`, `notes`。
+- `ValidationOutcome`:
+  - `passed: bool`, `violations: list[Violation]`, `artifacts: list[ArtifactRef]`, `review_required: bool`。
+
+- `BacktestRunResult`と`ValidationOutcome`は`reports/research/<strategy>/<date>/`配下へJSON/Markdownで保存。`hash`は`dataset_hash + parameter_hash + code_hash + scenario_id`のSHA256。
+
+### 21.4 CLI仕様 (`tradectl research ...`)
+| コマンド | 用途 | 主な引数/フラグ | 出力 |
+| --- | --- | --- | --- |
+| `tradectl research dataset register` | データセット登録 | `--id`, `--path`, `--hash`, `--tf`, `--tags` | `DatasetRegistry`更新。検証結果を表示。 |
+| `tradectl research dataset verify` | データセット検証 | `--id`, `--strict` | 欠損/ハッシュ不一致を表形式で表示。`--strict`はCI向けExit Code。 |
+| `tradectl research parameters diff` | パラメータ差分 | `--strategy`, `--from-version`, `--to-version` | `ParameterDiff`表。Acceptable Degradation影響度も表示。 |
+| `tradectl research run backtest` | Backtest実行 | `--strategy`, `--dataset`, `--params`, `--profile`, `--out`, `--compare-to` | 主要KPIと`ValidationOutcome`サマリを表示。`--compare-to`でIS/OOS差分。 |
+| `tradectl research run stress` | ストレステスト | `--strategy`, `--scenario`, `--dataset` | Stress結果と`ValidationOutcome.review_required`を表示。 |
+| `tradectl research report` | Markdown生成 | `--strategy`, `--run-id`, `--template` | `reports/research/<strategy>/<date>.md`生成。 |
+
+- CLIは`qa_tags`に`['research']`、ストレステスト時は`['research','stress']`、Acceptable Degradation検証は`['research','degraded']`。
+- `dataset register`は成功時に`ChangeLedger.record_change(category='research', summary=...)`を自動呼び出し。
+
+### 21.5 実装ガイド
+1. **データハッシュ管理**: `DatasetRegistry`は`reports/data_manifest.json`を参照し、登録時にハッシュを照合。差異がある場合は`DatasetMismatch`例外で停止し、Runbook `RUN-DATA-05#dataset_review`を案内。
+2. **パラメータ版管理**: `ParameterProfile`は`docs/strategies/<id>/parameters/<version>.yaml`へ保存。PRでは新旧比較を`tradectl research parameters diff`で提示し、PO承認コメントを記録。`ChangeLedger`へ`category='parameter'`で登録。
+3. **再現ハッシュ**: `BacktestRunResult.hash`は`dataset_hash`, `parameter_hash`, `code_hash`, `scenario_id`から生成。`ValidationOutcome`にも同じ`hash`を保持し、Runbookでの再実行時に突合。
+4. **Validationテンプレ**: `docs/research/templates/validation_expectations.yaml`に戦略別許容幅を保持。`tradectl research run backtest`は実行前に期待値を読み込み、逸脱時は`review_required=True`でOpsレビューへ通知。
+5. **ストレステスト**: `run_stress`は`ScenarioRunner`（§14）の`ScenarioDefinition`を再利用し、`kind='stress'`ステップのみ実行。結果は`BacktestRunResult.stress_results`へ格納し、`Knowledge Pack`（§16）にリンク。
+6. **CI統合**: `make research-baseline`が主要戦略のBacktestを実行し、KPIとハッシュを`reports/research/baseline/<date>.json`へ出力。CIは差分検出時に警告するが、Acceptable Degradation中は`allow_degraded=true`フラグで閾値緩和。
+
+### 21.6 テスト計画
+| テストID | 目的 | 内容 |
+| --- | --- | --- |
+| UT-RES-01 | データセット検証 | `tests/unit/test_research_databank.py::test_verify_hash_mismatch`。 |
+| UT-RES-02 | パラメータ差分 | `tests/unit/test_research_parameter_store.py::test_diff_detects_changes`。 |
+| UT-RES-03 | Validation結果判定 | `tests/unit/test_research_validation.py::test_validation_outcome_flags_review`。 |
+| IT-RES-01 | Backtest + Validation | `tests/integration/test_research_cli.py::test_run_backtest_and_validate`。 |
+| IT-RES-02 | ストレステスト連携 | `tests/integration/test_research_cli.py::test_run_stress_links_scenario`。 |
+| IT-RES-03 | レポート生成 | `tests/integration/test_research_cli.py::test_report_generation`。 |
+
+- Acceptable Degradation発生時は`tradectl research run backtest --compare-to last_ok`で直前の正常実行と比較し、`ValidationOutcome.violations`をKnowledge Packに添付する。
+
+### 21.7 Codexハンドオフ指針
+- Prompt Bundle（§20）へ`dataset register`結果、`ParameterProfile`差分、`BacktestRunResult`サマリを添付する。
+- Codex実装タスクでは`research` CLIのスナップショットを`pytest-approvaltests`で維持し、`docs/research/templates/report.md`更新をIssueに明記する。
+- トレーダーは検証完了後に`ChangeLedger.record_change(category='research_validation')`を実行し、`OpsReviewDigest`（§19）へアクションアイテムを登録する。
+
+---
+
 ## 27. 流動性・スリッページ診断ラボ（v2.7）
 
 Paper→Live移行を見据えて、ヒューマン承認フローのまま実効スリッページと流動性リスクを定量化する分析モジュール群を追加する。M1 CoreではPaper fills/手動入力CSVを対象に実装し、M1.1でブローカーAPIに拡張してもインターフェース互換性が維持されるよう抽象化する。
@@ -3280,6 +5889,16 @@ Paper→Live移行を見据えて、ヒューマン承認フローのまま実�
 - `config/execution_model.yaml`のサンプル値ではEURUSDトレンド時の`p50=0.8`pips、`p90=1.6`pips、レンジ時の`p90=1.2`pipsが定義されている。`SlippageLabService`はこれらを基準に、`bias_threshold=0.5`pips（トレンド`p90-p50`の62.5%）で`SlippageBiasDetected`を`warn`、`>=0.8`pipsで`critical`とし、`stop_threshold=1.2`pips（レンジ上限）超で`strategy.watchlist`を発火させる。【F:basic_design_fx_signal_tool_v1.md†L448-L466】
 - `drift_score`はRolling30サンプルのzスコアを使用し、`>=2.0`で`warn`、`>=3.0`で`critical`に分類する。これにより、通常の標準偏差内（約95%信頼区間）を逸脱したケースのみが緊急オーケストレータ（§28）へ伝搬する。
 
+
+### 27.8 実装状況メモ（2025-03-13）
+
+| 区分 | 対象 | 実装状況 | 依頼元Runbook | 証跡ファイル |
+| --- | --- | --- | --- | --- |
+| テスト | UT/IT/PT-SLP-01〜04, OPS-DEG-01 | 未実装（M1.1+） | RUN-SPREAD-03 | `docs/change_requests/CR-20250313-test_cli_gap.md`（§27） |
+| CLI | `tradectl liquidity ...`/`tradectl account import`コマンド群 | 未実装（M1.1+） | RUN-SPREAD-03 | 同上 |
+
+- CI反映メモ: `make ci-lite`に`pytest -k "slippage or liquidity"`と`tradectl liquidity analyze --window 7d --format markdown`を追加予定。
+- 詳細は`docs/change_requests/CR-20250313-test_cli_gap.md`参照。
 ## 28. 緊急対応オーケストレータ（v2.7）
 
 ### 28.1 目的
@@ -3372,6 +5991,16 @@ src/emergency/
 - 直近のデータ遅延ケースでは検知から初動（Manual CSV投入）まで12分、Guard解除まで25分を要した。Emergency Orchestratorはこの実績と設計ゴール（24分以内の初動着手、60分以内の暫定復旧）を組み合わせ、`IncidentLedger`で`MTTA_warn>=15分`、`MTTA_fail>=24分`、`MTTR_warn>=30分`、`MTTR_fail>=60分`を評価する。【F:docs/templates/degradation_report.md†L24-L36】【F:detailed_design_fx_signal_tool_v1.md†L3262-L3265】
 - `IncidentLedger`サマリはDelivery Control TowerおよびRelease Readinessへ共有され、`MTTR_warn`超過で`DeliveryAlert.kind='guard_release_delay'`へ`severity='major'`を付与、`MTTR_fail`超過で`severity='critical'`とする。
 
+
+### 28.8 実装状況メモ（2025-03-13）
+
+| 区分 | 対象 | 実装状況 | 依頼元Runbook | 証跡ファイル |
+| --- | --- | --- | --- | --- |
+| テスト | UT/IT/PT-EMG-01〜03 | 未実装（M1.1+） | RUN-OPS-02 | `docs/change_requests/CR-20250313-test_cli_gap.md`（§28） |
+| CLI | `tradectl emergency ...`/`tradectl broker report`コマンド群 | 未実装（M1.1+） | RUN-OPS-02 | 同上 |
+
+- CI反映メモ: `pytest -k "emergency"`と`tradectl emergency simulate EMG-DATA-01 --with-scenario-runner`を`make ci-lite`に組み込む計画。
+- ギャップ詳細は`docs/change_requests/CR-20250313-test_cli_gap.md`参照。
 ## 29. 運用健全性ダッシュボード（v2.7）
 
 ### 29.1 目的
@@ -3467,6 +6096,16 @@ src/ops_dashboard/
 - `kpi_summary`ウィジェットは`Sharpe_recent`を`0.85`/`0.80`で3段階表示し、`Release Readiness`のKPIゲート（§30.4）と同じ判定を返却する。
 
 
+
+### 29.8 実装状況メモ（2025-03-13）
+
+| 区分 | 対象 | 実装状況 | 依頼元Runbook | 証跡ファイル |
+| --- | --- | --- | --- | --- |
+| テスト | UT/IT/PT-DASH-01〜03, OPS-BENCH-01 | 未実装（M1.1+） | RUN-OPS-02 | `docs/change_requests/CR-20250313-test_cli_gap.md`（§29） |
+| CLI | `tradectl ops dashboard`系コマンド | 未実装（M1.1+） | RUN-OPS-02 | 同上 |
+
+- CI反映メモ: `pytest -k "ops_dashboard"`と`tradectl ops dashboard --format markdown`を`make ci-lite`で実行予定。
+- 詳細は`docs/change_requests/CR-20250313-test_cli_gap.md`参照。
 ## 30. Release Readinessスコアカード＆ゲートキーパー（v2.7追加）
 
 トレーダー/PO/運用がリリース判定（Backtest→Paper→Live、Hotfix、Feature Flag切替）を迅速かつ再現性高く実行できるよう、QAスコアカード（§0.10）、Delivery Control Tower（§25）、AD復旧ツールキット（§24）、Feedback循環エンジン（§26）を統合した「Release Readinessスコアカード」を設計する。Codexが実装する際にI/O契約が明確になるよう、モジュール境界とテスト観点を定義する。
@@ -3582,6 +6221,16 @@ src/ops_dashboard/
 - レビュー時は`git diff --stat`で変更が`src/release/`, `interfaces/cli/release.py`, `tests/`, `docs/`に収まっているか確認。`config/release/`やRunbook差分がある場合は`ChangeLedger`記録を必須とする。
 - `ReleaseDecision`が`hold`または`no_go`の場合、`tradectl release blockers --export`のMarkdownを`docs/runbooks/RUN-REL-01.md`へ貼り付け、改善タスクをチケット化する。
 
+
+### 30.8 実装状況メモ（2025-03-13）
+
+| 区分 | 対象 | 実装状況 | 依頼元Runbook | 証跡ファイル |
+| --- | --- | --- | --- | --- |
+| テスト | UT/IT-REL-01〜04 | 未実装（M1.1+） | RUN-OPS-02 | `docs/change_requests/CR-20250313-test_cli_gap.md`（§30） |
+| CLI | `tradectl release ...`コマンド群 | 未実装（M1.1+） | RUN-OPS-02 | 同上 |
+
+- CI反映メモ: `pytest -k release_readiness`と`tradectl release readiness --dry-run`を`make ci-lite`へ連携予定。
+- ギャップ詳細は`docs/change_requests/CR-20250313-test_cli_gap.md`参照。
 ## 87. EP-01〜EP-04強化ブロック整合ハブ（v2.7追加）
 
 M1 Coreの優先エピック（EP-01〜EP-04）を段階的にハードニングするため、Runbook／CLI仕様／証跡導線を再確認し、Codex依頼時に欠損が出ないよう統合テーブルを設ける。本節は`basic_design_fx_signal_tool_v1.md §12.1`およびPacketバックログ（`docs/change_requests/20250318_packet_backlog.md`）と同一ID体系を共有し、Runbook更新や証跡配置の差異が即座に検出できるようにする。
@@ -3598,6 +6247,14 @@ M1 Coreの優先エピック（EP-01〜EP-04）を段階的にハードニング
 - 各ブロックのCLIコマンドは`§6`のインターフェース表とRunbook手順に一致することをQAレビューで確認し、バージョン差異がある場合はRunbook改訂と同時に本節のテーブルを更新する。
 - テストコマンドは`pytest` deselect ログ（`docs/change_requests/20250318_packet_backlog.md §4.2〜§4.5`）と突合し、実装後にGREENへ移行したら本表の備考列を更新し、`reports/validation_log/`配下に成功ログをリンクする。
 
+
+### 87.4 実装状況メモ（2025-03-13）
+
+| 区分 | 対象 | 実装状況 | 依頼元Runbook | 証跡ファイル |
+| --- | --- | --- | --- | --- |
+| CLI | `tradectl`ボード/リスク関連コマンド、`pytest`ターゲット | 未実装（M1.1+） | CHK-0.6.9 | `docs/change_requests/CR-20250313-test_cli_gap.md`（§87） |
+
+- CI反映メモ: `make sla-report`と主要`pytest -k`ターゲットを`make ci-lite`へ連携する。
 ## 88. EP-01 DataLag Mitigation強化ブロック
 
 ### 88.1 運用境界と依存モジュール
@@ -3618,6 +6275,15 @@ M1 Coreの優先エピック（EP-01〜EP-04）を段階的にハードニング
 - CLI/手動演習: `SCN-ING-01`（§5.3）および`OPS-DEG-01`（付録H）をRunbookに紐付け、`tradectl data failover --mode manual`→`tradectl data manual-template`→`tradectl data jobs enqueue`の一連ログを`reports/validation_log/AC-45_sla_<date>.md`へ貼り付ける。
 - 証跡チェックリスト: `metrics/data_ingestion_sla.jsonl`最新ハッシュ、`data/manual_fallback/`投入CSVのSHA256、`logs/audit/manual_csv.log`（生成予定）を照合し、Evidence Graph（§23）へ`node.type='data_episode'`として登録する。
 
+
+### 88.4 実装状況メモ（2025-03-13）
+
+| 区分 | 対象 | 実装状況 | 依頼元Runbook | 証跡ファイル |
+| --- | --- | --- | --- | --- |
+| テスト | IT-RL-01, OPS-DEG-01, SCN-ING-01 | 未実装（M1.1+） | RUN-DATA-05 | `docs/change_requests/CR-20250313-test_cli_gap.md`（§88） |
+| CLI | `tradectl data ...`コマンド群 | 未実装（M1.1+） | RUN-DATA-05 | 同上 |
+
+- CI反映メモ: `pytest -k data_pipeline`/`rate_limit_guard`を`make ci-lite`へ追加予定。
 ## 89. EP-02 Strategy Determinism強化ブロック
 
 ### 89.1 運用境界と依存モジュール
@@ -3638,6 +6304,14 @@ M1 Coreの優先エピック（EP-01〜EP-04）を段階的にハードニング
 - Backtest再現性: `tradectl backtest run --seed 123`→`tradectl backtest run --seed 123`で一致する`StrategyReplay`ハッシュを`metrics/strategy_replay.jsonl`へ書き込み、`reports/validation_log/AC-07_<date>.md`に貼り付ける。
 - Evidence連携: `docs/prompt_packages/20250318_packet_backlog.md#3-...`にRunbook参照とテストログを追加し、Evidence Graph（§23）で`strategy_manifest`バージョン差分と紐付ける。
 
+
+### 89.3 実装状況メモ（2025-03-13）
+
+| 区分 | 対象 | 実装状況 | 依頼元Runbook | 証跡ファイル |
+| --- | --- | --- | --- | --- |
+| CLI | `tradectl backtest`/`report`コマンド群、`make data-build` | 未実装（M1.1+） | RUN-OPS-02 | `docs/change_requests/CR-20250313-test_cli_gap.md`（§89） |
+
+- CI反映メモ: `pytest -k strategy_determinism`を`make ci-lite`に追加予定。
 ## 90. EP-03 Guardrails強化ブロック
 
 ### 90.1 運用境界と依存モジュール
@@ -3658,6 +6332,15 @@ M1 Coreの優先エピック（EP-01〜EP-04）を段階的にハードニング
 - シナリオ演習: `RISK-KS-05`（付録H）および`SCN-SPR-02`（§5.3）を`tradectl kill-switch engage`→`tradectl board --guarded`→`tradectl kill-switch release`の順で再現し、`logs/audit/kill_switch.jsonl`とRunbookダブルサインを突合する。
 - Evidence整備: `reports/validation_log/AC-03_<date>.md`と`AC-09_<date>.md`には`Kill Switch`発火ログ、`R_eff`逸脱の統計、復旧会議議事録のリンクを添付し、Ops Review Hub（§19）で自動集約する。
 
+
+### 90.6 実装状況メモ（2025-03-13）
+
+| 区分 | 対象 | 実装状況 | 依頼元Runbook | 証跡ファイル |
+| --- | --- | --- | --- | --- |
+| テスト | RISK-KS-05, SCN-SPR-02 | 未実装（M1.1+） | RUN-RISK-01 | `docs/change_requests/CR-20250313-test_cli_gap.md`（§90） |
+| CLI | `tradectl risk ...`/`tradectl kill-switch ...`コマンド群 | 未実装（M1.1+） | RUN-RISK-01 | 同上 |
+
+- CI反映メモ: `pytest -k risk_manager`/`health_state`を`make ci-lite`に組み込む。
 ## 91. EP-04 Ticket Clarity強化ブロック
 
 ### 91.1 運用境界と依存モジュール
@@ -3678,6 +6361,14 @@ M1 Coreの優先エピック（EP-01〜EP-04）を段階的にハードニング
 - CLIスナップショット: `tradectl board --filter symbol=USDJPY`の出力を`docs/prompt_packages/20250318_packet_backlog.md#5-...`へ貼付し、Boardバナー/チェックリスト表示をRunbook`RUN-HITL-01`に整合させる。
 - Evidence整備: `reports/validation_log/AC-02_<date>.md`/`AC-10_<date>.md`/`AC-11_<date>.md`へ承認ログとスクリーンショット参照（将来は`artifacts://`リンク）を追記し、Ops Review Hub（§19）とRelease Readiness（§30）で再利用する。
 
+
+### 91.4 実装状況メモ（2025-03-13）
+
+| 区分 | 対象 | 実装状況 | 依頼元Runbook | 証跡ファイル |
+| --- | --- | --- | --- | --- |
+| CLI | `tradectl ticket ...`/`tradectl board --filter ...` | 未実装（M1.1+） | RUN-HITL-01 | `docs/change_requests/CR-20250313-test_cli_gap.md`（§91） |
+
+- CI反映メモ: `pytest -k ticket_builder`/`board_renderer`のスナップショットを`make ci-lite`へ追加予定。
 ## 92. 証跡・Runbookトレーサビリティ統合（EP-01〜EP-04）
 
 - エピック横断の証跡状況は`reports/validation_log/`配下のAC-02/03/07/09/10/11/45ファイルと`CHK-0.6.9-run.md`を基準に、Evidence Graph（§23）で`evidence_tags=['ep01','ep02','ep03','ep04']`を付与して集約する。
@@ -3687,3 +6378,11 @@ M1 Coreの優先エピック（EP-01〜EP-04）を段階的にハードニング
 - CI/CLIログの整合: `docs/change_requests/20250318_packet_backlog.md §4`のpytestログと、将来的に追加されるCLIログ（`scripts/qa/manual_csv_smoke.sh`等）のハッシュを`reports/ci/`へ保存し、Runbookエビデンス欄とリンクする。欠落時はOps Review Hub（§19）の`DeliveryAlert`で可視化する。
 - Release Readiness（§30）との連携: `ReleaseReadinessSnapshot`生成時に、本節のテーブルからエピック別`required_evidence`を参照し、欠損がある場合はGate判定`warn`または`no_go`へ自動反映する。Codex PRでは`Summary`に対象エピックとRunbook IDを明記し、レビュワーがRunbook整合を即座に検証できるようにする。
 
+
+### 92.3 実装状況メモ（2025-03-13）
+
+| 区分 | 対象 | 実装状況 | 依頼元Runbook | 証跡ファイル |
+| --- | --- | --- | --- | --- |
+| CLI | CLIログ整備方針（記載のみ、コマンド未定義） | 未実装（M1.1+） | RUN-OPS-02 | `docs/change_requests/CR-20250313-test_cli_gap.md`（§92） |
+
+- 備考: CLIログ仕様は未確定のため、Runbook整備時に具体コマンドを定義する。
