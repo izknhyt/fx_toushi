@@ -2346,22 +2346,6 @@ SpreadCooldown: cooldown (ETA 12:15) | Snapshot hash: a1c3...
 - `AlertDispatcher`は重大度ごとに件名 `[tradectl][<SEVERITY>] <reason>` を付与する。Slack/Webhook有効時は同じpayloadを送信。
 - Runbook参照欄は対応手順を示し、アフターアクションレビューで更新する。
 
-### 付録D: エラーコードと通知マッピング
-| エラーコード | 重大度 | 発火元 | 通知チャネル | Runbook参照 |
-| --- | --- | --- | --- | --- |
-| ERROR-C01 (データ欠損) | WARN/MAJOR | DataQualityGuard | CLI + メール(WARN) | Runbook §2.1 |
-| ERROR-C02 (指標計算失敗) | CRITICAL | FeaturePipeline | CLI + メール(CRITICAL) | Runbook §2.2 |
-| ERROR-C03 (Config検証NG) | WARN | ConfigRegistry | CLI | Runbook §3.1 |
-| ERROR-C04 (監査ログ書込失敗) | CRITICAL | AuditWriter | CLI + メール(CRITICAL) | Runbook §4.3 |
-| ERROR-C05 (Spread欠損) | WARN | SpreadMonitor | CLI + メール(WARN) | Runbook §2.3 |
-| ERROR-C06 (Funding未更新) | WARN | FundingService | CLI | Runbook §2.4 |
-| ERROR-C07 (Heartbeat停止) | MAJOR | HealthMonitor | CLI + メール(MAJOR) | Runbook §5.1 |
-| ERROR-C08 (Snapshot破損) | CRITICAL | SnapshotManager | CLI + メール(CRITICAL) | Runbook §4.1 |
-| ERROR-C09 (Account CSV不整合) | MAJOR | AccountService | CLI + メール(MAJOR) | Runbook §3.2 |
-| ERROR-C10 (Scheduler遅延) | WARN | Scheduler | CLI | Runbook §2.3 |
-
-- `AlertDispatcher`は重大度ごとに件名 `[tradectl][<SEVERITY>] <reason>` を付与する。Slack/Webhook有効時は同じpayloadを送信。
-- Runbook参照欄は対応手順を示し、アフターアクションレビューで更新する。
 
 ### 付録E: ログ/メトリクスタグ規約
 | タグ | 対象ログ | 意味 | 例 |
@@ -3546,40 +3530,6 @@ SpreadCooldown: cooldown (ETA 12:15) | Snapshot hash: a1c3...
 ```
 - エラー時ログは`logs/ops/cli.log`に二重化し、Runbookのトラブルシュート手順と連携する。
 
-
-### 付録D: エラーコードと通知マッピング
-| エラーコード | 重大度 | 発火元 | 通知チャネル | Runbook参照 |
-| --- | --- | --- | --- | --- |
-| ERROR-C01 (データ欠損) | WARN/MAJOR | DataQualityGuard | CLI + メール(WARN) | Runbook §2.1 |
-| ERROR-C02 (指標計算失敗) | CRITICAL | FeaturePipeline | CLI + メール(CRITICAL) | Runbook §2.2 |
-| ERROR-C03 (Config検証NG) | WARN | ConfigRegistry | CLI | Runbook §3.1 |
-| ERROR-C04 (監査ログ書込失敗) | CRITICAL | AuditWriter | CLI + メール(CRITICAL) | Runbook §4.3 |
-| ERROR-C05 (Spread欠損) | WARN | SpreadMonitor | CLI + メール(WARN) | Runbook §2.3 |
-| ERROR-C06 (Funding未更新) | WARN | FundingService | CLI | Runbook §2.4 |
-| ERROR-C07 (Heartbeat停止) | MAJOR | HealthMonitor | CLI + メール(MAJOR) | Runbook §5.1 |
-| ERROR-C08 (Snapshot破損) | CRITICAL | SnapshotManager | CLI + メール(CRITICAL) | Runbook §4.1 |
-| ERROR-C09 (Account CSV不整合) | MAJOR | AccountService | CLI + メール(MAJOR) | Runbook §3.2 |
-| ERROR-C10 (Scheduler遅延) | WARN | Scheduler | CLI | Runbook §2.3 |
-
-- `AlertDispatcher`は重大度ごとに件名 `[tradectl][<SEVERITY>] <reason>` を付与する。Slack/Webhook有効時は同じpayloadを送信。
-- Runbook参照欄は対応手順を示し、アフターアクションレビューで更新する。
-
-### 付録D: エラーコードと通知マッピング
-| エラーコード | 重大度 | 発火元 | 通知チャネル | Runbook参照 |
-| --- | --- | --- | --- | --- |
-| ERROR-C01 (データ欠損) | WARN/MAJOR | DataQualityGuard | CLI + メール(WARN) | Runbook §2.1 |
-| ERROR-C02 (指標計算失敗) | CRITICAL | FeaturePipeline | CLI + メール(CRITICAL) | Runbook §2.2 |
-| ERROR-C03 (Config検証NG) | WARN | ConfigRegistry | CLI | Runbook §3.1 |
-| ERROR-C04 (監査ログ書込失敗) | CRITICAL | AuditWriter | CLI + メール(CRITICAL) | Runbook §4.3 |
-| ERROR-C05 (Spread欠損) | WARN | SpreadMonitor | CLI + メール(WARN) | Runbook §2.3 |
-| ERROR-C06 (Funding未更新) | WARN | FundingService | CLI | Runbook §2.4 |
-| ERROR-C07 (Heartbeat停止) | MAJOR | HealthMonitor | CLI + メール(MAJOR) | Runbook §5.1 |
-| ERROR-C08 (Snapshot破損) | CRITICAL | SnapshotManager | CLI + メール(CRITICAL) | Runbook §4.1 |
-| ERROR-C09 (Account CSV不整合) | MAJOR | AccountService | CLI + メール(MAJOR) | Runbook §3.2 |
-| ERROR-C10 (Scheduler遅延) | WARN | Scheduler | CLI | Runbook §2.3 |
-
-- `AlertDispatcher`は重大度ごとに件名 `[tradectl][<SEVERITY>] <reason>` を付与する。Slack/Webhook有効時は同じpayloadを送信。
-- Runbook参照欄は対応手順を示し、アフターアクションレビューで更新する。
 
 ### 付録E: ログ/メトリクスタグ規約
 | タグ | 対象ログ | 意味 | 例 |
@@ -4895,23 +4845,6 @@ SpreadCooldown: cooldown (ETA 12:15) | Snapshot hash: a1c3...
 ```
 - エラー時ログは`logs/ops/cli.log`に二重化し、Runbookのトラブルシュート手順と連携する。
 
-
-### 付録D: エラーコードと通知マッピング
-| エラーコード | 重大度 | 発火元 | 通知チャネル | Runbook参照 |
-| --- | --- | --- | --- | --- |
-| ERROR-C01 (データ欠損) | WARN/MAJOR | DataQualityGuard | CLI + メール(WARN) | Runbook §2.1 |
-| ERROR-C02 (指標計算失敗) | CRITICAL | FeaturePipeline | CLI + メール(CRITICAL) | Runbook §2.2 |
-| ERROR-C03 (Config検証NG) | WARN | ConfigRegistry | CLI | Runbook §3.1 |
-| ERROR-C04 (監査ログ書込失敗) | CRITICAL | AuditWriter | CLI + メール(CRITICAL) | Runbook §4.3 |
-| ERROR-C05 (Spread欠損) | WARN | SpreadMonitor | CLI + メール(WARN) | Runbook §2.3 |
-| ERROR-C06 (Funding未更新) | WARN | FundingService | CLI | Runbook §2.4 |
-| ERROR-C07 (Heartbeat停止) | MAJOR | HealthMonitor | CLI + メール(MAJOR) | Runbook §5.1 |
-| ERROR-C08 (Snapshot破損) | CRITICAL | SnapshotManager | CLI + メール(CRITICAL) | Runbook §4.1 |
-| ERROR-C09 (Account CSV不整合) | MAJOR | AccountService | CLI + メール(MAJOR) | Runbook §3.2 |
-| ERROR-C10 (Scheduler遅延) | WARN | Scheduler | CLI | Runbook §2.3 |
-
-- `AlertDispatcher`は重大度ごとに件名 `[tradectl][<SEVERITY>] <reason>` を付与する。Slack/Webhook有効時は同じpayloadを送信。
-- Runbook参照欄は対応手順を示し、アフターアクションレビューで更新する。
 
 ### 付録D: エラーコードと通知マッピング
 | エラーコード | 重大度 | 発火元 | 通知チャネル | Runbook参照 |
