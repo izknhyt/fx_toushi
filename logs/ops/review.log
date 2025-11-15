@@ -7,4 +7,5 @@
 # 補足:
 # - 追記は新しいものをファイル末尾に追加し、時系列（昇順）で管理する。
 # - Change Ledger ID や Runbook ステップを参照する場合は、サマリ内に`CL-XXXX`や`RUN-XXXX#step`の形式で記載する。
+# - `docs/review_log.md`に登録した行と同じチェックID/Change Ledger IDを必ず含め、両ログの突合に利用する。
 # - 重大度（critical/major/warnなど）は必要に応じてサマリ末尾に付記する。
