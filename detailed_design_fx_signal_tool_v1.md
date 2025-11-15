@@ -2284,7 +2284,7 @@ Signal Board/チケット承認フローで収集したヒューマンフィー�
 - CLI滞在時間の分布は`decision_delay_triangular=[30,45,75]`秒を基準にし、`avg_time_to_decision`が90秒を超えるとペナルティを加算する。`p90≤120s`がAcceptable Degradation演習での上限値のため、`PrioritizedFeedback.priority_score`は`avg_time_to_decision>=90`で`warn`、`>=120`で`fail`を付与し、Delivery Control Towerの`kpi_regression`と連動させる。【F:detailed_design_fx_signal_tool_v1.md†L1645-L1659】【F:detailed_design_fx_signal_tool_v1.md†L2192-L2194】
 - `reject_rate`はBacktest/Paper検証の`HitRate=48〜55%`（Reject率45〜52%）をベースラインとし、`reject_rate>0.52`で`warn`、`>0.55`で`fail`扱いにする。`priority_score`は該当閾値で+20/+40を加点し、Release Readinessの`Feedback`ゲートに同一ステータスを伝搬する。【F:detailed_design_fx_signal_tool_v1.md†L1655-L1659】
 
-### 26.8 Acceptable Degradation/トレーダー連携
+### 26.9 Acceptable Degradation/トレーダー連携
 - Guarded状態でRejectが急増した場合、`feedback summarize`が`severity='high'`の項目をハイライト。Delivery Control Towerが`alerts`を発火し、Opsレビューで即時対応を検討。
 - トレーダーは日次のBoardレビュー後に`tradectl feedback export --include-degradation`を実行し、復旧計画（§24）と照合。改善策がPrompt Bundleへ反映されているか確認。
 - スナップショットは`reports/feedback/<YYYYWW>.md`に保存し、Ops Review Hubが週次ダッシュボードに統合。改善効果は`manual_hours_saved`指標で評価し、6週間継続して改善が見られない場合は追加タスクを起票する。
@@ -3502,7 +3502,7 @@ Signal Board/チケット承認フローで収集したヒューマンフィー�
 - CLI滞在時間の分布は`decision_delay_triangular=[30,45,75]`秒を基準にし、`avg_time_to_decision`が90秒を超えるとペナルティを加算する。`p90≤120s`がAcceptable Degradation演習での上限値のため、`PrioritizedFeedback.priority_score`は`avg_time_to_decision>=90`で`warn`、`>=120`で`fail`を付与し、Delivery Control Towerの`kpi_regression`と連動させる。【F:detailed_design_fx_signal_tool_v1.md†L1645-L1659】【F:detailed_design_fx_signal_tool_v1.md†L2192-L2194】
 - `reject_rate`はBacktest/Paper検証の`HitRate=48〜55%`（Reject率45〜52%）をベースラインとし、`reject_rate>0.52`で`warn`、`>0.55`で`fail`扱いにする。`priority_score`は該当閾値で+20/+40を加点し、Release Readinessの`Feedback`ゲートに同一ステータスを伝搬する。【F:detailed_design_fx_signal_tool_v1.md†L1655-L1659】
 
-### 26.8 Acceptable Degradation/トレーダー連携
+### 26.9 Acceptable Degradation/トレーダー連携
 - Guarded状態でRejectが急増した場合、`feedback summarize`が`severity='high'`の項目をハイライト。Delivery Control Towerが`alerts`を発火し、Opsレビューで即時対応を検討。
 - トレーダーは日次のBoardレビュー後に`tradectl feedback export --include-degradation`を実行し、復旧計画（§24）と照合。改善策がPrompt Bundleへ反映されているか確認。
 - スナップショットは`reports/feedback/<YYYYWW>.md`に保存し、Ops Review Hubが週次ダッシュボードに統合。改善効果は`manual_hours_saved`指標で評価し、6週間継続して改善が見られない場合は追加タスクを起票する。
@@ -4841,7 +4841,7 @@ Signal Board/チケット承認フローで収集したヒューマンフィー�
 - CLI滞在時間の分布は`decision_delay_triangular=[30,45,75]`秒を基準にし、`avg_time_to_decision`が90秒を超えるとペナルティを加算する。`p90≤120s`がAcceptable Degradation演習での上限値のため、`PrioritizedFeedback.priority_score`は`avg_time_to_decision>=90`で`warn`、`>=120`で`fail`を付与し、Delivery Control Towerの`kpi_regression`と連動させる。【F:detailed_design_fx_signal_tool_v1.md†L1645-L1659】【F:detailed_design_fx_signal_tool_v1.md†L2192-L2194】
 - `reject_rate`はBacktest/Paper検証の`HitRate=48〜55%`（Reject率45〜52%）をベースラインとし、`reject_rate>0.52`で`warn`、`>0.55`で`fail`扱いにする。`priority_score`は該当閾値で+20/+40を加点し、Release Readinessの`Feedback`ゲートに同一ステータスを伝搬する。【F:detailed_design_fx_signal_tool_v1.md†L1655-L1659】
 
-### 26.8 Acceptable Degradation/トレーダー連携
+### 26.9 Acceptable Degradation/トレーダー連携
 - Guarded状態でRejectが急増した場合、`feedback summarize`が`severity='high'`の項目をハイライト。Delivery Control Towerが`alerts`を発火し、Opsレビューで即時対応を検討。
 - トレーダーは日次のBoardレビュー後に`tradectl feedback export --include-degradation`を実行し、復旧計画（§24）と照合。改善策がPrompt Bundleへ反映されているか確認。
 - スナップショットは`reports/feedback/<YYYYWW>.md`に保存し、Ops Review Hubが週次ダッシュボードに統合。改善効果は`manual_hours_saved`指標で評価し、6週間継続して改善が見られない場合は追加タスクを起票する。
@@ -4851,7 +4851,7 @@ Signal Board/チケット承認フローで収集したヒューマンフィー�
 本詳細設計は要件定義・基本設計に基づき、M1リリースの実装に必要なインターフェース・データモデル・フロー・テスト計画を整備した。拡張機能はFeature Flagとガバナンス手順を通じて安全に段階導入できるよう設計している。
 
 
-### 26.8 実装状況メモ（2025-03-13）
+### 26.10 実装状況メモ（2025-03-13）
 
 | 区分 | 対象 | 実装状況 | 依頼元Runbook | 証跡ファイル |
 | --- | --- | --- | --- | --- |
