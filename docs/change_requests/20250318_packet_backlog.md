@@ -80,3 +80,4 @@ $ pytest -k reporter
 1. Packet所有者は本棚卸しテーブルを起点に、該当Packetの`docs/prompt_packages/20250318_packet_backlog.md`テンプレートへ追記を行う。
 2. 未整備テストについては対象モジュールの実装計画に合わせてテストケースを補完し、ログがdeselect状態から脱却した時点で本ドキュメントのログを更新する。
 3. CLIベースの手動テスト（例: `scripts/qa/manual_csv_smoke.sh`）が整備され次第、§4へコマンドログを追記し§2・§3のステータスを更新する。
+4. 詳細設計書の§9および§22〜§26の重複ブロックは`CR-20250320-SECTION-COMMON-SPEC`で共通仕様へ統合予定。差分吸収後は本バックログから該当セクション差分メモを削除する。【F:docs/change_requests/CR-20250320-section_common_spec.md†L1-L108】
