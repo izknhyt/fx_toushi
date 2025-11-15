@@ -270,7 +270,7 @@ M1整備対象は即時着手候補として`未実装 (M1整備予定)`で明�
 
 ## §25 Delivery Control Tower
 
-* 依頼元Runbook既定: RUN-OPS-02
+* 依頼元Runbook既定: [RUN-OPS-05](docs/runbooks/RUN-OPS-05.md)
 
 
 ### テストID
@@ -580,7 +580,7 @@ M1整備対象は即時着手候補として`未実装 (M1整備予定)`で明�
 
 ## §30 Release Readiness
 
-* 依頼元Runbook既定: RUN-OPS-02
+* 依頼元Runbook既定: [RUN-REL-01](docs/runbooks/RUN-REL-01.md) / [docs/release_checklist.md](docs/release_checklist.md)
 
 
 ### テストID
