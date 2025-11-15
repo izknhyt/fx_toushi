@@ -1,11 +1,12 @@
 # Ops Review Log Format
 # 重要なレビュー観点を抜粋して追記する際は、以下のフォーマットを使用する。
 #
-# [YYYY-MM-DD HH:MM] 担当: <Ops担当者名> | サマリ: <一次対応またはフォローアップ要約>
-# 例: [2025-03-15 09:30] 担当: Sato | サマリ: Runbook RUN-DATA-05 の手順3を自動化タスクに起票（CL-20250315-0003）
+# [YYYY-MM-DD HH:MM] 担当: <Ops担当者名> | サマリ: <一次対応またはフォローアップ要約> | チェックID: <CHK-...>
+# 例: [2025-03-15 09:30] 担当: Sato | サマリ: Runbook RUN-DATA-05 の手順3を自動化タスクに起票（CL-20250315-0003） | チェックID: CHK-20250315-01
 #
 # 補足:
 # - 追記は新しいものをファイル末尾に追加し、時系列（昇順）で管理する。
 # - Change Ledger ID や Runbook ステップを参照する場合は、サマリ内に`CL-XXXX`や`RUN-XXXX#step`の形式で記載する。
 # - `docs/review_log.md`に登録した行と同じチェックID/Change Ledger IDを必ず含め、両ログの突合に利用する。
 # - 重大度（critical/major/warnなど）は必要に応じてサマリ末尾に付記する。
+# - 週次のOpsレビュー（Runbook RUN-OPS-05#review-sum）では、当ログと`docs/review_log.md`の差分を突合し、対応ステータスを更新する。

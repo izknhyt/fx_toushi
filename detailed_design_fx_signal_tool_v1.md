@@ -123,9 +123,9 @@
 - ヒット率、平均RR、週次ドローダウンなどのKPIは`reports/kpi/dashboard.md`に集約し、Codexが手を入れる際には関連KPIの期待変化を記述する。
 - Acceptable Degradation状態での運用負荷を軽減するため、開発チケットには「オペレータが何分短縮されるか」「どのRunbookステップが省略/自動化されるか」を必ず盛り込み、実装後に`logs/ops/workload.log`で効果を定量化する。
 - トレーダー視点でのUX課題（例: チケット承認時にSpread理由が不明瞭）は`docs/ux_feedback.md`で管理し、Codex改善タスクには該当行を参照させる。
-- `docs/review_log.md`にはチェックID・レビュー日・指摘概要・Runbook参照・Change Ledger IDを表形式で記録し、最新行を最上段へ配置する。
+- `docs/review_log.md`にはチェックID・レビュー日・指摘概要・Runbook参照・Change Ledger IDを表形式で記録し、テンプレ行をコピーして最新レビューを常に最上段へ配置する。指摘概要には添付証跡の場所とフォローアップ期限を明記する。
 - レビュー記録は`docs/review_log.md`のテンプレートに従って追記し、Runbook [RUN-OPS-05](docs/runbooks/RUN-OPS-05.md)の「レビューサマリ集約」ステップでOpsリードが承認する。Change Ledger未起票の場合は`pending`と明示し、承認後24時間以内に更新する。
-- 重大指摘は即時に`logs/ops/review.log`へタイムスタンプ付きで抜粋し、`docs/review_log.md`の該当行と同一のIDを明記して次回日次レビューでフォローアップする。
+- 重大指摘は即時に`logs/ops/review.log`へ`[YYYY-MM-DD HH:MM] 担当: <name> | サマリ: ... | チェックID: <CHK-...>`形式で抜粋し、`docs/review_log.md`の該当行と同一のIDを明記して次回日次レビューでフォローアップする。
 
 #### 0.6.6 Codexフィードバックループ
 1. Codex出力をレビュー後、`docs/prompt_packages/<date>_<feature>.md`に「良かった点」「改善要望」「想定外差分」を追記し、次回プロンプトの改善に反映する。
@@ -2146,8 +2146,8 @@ Codexへ委譲した開発タスクの進行状況・品質指標・運用影響
 - `scope_paths`は設計書内の参照（例: `§3.1`, `src/data/service.py`）を持つ。Acceptable Degradation復旧タスクは`degradation_case_id`を追加。
 - `change_ids`はChangeLedgerの記録IDリスト。差分追跡と監査ログ連携に利用。
 - `docs/review_log.md`はチェックID、レビュー日、指摘概要、Runbook参照、Change Ledger IDを格納する表テンプレートで、最新エントリを最上段に保持する。
-- `logs/ops/review.log`は`[YYYY-MM-DD HH:MM] 担当: <name> | サマリ: <概要>`形式で重大レビューを抜粋し、`docs/review_log.md`と同じIDで突合できるようにする。
-- `QualitySignal.notes`には`docs/review_log.md`の該当行リンクと`logs/ops/review.log`の抜粋タイムスタンプを記載し、Runbook [RUN-OPS-05](docs/runbooks/RUN-OPS-05.md)の「Change Ledger同期」手順でOps当番が両ログの整合を確認する。
+- `logs/ops/review.log`は`[YYYY-MM-DD HH:MM] 担当: <name> | サマリ: <概要> | チェックID: <CHK-...>`形式で重大レビューを抜粋し、`docs/review_log.md`と同じIDで突合できるようにする。
+- `QualitySignal.notes`には`docs/review_log.md`の該当行リンクと`logs/ops/review.log`の抜粋タイムスタンプを記載し、Runbook [RUN-OPS-05](docs/runbooks/RUN-OPS-05.md)の「Change Ledger同期/Review-Summary」手順でOps当番が週次レビュー時に両ログの整合とChange Ledger更新状況を確認する。
 
 ### 25.4 フローとアルゴリズム
 1. `DeliveryControlTower.build_snapshot(window)`が`repository`各メソッドで入力データを収集。`window`は`ReviewWindow`（§19.2）と共通。
@@ -3351,8 +3351,8 @@ Codexへ委譲した開発タスクの進行状況・品質指標・運用影響
 - `scope_paths`は設計書内の参照（例: `§3.1`, `src/data/service.py`）を持つ。Acceptable Degradation復旧タスクは`degradation_case_id`を追加。
 - `change_ids`はChangeLedgerの記録IDリスト。差分追跡と監査ログ連携に利用。
 - `docs/review_log.md`はチェックID、レビュー日、指摘概要、Runbook参照、Change Ledger IDを格納する表テンプレートで、最新エントリを最上段に保持する。
-- `logs/ops/review.log`は`[YYYY-MM-DD HH:MM] 担当: <name> | サマリ: <概要>`形式で重大レビューを抜粋し、`docs/review_log.md`と同じIDで突合できるようにする。
-- `QualitySignal.notes`には`docs/review_log.md`の該当行リンクと`logs/ops/review.log`の抜粋タイムスタンプを記載し、Runbook [RUN-OPS-05](docs/runbooks/RUN-OPS-05.md)の「Change Ledger同期」手順でOps当番が両ログの整合を確認する。
+- `logs/ops/review.log`は`[YYYY-MM-DD HH:MM] 担当: <name> | サマリ: <概要> | チェックID: <CHK-...>`形式で重大レビューを抜粋し、`docs/review_log.md`と同じIDで突合できるようにする。
+- `QualitySignal.notes`には`docs/review_log.md`の該当行リンクと`logs/ops/review.log`の抜粋タイムスタンプを記載し、Runbook [RUN-OPS-05](docs/runbooks/RUN-OPS-05.md)の「Change Ledger同期/Review-Summary」手順でOps当番が週次レビュー時に両ログの整合とChange Ledger更新状況を確認する。
 
 ### 25.4 フローとアルゴリズム
 1. `DeliveryControlTower.build_snapshot(window)`が`repository`各メソッドで入力データを収集。`window`は`ReviewWindow`（§19.2）と共通。
@@ -4649,8 +4649,8 @@ Codexへ委譲した開発タスクの進行状況・品質指標・運用影響
 - `scope_paths`は設計書内の参照（例: `§3.1`, `src/data/service.py`）を持つ。Acceptable Degradation復旧タスクは`degradation_case_id`を追加。
 - `change_ids`はChangeLedgerの記録IDリスト。差分追跡と監査ログ連携に利用。
 - `docs/review_log.md`はチェックID、レビュー日、指摘概要、Runbook参照、Change Ledger IDを格納する表テンプレートで、最新エントリを最上段に保持する。
-- `logs/ops/review.log`は`[YYYY-MM-DD HH:MM] 担当: <name> | サマリ: <概要>`形式で重大レビューを抜粋し、`docs/review_log.md`と同じIDで突合できるようにする。
-- `QualitySignal.notes`には`docs/review_log.md`の該当行リンクと`logs/ops/review.log`の抜粋タイムスタンプを記載し、Runbook [RUN-OPS-05](docs/runbooks/RUN-OPS-05.md)の「Change Ledger同期」手順でOps当番が両ログの整合を確認する。
+- `logs/ops/review.log`は`[YYYY-MM-DD HH:MM] 担当: <name> | サマリ: <概要> | チェックID: <CHK-...>`形式で重大レビューを抜粋し、`docs/review_log.md`と同じIDで突合できるようにする。
+- `QualitySignal.notes`には`docs/review_log.md`の該当行リンクと`logs/ops/review.log`の抜粋タイムスタンプを記載し、Runbook [RUN-OPS-05](docs/runbooks/RUN-OPS-05.md)の「Change Ledger同期/Review-Summary」手順でOps当番が週次レビュー時に両ログの整合とChange Ledger更新状況を確認する。
 
 ### 25.4 フローとアルゴリズム
 1. `DeliveryControlTower.build_snapshot(window)`が`repository`各メソッドで入力データを収集。`window`は`ReviewWindow`（§19.2）と共通。
