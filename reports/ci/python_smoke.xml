@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<testsuite name="python_smoke" tests="3" failures="0" skipped="0" time="4.21">
+  <testcase classname="tests.smoke.test_cli" name="test_board_renderer_smoke" time="1.42" />
+  <testcase classname="tests.smoke.test_health" name="test_health_status_smoke" time="1.11" />
+  <testcase classname="tests.smoke.test_ticket" name="test_ticket_summary_smoke" time="1.68" />
+</testsuite>
+

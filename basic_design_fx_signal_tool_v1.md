@@ -788,6 +788,16 @@ project_root/
   - `logs/audit/account_aggregator/<date>.jsonl`に統合計算の入力ハッシュ・結果・警告を残し、`tradectl account aggregate --dry-run`実行ログを添付する。
 - **運用タスクリード**: M1では単一口座のみを対象とし、複数口座対応のRunbook（`docs/runbooks/RUN-ACCOUNT-02.md`想定）はM2スプリントで策定する。M1のリリースチェックリストやAC-03/AC-11等にはFR-58関連項目を含めない。
 
+#### Packetバックログ表（2025-03-18更新）
+| Packet | 目的/エピック | モジュール範囲 | 必須テスト | ステータス/担当 | Evidence/ログ |
+| --- | --- | --- | --- | --- | --- |
+| EP00-P1 | **EP-00 Readiness Scaffolding**: バックログテンプレ整備と証跡導線の確立 | `docs/change_requests/*`, `docs/prompt_packages/*`, ガバナンス系ドキュメント | `pytest`（[ログ](docs/change_requests/20250318_packet_backlog.md#41-pytest)） | 進行中 / Ops PMO | [CR-20250318 §2](docs/change_requests/20250318_packet_backlog.md#2-packetインベントリ要約)<br>[Prompt Bundle §1](docs/prompt_packages/20250318_packet_backlog.md#1-packet-ep00-p1--readiness-scaffolding) |
+| EP01-P1 | **EP-01 DataLag Mitigation**: RateLimitガードと手動CSV導線の検証 | `src/data/*`, `metrics/data_ingestion_sla.jsonl`, `docs/runbooks/RUN-DATA-05.md` | `pytest -k data_pipeline`（deselect, テスト未整備）<br>`pytest -k rate_limit_guard`（未実施）<br>`scripts/qa/manual_csv_smoke.sh`（未整備） | 未着手 / Data Eng | [CR-20250318 §2](docs/change_requests/20250318_packet_backlog.md#2-packetインベントリ要約)<br>[Prompt Bundle §2](docs/prompt_packages/20250318_packet_backlog.md#2-packet-ep01-p1--datalag-mitigation) |
+| EP02-P1 | **EP-02 Strategy Determinism**: 特徴量リプレイ一致と戦略決定論テスト | `src/features/*`, `src/strategies/*`, `docs/validation/strategy_determinism.md` | `pytest -k strategy_determinism`（deselect）<br>`pytest -k feature_pipeline`（未実施） | 未着手 / Quant Lead | [CR-20250318 §2](docs/change_requests/20250318_packet_backlog.md#2-packetインベントリ要約)<br>[Prompt Bundle §3](docs/prompt_packages/20250318_packet_backlog.md#3-packet-ep02-p1--strategy-determinism) |
+| EP03-P1 | **EP-03 Guardrails**: Health/KillSwitch遷移とCLI可視化強化 | `src/core/health.py`, `src/risk/manager.py`, `src/interfaces/cli/status.py`, `docs/runbooks/RUN-RISK-01.md` | `pytest -k health_state`（deselect）<br>`pytest -k risk_manager`（未実施）<br>`tradectl kill-switch status`（CLIログ未取得） | 未着手 / Risk Lead | [CR-20250318 §2](docs/change_requests/20250318_packet_backlog.md#2-packetインベントリ要約)<br>[Prompt Bundle §4](docs/prompt_packages/20250318_packet_backlog.md#4-packet-ep03-p1--guardrails) |
+| EP04-P1 | **EP-04 Ticket Clarity**: HITL承認時のチケット可読性向上 | `src/ticket/*`, `src/interfaces/cli/board.py`, `docs/ux_feedback.md` | `pytest -k ticket_builder`（deselect）<br>`pytest -k board_renderer`（未実施）<br>`pytest --snapshot-update`（必要時, 未実施） | 未着手 / UX Eng | [CR-20250318 §2](docs/change_requests/20250318_packet_backlog.md#2-packetインベントリ要約)<br>[Prompt Bundle §5](docs/prompt_packages/20250318_packet_backlog.md#5-packet-ep04-p1--ticket-clarity) |
+| EP05-P1 | **EP-05 Weekly Review**: 週次レポート生成と監査トレーサビリティ | `src/reporter/*`, `reports/templates/*`, `docs/runbooks/OPS-READINESS-01.md` | `pytest -k reporter`（deselect）<br>`tradectl report weekly --dry-run`（未実施）<br>`tradectl kpi rollup --window 90`（未実施） | 未着手 / Reporting | [CR-20250318 §2](docs/change_requests/20250318_packet_backlog.md#2-packetインベントリ要約)<br>[Prompt Bundle §6](docs/prompt_packages/20250318_packet_backlog.md#6-packet-ep05-p1--weekly-review) |
+
 ## 13. リリース判定チェックリスト（M1）
 
 | 項目 | 判断基準 | 参照セクション | 対応AC |
