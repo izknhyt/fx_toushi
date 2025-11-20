@@ -1,9 +1,9 @@
 # RUN-EXEC-02: Executionモデル再キャリブレーション手順
 
 > **ACカバレッジ**: AC-34, AC-43  
-> **Runbook版数**: v1.0  
-> **最終更新日**: 2025-03-23  
-> **最終更新者**: Quant Lead (Execution Desk)
+> **Runbook版数**: v1.1  
+> **最終更新日**: 2025-03-21  
+> **最終更新者**: Quant Lead / Ops Manager
 
 ## 目的
 - `ExecutionModel`の遅延・スリッページ分布がライブ fills と乖離した際に、最小限のボード停止で新パラメータへ更新する。
@@ -58,6 +58,21 @@
 - `reports/weekly/evidence/<YYYY-WW>/live_guard.json`（Live Guard確認）
 - `reports/audit/kill_switch_review/<timestamp>.md`（Reduce-Only/停止判断の根拠）
 - `metrics/execution_recalibration.jsonl`（CLIが自動追記、週次Opsレビューでトレンド監視）
+
+## 半月ごとのライブ実績反映チェックリスト（§11.1 リスク#1対応）
+- **スケジュール**: 1日と15日のOps Agendaに`execution_model_refresh`を追加し、`tradectl ops agenda --date <YYYY-MM-DD>`で担当者・締切を可視化する。
+- **データ取得**:
+  1. `tradectl execution export-live-fills --window 14d --out reports/performance/live_fill_stats_<YYYYMMDD>.parquet --mode live`を実行し、ライブ/Paper双方のfillsをエクスポートする。
+  2. `python tools/check_dataset_hash.py --manifest reports/data_manifest.json --strategy m1_baseline_ma_rsi --write reports/risk/20250318_prelaunch/execution_model_refresh.md --append --label live_fill_snapshot_<YYYYMMDD>`でハッシュとCLIログをEvidence化する。
+  3. `tradectl ops workload log --task execution_model_refresh --note "EXPORT window=14d"`でOps Worklogへ記録する。
+- **パラメータ更新**:
+  - 本Runbookの手順2〜5を簡易モードで実行し、`config/execution_model.yaml`のdiffが±5%以内であれば`reviews/pre_launch/execution_model.md`へ「確認のみ」と記載する。閾値を超える場合は通常手順へエスカレーション。
+  - 更新有無に関わらず`reports/risk/20250318_prelaunch/execution_model_refresh.md`へチェック結果・CLIリンク・イニシャルを追記する。
+- **Ops Review**:
+  - 週次Opsレビューでは`metrics/execution_recalibration.jsonl`の`run_type=scheduled`エントリを確認し、欠落時はOps Agendaで補完する。
+  - Evidenceテンプレート: `reports/risk/20250318_prelaunch/execution_model_refresh.md`（フォーマット例を同ファイル先頭に記載）。
+
+このチェックリストの完了をもって§11.1「執行モデルの実績データ不足」リスクをクローズする。
 
 ## 責任者
 - **一次担当**: Quant Lead（Execution担当）

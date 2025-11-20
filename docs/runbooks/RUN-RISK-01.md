@@ -76,6 +76,7 @@
 2. **Kill Switch演習（RUN-EMER-UNWIND-01連携）**  
    - 週次Ops会議前に`tradectl kill-switch engage --mode paper --reason drill_soft_stop --dry-run`（スタブ可）で擬似発火し、`logs/risk/kill_switch_events.jsonl`へ演習ログを記録する。  
    - `tradectl kill-switch release --mode paper --ticket DRILL-<id>` を実行し、解除条件の確認チェックリスト（R分布/Latency/是正タスク）を`reports/risk/20250318_prelaunch/ops_unwind_drill_<date>.md`へ記載する。  
+   - `tradectl status --history kill-switch --json` を実行し、`logs/events/risk.kill_switch.jsonl`に直近演習ログが残っていることを確認する。結果のJSONは`reports/validation_log/AC-03_<date>.md`へ貼付する。  
    - 演習結果は`reports/risk/20250318_prelaunch/R02_oncall_readiness.md`の訓練ログ表へリンクし、Ops ManagerとRisk Officerがサインする。
 
 3. **ウォッチポイント**  
@@ -85,6 +86,16 @@
 4. **証跡**  
    - `reports/validation_log/AC-03_<date>.md`へ演習コマンド・結果・参加者サインを記録。  
    - `reports/risk/20250318_prelaunch/R02_oncall_readiness.md`／`R05_log_compression_plan.md`（ログ保全）を更新し、次回レビューで参照できるようOps Agendaへリンクする。
+
+## Reduce-Onlyレビュー負荷管理（§11.1 リスク#2対応）
+- **目的**: Spread/相関異常でReduce-Only提案が集中した際もOps判断が詰まらないよう、キュー可視化とバッチ処理をRunbookに組み込む。
+- **手順**:
+  1. `tradectl board --guarded --view tickets --save-snapshot reports/audit/reduce_only_queue_<date>.json`を実行し、Guardedモードのスナップショットを取得する（M1 CLIはスタブだがEvidenceとして保存する）。
+  2. `tradectl ops workload log --task reduce_only_review --note "tickets=<count>"`でOps Worklogへ所要時間を記録し、Ops Agendaにリンクを貼る。`count`はスナップショット内`strategy_snapshot.acceptable_degradation`フラグを暫定値として記録する。
+  3. `reports/audit/reduce_only/<date>.md`へ処理対象（チケットID、Spreadクールダウン状態、TTL、ダブルエントリーチェック）と承認者を列挙する。
+  4. `tradectl kill-switch review --reason backlog --strategy <id>`を使用し、Guarded状態が2時間超過した場合にKill Switch判断を再評価する。
+- **キャパシティ分散**: `reduce_only_queue_<date>.json`に未処理チケットの推定件数が10件を超えた場合、Quant/Risk/POと協議して2名体制を設定し、Ops Agendaに担当列を追加する。Ops Managerは`tradectl ops agenda --date <YYYY-MM-DD> --with-oncall`のメモ欄へ本RunbookIDを明記する。
+- **Evidence**: `reports/risk/20250318_prelaunch/reduce_only_queue.md`に日次レビュー結果・Ops/Risk/POのイニシャルを追記し、`docs/risk_review/20250318_prelaunch.md` §11.1-2へ「Closed (RUN-RISK-01 v1.2)」と記録する。
 
 ## チェックリスト
 - [ ] 日次`tradectl diagnostics risk`でR分布/同時保有数の基準確認（Signal Boardバナーと突合）

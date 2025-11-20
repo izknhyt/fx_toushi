@@ -2,7 +2,7 @@
 # 詳細設計 §3.5.6 / §5.12 に基づき、Human Gate と Reduce-Only Advisor の既定値を定義する。
 # Schema: docs/schemas/human_gate_config.schema.json
 
-schema_version: 0  # TODO: human_gate_config.schema.json 整備後に更新
+schema_version: "human_gate_config.v1"
 human_gate:
   double_ack_roles:
     - risk_officer

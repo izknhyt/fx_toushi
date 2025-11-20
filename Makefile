@@ -1,6 +1,6 @@
 ARGS ?=
 
-.PHONY: config-init schema-validate check-ops-readiness contract-performance-snapshot check-doc-sync config-evidence verify-config-evidence
+.PHONY: config-init schema-validate check-ops-readiness contract-performance-snapshot check-doc-sync config-evidence verify-config-evidence edge-watch-report
 
 config-init:
 	@if command -v poetry >/dev/null 2>&1; then \
@@ -49,4 +49,11 @@ verify-config-evidence:
 		poetry run python tools/collect_config_evidence.py --verify-only $(ARGS); \
 	else \
 		python3 tools/collect_config_evidence.py --verify-only $(ARGS); \
+	fi
+
+edge-watch-report:
+	@if command -v poetry >/dev/null 2>&1; then \
+		poetry run python tools/generate_edge_watch_report.py $(ARGS); \
+	else \
+		python3 tools/generate_edge_watch_report.py $(ARGS); \
 	fi

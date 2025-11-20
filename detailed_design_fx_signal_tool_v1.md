@@ -225,7 +225,7 @@
 1. `poetry install --no-root`が成功し、`python -m tradectl --help`（仮スタブ可）が0終了すること（CHK-0.6.9-1）。
 2. `pytest -k smoke`が通る最小テストスイートを確立し、CIテンプレ（`ci/templates/python_smoke.yml`）に組み込むこと（CHK-0.6.9-2）。
 3. `docs/review_log.md`に本レビュー反映、`docs/prompt_packages/`へPacket下書きを格納済みであること（CHK-0.6.9-3）。週次レビューで参照するOps Agendaは`docs/runbooks/daily_agenda/TEMPLATE.md`を基に作成し、関連エントリからリンクする。
-4. Spread/Kill Switch等のリスク閾値ファイル（`config/risk_policy.yaml`など）が`schema/`定義と突合できる形で雛形化され、`GateState`スキーマ（`market.news.blocked`/`market.calendar.blocked`/`market.spread.state`/`risk.reduce_only`/`human.double_entry_required`）と整合していること（CHK-0.6.9-4）。
+4. Spread/Kill Switch等のリスク閾値ファイル（`config/risk_policy.yaml`など）が`schema/`定義と突合できる形で雛形化され、`GateState`スキーマ（`market.news.blocked`/`market.calendar.blocked`/`market.spread.state`/`risk.reduce_only`/`human.double_entry_required`）および`docs/schemas/gate_state.sample.json`に整合していること（CHK-0.6.9-4）。
 5. Codexへ渡すIssue/PRテンプレに§0.6.8の番号を引用し、未解決項目がある場合は「受入不可（前提未了）」ラベルを適用してから再依頼すること（CHK-0.6.9-5）。
 6. `ModeContext`のフィールド（§3.1 表）を初期化する`ModeContextFactory`/`ModeController`のスタブが揃い、`config/profiles/<mode>.yaml`→`ModeContext.profile`→`SessionManager.start()`の流れで`clock`/`data_feeds`/`execution_profile`/`account_gateway`が埋まることを単体テストまたはドキュメントで確認していること（CHK-0.6.9-6）。証跡は `docs/validation/ModeContext_startup.md` §2 に記録する。
 7. `tradectl start --profile backtest`, `tradectl start --profile paper`, `tradectl start --profile live`（各モードはモック実装可）を手動/CIで実行し、`ModeContext`初期化ログ（`ctx.mode`, `ctx.profile.name`, `deterministic_seed`) が`logs/sessions/<session_id>.log`に出力されること。終了時は`tradectl stop`→`SnapshotManager.persist()`までを含むテスト手順を`docs/validation/ModeContext_startup.md` §1に記録し、Ops Agendaの「ModeContext Startup Walkthrough」セクションから参照すること（CHK-0.6.9-7）。
@@ -340,6 +340,47 @@ definitions:
     rollback:
       - "tradectl config flags --set reduce_only_advisor=false --profile <mode>"
 ```
+
+- マイルストーン別の有効化タイムライン:
+  1. **M1.0**: 全Flag `false`（Backtest/Paper/Live共通）。`pytest -k feature_flags`で整合性のみ検証。
+  2. **M1.1**: `reduce_only_advisor`, `risk_disclosure_enforce`, `reporter.enable_extended_blocks`をPaperで有効化→Runbook記録→Live反映。
+  3. **M1.2**: `reports.performance.enable`, `data.paid_feed`をPaper→Liveへ段階展開。ストレージ/ライセンス証跡必須。
+  4. **M2**: `sprt_guard`をPaper soak後にLive反映。`GateState`/`NextBarChangeQueue`との連携テレメトリを監視。
+
+#### 0.6.14 プロフィット実現準備サマリ
+
+「勝てて儲けられる」状態を証明するため、以下3レバーを常時モニタし、設計・実装・運用の責任境界を明確化する。各レバーはRunbook/証跡へのリンクを必須とし、週次Opsレビューで進捗を確認する。
+
+| レバー | 目的 | 対応節 | Runbook / Evidence | 現状 |
+| --- | --- | --- | --- | --- |
+| **Live Execution Bridge** | Spread/Kill Switch統合済みのPaper→Live橋渡しとブローカーAPI順守 | §1.10.1, §3.6, §84〜§85, §92 | `RUN-HITL-01`, `RUN-BROKER-01`, `RUN-DET-01`, Evidence: `reports/execution/live_bridge_<date>.md` | ✅ 2025-11-19 StageGuard soak完了（`reports/execution/live_bridge_20251119.md`, `metrics/execution_bridge.jsonl`, `ops_worklog#execution_bridge`）。CLI: `tradectl ops readiness --profit --lever "Live Execution Bridge" --json`. |
+| **Market Edge Protection** | データ鮮度・スプレッド・相関の逸脱を事前検知し、期待値>0の戦略のみ通過させる | §1.10.2, §2.1〜§3.5, §64/§71, 付録F | `RUN-SPREAD-03`, `RUN-CORR-02`, `RUN-DATA-05/06`, Evidence: `metrics/spread_guard.jsonl`, `reports/ops/edge_watch_<week>.md` | ✅ 2025-11-19 Edge Watch 2025-W12（`reports/ops/edge_watch_2025-W12.md`, `metrics/spread_guard.jsonl`, `metrics/correlation_guard.jsonl`, `ops_worklog#edge_watch`）。`RUN-SPREAD-03`/`RUN-CORR-02`の証跡を添付済。 |
+| **Alpha Feedback & Scoreboard** | Conviction vs 実RRの乖離を定量化し、Pulse/Manifest/ガバナンス判断に反映 | §1.10.3, §3.25, §88, 付録G.1 | `RUN-ALPHA-FEEDBACK-01`, `RUN-GOV-BOARD-01`, Evidence: `scoreboard/alpha/<week>.json`, `reports/performance/profit_loop_daily.md`, `reports/performance/live_bridge_pnl_<range>.md` | ✅ 2025-12-19 Week 2025-W13でWatchlist解除（`scoreboard/alpha/2025-W13.json`, `scoreboard/bridge/2025-W13.json`, `reports/performance/profit_loop_daily.md`, `reports/performance/live_bridge_pnl_20251119-20251219.md`）。`metrics/profit_readiness.jsonl` status=`ok`（conviction drift=+0.06, spread_penalty=0.02, Profit Loop samples mode=live）。 |
+
+- 各レバーは`OpsAgendaService`の「Profit Readiness」セクションでチケットを管理し、遅延時は`ops_worklog`に`task='profit_readiness'`を追加する。
+- `metrics/profit_readiness.jsonl`（`{lever, status, updated_at, evidence}`）に全レバーの最新ステータスを記録（2025-11-19付で3レバー分のEvidenceを登録済）。CLI `tradectl ops readiness --profit --lever <name> --json`は`profit_readiness_summary`フィールドで各レバーの最新証跡を返し、`ops_worklog`との差分チェックを容易にする。
+- CLIサポート:
+- `tradectl ops readiness --profit --limit 5 --lever <name>`でフィルタ表示し、`--set-lever`と併用して証跡を追記。`profit_readiness_summary.<lever>.evidence`は`reports/`/`metrics/`パスとRunbook IDを返す。
+- `tradectl scoring bridge --week <YYYY-Www>`で`scoreboard/bridge/<week>.json`を生成。
+- `tradectl execution bridge-log`で`metrics/execution_bridge.jsonl`更新＆`reports/execution/live_bridge_<date>.md`雛形を生成。
+- `tradectl alpha review --strategy <id> --with-scoreboard`でScoreboard BridgeとProfit Loopサンプルを同時表示し、Watchlist理由がある場合はExit code 123、Bridge欠損時は78を返す。
+
+- **Runbook整合**: `RUN-CORR-02`（相関/Spread対応）、`RUN-GOV-BOARD-01`（Scoreboardレビュー）、`RUN-OPS-04`（イベント遮断）、`RUN-RISK-03`（Spread/Pre-Tradeハードエンフォース）、`RUN-BROKER-API-03`（ブローカー・コンプライアンス）を本節の必須Runbookとして位置づけ、各Runbook末尾の証跡テンプレから`reports/validation_log/`エントリを参照する。
+
+#### 0.6.15 M1コア vs エクステンション境界
+
+M1 Issue/Packetでは下表の「M1 Core」列のみをDone条件とし、Bridge/M2+列の要件は拡張ポイントとして`§87〜§92`で扱う。PR/Runbookでは対象列を明記し、エビデンスと承認者を切り分ける。
+
+| レイヤ | M1 Core（Backtest/Paper共通基盤） | Bridge/M1.1（HITL/Live準備） | M2+ / 拡張 |
+| --- | --- | --- | --- |
+| Data & ModeContext | ModeContext初期化（CHK-0.6.9-6/7）、`tradectl start/stop`ログ、`docs/validation/ModeContext_startup.md`更新 | Signal Streaming Gatewayキャッシュ (§87)、オフラインCSV再同期CLI | マルチセッション/Shadow Session並列、データ遅延自動補正 (EP-01) |
+| Risk & GateState | `GateAggregator`/`docs/schemas/gate_state.sample.json`/`config/reduce_only.yaml`を同期し、`RUN-OPS-04`でイベント遮断 | Spread Guard/Correlation Guardの`RUN-CORR-02`運用、Reduce-Only AdvisorをPaper soakで実証 | Guardrails hardening (EP-03)、Kill Switch自動化、NextBarChangeQueue連携 |
+| Execution & Tickets | Backtest/Paperで`ExecutionModel`→`PositionSizer`→`TicketBuilder`決定論を検証、`RUN-RISK-03`でヒューマンゲート手順を確認 | OrderLifecycleManager / Broker Stage Guard / Live Execution Bridgeログ（§84/§85/§0.6.14） | Broker API本番接続、Shadow Fill/Stage Guard演習ラボ常設 |
+| Gov/Scoreboard | Scoreboard設定（§4.4.5）と`RUN-GOV-BOARD-01`レビューで週次Evidence作成、PenaltyRegistry Stub | Scoreboard Bridge (M1.1)とPenaltyRegistry実データの突合、`RUN-CORR-02`とのクロスチェック | EP-02/EP-04 (Strategy Determinism/Ticket Clarity) に沿ったGUI/HITL完全自動化 |
+
+> **Bridge/M1.1 完了記録**: Risk & GateState（`RUN-SPREAD-03`/`RUN-CORR-02`, `reports/ops/edge_watch_2025-W12.md`）、Execution & Tickets（`RUN-HITL-01`/`RUN-BROKER-01`, `reports/execution/live_bridge_{20251119,20251219}.md`）、Gov/Scoreboard（`RUN-ALPHA-FEEDBACK-01`/`RUN-GOV-BOARD-01`, `scoreboard/alpha/2025-W12.json`→`scoreboard/alpha/2025-W13.json`）の各Runbook/EvidenceをBridge列要件としてダブルサイン済。2025-W13でWatchlist解除済。 
+
+> **運用ガイド**: Packet申請は必ず「対象列」「Runbook」「Evidenceファイル（`reports/...`）」をセットで記載し、M1コア範囲外の差分は`docs/change_requests/`でフォローアップする。
 
 - マイルストーン別の有効化タイムライン:
   1. **M1.0**: 全Flag `false`（Backtest/Paper/Live共通）。`pytest -k feature_flags`で整合性のみ検証。
@@ -617,141 +658,249 @@ graph TD
 - **既存3層表現**（アプリケーションサービス/ドメインコア/インフラ）は上記拡張レイヤに内包される。分析・執行・監視レイヤはドメインコアの責務を細分化し、将来のスケーリング方針（分散処理、追加戦略、Ops自動化）に備えた依存分離を明示する。
 
 ### 1.3 ディレクトリ構成（M1）
-```
+```text
+# `rg --files src | sort | grep -v __pycache__`（2025-03-19確認）
 src/
+  account/
+    exposure.py          # 通貨/相関バケット集計
+    fx_rates.py          # FX換算レート参照
+    service.py           # 残高/証拠金/ポジション集計
   app/
     main.py              # CLIエントリ / Graceful shutdown
+    mode_context.py      # ModeContext DIとプロファイル分岐
     telemetry.py         # 起動時メトリクス初期化
-  interfaces/
-    cli/
-      __init__.py        # Typerアプリ登録
-      board.py           # tradectl board
-      tickets.py         # approve/reject/edit
-      status.py          # health/snapshot表示
-      events.py          # Event tail
-      export.py          # CSV/JSON export
-      resync.py          # Catch-up操作
-      spread.py          # Spread監視補助
-      broker.py          # tradectl brokerサブコマンド統合（M1.1 Hardeningでサンドボックス操作, M3準備で本稼働）
-      broker_orders.py   # API注文/Recovery操作CLI（M1.1演習でdry-run, M3準備でLive運用）
-      broker_fault.py    # Fault Injection Lab CLI（M1.1演習, M3準備で恒常化）
-      broker_stage.py    # AutonomyStageGuard操作CLI（M3準備, Stage昇格フロー）
-    renderers.py        # CLI共通フォーマッタ
-  core/
-    session.py           # SessionManager, ModeController
-    workflow.py          # Pipeline orchestrator
-    scheduler.py         # AsyncIntervalJob/OneShotJob
-    event_bus.py         # publish/subscribe + JSONL sink
-    health.py            # HealthMonitor/KillSwitch state
-    snapshot.py          # SnapshotManager
-  data/
-    service.py           # DataIngestionService
-    cache.py             # Parquet/Arrowキャッシュ
-    quality.py           # DataQualityGuard
-    providers/
-      yahoo.py
-      dukascopy.py
-      csv_loader.py
-  features/
-    pipeline.py          # FeaturePipeline + multi-TF join
-    indicators.py        # インジケータ実装
-    regime.py            # RegimeDetector
-  strategies/
-    base.py              # StrategyProtocol/Context
-    registry.py          # Plugin登録/ロード
-    ma_rsi.py
-    donchian.py
-  execution/
-    model.py             # ExecutionModel（M1 Core: deterministic baseline実装, M1.1+: 分布拡張）
-    spread.py            # SpreadMonitor + cooldown state（M1.1で本稼働、M1 Coreはスタブのみ）
-    adjustments.py       # ExecutionAdjustments dataclass（M1 Coreでは参照のみ）
-  scoring/
-    hybrid.py            # HybridScore（M2+で有効化、M1 Coreではファイル未配置/追加不要）
-    stability.py         # 摂動テスト（M2+）
-    ranking.py           # ランキング/閾値
-  scoreboard/
-    service_stub.py      # StrategyScoreboardServiceStub (M1, no-op; M2+本実装は付録G)
-    jobs_stub.py         # 週次ジョブスタブ（ログ出力のみ）
-    repository_stub.py   # KPIキャッシュ参照スタブ（固定レスポンス）
-  risk/
-    policy.py            # RiskPolicy構造体
-    manager.py           # Kill Switch/制約評価
-    correlation_guard.py # 通貨・シンボル相関ガード（M1.1以降）
-    sprt.py              # SPRT（M2+でのみ有効、M1 Coreはスタブ）
-  account/
-    service.py           # 残高/証拠金/ポジション集計
-    fx_rates.py          # FX換算レート
-    exposure.py          # 通貨バケット/相関用エクスポージャ
-  sizing/
-    fractional.py        # Fixed fractional sizing
-    rounding.py          # ブローカー仕様準拠の丸め
-  funding/
-    service.py           # FundingCurve
-    loaders.py           # swap_rates.csv / APIローダ
-  ideas/
-    manager_stub.py      # IdeaPipelineManagerStub (M1, ガバナンスAPIスタブ)
-    schema_stub.py       # manifest/checklist検証スタブ
-    checklist_stub.py    # ステージ別チェックリスト生成スタブ（常にTODO保留）
-  calendar/
-    service.py           # 経済指標/休日ゲート
-    adapters.py          # CSV/外部API同期
-  ops_readiness/
-    evaluator_stub.py    # OpsReadinessEvaluatorStub (M1, スコア=Not Assessed)
-    evidence_stub.py     # 証跡ハッシュ検証スタブ
-  governance/
-    model_risk_stub.py   # ModelRiskRegisterServiceStub (M1, ギャップ検出無効)
-    registry_stub.py     # Register参照スタブ
-  reconciliation/
-    service_stub.py      # StatementReconciliationServiceStub (M1, 証跡未対応)
-    normalizer_stub.py   # ブローカーステートメント正規化スタブ
-    matcher_stub.py      # 取引/残高突合スタブ
-  ticket/
-    builder.py           # TradeTicket構築
-    validator.py         # Broker検証/TTL/Drift
-    checklist.py         # ヒューマンエラーチェック
-  brokers/
-    adapter.py           # BrokerAdapter抽象/SandboxAdapter（M1.1 Hardeningで稼働, M3準備でLive API）
-    sandbox.py           # サンドボックスブリッジ（M1.1演習, M3準備で本番接続）
-    monitor.py           # BrokerApiMonitor/Heartbeat（M1.1演習, M3準備で常時監視）
-    policy.py            # BrokerPolicyEnforcer/RateLimitWindow（M1.1演習, M3準備）
-    failover.py          # ApiFailoverPlanner（M3準備, Emergency連携）
-    certification.py     # BrokerCertificationSuite（M1.1演習, M3準備で承認ゲート）
-    stage_guard.py       # AutonomyStageGuard（M3準備, 段階的自動化）
-    order_lifecycle.py   # OrderLifecycleManager（M3準備, API注文ライフサイクル）
-    order_store.py       # OrderStateStore（M3準備, JSONL永続化）
-    recovery.py          # RecoveryPlanner/Runbook連携（M3準備, エラー回復）
-    fill_shadow.py       # FillShadowRecorder（M1.1演習, M3準備でLive比較）
-    fill_drift.py        # FillDriftDetector（M3準備, 差分アラート）
-    fill_replay.py       # FillReplayService（M1.1演習, M3準備）
-  compliance/
-    risk_disclosure.py   # RiskDisclosureService（M1.1 enforce、M1はWARNのみ）
-  persistence/
-    events.py            # DomainイベントJSONL
-    audit.py             # HITL監査ログ
-    snapshot.py          # Snapshot永続化
+  audit/
+    trace.py             # AuditTraceユーティリティ
   backtest/
     engine.py            # Pipeline replay
-    walkforward.py       # Walk-Forward
     optimizer.py         # Grid/Random探索
+    walkforward.py       # Walk-Forward
+  brokers/
+    adapter.py           # BrokerAdapter抽象/SandboxAdapter
+    certification.py     # BrokerCertificationSuite
+    failover.py          # ApiFailoverPlanner
+    fill_drift.py        # FillDriftDetector
+    fill_replay.py       # FillReplayService
+    fill_shadow.py       # FillShadowRecorder
+    monitor.py           # BrokerApiMonitor/Heartbeat
+    order_lifecycle.py   # OrderLifecycleManager
+    order_store.py       # OrderStateStore
+    policy.py            # BrokerPolicyEnforcer
+    recovery.py          # RecoveryPlanner
+    sandbox.py           # サンドボックスブリッジ
+    stage_guard.py       # AutonomyStageGuard
+  calendar/
+    adapters.py          # CSV/外部API同期
+    service.py           # 経済指標/休日ゲート
+  compliance/
+    risk_disclosure.py   # RiskDisclosureService
+  core/
+    event_bus.py         # publish/subscribe + JSONL sink
+    gate.py              # GateAggregator
+    health.py            # HealthMonitor/KillSwitch state
+    schema_registry.py   # SchemaRegistry（Config/Events）
+    scheduler.py         # AsyncIntervalJob/OneShotJob
+    session.py           # SessionManager, ModeController
+    snapshot.py          # SnapshotManager
+    workflow.py          # Pipeline orchestrator
+  data/
+    cache.py             # Parquet/Arrowキャッシュ
+    quality.py           # DataQualityGuard
+    service.py           # DataIngestionService
+    providers/
+      base.py            # Provider共通IF
+      csv_loader.py      # 手動CSV取り込み
+      dukascopy.py       # Dukascopy HTTP Feed
+      yahoo.py           # yfinance Feed
+  diagnostics/
+    broker/
+      api_fault_lab.py   # API Fault Injection Lab
+  execution/
+    adjustments.py       # ExecutionAdjustments dataclass
+    bridge.py            # Execution<->Brokerブリッジ
+    model.py             # ExecutionModel（Deterministic baseline）
+    order_router.py      # OrderRouter（M3準備）
+    reduce_only.py       # Reduce-only Advisor
+    spread.py            # SpreadMonitor + cooldown state
+  features/
+    indicators.py        # インジケータ実装
+    pipeline.py          # FeaturePipeline
+    regime.py            # RegimeDetector
+  funding/
+    loaders.py           # swap_rates.csv / APIローダ
+    service.py           # FundingCurve Service
+  governance/
+    model_risk_stub.py   # ModelRiskRegisterServiceStub
+    registry_stub.py     # Registry参照スタブ
+  ideas/
+    checklist_stub.py    # ステージ別チェックリスト生成スタブ
+    manager_stub.py      # IdeaPipelineManagerStub
+    schema_stub.py       # manifest/checklist検証スタブ
+  infra/
+    alert.py             # AlertDispatcher (SMTP)
+    broker_rules.py      # BrokerRulesSchema
+    config.py            # ConfigRegistry + schema検証
+    metrics.py           # メトリクス集計/Exporterフック
+    registry.py          # モード別依存性組立
+  interfaces/
+    renderers.py         # CLI共通フォーマッタ
+    cli/
+      alpha.py           # Alpha/Idea参照CLI
+      audit.py           # 監査ログ確認
+      backtest.py        # Backtest操作
+      benchmark.py       # KPI比較
+      board.py           # tradectl board
+      broker.py          # Broker統合操作
+      broker_fault.py    # Fault Injection CLI
+      broker_orders.py   # API注文/Recovery操作
+      broker_stage.py    # AutonomyStageGuard操作
+      compliance.py      # Compliance banner CLI
+      data.py            # データ状態点検
+      events.py          # Event tail
+      execution.py       # Execution diagnostics
+      export.py          # CSV/JSON export
+      funding.py         # Funding CLI
+      kill_switch.py     # Kill Switch操作
+      main.py            # tradectlエントリ
+      metrics.py         # メトリクス集計
+      ops.py             # Ops agenda sync
+      preflight.py       # Preflightチェック
+      report.py          # 週次/証跡レポート
+      resync.py          # Catch-up操作
+      schema_validate.py # JSON Schema検証
+      scoring.py         # Strategy Scoring CLI
+      session.py         # セッション状態
+      spread.py          # Spread監視補助
+      status.py          # health/snapshot表示
+      tickets.py         # HITLチケット操作
+  metrics/
+    reports.py           # KPI/メトリクスレポート生成
+  ops/
+    action_sync.py       # Ops Action同期
+    agenda.py            # Ops Agenda生成
+    automation.py        # Ops自動化フック
+    drills.py            # 演習スクリプト
+    profit_readiness.py  # Profit Readinessチェック
+    worklog.py           # Ops Worklog管理
+  ops_readiness/
+    evaluator_stub.py    # OpsReadinessEvaluatorStub
+    evidence_stub.py     # 証跡ハッシュ検証スタブ
+  persistence/
+    audit.py             # HITL監査ログ
+    events.py            # DomainイベントJSONL
+    snapshot.py          # Snapshot永続化
+  reconciliation/
+    matcher_stub.py      # 取引/残高突合スタブ
+    normalizer_stub.py   # ブローカーステートメント正規化スタブ
+    service_stub.py      # StatementReconciliationServiceStub
   reporter/
     generator.py         # 週次/成績レポート
     templates/           # Markdownテンプレート
-  diagnostics/
-    broker/
-      api_fault_lab.py   # API Fault Injection Lab（M1.1演習, M3準備で恒常運用）
-  infra/
-    config.py            # ConfigRegistry + schema検証
-    registry.py          # モード別依存性組立
-    alert.py             # AlertDispatcher (SMTP)
-    metrics.py           # メトリクス集計/Exporterフック
+  risk/
+    correlation_guard.py # 通貨・シンボル相関ガード
+    manager.py           # Kill Switch/制約評価
+    policy.py            # RiskPolicy構造体
+    sprt.py              # SPRT（M2+フック）
+  scoreboard/
+    bridge.py            # ScoreboardBridge（データ流通）
+    jobs_stub.py         # ジョブスタブ
+    repository_stub.py   # KPIキャッシュ参照スタブ
+    service_stub.py      # StrategyScoreboardServiceStub
+  scoring/
+    hybrid.py            # HybridScore
+    ranking.py           # ランキング/閾値
+    stability.py         # 摂動テスト
+  sizing/
+    fractional.py        # Fixed fractional sizing
+    rounding.py          # ブローカー仕様準拠の丸め
+  strategies/
+    base.py              # StrategyProtocol/Context
+    donchian.py          # Donchian戦略
+    ma_rsi.py            # MA+RSI戦略
+    registry.py          # Plugin登録/ロード
+  ticket/
+    builder.py           # TradeTicket構築
+    checklist.py         # ヒューマンチェック
+    monitor.py           # TicketMonitor
+    validator.py         # Broker検証/TTL/Drift
+    validators.py        # validatorユーティリティ
+    exceptions.py        # Ticket例外群
+  tradectl/
+    # 未整備: CLIラッパ/スクリプト配置予定
 
-tests/
-  conftest.py
+tests/  # `rg --files tests | sort | grep -v __pycache__`（2025-03-19確認）
+  README.md              # テストガイド
+  __init__.py
+  conftest.py            # Pytest共通Fixture
   fixtures/
-  unit/
+    broker_adapter.json
+    brokers/
+      ctrader_order_ack.json
+      mt5_order_ack.json
+  helpers/
+    __init__.py
+    config.py            # 設定読み出しヘルパ
+  cli/
+    test_data_status_cli.py
+    test_funding_cli.py
+    test_session_cli.py
+  config/
+    test_broker_rules_config.py
+    test_config_schema_smoke.py
+    test_feature_flags.py
+    test_human_gate_config.py
+    test_sla_threshold_profile.py
+  contracts/
+    test_performance_snapshot_schema.py
+  docs/
+    test_offline_install_template.py
   integration/
+    __init__.py
+    test_reporter_weekly.py
+    test_scoring_diagnostics.py
+    test_strategy_determinism.py
+    test_strategy_engine.py
+    test_tradectl_cli_evidence.py
+  jsonschema/
+    test_domain_schemas.py
+    test_schema_integrity.py
+  schema/
+    test_json_schema_validation.py
+  smoke/
+    test_audit_trace.py
+    test_feature_context_contract.py
+    test_metrics_report.py
+    test_resync_simulation.py
+    test_session_manager_pipeline.py
+    test_spread_monitor_protocol.py
+    test_status_history.py
+    test_ticket_monitor.py
+  unit/
+    test_action_sync.py
+    test_broker_adapter_contracts.py
+    test_cli_resync.py
+    test_cli_status.py
+    test_event_bus_snapshot_placeholder.py
+    test_gate_aggregator.py
+    test_health_monitor.py
+    test_ideas_stubs.py
+    test_mode_context_factory.py
+    test_scheduler_scaffold.py
+    test_strategy_manifest.py
+    test_strategy_manifest_lifecycle.py
+    test_strategy_plugin_contract.py
+    test_strategy_registry.py
+    test_strategy_registry_contracts.py
+    test_ticket_builder.py
+    test_ticket_builder_gate_state.py
+    core/
+      test_event_bus_snapshot_scaffold.py
+  perf/
+    # 未作成: §18.5/RUN-PERF-01で要求される`tests/perf/test_pipeline_latency.py`等は今後Packet整備
+  e2e/
+    # 未作成: §52.3/付録GUIシナリオのPlaywright (`tests/e2e/gui_board_hitl.spec.ts`) はTauri導入Packetで追加予定
 ```
-- **現状のリポジトリ差分**: 2025-03-10時点では`src/brokers/adapter.py`のみが実装済みであり、上記ディレクトリの大半は未作成。§0.6.8で整理した`SRC-SCAFF-01` Packetを優先し、空モジュールでも`__init__.py`や型プロトコルを配置したうえでCodexへ委託する。スタブを追加した際は`README.md`や`__all__`で将来機能とFeature Flagの位置づけを明示し、意図しない名前空間の乱立を防ぐ。
+- **現状のリポジトリ差分**: 2025-03-19時点で`rg --files src`/`rg --files tests`結果を上記へ反映済み。README.mdのディレクトリ説明と整合する形で主要パッケージ/テストスイートが揃っており、未整備なのは`src/tradectl/`の空ラッパと将来機能向けスタブ群（scoreboard/governance/ideas/ops_readiness/reconciliation等）および`tests/perf`/`tests/e2e`のPacket未着手部分のみ。従来の「adapter.pyのみ実装済」という記述は撤回し、本一覧を基準に`SRC-SCAFF-01`保全状況とREADME記載のFeature Flag位置付けを確認したうえでPacketを依頼すること。
 
 ランタイムディレクトリとして `config/`, `data/`, `logs/`, `snapshots/`, `reports/`, `metrics/` を使用する。
 
@@ -853,6 +1002,43 @@ M2以降で変更が見込まれる領域について、実装/運用負荷を�
 - 監査ログ (`persistence/audit.py`) のフィールド拡張は`AuditRecord.schema_version`と`extras: Dict[str, Any]`に集約し、未既知キーは`extras`に収納する。Codexには新規必須フィールドを追加する場合、旧ログ互換性と再生スクリプト（`tools/replay_audit.py`）への影響評価を求める。
 
 - これら拡張ポイントの更新では、必ず`docs/development_style_and_linting.md`で定義したリンターコマンドをCI実行対象に含め、テスト命令はプロンプト内`<テスト>`セクションへ明示する。
+
+### 1.10 プロフィット実現ロードマップ（M1.1 Bridge → M2自動化）
+
+M1ではバックテストとデータ品質の整備に注力し、M1.1でPaper/Live橋渡しとガードレール/Scoreboardの「Bridge実装」を完了させ、M2で完全自動化まで伸ばす。以下3フェーズの整備状況は§0.6.14および`metrics/profit_readiness.jsonl`で追跡する。
+
+#### 1.10.1 Live Execution Bridge
+- **対象モジュール**: `SessionManager`（§2.1）、`ExecutionModel`/`SpreadMonitor`（§3.6）、`OrderLifecycleManager`（§84.1）、`BrokerStageGuard`（§85.2）、`TicketBuilder`/`HITL UX`（§92）、`AuditWriter`＆`Determinism Replay`（§91）。
+- **Bridge要件**:
+  1. `ModeContext.execution_profile`へ`execution_bridge_profile`を追加し、`OrderLifecycleManager`の`Adapter`層で`SandboxAdapter`（Paper）と`LiveAdapter`（本番API）を同時DI。Paper実行でもLive API署名/パラメータ検証を行い、Live切替時は`stage_guard`の`double_ack`を必須にする。
+  2. `SpreadMonitor.current_state()`と`RiskManager.live_guard()`の結果を`TicketRecord.guardrails`へ必須フィールドとして埋め込み、CLI/GUI/監査/Reporterが同一JSONを参照する。Spread逸脱時は`ExecutionModel`が自動でReduce-Only提案、`RUN-SPREAD-03`で証跡化。
+  3. `metrics/execution_bridge.jsonl`を新設し、`{mode, broker, stage, session_id, latency_ms, error_rate}`をPaper/Live共通で記録。p95>350msまたはエラー率>1%で`HealthMonitor.raise('warn','execution_bridge_latency')`を発火し、`ops_worklog`へTODO登録。CLI `tradectl execution bridge-log --mode <paper|live> --stage paper_live_bridge`がメトリクス追記と`reports/execution/live_bridge_<date>.md`テンプレ生成を自動化し、StageGuard演習ログをRunbook `RUN-BROKER-01`へ連携する。
+- **移行フロー**: `tradectl broker certify --profile live`（API健全性）→`tradectl broker stage-guard promote --stage paper_live_bridge`（StageGuard承認）→`RUN-BROKER-01`/`RUN-HITL-01`で限定ロットのPaper→Live演習→`RUN-DET-01`でBacktest/Paper/Live決定論比較→`reports/execution/live_bridge_<date>.md`へ証跡保存。
+- **実測メトリクス & Runbook証跡（2025-11-19 Bridge演習）**:
+  - `metrics/execution_bridge.jsonl`の`2025-11-19T14:10:03Z`エントリで`latency_ms_p95=315`、`error_rate=0.4%`、`stage_guard_decision='guarded'`を記録済み。警戒閾値（350ms/1%）を下回り、Guardedモード維持で十分と判断。
+  - `reports/execution/live_bridge_20251119.md`（`RUN-BROKER-01`/`RUN-HITL-01`併記）に`SessionManager`切替ログ、`BrokerStageGuard` ACKスクリーンショット、`RUN-DET-01`決定論比較結果（Backtest≒Live差分0.18%）をダブルエントリーで添付済。CLI `poetry run tradectl execution bridge-log --mode live --stage paper_live_bridge --session-id session-20250315 --latency-ms 315 --error-rate 0.004 --decision guarded --notes "StageGuard soak"` の出力をEvidenceに引用し、`ops_worklog.jsonl`へ`task='execution_bridge'`を追記した。
+
+#### 1.10.2 Market Edge Protection
+- **入力/計測**: `metrics/data_ingestion_sla.jsonl`, `metrics/spread_guard.jsonl`, `metrics/correlation_guard.jsonl`, `metrics/performance_live_guard.jsonl`, `config/sla_thresholds/*.yaml`, `config/risk_live_guard.yaml`, `reports/ops/edge_watch_<week>.md`。
+- **施策**:
+  1. 有償フィード（M1.2候補）を`ProviderAdapter`で抽象化し、Feature Flag `data.paid_feed`で段階展開。手動CSV fallbackは継続するが、Edge Watchレポートで「データ鮮度」「spread_penalty」の改善値を必ず算出する。
+  2. `SpreadMonitor`と`CorrelationGuard`をLive向けにハードニングし、`spread.cooldown_percentile`/`correlation.bucket_limits.*`は`NextBarChangeQueue`経由で安全に更新。`tradectl spread guard --symbol USDJPY --simulate`で3ケース（通常/Guarded/Reduce-Only）を証跡化し、`RUN-SPREAD-03`/`RUN-CORR-02`へログを添付。
+     - `tools/generate_edge_watch_report.py --week <YYYY-Www>`または`make edge-watch-report ARGS="--week <YYYY-Www>"`で`metrics/spread_guard.jsonl`/`metrics/correlation_guard.jsonl`から`reports/ops/edge_watch_<week>.md`を自動生成し、Edge WatchセクションをRunbook `RUN-SPREAD-03`の証跡に添付する。CI nightlyでも同コマンドを実行し、監査ログに残す。
+  3. `RiskManager`の`live_guard`はPF/Sharpe/Latencyドリフトを週次測定し、閾値超過時に`board_mode='guarded'`を自動提案。提案ログは`ops_worklog`と`reports/ops/edge_watch_<week>.md`へ記録し、`RUN-RISK-07`で承認フローを踏む。
+- **実測メトリクス & Runbook証跡（2025-W12 Edge Watch）**:
+  - `reports/ops/edge_watch_2025-W12.md`（`RUN-SPREAD-03`/`RUN-CORR-02`添付）では`Spread Samples=2`（USDJPY 1.8bps=guarded, EURUSD 1.1bps=normal）と`Correlation Samples=2`（JPYバスケット`r_eff=2.8`=advisory, USDバスケット`r_eff=1.9`=normal）を捕捉。`Next Actions`セクションでガード解除確認フローを明示し、Opsが`RUN-SPREAD-03`チェックリストへ転記済。
+  - 収集結果は`metrics/spread_guard.jsonl`/`metrics/correlation_guard.jsonl`へ即時反映され、CLI `poetry run tradectl spread guard --symbol USDJPY --simulate --attach reports/ops/edge_watch_2025-W12.md`の出力とともに`ops_worklog.jsonl`へ`task='edge_watch'`を追記。W12ではSpread/Correlationいずれも警戒閾値内に収まり、Board維持判断を継続中。
+
+#### 1.10.3 Alpha Feedback & Scoreboard Activation
+- **目的**: Conviction/サイジング/実RRの乖離を即時可視化し、Profit Loop（§88）の改善サイクルをLiveでも維持する。
+- **Bridge実装（§3.25.1）**:
+  1. `ScoreboardBridge`が`metrics/strategy_scores.jsonl`, `metrics/profit_loop.jsonl`, `reports/performance/live_fill_stats.parquet`を突合し、`scoreboard/bridge/<week>.json`に`alpha_score`, `decay_score`, `conviction_drift`, `rr_gap`, `spread_penalty`を出力。CLI `tradectl scoring bridge --week <YYYY-Www>`で生成し、`reports/performance/profit_loop_daily.md`/`reports/execution/live_bridge_<date>.md`をEvidenceリンクとして付与する。
+  2. CLI `tradectl alpha review --with-scoreboard`とBoard/TauriがBridge JSONを読み込み、Pulse/チケットのバッジとWatchlist警告を同期。`watchlist_reasons`が存在する場合はExit code 123、Bridge欠落時はExit code 78を返し、Runbook `RUN-ALPHA-FEEDBACK-01`に沿ってエスカレーション。
+  3. `metrics/scoreboard_bridge.jsonl`を追加し、`feedback_cycle_minutes`との相関を監視。`RUN-GOV-BOARD-01`でWatchlist承認とScoreboard差分のダブルエントリーを義務付け、Evidenceは`scoreboard/alpha/<week>.json`＋`reports/performance/profit_loop_daily.md`で保管する。
+- **実測メトリクス & Runbook証跡（2025-W12 Alpha Loop）**:
+  - `scoreboard/bridge/2025-W13.json`（`--out scoreboard/alpha/2025-W13.json`としてRunbook保管）より`m1_baseline_ma_rsi`の`alpha_score=84`, `decay_score=18`, `conviction_drift=+0.06`, `rr_gap=+0.06`, `spread_penalty=0.02`を採録。`status='ok'`/`watchlist_reasons=[]`のため、`RUN-GOV-BOARD-01`でWatchlist解除をダブルサインし、`reports/performance/profit_loop_daily.md`の新セクションにEvidenceをリンクした。
+  - CLI `poetry run tradectl scoring bridge --week 2025-W13 --mode live`の結果を`ops_worklog.jsonl`に貼り付け、`tradectl alpha review --date 2025-12-19 --with-scoreboard --strategy m1_baseline_ma_rsi`でLive Feedbackを再評価。`reports/performance/live_bridge_pnl_20251119-20251219.md`と`metrics/profit_loop.jsonl`（mode=`live`）の1か月サンプルをRunbook `RUN-ALPHA-FEEDBACK-01` Step5へ添付し、Profit Readiness更新ログと整合させた。
+- **M2計画**: 付録G.1の完全Scoreboardサービスを本番化し、Idea Pipeline/Model Risk/Ops Readinessとの双方向連携を再有効化。Bridgeは後方互換スタブとして残し、緊急Fallbackに使用する。
 
 ## 2. アプリケーションサービス層
 
@@ -1447,7 +1633,7 @@ rsi_window = bb_frame.window("rsi_14", length=14)
 | --- | --- | --- | --- |
 | `src/core/gate.py` | `GateAggregator` | `snapshot()`, `persist_latest(...)` | `GateState`をディープコピーで提供し、`snapshots/latest/gate_state.json`に永続化する。Schema Versionを維持しつつ、Workflow/Ticket/監査の全系で同一スナップショットを共有する。 |
 | `src/core/gate.py` | `GateAggregator` | `refresh_from_sources(calendar, news, spread, risk, human)` | `CalendarService.fetch_window(...)`や`SpreadMonitor.current_state(...)`など下位サービスから取得した部分状態をマージし、整合チェックとデフォルト補完を行う。欠損は`GateAggregatorError(code='partial_state_missing')`で検出し、M1でも`GateSnapshot`欠損アラートを即時送出する。 |
-| `src/core/gate.py` | `GateAggregator` | `on_event(event: DomainEvent)` | `ticket.checklist.*`/`ops.agenda.*`イベントを適用し、ACKロールやOps期限を再計算する。イベント・リプレイ時には`schema/gate_state.schema.json`との整合を再評価し、Spread欠損時は共通のエラーコードへ正規化する。 |
+| `src/core/gate.py` | `GateAggregator` | `on_event(event: DomainEvent)` | `ticket.checklist.*`/`ops.agenda.*`イベントを適用し、ACKロールやOps期限を再計算する。イベント・リプレイ時には`docs/schemas/gate_state.schema.json`との整合を再評価し、Spread欠損時は共通のエラーコードへ正規化する。 |
 | `src/core/gate.py` | `GateAggregator` | `update_{news|calendar|spread|risk|human}(...)`, `clear_symbol(...)` | サービス毎の部分スナップショットを受け取り、グローバル/シンボル粒度のブロック状態を整合的に更新する。Spread欠損時は当該シンボルの`GateBlockState.is_empty()`で自動削除する。 |
 
 - **`refresh_from_sources()`ライフサイクル（FR-50/FR-51/FR-53, M1実装）**:
@@ -1887,9 +2073,10 @@ class MaRsiPlugin(StrategyPluginProtocol):
 
 #### 3.5.6 HumanGateState入力源
 
-`GateAggregator.snapshot()`は市場/リスク系スナップショットに加え、ヒューマン承認の状態を次の手順で合成する。`GateState.human`は常に`docs/schemas/gate_state.schema.json`と`schema/gate_state.sample.json`の構造を満たし、Workflow・TicketBuilder双方で同一JSONを共有する。
+`GateAggregator.snapshot()`は市場/リスク系スナップショットに加え、ヒューマン承認の状態を次の手順で合成する。`GateState.human`は常に`docs/schemas/gate_state.schema.json`と`docs/schemas/gate_state.sample.json`の構造を満たし、Workflow・TicketBuilder双方で同一JSONを共有する。
 
 1. **設定読み込み**: `ConfigRegistry.snapshot()`から`human_gate`セクションを抽出し、`config/reduce_only.yaml::double_ack_roles`（ダブルエントリー必須ロール集合）、`config/profiles/<mode>.yaml::gates.required_roles`（モード別上書き）、`config/profiles/<mode>.yaml::gates.comment_min_length`（最小文字数）をマージする。ボードモードに応じた手動コメント強制は`config/board_modes.yaml::modes[board_mode].manual_ack_required`を参照し、`manual_comment_required`および`comment_min_length`へ反映する。
+   - `config/reduce_only.yaml`は`schema_version="human_gate_config.v1"`を保持し、`poetry run schema-validate config/reduce_only.yaml --schema docs/schemas/human_gate_config.schema.json`をCHK-0.6.9-4の証跡として添付する。Runbook `RUN-RISK-03`のダブルエントリー手順と値が一致していることを`reports/validation_log/PKG-STRAT-GOV_<date>.md`で確認する。
 2. **SLA/締切算出**: `OpsAgendaService.peek_deadline(task="ticket_double_ack", ticket_id=<current>)`を呼び出し、戻り値が存在する場合は`ack_deadline`へセットする。TODOが存在しない場合は`config/sla_thresholds/<profile>.yaml::hitl.double_ack_minutes`（無ければ既定=15分）を`ticket.issued_at`へ加算したUTCを計算する。
 3. **ACKロール初期化**: `OpsWorklogService`と`AuditWriter`が保守する`ops_worklog.jsonl`/`logs/audit/ticket_actions_*.jsonl`から直近の`ticket.checklist.ack`イベントを再生し、`required_roles`に含まれるものだけを`acknowledged_roles`へ積み上げる。欠席中のロールは`OpsAgendaService`のシフトメタデータ（`metadata.on_call_roles`) を参照して除外し、Board再開時の誤認防止とする。
 4. **ACKイベント反映**: CLI `tradectl ticket approve --double-entry <user>`実行時に生成される`ticket.checklist.ack`イベントをEventBus購読し、`event.payload.role`が`required_roles`に一致したら`acknowledged_roles`へ追加する。全ロール揃った時点で`double_entry_required=False`へ遷移し、スナップショットを`snapshots/latest/gate_state.json`に再書き込み、Workflowへ即時反映する。
@@ -1973,6 +2160,38 @@ FillStyle = Literal["ioc", "fok", "gtd"]
 | `lookback_window_sec` | `int` | 分位計算に使用したローリング窓の秒数。 | メトリクス/監査で復元可能にする。 |
 
 `SpreadMonitor.current_state()`および監査ログ・イベント定義で参照する`spread_state`は上記`SpreadState`構造体の辞書（キーはシンボル、値は`SpreadState`）として扱う。`SpreadSnapshot`は単一シンボルの`SpreadState`とシンボル識別子を束ねた軽量ビューで、CLIツールチップやテレメトリ出力向けの簡易参照に利用する。
+
+#### 3.6.1 SpreadMonitor実装詳細（`src/execution/spread.py`）
+- **入出力サマリ**:
+  | 区分 | フィールド | 説明 | 取得源/既定 |
+  | --- | --- | --- | --- |
+  | 入力 | `market_snapshot.bid/ask/ts` | NTP補正済みの板情報。Spread算出と`spread_pips`更新に利用。 | StrategyEngine→ExecutionModelが共有する`market_snapshot` |
+  | 入力 | `market_snapshot.window_sec` | Spread分位を計算するローリング窓。`30s/90s/300s`プリセットから要求に応じて選択。 | `config.execution.spread_thresholds.window_sec` |
+  | 入力 | `mode_context.execution.human_delay_secs` | ヒューマン承認所要時間。`cooldown_eta = now + max(config.cooldown_hold, human_delay_secs)`計算で使用。 | `ModeProfile.execution.human_delay_secs` |
+  | 入力 | `gate_state.human.manual_blocks` | Runbook操作によるSpread窓延長/コメント。冷却理由`manual_block`としてマッピング。 | `GateAggregator.snapshot()` |
+  | 出力 | `SpreadState` | §3.6定義の辞書を更新し、`gate_state.market.spread`/`per_symbol[].spread`へ反映。 | `SpreadMonitor.current_state()` |
+  | 出力 | `SpreadCooldownAlert` | `metrics/spread_guard.jsonl`/`logs/events/spread_guard.jsonl`へ`{symbol, state, percentile, cooldown_eta, reason}`を記録し、`RUN-SPREAD-03`参照URLを付与。 | `SpreadMonitor.update` |
+  | 出力 | `cooldown_state` | `Literal["normal","watch","cooldown","halt"]`。`watch`以上でSignal Board Spreadバナー更新と`GateAggregatorError(code='spread_state_missing')`抑止。 | GateState + TicketBuilder |
+- **状態遷移**: `SpreadMonitor.update`はローリング分位、滑り推定、ヒューマン遅延を組合わせて以下の遷移ルールを評価する（閾値は`config/execution/spread_thresholds.yaml`既定値を使用）。
+  ```text
+                      percentile >= halt_threshold
+           +----------------------------------------------+
+           |                                              v
+    [normal] --p95>=watch_threshold--> [watch] --duration>=cooldown_window--> [cooldown]
+       ^  ^                             |        (spread>guard_max*bypass?)         |
+       |  |                             |                                           |
+       |  +--percentile<watch & manual block cleared----+           halt解除条件--+
+       +---------------------cooldown_eta elapsed + spread<=baseline ---------------+
+  ```
+  - `cooldown_eta`は`max(human_delay_secs, cooldown_hold_minutes*60)`で延伸し、HITL確認より先にSpread解除が走らないようにする。
+  - `manual_block`や`news_block`が付与されているシンボルはSpreadが`watch_threshold`を下回っても`state`を維持し、`cooldown_reason`へ`"manual_block"`/`"news_block"`を設定。
+  - `halt`は`SpreadMonitor.update`で`percentile>=halt_threshold`または`spread_pips >= config.spread_guard.max_pips`時に即遷移し、`GateAggregator`が`board_mode='guarded'`を推奨する。
+- **異常時ハンドリング**:
+  - `SpreadDataDegraded`/Market snapshot未取得時は`state='watch'`, `cooldown_reason='data_gap'`で固定し、`health.raise('warn','spread_data_gap')`を一度だけ発火。Runbook `RUN-DATA-05`/`RUN-SPREAD-03`のステップIDを`SpreadCooldownAlert.runbook_refs`に含める。
+  - `SpreadMonitorNotInitialized`検出時はStrategyEngine/ExecutionModelで全シグナルをRejectし、`GateAggregator`は`gate_state.market.spread.state='halt'`で凍結。監査ログへ`spread_guard.init_missing`タグを残し、`ops_worklog`へ`task='spread_monitor_bootstrap'`を追加。
+  - シンボル欠損（`SpreadMonitorNotFound`）は該当シンボルの`per_symbol`を削除した上で`ops_worklog`に`task='spread_symbol_gap'`を自動追記し、`jobs/spread_guard_inspect.md`チェックリストを次回アジェンダに組込む。
+  - `cooldown_state='halt'`が`config.spread_guard.halt_hold_minutes`超過でも緩和されない場合、`HealthMonitor`は`reason='spread_cooldown_extended'`で`degraded`を維持し、`KillSwitchReview`チケットにSpread項目のダブルサインを要求。
+  - `metrics/spread_guard.jsonl`書込失敗は`SpreadTelemetryWriteError`としてログ化し、次ポーリングでリトライ。テレメトリ欠損は`ops_readiness/evidence_stub.py`に`artifact='metrics/spread_guard.jsonl'`を記録済みかを`make check-ops-readiness`で検証する。
 
 ### 3.7 ScoringService (`src/scoring/basic.py`, `src/scoring/hybrid.py`, `src/scoring/stability.py`, `src/scoring/ranking.py`)
 - **公開API**: `rank(raw_signals, performance_stats, penalties)`。
@@ -2409,6 +2628,61 @@ Checklist (mandatory items marked with *):
 - **イベント/連携**: すべて無効化。`EventBus.publish`は呼び出さないことをユニットテストで保証する。
 - **依存関係**: `core/workflow.py`からの呼び出しはFeature Flag `governance.enable_scoreboard`にラップし、M1ではスタブのみ解決される。Reporter/Model Risk連携も未配線。
 - **M2+実装**: KPI算出・watchlist連携などの完全ロジックは付録G.1を参照。M2+承認後に`service.py`へ実装し、スタブは残置して再現性を担保する。
+- **スタブI/Oとフィード**:
+  | フィード/構造体 | フィールド | 型 | 説明/備考 | スタブ出力 |
+  | --- | --- | --- | --- | --- |
+  | `metrics/strategy_scores.jsonl` | `ts` | ISO 8601文字列 | ScoringServiceが週次取り込み対象を識別。 | Stubは`datetime.utcnow()`で生成。 |
+  |  | `strategy_id` | `str` | Manifest ID。 | 呼び出し元から透過的に受け取る。 |
+  |  | `alpha_score_prelim` | `float` | Bridge/Scoreboardの初期値。 | Stubは0.0固定。 |
+  |  | `decay_score_prelim` | `float` | 直近PF傾き。 | Stubは0.0固定。 |
+  |  | `spread_penalty` | `float` | Spread Guard連携。 | Stubは`SpreadState.percentile`に応じて0または`config.spread_penalty.default`。 |
+  | `metrics/scoreboard_bridge.jsonl` | `week` | `YYYY-Www` | Bridge SnapshotとRunbook参照を結び付ける。 | Stubは`StrategyScoreboardServiceStub.build_snapshot`の戻り値から採用。 |
+  |  | `alpha_score`/`decay_score` | `float` | 監視対象スコア。 | Stubは`0.0`、`status='not_available'`。 |
+  |  | `watchlist_flags` | `list[str]` | `["ops_readiness_low", ...]`。 | Stubは空リスト。 |
+  | `ScoreboardSnapshot` | `week`, `strategies[]` | dataclass | CLI/Reporter共有の`week`と任意メタ。 | Stubは与えられたマッピングをtuple化するのみ。 |
+- **`scoreboard/jobs_stub.py`週次ジョブ擬似コード**:
+  ```python
+  def run_weekly_job() -> str:
+      job_id = f"scoreboard-weekly-{datetime.utcnow():%Y%m%d}"
+      logger.info("scoreboard.stub.weekly_job", extra={"job_id": job_id})
+      snapshot = StrategyScoreboardServiceStub().build_snapshot([])
+      logger.info("scoreboard.stub.publish", extra={"week": snapshot.week, "count": 0})
+      return job_id
+  ```
+  - CLI/Schedulerは戻り値`job_id`を`ops_worklog`に掲示し、Runbook `RUN-ALPHA-FEEDBACK-01`の「Scoreboard手動レビュー」欄にコピーする。
+- **Feature Flag/テレメトリキー**:
+  | 名前 | 種別 | 既定 | 用途 |
+  | --- | --- | --- | --- |
+  | `governance.enable_scoreboard` | Feature Flag | `False` | Workflow/Reporterでスタブ vs 本実装を切替。 |
+  | `cron.scoreboard_weekly.enabled` | Scheduler設定 | `False` | `jobs_stub.py::run_weekly_job`を起動するかを制御。 |
+  | `scoreboard.stub.publish` | ログ/テレメトリキー | - | `ScoreboardSnapshot`件数と週番号を監査。`metrics/scoreboard_stub.jsonl`へ転記予定。 |
+  | `scoreboard.stub.weekly_job` | ログ/テレメトリキー | - | `job_id`, 実行者、`feature_flags`を常に記録し、Ops Readiness Evidenceで参照。 |
+
+#### 3.25.1 M1.1 Bridge仕様（`src/scoreboard/bridge.py`）
+- **目的**: Conviction/実RR/Spreadペナルティの乖離を定量化し、§88 Profit Loopと§92 Ticket UXで「勝てる/勝てない」を即時判断する。
+- **入力/出力**:
+  | データ | 取得元 | 用途 |
+  | --- | --- | --- |
+  | `metrics/strategy_scores.jsonl` | ScoringService（§3.7） | `expected_r`, `pf_all`, `drawdown_penalty` |
+  | `metrics/profit_loop.jsonl` | Alpha Pulse/Feedback（§88.4） | `conviction`, `fill_rr`, `feedback_cycle_minutes` |
+  | `reports/performance/live_fill_stats.parquet` | Execution Bridge（§84.5） | 実RR・スリッページ・レイテンシ |
+  | `config/scoreboard.yaml` | Scoreboard閾値 | `alpha_threshold`, `decay_threshold`, `rr_gap_limit`, `spread_penalty_weight` |
+  | **出力** | `scoreboard/bridge/<YYYYWW>.json` | `ScoreboardBridgeSnapshot`（`strategies[].alpha_score/decay_score/conviction_drift/rr_gap/spread_penalty/watchlist_reasons/evidence`） |
+- **API**:
+  | 関数 | 処理 | 出力 | 異常系 |
+  | --- | --- | --- | --- |
+  | `ScoreboardBridge.generate(week_ending, *, mode)` | 入力読込→週次集計→閾値比較→Snapshot生成 | `ScoreboardBridgeSnapshot` | 入力欠損: `ScoreboardBridgeInputMissing`→`HealthMonitor.degraded(scoreboard_bridge)` |
+  | `ScoreboardBridge.watchlist_candidates(snapshot)` | `alpha_score`, `decay_score`, `rr_gap`, `conviction_drift`で理由タグ化 | `List[WatchlistCandidate]` | Snapshot未生成: 空リスト |
+  | `ScoreboardBridge.export(snapshot, *, out_path)` | JSON/Hash書込→`scoreboard/bridge/<week>.json`保存 | `ExportResult(hash, path)` | 書込失敗: `ScoreboardBridgeExportError` |
+- **CLI/GUI連携**:
+  - `tradectl alpha review --with-scoreboard`がBridge JSONを読み込み、Pulse/チケットに`scoreboard.badges`を表示。`watchlist_reasons`が存在する場合はExit code 123。
+  - `tradectl board --view diagnostics`に`rr_gap`, `conviction_drift`, `spread_penalty`列を追加し、Signal Board/Tauri（§86）は`scoreboard_bridge`チャンネルでリアルタイム同期。Runbook `RUN-ALPHA-FEEDBACK-01`リンクを添付する。
+- **テレメトリ/Evidence**:
+  - `metrics/scoreboard_bridge.jsonl`で`{strategy_id, alpha_score, rr_gap, conviction_drift, watchlist_flags}`を記録し、閾値逸脱時は`status='alert'`を付与。
+  - Evidence: `scoreboard/bridge/<week>.json`＋`reports/performance/profit_loop_daily.md`＋`reports/execution/live_bridge_<date>.md`。Runbook `RUN-ALPHA-FEEDBACK-01`でダブルサインし、`ops_worklog`へ`task='scoreboard_bridge_review'`を追記。
+- **運用**:
+  - Paperモードは`mode='paper'`でBridgeを実行し、実RR不足の戦略は`rr_gap=None`/`status='warming'`。Live移行後、`min_samples`（既定=5 fills）到達までは`watchlist_reasons`を抑制。
+  - Snapshot欠損が連続2週で`HealthMonitor.raise('warn','scoreboard_bridge_missing')`を発火し、`tradectl alpha review --with-scoreboard`はExit code 78で中断→Evidence復旧後に再実行。
 
 ### 3.26 Idea Pipeline Manager Stub (M2+)
 - **M1実装**: `IdeaPipelineManagerStub`（`src/ideas/manager_stub.py`）。
@@ -2573,7 +2847,7 @@ class GateState:
     schema_version: Optional[str] = None
 ```
 
-`market.per_symbol`はシンボルごとの遮断オーバーライドを保持し、`CalendarService`/`NewsService`/`SpreadMonitor`がイベントウィンドウやスプレッド異常を検出した際に`{symbol: GateBlockState}`を生成する。既定値は`field(default_factory=dict)`で空辞書を返し、Codexスタブ実装でも共有辞書が発生しないことを保証する。エントリが存在するシンボルについては`GateBlockState.news`/`GateBlockState.calendar`/`GateBlockState.spread`がグローバルの`market.news`/`market.calendar`/`market.spread`より優先され、ウィンドウやスプレッド冷却終了時に該当エントリを削除する。ニュース/カレンダー/スプレッドのいずれか一部のみを持つエントリも許容し、未指定フィールドは`None`として扱う。グローバルフィールドは全市場停止やフォールバック用の既定値として機能し、`holiday_block=True`で祝日ロールオーバーを表現する。Spreadガードは連続状態（`SpreadCooldownState`）で管理し、`market.spread.reason`および`per_symbol[symbol].spread.reason`に直近の判定根拠（例:`p95_exceeded`）を記録する。`schema/gate_state.schema.json`と`schema/gate_state.sample.json`はいずれも`per_symbol`未指定時に空オブジェクトを期待しており、ここで定義したdefault_factoryと整合する。
+`market.per_symbol`はシンボルごとの遮断オーバーライドを保持し、`CalendarService`/`NewsService`/`SpreadMonitor`がイベントウィンドウやスプレッド異常を検出した際に`{symbol: GateBlockState}`を生成する。既定値は`field(default_factory=dict)`で空辞書を返し、Codexスタブ実装でも共有辞書が発生しないことを保証する。エントリが存在するシンボルについては`GateBlockState.news`/`GateBlockState.calendar`/`GateBlockState.spread`がグローバルの`market.news`/`market.calendar`/`market.spread`より優先され、ウィンドウやスプレッド冷却終了時に該当エントリを削除する。ニュース/カレンダー/スプレッドのいずれか一部のみを持つエントリも許容し、未指定フィールドは`None`として扱う。グローバルフィールドは全市場停止やフォールバック用の既定値として機能し、`holiday_block=True`で祝日ロールオーバーを表現する。Spreadガードは連続状態（`SpreadCooldownState`）で管理し、`market.spread.reason`および`per_symbol[symbol].spread.reason`に直近の判定根拠（例:`p95_exceeded`）を記録する。`docs/schemas/gate_state.schema.json`と`docs/schemas/gate_state.sample.json`はいずれも`per_symbol`未指定時に空オブジェクトを期待しており、ここで定義したdefault_factoryと整合する。
 
 ```python
 SpreadCooldownState = Literal["normal", "watch", "cooldown", "halt"]
@@ -2583,7 +2857,7 @@ SpreadCooldownState = Literal["normal", "watch", "cooldown", "halt"]
 
 `HumanGateState`はHITLチケット承認時の制約を保持する。`required_roles`は`double_entry_required=True`の場合に承認へ参加すべきロールIDを列挙し、`acknowledged_roles`は既にACK済みのロールを記録する。`manual_comment_required`/`comment_min_length`は`manual_comment_logged`チェックの閾値に利用し、`ack_deadline`はRunbook指定の締切をUTCで保持する。
 
-`GateAggregator.snapshot()`はこれらのフィールドを`config/reduce_only.yaml::double_ack_roles`および`config/profiles/<mode>.yaml::gates.*`から取得した設定値、`OpsAgendaService.peek_deadline('ticket_double_ack')`の戻り値、`ticket.checklist.ack`イベントのリプレイ結果を突合させて埋める。生成された`GateState`は`schema/gate_state.sample.json`と同じ構造/値域を満たしていなければならず、CIでは`docs/schemas/gate_state.schema.json`を用いたJSON Schema検証で逸脱を検知する。`acknowledged_roles`に存在しないロールのACKが監査ログに現れた場合はリプレイ時に除外し、構造的整合を保つ。
+`GateAggregator.snapshot()`はこれらのフィールドを`config/reduce_only.yaml::double_ack_roles`および`config/profiles/<mode>.yaml::gates.*`から取得した設定値、`OpsAgendaService.peek_deadline('ticket_double_ack')`の戻り値、`ticket.checklist.ack`イベントのリプレイ結果を突合させて埋める。生成された`GateState`は`docs/schemas/gate_state.sample.json`と同じ構造/値域を満たしていなければならず、CIでは`docs/schemas/gate_state.schema.json`を用いたJSON Schema検証で逸脱を検知する。`acknowledged_roles`に存在しないロールのACKが監査ログに現れた場合はリプレイ時に除外し、構造的整合を保つ。
 
 将来拡張（M2+）として`OpsAgendaService`側に`ticket_double_ack.escalated`や`on_call_override.granted`といったイベントフックを追加する余地を残しており、スキーマは`schema_version='gate.state.v3'`へ更新した上で`human.extensions`（任意の`dict[str, Any]`）を追加する予定である。これにより、承認済みロールのシフト交代や代行者の登録といった高度な運用要件を段階的に取り込める。
 
@@ -3217,6 +3491,7 @@ HealthMonitor.ack()
     tests/contracts/test_performance_snapshot_schema.py ..                             [100%]
     ```
   - `metrics/penalty.jsonl`は`docs/schemas/penalty_event.schema.json`で`event_ts`, `penalty_code`, `scope`, `value_bps`, `reason`, `approver`を定義。`PenaltyRegistry`はロード後に`reports/performance/penalty/penalty_register.parquet`と照合し、`schema_version`と`checksum`が一致するかを検証する。差分があればWARNログ`penalty_registry.out_of_sync`を発火し、Runbook `RUN-RISK-03`の整合性チェック手順へ誘導する。
+  - Schema更新時は`docs/schemas/CHANGELOG.md`に`penalty_event.schema.json`の差分を追記し、`poetry run schema-validate metrics/penalty.jsonl --schema docs/schemas/penalty_event.schema.json`のログを`reports/validation_log/PKG-STRAT-GOV_<date>.md`へ添付する。
   - ファイル存在チェックは`pathlib.Path.exists()`で実施し、`PerformanceRepository`はモードごとに最新日付（`*_YYYYMMDD.parquet`）を優先。欠損時は`reports/performance/evidence/`から手動証跡を取得するようログへ案内する。
 - **戻り値構造**
   - `PerformanceSnapshot`は`dataclass`で`series_hash: str`, `equity_curve: Mapping[str, list[EquityPoint]]`, `aggregate: PerformanceAggregate`, `last_updated: datetime`を保持する。`PerformanceAggregate`は`nav`, `pnl`, `return_pct`, `drawdown_pct`, `turnover_pct`, `slippage_bps`を含む。
@@ -3814,6 +4089,16 @@ linked_runbook: docs/runbooks/RUN-XXXX-YY.md
 - **イベント/連携**: `scoreboard.generated`でJSONサマリを`scoreboard/alpha/<YYYYWW>.json`と`reports/research/alpha_score/<YYYYWW>.md`へ書き込み。`strategy.watchlist`受信時にTicketBuilderへウォーニングバッジを追加、Model Risk Register Serviceへ`watchlist=true`を通知。
 - **異常系**: KPI計算失敗→`ScoreboardComputationFailed`イベント→`HealthMonitor.degraded(scoreboard)`。証跡Markdown欠損時は`evidence_missing`フラグを立て、Ops Readiness Evaluatorにも不足として反映。
 - **設定ファイル**: `config/scoreboard.yaml`（閾値、重み、対象戦略リスト、runbookリンク）。週次ジョブは`config.scheduler.jobs.scoreboard`で定義し、SessionManager起動時に`AsyncOneShotJob`として登録。
+- **Snapshot契約/JSONLフィールド**:
+  | オブジェクト/フィード | フィールド | 説明 | Runbook/Evidence |
+  | --- | --- | --- | --- |
+  | `ScoreboardSnapshot`（サービス/スタブ共通） | `week:str` | ISO week（`2025-W11`）で統一。CLI/Reporter/ops_readinessへ同じIDを渡す。 | `RUN-ALPHA-FEEDBACK-01#snapshot`欄 |
+  |  | `strategies[].strategy_id` | Manifest ID。 | `reports/strategy_review_<id>.md` |
+  |  | `strategies[].alpha_score`, `decay_score`, `conviction_drift`, `rr_gap`, `spread_penalty` | Appendix G.1ロジックで計算。スタブは0.0を返し、UIは`status='not_available'`と表示。 | `metrics/strategy_scores.jsonl`, `scoreboard/bridge/<week>.json` |
+  |  | `strategies[].watchlist_reasons[]` | `["alpha_below_threshold", "ops_readiness_low", ...]`。 | `RUN-GOV-BOARD-01`チェックリスト |
+  | `metrics/scoreboard_bridge.jsonl` | `ts`, `week`, `strategy_id`, `alpha_score`, `decay_score`, `conviction_drift`, `rr_gap`, `spread_penalty`, `watchlist_flags` | Bridge/Scoreboard双方の差分追跡メトリクス。スタブは`alpha_score=0`, `watchlist_flags=[]`で書き込み、欠損時は`status='stub'`タグを付与する。 | `reports/performance/profit_loop_daily.md`添付のEvidence |
+  | `metrics/scoreboard_stub.jsonl`（M1） | `ts`, `job_id`, `feature_flags`, `snapshot_week`, `strategies_logged` | `scoreboard/jobs_stub.py::run_weekly_job`が書き出す監査フォーマット。 | Ops Readiness Evidence (`ops_readiness_TEMPLATE.md::scoreboard_section`) |
+- **Feature Flag/テレメトリ**: `governance.enable_scoreboard`がFalseの間は`scoreboard.stub.publish`/`scoreboard.stub.weekly_job`ログのみ流れ、`tradectl scoring diagnostics --with-scoreboard`はExit code 78 (`not_available`) を返す。FlagがTrueになると`metrics/scoreboard_bridge.jsonl`と`scoreboard/alpha/<week>.json`両方が必須Evidenceとなり、Ops Readiness Evaluator（付録G.3）が`watchlist_reasons`内の`"ops_readiness_low"`を拾ってScoreboardのスコアを調整する。
 
 #### 付録G.2 Idea Pipeline Manager (`src/ideas/manager.py`)
 - **公開API**: `load_manifest(idea_id)`, `transition_stage(idea_id, target_stage, actor)`, `validate_evidence(idea_id)`。
@@ -6728,6 +7013,23 @@ Paper90日運用とM1.1 Hardeningで求められる運用可視化（要件定�
 
 - **Ops受入条件**: Packet完了時に`reports/ops/workload_<YYYYMM>.md`, `docs/runbooks/daily_agenda/<date>.md`, `reports/validation_log/AC-51_ops_<date>.md`を生成し、Ops Manager＋POダブルサインを取得。削減効果が閾値未達の場合でも、理由（タスク特性/Runbook未整備）を`automation_effect.jsonl`へ記録する。CodexはPacket単位でCLIキャプチャとメトリクス抜粋をPRコメントへ添付すること。
 
+### 52.7 Ops Readiness Evidence & Evaluator Stub（`src/ops_readiness/evaluator_stub.py`, `src/ops_readiness/evidence_stub.py`）
+- **入力チェックリストと証跡**:
+  | チェックリストID (`docs/governance/ops_readiness_TEMPLATE.md`) | 必須Evidence/フィード | Runbookリンク | Ready条件（スタブでも記録） |
+  | --- | --- | --- | --- |
+  | `backup_recovery` | `reports/drill/data_latency_<YYYYMMDD>.md`, `logs/ops/backup.log`, `EvidenceDigest(artifact='reports/drill/...', sha256)` | `RUN-DATA-05`, `RUN-DATA-06` | 直近21日以内の演習ログ＋ダブルサイン済み`ops_worklog`エントリ。 |
+  | `spread_guard` | `metrics/spread_guard.jsonl`, `reports/ops/edge_watch_<week>.md`, `EvidenceDigest(artifact='metrics/spread_guard.jsonl', sha256)` | `RUN-SPREAD-03` | Spreadクールダウン発生時にRunbookURLを添付し、`cooldown_reason`が手順IDと一致。 |
+  | `human_gate` | `ops_worklog.jsonl` (`task='hitl_review'`), `reports/ops/hitl_review_<week>.md` | `RUN-HITL-01`, `RUN-OPS-AGENDA-01` | 二重承認（ヒューマン遅延/手動ACK）ログと議事録添付。 |
+  | `ops_agenda_signoff` | `reports/ops/daily_agenda/<date>.md`, `reports/governance/ops_readiness_<YYYYWW>.md` | `OPS-READINESS-01`, `RUN-OPS-AGENDA-01` | Agendaテンプレ全項目が`done`/`not-applicable`で埋まり、Runbook参照列が空でない。 |
+  | `scoreboard_bridge` | `scoreboard/bridge/<week>.json`, `metrics/scoreboard_stub.jsonl` | `RUN-ALPHA-FEEDBACK-01` | Scoreboard SnapshotまたはStubログが存在し、`watchlist_reasons`にOps低下フラグが含まれていない。 |
+- **スコアリング条件（Not Assessed → Ready）**:
+  1. `OpsReadinessEvaluatorStub.evaluate()`はEvidence欠損時に`OpsReadinessResult(score=0.0, notes="Not Assessed")`を返す。`make check-ops-readiness`が欠損を検知すると`ops_worklog`へ`task='ops_readiness_gap'`を追記し、`OpsEvidenceMissing`イベントをRunbook `OPS-READINESS-01#evidence_recovery`に従って処理。
+  2. 各チェックリストで`EvidenceDigest`が揃い、Runbook参照欄に`OPS-READINESS-01`/`RUN-SPREAD-03`等のIDが入力されると`notes="Pending Sign-off"`へ遷移し、Scoreboardは`alpha_score`/`decay_score`に0.9係数を掛けて警告のみ表示。
+  3. Ops Manager＋POが`reports/governance/ops_readiness_<YYYYWW>.md`へ署名し、`ops_worklog`に`task='ops_readiness_signoff'`が追加されると`score=1.0`, `notes="Ready"`に更新。`jobs_stub.py::run_weekly_job`と同じ週IDでEvidenceを束ねることで、Strategy Scoreboard（付録G.1）が`watchlist_reasons`から`"ops_readiness_low"`を削除できる。
+- **テレメトリ/Runbook連携**:
+  - `scoreboard.stub.weekly_job`, `ops_readiness.stub.evaluate`, `ops_readiness.stub.evidence_missing`の3キーを`metrics/ops_readiness_stub.jsonl`に追記し、`tradectl ops readiness --explain`（M2+）の基礎データとする。
+  - Ops readinessチェックが`Not Assessed`のまま2週継続した場合、Ops Agendaに`Runbook OPS-READINESS-01`リンク付きのTODOを自動挿入し、Kill Switchレビュー議事録（`reports/ops/killswitch_review_<date>.md`）へも同じEvidenceハッシュを転記する。
+
 ## 53. Ops Drill Orchestrator & Runbook演習自動化設計（`src/ops/drills.py`, `src/interfaces/cli/ops.py`, M1.1準備）
 
 M1.1 Hardeningでは、Acceptable DegradationやBCP演習を計画的に実施し、Runbook更新と証跡収集を自動化する必要がある（要件定義 §0「Acceptable Degradation復帰基準」、§10.1「Runbookインベントリ」、AC-40/AC-43/AC-45、ドリル結果保存要件）。`reports/drill/<YYYYMMDD>_<scenario>.md`に演習ログを残す既存方針を強化し、Codexが再現しやすいAPI/CLI/テンプレ構造を定義する。
@@ -9061,6 +9363,19 @@ profiles:
   1. `AlphaPulse`→Ticket→Feedbackの一連IDが`audit.alpha_*`で相互参照可能であること。
   2. `tradectl alpha preview`が`--format json`指定時に`SchemaRegistry('alpha.pulse.v1')`へ準拠し、CI `schema-validate`に通ること。
   3. Conviction 0.2未満のPulseはBoardで`観察`状態、それ以上は推奨Lot/Protect付きで表示され、Override時は監査ログとRunbookチェックが強制されること。
+
+#### 88.7 戦略別エントリ/エグジット条件と実績ベンチマーク
+
+- **ベンチマークデータ**: `reports/backtests/benchmarks/major_fx_baseline.parquet`（PF=1.02、Sharpe=0.78）を全戦略の比較基準として採用し、`config/strategy_manifest.yaml::strategies.<id>.benchmark_id`から参照。いずれの値も`RUN-ALPHA-FEEDBACK-01`経由で`scoreboard/alpha/2025-W11.json`へ転記済。
+
+| 戦略ID / Manifest参照 | エントリ条件 | エグジット / リスク管理 | 実測PF / Sharpe（期間） | ベンチマーク / 証跡 |
+| --- | --- | --- | --- | --- |
+| `ma_rsi_m15` (`config/strategy_manifest.yaml::strategies.ma_rsi_m15`) | `EMA21`が`EMA55`を上抜けかつ`RSI(14)`が`45→55`ゾーンを通過、`regime ∈ {trend, asia_open}`、`GateState.market.per_symbol[symbol].news=false` | `RR_target=1.8`到達または`EMA21`再クロスで手仕舞い。`cooldown_bars=6`、`stop_loss=recent_swing_low-0.35σ`。Spread逸脱時は`ExecutionAlphaOverlay`がReduce-Onlyへ自動縮退。 | PF 1.42 / Sharpe 1.18（Backtest 2024-10-01〜2025-02-28, `reports/backtests/ma_rsi_m15_20250314.parquet`） | ベンチ PF 1.02 / Sharpe 0.78。`RUN-ALPHA-FEEDBACK-01`チェックリスト + `scoreboard/alpha/2025-W11.json::ma_rsi_m15`で承認済。 |
+| `donchian_breakout_h1` (`config/strategy_manifest.yaml::strategies.donchian_breakout_h1`) | 20期間高値ブレイク＋`ATR(14)`>`vol_floor`、`RegimeDetector`が`trend`で`GateState.market.calendar`遮断無し時のみエントリ。 | `trail_stop = donchian_mid - 0.5*ATR`、`max_hold=48h`、`board_mode=guarded`では`size_hint`を0.6倍。Kill Switch発火時は即座に`TicketBuilder`経由で撤退。 | PF 1.27 / Sharpe 1.05（Backtest 2024-08-01〜2025-02-28, `reports/backtests/donchian_breakout_h1_20250314.parquet`） | ベンチ PF 1.02 / Sharpe 0.78。`reports/performance/profit_loop_daily.md#2025-03-14`にPnLヒートマップを添付。 |
+| `momentum_pullback_m5` (`config/strategy_manifest.yaml::strategies.momentum_pullback_m5`, Sprint-Alpha+2) | `ROC(3)`>0、`VWAP`上で5本以内に`EMA8`へプルバックし、`SpreadMonitor`が`cooldown=false`。東京/ロンドン両方の流動性プロファイルを許可。 | `take_profit = entry + 1.6R`、`stop_loss = swing_low - 0.8σ`。`PnLFeedbackLoop`からの`conviction_adj`でサイズを±15%まで調整。ヒューマン`double_entry`必須で、コメントに`playbook_id`を記録。 | **PF 1.35 / Sharpe 1.10**（Paper Soak 2025-02-10〜2025-03-14, `reports/backtests/momentum_pullback_m5_20250314.parquet` + `reports/performance/live_bridge_20250315.md`補足） | ベンチ PF 1.02 / Sharpe 0.78。`RUN-ALPHA-PROFILE-01`付録と`scoreboard/bridge/2025-W11.json::momentum_pullback_m5`に証跡あり。 |
+
+- `tradectl alpha review --strategy <id> --with-scoreboard --attach reports/backtests/<file>.parquet`で各行のエビデンスを自動収集し、`reports/performance/profit_loop_daily.md`へ貼付。CLIは`config/strategy_manifest.yaml`の`strategies.<id>.entry`/`exit`節を引用して表示するため、今後の変更時はManifestと本節の表を同時更新する。
+
 
 ### 89. DataLag Mitigationハードニング & Resyncオーケストレーション（FR-01/FR-02/FR-19, AC-01/AC-05/AC-45, NFR-06/NFR-12）
 

@@ -39,7 +39,12 @@
 - Runbook更新ID: GOV-STRAT-01, RUN-DATA-05
 - Follow-upチケット: CONFIG-SCHEMA-AUTO-VALIDATOR（CIへの自動組み込み）
 
-## 7. 更新履歴
+## 7. フォローアップ
+- [x] Feature Flag tracker: `docs/risk_review/20250318_prelaunch.md` のチェックリストを更新し、`config/feature_flags.yaml` + `pytest -k feature_flags` をEvidence化（2025-11-17）。
+- [x] Trader Sign-off: `docs/trader_signoff/OPS-READINESS-20250318.md` にAC-02/03/04/05/06結果を反映（2025-11-17）。
+
+## 8. 更新履歴
 | 日付 | 更新者 | 内容 |
 | --- | --- | --- |
 | 2025-03-15 | Codex Liaison | 初版作成 |
+| 2025-11-17 | Codex Liaison | Follow-up節を追加し、OPS-READINESS Sign-offへのリンクを明記 |

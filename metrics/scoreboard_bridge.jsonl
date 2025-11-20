@@ -1,0 +1,6 @@
+{"timestamp": "2025-03-15T00:00:00Z", "week": "2025-W11", "mode": "paper", "strategy_id": "m1_baseline_ma_rsi", "alpha_score": 68.0, "decay_score": 21.0, "rr_gap": -0.35, "status": "alert"}
+{"timestamp": "2025-11-17T13:13:53+00:00", "week": "2025-W11", "mode": "paper", "strategy_id": "m1_baseline_ma_rsi", "alpha_score": 68.0, "decay_score": 21.0, "rr_gap": -0.09000000000000002, "status": "alert"}
+{"timestamp": "2025-11-19T14:13:57+00:00", "week": "2025-W12", "mode": "paper", "strategy_id": "m1_baseline_ma_rsi", "alpha_score": 68.0, "decay_score": 21.0, "rr_gap": -0.09000000000000002, "status": "alert"}
+{"timestamp": "2025-11-20T11:40:07+00:00", "week": "2025-W13", "mode": "live", "strategy_id": "m1_baseline_ma_rsi", "alpha_score": 84.0, "decay_score": 18.0, "rr_gap": 0.05999999999999994, "status": "ok"}
+{"timestamp": "2025-11-20T11:40:38+00:00", "week": "2025-W13", "mode": "live", "strategy_id": "m1_baseline_ma_rsi", "alpha_score": 84.0, "decay_score": 18.0, "rr_gap": 0.05999999999999994, "status": "ok"}
+{"timestamp": "2025-11-20T11:41:01+00:00", "week": "2025-W13", "mode": "live", "strategy_id": "m1_baseline_ma_rsi", "alpha_score": 84.0, "decay_score": 18.0, "rr_gap": 0.05999999999999994, "status": "ok"}

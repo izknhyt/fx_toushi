@@ -1,5 +1,9 @@
 # Schema Registry Change Log
 
+## 2025-03-22
+- Added `penalty_event.schema.json` capturing penalty ledger entries（event_ts/penalty_code/scope/value_bps/reason/approver） per detailed design §7.7. CI command `poetry run schema-validate metrics/penalty.jsonl --schema docs/schemas/penalty_event.schema.json` is now part of `PKG-STRAT-GOV`.
+- Published `docs/schemas/gate_state.sample.json` aligned with `gate_state.schema.json` v3 so GateAggregator/GateState validation, Runbook RUN-OPS-04, and CLI snapshots share a canonical instance for audits.
+
 ## 2025-03-21
 - Added `performance_snapshot.schema.json` capturing KPI snapshots (Sharpe, Sortino, drawdown, win rate, P&L metadata and governance state) for backtest/paper/live windows per detailed design §3.5.2/§7.6. Included curated sample `docs/schemas/examples/performance_snapshot.sample.json`, symlink `schema/performance_snapshot.schema.json`, and regression coverage via `tests/contracts/test_performance_snapshot_schema.py`.
 

@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import asdict
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any, Iterable, Mapping
 
@@ -15,17 +15,30 @@ from rich.json import JSON
 from rich.panel import Panel
 from rich.pretty import Pretty
 
+from .alpha import AlphaReviewError, AlphaWatchlistAlert, review as alpha_review
 from .backtest import run_backtest, walk_forward_backtest
 from .board import board as board_view
 from .data import acknowledge_degradation, health_snapshot, status as data_status
-from .execution import ExecutionEvidenceError, recalibrate
+from .execution import ExecutionBridgeLogError, ExecutionEvidenceError, bridge_log, recalibrate
 from .funding import FundingSyncError, funding_status, funding_sync
 from .kill_switch import KillSwitchEvidenceError, ResumeBlocked, review as kill_switch_review
-from .ops import action_item_sync
+from .ops import action_item_sync, readiness
 from .resync import resync
 from .session import start_session, stop_session
-from .scoring import DiagnosticsEvidenceError, run_diagnostics
+from .scoring import (
+    DiagnosticsEvidenceError,
+    ScoreboardBridgeError,
+    generate_scoreboard_bridge,
+    run_diagnostics,
+)
 from .status import status
+from src.audit.trace import DEFAULT_AUDIT_LOG, trace_order
+from src.metrics.reports import generate_latency_report
+from src.ticket.monitor import (
+    DEFAULT_EVENT_LOG_PATH as DEFAULT_TICKET_EVENT_LOG_PATH,
+    DEFAULT_EXPORT_PATH as DEFAULT_TICKET_EXPORT_PATH,
+    monitor_ticket,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -168,12 +181,106 @@ def create_cli_app() -> typer.Typer:
 
     app.add_typer(backtest_app, name="backtest")
 
+    ticket_app = typer.Typer(help="Ticket HITL utilities")
+
+    @ticket_app.command("monitor")
+    def ticket_monitor_command(
+        ctx: typer.Context,
+        ticket_id: str | None = typer.Option(None, "--id", help="Ticket identifier"),
+        mode: str = typer.Option("paper", "--mode", help="Mode to monitor"),
+        watch_seconds: int = typer.Option(120, "--watch", help="Seconds to wait for OCO ack", min=1),
+        export_path: Path | None = typer.Option(
+            DEFAULT_TICKET_EXPORT_PATH,
+            "--export",
+            help="Path to write sample orders Parquet",
+        ),
+        event_log_path: Path = typer.Option(
+            DEFAULT_TICKET_EVENT_LOG_PATH,
+            "--event-log",
+            help="Override ack event log path",
+            hidden=True,
+        ),
+        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
+    ) -> None:
+        ctx_obj = ctx.obj or {"json": False}
+        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        result = monitor_ticket(
+            ticket_id=ticket_id,
+            mode=mode,
+            watch_seconds=watch_seconds,
+            export_path=export_path,
+            event_log_path=event_log_path,
+        )
+        _render_payload(console, result.to_mapping(), json_output=effective_json)
+
+    app.add_typer(ticket_app, name="ticket")
+
+    metrics_app = typer.Typer(help="Metrics reporting utilities")
+
+    @metrics_app.command("report")
+    def metrics_report_command(
+        ctx: typer.Context,
+        kind: str = typer.Option(..., "--kind", help="Report kind", case_sensitive=False),
+        window: str = typer.Option("7d", "--window", help="Metrics window"),
+        export: Path | None = typer.Option(
+            None,
+            "--export",
+            help="Optional markdown export path",
+        ),
+        source: Path = typer.Option(
+            Path("metrics/data_ingestion_sla.jsonl"),
+            "--source",
+            help="Override metrics source path",
+            hidden=True,
+        ),
+        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
+    ) -> None:
+        if kind.lower() != "latency":
+            raise typer.BadParameter("Only latency reports are supported in M1")
+        ctx_obj = ctx.obj or {"json": False}
+        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        report = generate_latency_report(window=window, export_path=export, source_path=source)
+        _render_payload(console, report.to_mapping(), json_output=effective_json)
+
+    app.add_typer(metrics_app, name="metrics")
+
+    audit_app = typer.Typer(help="Audit tooling")
+
+    @audit_app.command("trace")
+    def audit_trace_command(
+        ctx: typer.Context,
+        order: str = typer.Option(..., "--order", help="Ticket/Order identifier"),
+        export: Path | None = typer.Option(
+            None,
+            "--export",
+            help="Optional markdown export path",
+        ),
+        log_path: Path = typer.Option(
+            DEFAULT_AUDIT_LOG,
+            "--log-path",
+            help="Override audit log path",
+            hidden=True,
+        ),
+        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
+    ) -> None:
+        ctx_obj = ctx.obj or {"json": False}
+        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        trace = trace_order(order_id=order, log_path=log_path, export_path=export)
+        _render_payload(console, trace.to_mapping(), json_output=effective_json)
+
+    app.add_typer(audit_app, name="audit")
+
     @app.command("status")
     def status_command(
         ctx: typer.Context,
         ack: str | None = typer.Option(None, "--ack", help="Ack reference or Runbook ID"),
         kill_switch: str | None = typer.Option(None, "--kill-switch", help="Requested kill switch state"),
         board: str | None = typer.Option(None, "--board", help="Board guard operation reference"),
+        history: str | None = typer.Option(
+            None,
+            "--history",
+            help="History view to render (e.g. kill-switch)",
+        ),
         verbose: bool | None = typer.Option(None, "--verbose", "-v", help="Override verbose flag"),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
@@ -187,6 +294,7 @@ def create_cli_app() -> typer.Typer:
             ack=ack,
             kill_switch=kill_switch,
             board=board,
+            history=history,
         )
         _render_payload(console, payload, json_output=effective_json)
 
@@ -376,6 +484,75 @@ def create_cli_app() -> typer.Typer:
         payload["verbose"] = effective_verbose
         _render_payload(console, payload, json_output=effective_json)
 
+    @execution_app.command("bridge-log")
+    def execution_bridge_log_command(
+        ctx: typer.Context,
+        mode: str = typer.Option("paper", "--mode", help="Operating mode (paper|live)."),
+        broker: str = typer.Option("sandbox", "--broker", help="Broker identifier."),
+        stage: str = typer.Option(
+            "paper_live_bridge",
+            "--stage",
+            help="StageGuard stage exercised during the drill.",
+        ),
+        session_id: str = typer.Option(
+            "session-mock",
+            "--session-id",
+            help="Session identifier recorded in logs.",
+        ),
+        latency_ms: float = typer.Option(320.0, "--latency-ms", help="Observed latency p95 in milliseconds."),
+        error_rate: float = typer.Option(0.005, "--error-rate", help="Observed error rate as ratio (e.g. 0.01 for 1%)."),
+        decision: str = typer.Option("guarded", "--decision", help="StageGuard decision outcome."),
+        notes: str | None = typer.Option(None, "--notes", help="Optional free-form notes."),
+        report_date: str | None = typer.Option(
+            None,
+            "--report-date",
+            help="Override report date (YYYY-MM-DD). Defaults to today (UTC).",
+            show_default=False,
+        ),
+        metrics_path: Path = typer.Option(
+            Path("metrics") / "execution_bridge.jsonl",
+            "--metrics-path",
+            help="Override metrics JSONL path.",
+            hidden=True,
+        ),
+        reports_dir: Path = typer.Option(
+            Path("reports") / "execution",
+            "--reports-dir",
+            help="Override directory for evidence Markdown.",
+            hidden=True,
+        ),
+        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON."),
+    ) -> None:
+        ctx_obj = ctx.obj or {"json": False}
+        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        parsed_date = None
+        if report_date:
+            try:
+                parsed_date = datetime.strptime(report_date, "%Y-%m-%d").date()
+            except ValueError as exc:  # pragma: no cover - user input validation
+                typer.echo(f"[execution.bridge-log] invalid --report-date: {report_date}", err=True)
+                raise typer.Exit(2) from exc
+        try:
+            payload = dict(
+                bridge_log(
+                    mode=mode,
+                    broker=broker,
+                    stage=stage,
+                    session_id=session_id,
+                    latency_ms=latency_ms,
+                    error_rate=error_rate,
+                    decision=decision,
+                    notes=notes,
+                    metrics_path=metrics_path,
+                    report_dir=reports_dir,
+                    report_date=parsed_date,
+                )
+            )
+        except ExecutionBridgeLogError as exc:
+            typer.echo(f"[execution.bridge-log] {exc}", err=True)
+            raise typer.Exit(1) from exc
+        _render_payload(console, payload, json_output=effective_json)
+
     app.add_typer(execution_app, name="execution")
 
     data_app = typer.Typer(help="Market data utilities")
@@ -489,7 +666,154 @@ def create_cli_app() -> typer.Typer:
         payload["verbose"] = effective_verbose
         _render_payload(console, payload, json_output=effective_json)
 
+    @scoring_app.command("bridge")
+    def scoring_bridge_command(
+        ctx: typer.Context,
+        week: str | None = typer.Option(
+            None,
+            "--week",
+            help="ISO week identifier (YYYY-Www). Defaults to current week.",
+            show_default=False,
+        ),
+        mode: str = typer.Option("paper", "--mode", help="Operating mode."),
+        out: Path | None = typer.Option(
+            None,
+            "--out",
+            help="Optional override for the exported JSON file path.",
+        ),
+        manifest: Path = typer.Option(
+            Path("config") / "strategy_manifest.yaml",
+            "--manifest",
+            help="Override manifest path.",
+            hidden=True,
+        ),
+        config_path: Path = typer.Option(
+            Path("config") / "scoreboard.yaml",
+            "--config",
+            help="Override scoreboard config path.",
+            hidden=True,
+        ),
+        scores_path: Path = typer.Option(
+            Path("metrics") / "strategy_scores.jsonl",
+            "--scores",
+            help="Override strategy scores JSONL.",
+            hidden=True,
+        ),
+        profit_loop_metrics: Path = typer.Option(
+            Path("metrics") / "profit_loop.jsonl",
+            "--profit-loop",
+            help="Override profit loop metrics path.",
+            hidden=True,
+        ),
+        fills_path: Path = typer.Option(
+            Path("reports") / "performance" / "live_fill_stats.parquet",
+            "--fills",
+            help="Override live fill stats path.",
+            hidden=True,
+        ),
+        bridge_dir: Path = typer.Option(
+            Path("scoreboard") / "bridge",
+            "--bridge-dir",
+            help="Override bridge export directory.",
+            hidden=True,
+        ),
+        profit_loop_report: Path = typer.Option(
+            Path("reports") / "performance" / "profit_loop_daily.md",
+            "--profit-report",
+            help="Override profit loop daily report path.",
+            hidden=True,
+        ),
+        bridge_metrics_path: Path = typer.Option(
+            Path("metrics") / "scoreboard_bridge.jsonl",
+            "--bridge-metrics",
+            help="Override scoreboard bridge metrics JSONL path.",
+            hidden=True,
+        ),
+        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON."),
+    ) -> None:
+        ctx_obj = ctx.obj or {"json": False}
+        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        iso_week = week
+        if not iso_week:
+            today = datetime.utcnow().date()
+            iso = today.isocalendar()
+            iso_year = getattr(iso, "year", iso[0])
+            iso_week_num = getattr(iso, "week", iso[1])
+            iso_week = f"{iso_year}-W{iso_week_num:02d}"
+        try:
+            payload = dict(
+                generate_scoreboard_bridge(
+                    week=iso_week,
+                    mode=mode,
+                    output=out,
+                    manifest_path=manifest,
+                    config_path=config_path,
+                    scores_path=scores_path,
+                    profit_loop_metrics_path=profit_loop_metrics,
+                    live_fill_stats_path=fills_path,
+                    bridge_dir=bridge_dir,
+                    profit_loop_report=profit_loop_report,
+                    bridge_metrics_path=bridge_metrics_path,
+                )
+            )
+        except ScoreboardBridgeError as exc:
+            typer.echo(f"[scoring.bridge] {exc}", err=True)
+            raise typer.Exit(1) from exc
+        _render_payload(console, payload, json_output=effective_json)
+
     app.add_typer(scoring_app, name="scoring")
+
+    alpha_app = typer.Typer(help="Alpha feedback utilities")
+
+    @alpha_app.command("review")
+    def alpha_review_command(
+        ctx: typer.Context,
+        strategy: str = typer.Option(..., "--strategy", help="Strategy identifier."),
+        week: str | None = typer.Option(None, "--week", help="Target ISO week (YYYY-Www). Defaults to latest."),
+        with_scoreboard: bool = typer.Option(
+            True,
+            "--with-scoreboard/--without-scoreboard",
+            help="Include Scoreboard Bridge data.",
+        ),
+        limit: int = typer.Option(5, "--limit", help="Number of Profit Loop samples to display."),
+        bridge_dir: Path = typer.Option(
+            Path("scoreboard") / "bridge",
+            "--bridge-dir",
+            help="Override Scoreboard Bridge directory.",
+            hidden=True,
+        ),
+        profit_metrics: Path = typer.Option(
+            Path("metrics") / "profit_loop.jsonl",
+            "--profit-loop",
+            help="Override Profit Loop metrics path.",
+            hidden=True,
+        ),
+        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON."),
+    ) -> None:
+        ctx_obj = ctx.obj or {"json": False}
+        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        try:
+            payload = dict(
+                alpha_review(
+                    strategy=strategy,
+                    week=week,
+                    with_scoreboard=with_scoreboard,
+                    bridge_dir=bridge_dir,
+                    profit_loop_metrics_path=profit_metrics,
+                    profit_loop_limit=limit,
+                )
+            )
+        except AlphaWatchlistAlert as exc:
+            payload = dict(exc.payload or {"error": str(exc)})
+            _render_payload(console, payload, json_output=effective_json)
+            raise typer.Exit(123) from exc
+        except AlphaReviewError as exc:
+            payload = dict(exc.payload or {"error": str(exc)})
+            _render_payload(console, payload, json_output=effective_json)
+            raise typer.Exit(78) from exc
+        _render_payload(console, payload, json_output=effective_json)
+
+    app.add_typer(alpha_app, name="alpha")
 
     kill_switch_app = typer.Typer(help="Kill switch review utilities")
 
@@ -577,6 +901,66 @@ def create_cli_app() -> typer.Typer:
             agenda_path=agenda,
             label_date=label_date,
         )
+        _render_payload(console, payload, json_output=effective_json)
+
+    @ops_app.command("readiness")
+    def ops_readiness_command(
+        ctx: typer.Context,
+        explain: bool = typer.Option(False, "--explain", help="Include descriptive text in the payload."),
+        period: str = typer.Option("weekly", "--period", help="Reporting cadence label."),
+        profit: bool = typer.Option(False, "--profit", help="Include profit readiness levers."),
+        limit: int = typer.Option(5, "--limit", help="Number of profit readiness entries to display."),
+        lever: list[str] = typer.Option(
+            [],
+            "--lever",
+            help="Filter profit readiness output to the specified levers (repeatable).",
+            show_default=False,
+        ),
+        set_lever: str | None = typer.Option(
+            None,
+            "--set-lever",
+            help="Record a new readiness entry for the given lever before rendering the report.",
+        ),
+        status: str = typer.Option(
+            "ok",
+            "--status",
+            help="Status value for --set-lever (ok|warning|alert).",
+        ),
+        evidence: list[Path] = typer.Option(
+            [],
+            "--evidence",
+            help="Evidence paths attached to --set-lever entries.",
+            show_default=False,
+        ),
+        note: str | None = typer.Option(None, "--note", help="Optional annotation for --set-lever."),
+        actor: str | None = typer.Option(None, "--actor", help="Person recording --set-lever."),
+        profit_path: Path = typer.Option(
+            Path("metrics") / "profit_readiness.jsonl",
+            "--profit-path",
+            hidden=True,
+            help="Override profit readiness JSONL log.",
+        ),
+        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON."),
+    ) -> None:
+        ctx_obj = ctx.obj or {"json": False}
+        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        try:
+            payload = readiness(
+                explain=explain,
+                period=period,
+                include_profit=profit,
+                profit_path=profit_path,
+                profit_limit=limit,
+                profit_levers=lever or None,
+                record_lever=set_lever,
+                record_status=status,
+                record_evidence=[str(path) for path in evidence],
+                record_notes=note,
+                record_actor=actor,
+            )
+        except RuntimeError as exc:  # pragma: no cover - user input validation
+            typer.echo(f"[ops.readiness] {exc}", err=True)
+            raise typer.Exit(1) from exc
         _render_payload(console, payload, json_output=effective_json)
 
     app.add_typer(ops_app, name="ops")

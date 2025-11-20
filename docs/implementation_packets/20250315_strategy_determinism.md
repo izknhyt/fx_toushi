@@ -40,7 +40,14 @@
 - Runbook更新ID: STRAT-M1-VALIDATION
 - Follow-upチケット: STRAT-DETERMINISM-CI（再現ハーネスCI導入）
 
-## 7. 更新履歴
+## 7. SPRTチューニングフォローアップ（§11.1 リスク#3対応）
+- **背景**: detailed_design_fx_signal_tool_v1.md §11.1ではSPRT閾値が不安定なまま戦略追加が進むリスクが指摘されている。本Packetでは決定論インフラを整備済みのため、ウォームアップ期間とベイズ更新ルールをここに追記する。
+- **ウォームアップ**: `strategy_manifest.yaml::entry.lifecycle.warmup_bars`を`14d ≒ 10,080 bars`で固定し、`StrategyEngine`は`entry.lifecycle.status='warming'`のうちは`SprtEvaluator`を`stop=False`で返すよう`src/risk/sprt.py`を更新する。ウォームアップ完了後にのみ`SprtResult.stop=True/False`を評価する。
+- **ベイズ更新**: `sprt.py`へ`alpha=0.05`,`beta=0.1`の参照実装を追加済み。M2以降でPosterior更新を導入するため、`reports/implementation/20250315_pkg-strat-determinism-01/sprt_calibration.md`をEvidence台帳とし、`tradectl benchmark replay --strict`のシードハッシュを併記する。
+- **Runbookリンク**: `docs/runbooks/STRAT-M1-VALIDATION.md`に「SPRTウォームアップチェックリスト」を追加予定（Follow-up: STRAT-DETERMINISM-CI）。
+- **リスククローズ条件**: 上記EvidenceがOpsレビューでサインされ、`docs/risk_review/20250318_prelaunch.md` §11.1-3に「Closed (PKG-STRAT-DETERMINISM-01 addendum)」と追記されること。
+
+## 8. 更新履歴
 | 日付 | 更新者 | 内容 |
 | --- | --- | --- |
 | 2025-03-15 | Codex Liaison | 初版作成 |

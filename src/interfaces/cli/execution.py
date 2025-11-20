@@ -1,15 +1,31 @@
-"""Mock implementation for the ``tradectl execution recalibrate`` command."""
+"""Mock implementation for execution tooling commands."""
 
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping, MutableMapping
 
+from src.execution.bridge import (
+    DEFAULT_METRICS_PATH as DEFAULT_EXECUTION_BRIDGE_METRICS,
+)
+from src.execution.bridge import (
+    DEFAULT_REPORT_DIR as DEFAULT_EXECUTION_REPORT_DIR,
+)
+from src.execution.bridge import (
+    ExecutionBridgeLogError,
+    log_execution_bridge,
+)
+
 logger = logging.getLogger(__name__)
 
-__all__ = ["recalibrate", "ExecutionEvidenceError"]
+__all__ = [
+    "recalibrate",
+    "bridge_log",
+    "ExecutionEvidenceError",
+    "ExecutionBridgeLogError",
+]
 
 DEFAULT_OUTPUT_PATH = Path("config/execution_model.calib.yaml")
 
@@ -144,4 +160,46 @@ def recalibrate(
         raise ExecutionEvidenceError(f"Failed to write calibration output: {target_path}") from exc
 
     logger.info("execution.recalibrate.completed", extra=payload)
+    return payload
+
+
+def bridge_log(
+    *,
+    mode: str,
+    broker: str,
+    stage: str,
+    session_id: str,
+    latency_ms: float,
+    error_rate: float,
+    decision: str,
+    notes: str | None = None,
+    metrics_path: Path = DEFAULT_EXECUTION_BRIDGE_METRICS,
+    report_dir: Path = DEFAULT_EXECUTION_REPORT_DIR,
+    report_date: date | None = None,
+) -> Mapping[str, Any]:
+    """Log execution bridge metrics and StageGuard exercise notes."""
+
+    try:
+        record = log_execution_bridge(
+            mode=mode,
+            broker=broker,
+            stage=stage,
+            session_id=session_id,
+            latency_ms=latency_ms,
+            error_rate=error_rate,
+            decision=decision,
+            notes=notes,
+            metrics_path=metrics_path,
+            report_dir=report_dir,
+            report_date=report_date,
+        )
+    except ExecutionBridgeLogError as exc:
+        raise ExecutionBridgeLogError(str(exc)) from exc
+
+    payload: MutableMapping[str, Any] = record.to_mapping()
+    payload["status"] = "ok"
+    logger.info(
+        "execution.bridge.logged",
+        extra={"mode": mode, "stage": stage, "broker": broker, "metrics": str(metrics_path)},
+    )
     return payload

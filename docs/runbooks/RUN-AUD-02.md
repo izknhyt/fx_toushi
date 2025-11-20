@@ -39,9 +39,10 @@
        --statement-dir data/statement/<broker>/202510/ \
        --fills-dir logs/fills/202510/ \
        --export-md reports/audit/reconciliation/20251031_<broker>.md \
-       --threshold-balance 0.5R --threshold-match 0.99
+      --threshold-balance 0.5R --threshold-match 0.99
      ```
    - Exit codeが0以外の場合はエラーログを確認し、`logs/audit/reconciliation_<timestamp>.jsonl`を参照する。
+   - チケット/注文単位の証跡を提示する際は`tradectl audit trace --order <ticket_id> --export reports/audit/order_trace/<ticket_id>.md`を実行し、Kill Switch/Reduce-Only判定と併せて監査ログへ添付する（AC-06）。
 3. **差分レビューと是正判断**
    - Markdownレポート内の`Actions Required`テーブルを精査し、`variance`項目がある場合は`RUN-REC-02`の調査を起動。
    - `tradectl reconcile preview --statement <file> --broker <id>`でフォーマット異常を確認し、必要なら`statement_reconciliation.yaml`へ列マッピングを追加。

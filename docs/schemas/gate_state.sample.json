@@ -1,0 +1,74 @@
+{
+  "schema_version": "gate.state.v3",
+  "market": {
+    "news": {
+      "blocked": false,
+      "reason": null,
+      "release_ts": null
+    },
+    "calendar": {
+      "blocked": false,
+      "holiday_block": false,
+      "reason": null
+    },
+    "spread": {
+      "state": "normal",
+      "reason": null,
+      "cooldown_eta": null
+    },
+    "per_symbol": {
+      "USDJPY": {
+        "news": {
+          "blocked": false,
+          "reason": null,
+          "release_ts": null
+        },
+        "calendar": {
+          "blocked": true,
+          "holiday_block": true,
+          "reason": "FOMC blackout"
+        },
+        "spread": {
+          "state": "cooldown",
+          "reason": "p95_exceeded",
+          "cooldown_eta": "2025-03-18T01:30:00Z"
+        }
+      },
+      "EURUSD": {
+        "news": {
+          "blocked": false,
+          "reason": null,
+          "release_ts": null
+        },
+        "calendar": {
+          "blocked": false,
+          "holiday_block": false,
+          "reason": null
+        },
+        "spread": {
+          "state": "normal",
+          "reason": null,
+          "cooldown_eta": null
+        }
+      }
+    }
+  },
+  "risk": {
+    "reduce_only": false,
+    "reduce_only_reason": null
+  },
+  "human": {
+    "double_entry_required": true,
+    "required_roles": [
+      "primary_operator",
+      "risk_officer",
+      "secondary_operator"
+    ],
+    "acknowledged_roles": [
+      "primary_operator"
+    ],
+    "ack_deadline": "2025-03-18T00:45:00Z",
+    "manual_comment_required": true,
+    "comment_min_length": 40
+  }
+}

@@ -1,10 +1,11 @@
-"""Stub for `tradectl ops` commands (see §17.11)."""
+"""Helpers backing the ``tradectl ops`` sub-commands."""
 
 from __future__ import annotations
 
 import logging
 
 from pathlib import Path
+from typing import Iterable
 
 from src.ops import (
     AutomationEffectTracker,
@@ -13,6 +14,13 @@ from src.ops import (
     OpsWorklogService,
 )
 from src.ops.action_sync import ActionSyncError, sync_action_items
+from src.ops.profit_readiness import (
+    DEFAULT_PROFIT_READINESS_PATH,
+    ProfitReadinessError,
+    latest_by_lever,
+    load_recent_readiness,
+    record_readiness,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -28,11 +36,59 @@ __all__ = [
 ]
 
 
-def readiness(*, explain: bool = False, period: str = "weekly") -> dict[str, object]:
-    """Stub for Ops readiness reports."""
+def readiness(
+    *,
+    explain: bool = False,
+    period: str = "weekly",
+    include_profit: bool = False,
+    profit_path: Path = DEFAULT_PROFIT_READINESS_PATH,
+    profit_limit: int = 5,
+    record_lever: str | None = None,
+    record_status: str = "ok",
+    record_evidence: Iterable[str] | None = None,
+    record_notes: str | None = None,
+    record_actor: str | None = None,
+    profit_levers: Iterable[str] | None = None,
+) -> dict[str, object]:
+    """Render an Ops readiness snapshot and optionally log profit readiness signals."""
 
-    logger.info("cli.ops.readiness.stub", extra={"explain": explain, "period": period})
-    raise NotImplementedError("tradectl ops readiness is not implemented in the M1 scaffold")
+    payload: dict[str, object] = {
+        "period": period,
+        "explain": explain,
+        "profit_readiness": None,
+        "profit_readiness_summary": None,
+        "recorded": None,
+    }
+
+    if include_profit:
+        recorded_entry = None
+        if record_lever:
+            try:
+                recorded_entry = record_readiness(
+                    lever=record_lever,
+                    status=record_status,
+                    evidence=record_evidence,
+                    notes=record_notes,
+                    actor=record_actor,
+                    path=profit_path,
+                )
+            except ProfitReadinessError as exc:
+                raise RuntimeError(str(exc)) from exc
+        records = load_recent_readiness(
+            path=profit_path,
+            lever_filter=profit_levers,
+            limit=profit_limit,
+        )
+        payload["profit_readiness"] = [entry.to_mapping() for entry in records]
+        payload["recorded"] = recorded_entry.to_mapping() if recorded_entry else None
+        latest_entries = latest_by_lever(path=profit_path, levers=profit_levers)
+        payload["profit_readiness_summary"] = {
+            lever: entry.to_mapping()
+            for lever, entry in latest_entries.items()
+        }
+
+    logger.info("cli.ops.readiness.completed", extra={"include_profit": include_profit})
+    return payload
 
 
 def agenda(date: str, *, out: str | None = None) -> str:

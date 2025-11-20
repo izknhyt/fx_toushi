@@ -1,0 +1,100 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://fx-toushi.dev/schemas/penalty_event.schema.json",
+  "title": "PenaltyEvent",
+  "description": "Penalty ledger entry used by PenaltyRegistry (§7.7) and Risk/Reporter pipelines.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "event_ts",
+    "penalty_code",
+    "scope",
+    "value_bps",
+    "reason",
+    "approver"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "anyOf": [
+        {
+          "type": "integer",
+          "minimum": 0
+        },
+        {
+          "type": "string",
+          "pattern": "^[a-z0-9_.\\-]+$"
+        }
+      ]
+    },
+    "event_ts": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "penalty_code": {
+      "type": "string",
+      "pattern": "^[A-Z0-9_]{2,32}$"
+    },
+    "scope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "id"
+      ],
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": [
+            "symbol",
+            "strategy",
+            "portfolio"
+          ]
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        }
+      }
+    },
+    "value_bps": {
+      "type": "number",
+      "minimum": 0
+    },
+    "reason": {
+      "type": "string",
+      "minLength": 4,
+      "maxLength": 512
+    },
+    "approver": {
+      "type": "object",
+      "required": [
+        "role",
+        "name"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "role": {
+          "type": "string",
+          "pattern": "^[a-z0-9_]+$"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "expires_at": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "date-time"
+    },
+    "metadata": {
+      "type": "object",
+      "additionalProperties": true
+    }
+  }
+}

@@ -48,6 +48,21 @@
 5. 原因分析としてネットワーク状態・APIレスポンス・利用規約制約を確認し、`reports/audit/license/`および`reports/quality/<date>.md`に記録する。処理遅延が原因の場合は`ProviderParseWorker`/`DataQualityGuard`のログを添付する。
 6. 復旧を確認したらチェックリストの完了と新規提案再開条件をダブルサインし、`tradectl data ack --provider <name>`で承認した上で`HealthMonitor.ack`を実行する。`degraded_ack`監査イベントのIDと再開時刻を`reports/validation_log/AC-45_sla_<date>.md`へ追記し、事後分析と改善策は24時間以内に`reports/performance/<mode>/<date>.md`へ反映する。
 
+## プロファイル別チューニング手順（§11.1 リスク#4対応）
+- **目的**: macOSローカル運用でネットワーク品質が不安定な場合でもCatch-up時間を抑えるため、`provider.timeout`/`retry`とバックフィル分割手順を明文化する。
+- **Config更新**:
+  1. `config/provider_profiles/local.yaml`を開き、`timeout_sec`/`retry.max_attempts`/`retry.backoff_sec`を見直す。推奨値: timeout=8→12、max_attempts=3→5、backoff=2秒ごと（Ops判断）。
+  2. `poetry run schema-validate config/provider_profiles/local.yaml --schema docs/schemas/provider_profile.schema.json`で検証し、`reports/risk/20250318_prelaunch/data_latency_tuning.md`へDiffとハッシュを貼る。
+- **バックフィル分割**:
+  - 長時間停止後のCatch-upは`tradectl resync --since <ISO8601> --chunk 6h --pause 30s`で6時間単位に分割する。`--chunk`はM1 CLIのオプション（存在しない場合は手動で期間を分割）としてログに記録し、1チャンクごとに`metrics/resync/chunks.jsonl`へ`catch_up_lag_minutes`を追記する。
+  - `reports/resync/chunk_plan_<date>.md`（新規）にチャンク数・所要時間・失敗箇所を書き出し、`reports/validation_log/AC-04_<date>.md`へリンクする。
+- **SLA再調整**:
+  - `python tools/sla/generate_profile.py --input metrics/data_ingestion_sla.jsonl --profile local --out config/sla_thresholds/candidate_local_latency.yaml`で新候補を生成し、`tradectl sla profile apply --file config/sla_thresholds/candidate_local_latency.yaml`（M1 CLIスタブ）を実行する。
+  - 適用結果を`reports/risk/20250318_prelaunch/data_latency_tuning.md`へサマリし、Opsレビューで承認を得る。
+- **Ops Agenda統合**: `tradectl ops agenda --date <YYYY-MM-DD> --include-latency-review`（スタブ）で`data_latency_review`タスクを挿入し、完了時に`ops_worklog`へ`{"task":"data_latency_review","status":"done"}`を記録する。
+- **Evidence**: `reports/risk/20250318_prelaunch/data_latency_tuning.md`と`reports/validation_log/AC-45_sla_<date>.md`。
+
+
 ## 責任者
 - オペレーションズマネージャ（初動と調整の指揮）
 - プロダクトオーナー（Kill Switch解除と再開判断）

@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import json
 import logging
+from pathlib import Path
 from typing import Any, Mapping, MutableMapping
 
 from src.core.gate import GateState
@@ -11,7 +13,9 @@ from src.core.snapshot import SnapshotManager, SnapshotRestoreResult
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["status"]
+DEFAULT_KILL_SWITCH_LOG = Path("logs/events/risk.kill_switch.jsonl")
+
+__all__ = ["status", "DEFAULT_KILL_SWITCH_LOG"]
 
 
 def _serialise_snapshot_restore(result: SnapshotRestoreResult) -> Mapping[str, Any]:
@@ -93,6 +97,28 @@ def _build_banner(
     }
 
 
+def _kill_switch_history(path: Path, *, limit: int = 10) -> Mapping[str, Any]:
+    if not path.exists():
+        return {
+            "status": "unavailable",
+            "error": "kill switch log missing",
+            "path": str(path),
+        }
+    entries: list[Mapping[str, Any]] = []
+    with path.open("r", encoding="utf-8") as handle:
+        lines = [line.strip() for line in handle.readlines() if line.strip()]
+    for line in lines[-limit:]:
+        try:
+            entries.append(json.loads(line))
+        except json.JSONDecodeError:  # pragma: no cover - defensive
+            continue
+    return {
+        "status": "ok",
+        "path": str(path),
+        "entries": entries,
+    }
+
+
 def status(
     *,
     verbose: bool = False,
@@ -103,6 +129,8 @@ def status(
     monitor: HealthMonitor | None = None,
     gate_state: GateState | None = None,
     snapshot_manager: SnapshotManager | None = None,
+    history: str | None = None,
+    kill_switch_log_path: Path = DEFAULT_KILL_SWITCH_LOG,
 ) -> Mapping[str, object]:
     """Return the current status snapshot for operators."""
 
@@ -160,6 +188,18 @@ def status(
             "verbose": verbose,
         },
     }
+
+    if history:
+        history_key = history.lower()
+        if history_key == "kill-switch":
+            result.setdefault("history", {})  # type: ignore[arg-type]
+            result["history"]["kill_switch"] = _kill_switch_history(kill_switch_log_path)
+        else:
+            result.setdefault("history", {})  # type: ignore[arg-type]
+            result["history"][history_key] = {
+                "status": "unsupported",
+                "error": f"history kind '{history}' is not available",
+            }
 
     logger.info(
         "cli.status.summary",

@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import logging
+import json
+from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Iterable, Mapping, MutableMapping, Sequence
 
 from rich.console import Console
@@ -13,7 +16,9 @@ from src.core.session import SessionManager
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["resync"]
+DEFAULT_RESYNC_LOG_PATH = Path("logs/resync/resync_events.jsonl")
+
+__all__ = ["resync", "DEFAULT_RESYNC_LOG_PATH"]
 
 
 def _render_error(console: Console | None, message: str) -> None:
@@ -44,6 +49,7 @@ def resync(
     json_output: bool = False,
     session: SessionManager | None = None,
     console: Console | None = None,
+    log_path: Path = DEFAULT_RESYNC_LOG_PATH,
 ) -> Mapping[str, Any]:
     """Trigger a session catch-up run while reporting progress."""
 
@@ -61,10 +67,19 @@ def resync(
     logger.info("cli.resync.start", extra=payload)
 
     if session is None:
-        message = "SessionManager.catch_up is not wired for M1"
-        _render_error(console, message)
+        summary = _simulate_resync(
+            since=since,
+            symbols=list(symbols or ()),
+            force=force,
+            failover_report=failover_report,
+            dry_run=dry_run,
+            attachments=list(attachments or ()),
+            log_path=log_path,
+        )
         payload["status"] = "unavailable"
-        payload["error"] = message
+        payload["error"] = "session manager not provided (resync unavailable in CLI stub)"
+        payload["summary"] = summary
+        _render_error(console, payload["error"])
         return payload
 
     progress_console = console if not json_output else None
@@ -109,3 +124,37 @@ def resync(
         progress.stop()
 
     return payload
+
+
+def _simulate_resync(
+    *,
+    since: str | None,
+    symbols: Sequence[str],
+    force: bool,
+    failover_report: bool,
+    dry_run: bool,
+    attachments: Sequence[str],
+    log_path: Path,
+) -> Mapping[str, Any]:
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    event = {
+        "ts": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "event": "resync.simulated",
+        "since": since,
+        "symbols": list(symbols),
+        "force": force,
+        "failover_report": failover_report,
+        "dry_run": dry_run,
+        "attachments": list(attachments),
+        "catch_up_lag_minutes": 12 if not dry_run else 0,
+        "status": "planned" if dry_run else "success",
+    }
+    with log_path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(event, ensure_ascii=False))
+        handle.write("\n")
+    return {
+        "log_path": str(log_path),
+        "entries": 1,
+        "catch_up_lag_minutes": event["catch_up_lag_minutes"],
+        "status": event["status"],
+    }

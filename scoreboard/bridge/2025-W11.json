@@ -1,0 +1,29 @@
+{
+  "week": "2025-W11",
+  "mode": "paper",
+  "generated_at": "2025-11-17T13:13:53+00:00",
+  "strategies": [
+    {
+      "id": "m1_baseline_ma_rsi",
+      "alpha_score": 68.0,
+      "decay_score": 21.0,
+      "conviction_drift": -0.09000000000000002,
+      "rr_gap": -0.09000000000000002,
+      "spread_penalty": 0.04,
+      "status": "alert",
+      "watchlist_reasons": [
+        "alpha_below_threshold"
+      ],
+      "evidence": [
+        "reports/performance/profit_loop_daily.md#m1_baseline_ma_rsi",
+        "reports/execution/live_bridge_20251119.md",
+        "scoreboard/alpha/2025-W11.json"
+      ]
+    }
+  ],
+  "meta": {
+    "schema_version": "bridge.v1",
+    "cfg_hash": "1f6a17fab9f2e8d5a139445b2f6acbcea2985f155f8a590cfdd65a83416ec8f8",
+    "manifest_path": "config/strategy_manifest.yaml"
+  }
+}

@@ -55,6 +55,13 @@
      - 再発防止タスク（`tickets/live_guard_followup/<date>.md`）
    - 週次OpsレビューでPO/Risk Managerがサインし、`docs/review_log.md`の該当週へリンクを追加する。
 
+## Board/Weeklyレポート統合（§11.1 リスク#5対応）
+- **Board Modeの強制**: `LATENCY-LIVE-GUARD`が連続Failした場合、`tradectl board --guarded`でBoardMode=guardedを強制し、`reports/audit/kill_switch_review/<timestamp>.md`に`reason=live_guard_chain_fail`を追記する。解除条件は本RunbookのStep5に従い、2営業日連続でPF/Latencyが閾値内に戻るまで維持する。
+- **Ops Agenda連携**: `tradectl ops agenda --date <YYYY-MM-DD> --include live_guard`（スタブ）で`live_guard_board_review`タスクを生成し、Ops Managerが`ops_worklog`へ`{"task":"live_guard_board_review","status":"queued"}`→`:"done"`を記録する。
+- **レポート整合**: `tradectl report weekly --since 7d --section live_guard`の出力を`reports/weekly/evidence/<YYYY-WW>/live_guard_board.md`へ貼り付け、`OPS-74`チェックリストに「Board/Weekly PF整合」項目としてリンクする。
+- **Evidence**: `reports/risk/20250318_prelaunch/live_guard_board_mode.md`（Boardスナップショット、Ops/POサイン付き）。
+- **Closed条件**: 上記エビデンスが最新週まで揃い、`docs/risk_review/20250318_prelaunch.md` §11.1-5へ「Closed (RUN-RISK-07 v1.0 board addendum)」を追記する。
+
 ## 証跡と保存先
 - `reports/weekly/evidence/<YYYY-WW>/live_guard.{json,md}`
 - `reports/validation_log/live_guard_<date>.md`（初動〜解除までの全ログ）

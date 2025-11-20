@@ -1,4 +1,4 @@
-"""Mock implementation for the ``tradectl scoring diagnostics`` command."""
+"""Mock implementation for scoring CLI commands."""
 
 from __future__ import annotations
 
@@ -9,9 +9,24 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping, MutableMapping, Sequence
 
+from src.scoreboard import (
+    DEFAULT_BRIDGE_OUTPUT_DIR,
+    DEFAULT_LIVE_FILL_STATS_PATH,
+    DEFAULT_PROFIT_LOOP_METRICS_PATH,
+    DEFAULT_SCOREBOARD_CONFIG_PATH,
+    DEFAULT_STRATEGY_SCORES_PATH,
+    ScoreboardBridge,
+    ScoreboardBridgeError,
+)
+
 logger = logging.getLogger(__name__)
 
-__all__ = ["DiagnosticsEvidenceError", "run_diagnostics"]
+__all__ = [
+    "DiagnosticsEvidenceError",
+    "ScoreboardBridgeError",
+    "run_diagnostics",
+    "generate_scoreboard_bridge",
+]
 
 DEFAULT_OUTPUT_DIR = Path("reports/diagnostics")
 
@@ -146,4 +161,37 @@ def run_diagnostics(
         "action_required": not 0.9 <= diagnostics.portfolio_drift <= 1.1,
     }
     logger.info("scoring.diagnostics.completed", extra=payload)
+    return payload
+
+
+def generate_scoreboard_bridge(
+    *,
+    week: str,
+    mode: str,
+    output: Path | None = None,
+    manifest_path: Path = Path("config/strategy_manifest.yaml"),
+    config_path: Path = DEFAULT_SCOREBOARD_CONFIG_PATH,
+    scores_path: Path = DEFAULT_STRATEGY_SCORES_PATH,
+    profit_loop_metrics_path: Path = DEFAULT_PROFIT_LOOP_METRICS_PATH,
+    live_fill_stats_path: Path = DEFAULT_LIVE_FILL_STATS_PATH,
+    bridge_dir: Path = DEFAULT_BRIDGE_OUTPUT_DIR,
+    profit_loop_report: Path = Path("reports/performance/profit_loop_daily.md"),
+    bridge_metrics_path: Path = Path("metrics/scoreboard_bridge.jsonl"),
+) -> Mapping[str, Any]:
+    """Generate a scoreboard bridge snapshot and export JSON evidence."""
+
+    bridge = ScoreboardBridge(
+        manifest_path=manifest_path,
+        config_path=config_path,
+        strategy_scores_path=scores_path,
+        profit_loop_metrics_path=profit_loop_metrics_path,
+        live_fill_stats_path=live_fill_stats_path,
+        bridge_dir=bridge_dir,
+        profit_loop_report=profit_loop_report,
+        bridge_metrics_path=bridge_metrics_path,
+    )
+    snapshot = bridge.generate(week=week, mode=mode)
+    out_path = bridge.export(snapshot, output=output)
+    payload = snapshot.to_mapping()
+    payload["output"] = str(out_path)
     return payload
