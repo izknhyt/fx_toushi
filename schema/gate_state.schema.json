@@ -28,7 +28,10 @@
       "required": [
         "news",
         "calendar",
-        "spread"
+        "spread",
+        "latency_data_status",
+        "slippage_data_status",
+        "profit_readiness_status"
       ],
       "additionalProperties": false,
       "properties": {
@@ -109,6 +112,18 @@
               "format": "date-time"
             }
           }
+        },
+        "latency_data_status": {
+          "type": "string",
+          "enum": ["ok", "degraded", "halt_recommended"]
+        },
+        "slippage_data_status": {
+          "type": "string",
+          "enum": ["ok", "degraded", "halt_recommended"]
+        },
+        "profit_readiness_status": {
+          "type": "string",
+          "enum": ["ok", "guarded", "halted", "stale"]
         },
         "per_symbol": {
           "type": "object",

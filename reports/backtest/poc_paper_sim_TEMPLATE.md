@@ -1,0 +1,24 @@
+# PoC Paper Simulation Report (Template)
+
+- strategy_id: <usd_jpy_breakout_h1>
+- mode/profile: paper_sim / profile=<name>
+- window: <from-to>, trades=<n>, bars=<n>
+- feed: <source> (lag stats: p50/p95 ms, gaps=<count>)
+- guardrails: spread_guard=<x1.8>/<x2.5>, news_block=<on/off>, ntp_drift_ms=<>
+- risk settings: risk_per_trade=0.5%, day_dd=-2%, week_dd=-4%, lot_step=±15% (max lot=<cap>)
+- execution sim: spread=<pips>, slippage=<pips>, ttl=<minutes>, fill_model=<market/limit/ifo>
+- results:
+  - PF_paper=
+  - WinRate_paper=
+  - AvgR=
+  - MaxDD=
+  - PnL (R)=
+- drift vs backtest: PF_bt=<>, PF_drift%=((paper/bt)-1)*100
+- evidence:
+  - metrics: reports/validation_log/paper_poc_<date>.json
+  - logs: logs/paper_poc/<session>.log
+  - snapshots: reports/backtest/<id>_paper_equity.png
+- verdict:
+  - status: {promote_to_small_live | iterate | halt}
+  - blocking issues: <none/list>
+  - next actions: <tuning, data quality, guard tweak>

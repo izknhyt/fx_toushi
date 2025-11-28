@@ -201,6 +201,10 @@
         }
       }
     },
+    "auto_execute": {
+      "type": "boolean",
+      "description": "Hands-off flag. Only true when board_mode=normal and profit readiness KPIs are satisfied; guarded/halt must set false."
+    },
     "risk": {
       "type": "object",
       "required": [

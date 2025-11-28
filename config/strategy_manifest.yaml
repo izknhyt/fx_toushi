@@ -3,9 +3,9 @@
 # Schema: docs/schemas/strategy_manifest.schema.json （schema_version を更新する際は同スキーマと同期させる）。
 
 schema_version: 0  # TODO: docs/schemas/strategy_manifest.schema.json が整備されたら見直す
-manifest_name: "M1 Core Strategy Manifest (scaffold)"
-revision_tag: "DRAFT-PLACEHOLDER"
-last_reviewed_at: "2025-03-10T00:00:00Z"
+manifest_name: "M1 Core Strategy Manifest (PoC 2024Q1)"
+revision_tag: "POC-2024Q1"
+last_reviewed_at: "2025-11-21T00:00:00Z"
 notes: |
   このファイルは Codex 実装着手前のダミー値です。戦略有効化/優先度/Feature Flag 変更時は
   `docs/runbooks/STRAT-PROMOTE-01.md` および `reports/governance/strategy_board/` への記録を必須とします。
@@ -14,24 +14,29 @@ notes: |
 strategies:
   m1_baseline_ma_rsi:
     enabled: true
-    priority: 100
-    weight: 1.0
+    priority: 50
+    weight: 0.5
     metadata:
       name: "M1 Baseline MA/RSI"
-      version: "0.1.0"
+      version: "0.1.1"
       required_features:
-        - sma_20_5m
         - ema_fast_5m
         - ema_slow_5m
         - rsi_14_5m
         - atr_14_1h
         - ema55_slope_1h
+        - session_tag_5m
+        - regime_trend_1h
+        - close_5m
     watchlist:
       - USDJPY
       - EURUSD
+      - GBPUSD
+      - EURJPY
+      - AUDUSD
     lifecycle:
       status: active
-      last_validated_at: "2025-10-01T00:00:00Z"
+      last_validated_at: "2025-11-21T00:00:00Z"
       deprecated_after_days: 365
       runbook_ref: "docs/runbooks/GOV-STRAT-01.md#2025-10-01"
     feature_flags:
@@ -39,7 +44,7 @@ strategies:
       guarded_board_required: false
     datasets:
       - id: "reports/data_manifest.json::m1_baseline_ma_rsi"
-        version: "2024-12-31"
+        version: "2024Q1"
         validation_playbook_id: "AC-01"
     governance:
       ticket_id: "TICKET-PLACEHOLDER"
@@ -49,10 +54,91 @@ strategies:
         - Ops Manager
     parameters:
       entry:
-        fast_ma_window: 20
-        slow_ma_window: 55
-        rsi_window: 14
+        timeframe: 5m
+        regime_timeframe: 1h
+        ema_fast: 21
+        ema_slow: 55
+        rsi_long_threshold: 55
+        rsi_short_threshold: 45
+        min_gap_pct: 0.0005
+        cooldown_bars: 4
       sizing:
-        max_r_eff: 2.5
-        target_r_multiple: 1.2
+        per_trade_risk_pct: 0.75
+        atr_sl_mult: 1.2
+        tp_r_multiple: 2.0
+        ttl_bars: 12
+        max_concurrent_positions:
+          overall: 4
+          per_currency_bucket: 2
+        r_eff_cap: 2.5
         reduce_only_on_guarded: true
+      filters:
+        session_utc_range: "06-21"
+        spread_guard_multiplier: 2.0
+        news_block_minutes: [-10, 20]
+        atr_volatility_ratio_band: [0.6, 1.8]
+        correlation_guard: true
+
+  m1_baseline_donchian:
+    enabled: true
+    priority: 60
+    weight: 0.5
+    metadata:
+      name: "M1 Baseline Donchian"
+      version: "0.1.1"
+      required_features:
+        - donchian_upper20_1h
+        - donchian_lower20_1h
+        - donchian_mid20_1h
+        - atr_14_1h
+        - close_5m
+        - regime_trend_1h
+        - session_tag_5m
+    watchlist:
+      - USDJPY
+      - EURUSD
+      - GBPUSD
+      - EURJPY
+      - AUDUSD
+    lifecycle:
+      status: active
+      last_validated_at: "2025-11-21T00:00:00Z"
+      deprecated_after_days: 365
+      runbook_ref: "docs/runbooks/GOV-STRAT-01.md#2025-10-01"
+    feature_flags:
+      determinism_enforced: true
+      guarded_board_required: false
+    datasets:
+      - id: "reports/data_manifest.json::m1_baseline_donchian"
+        version: "2024Q1"
+        validation_playbook_id: "AC-01"
+    governance:
+      ticket_id: "TICKET-PLACEHOLDER"
+      last_board_decision: "2025-02-28"
+      reviewers:
+        - Quant Lead
+        - Ops Manager
+    parameters:
+      entry:
+        timeframe: 1h
+        fallback_timeframe: 1d
+        channel_window: 20
+        buffer:
+          atr_multiplier: 0.02
+          min_abs: 0.05
+        cooldown_bars: 3
+      sizing:
+        per_trade_risk_pct: 0.75
+        tp_r_multiple: 2.0
+        ttl_bars: 12
+        max_concurrent_positions:
+          overall: 2
+          per_currency_bucket: 1
+        r_eff_cap: 2.0
+        reduce_only_on_guarded: true
+      filters:
+        session_utc_range: "06-21"
+        news_block_minutes: [-15, 30]
+        spread_guard_multiplier: 2.0
+        board_mode_guarded_size_factor: 0.6
+        volatility_floor_quantile: 0.4

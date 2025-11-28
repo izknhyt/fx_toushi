@@ -20,6 +20,8 @@ if TYPE_CHECKING:
     from src.risk.manager import RiskAssessment
 
 SpreadState = Literal["normal", "watch", "cooldown", "halt"]
+DataStatus = Literal["ok", "degraded", "halt_recommended"]
+ProfitReadinessStatus = Literal["ok", "guarded", "halted", "stale"]
 SchemaVersion = int | str
 
 
@@ -140,6 +142,9 @@ class MarketGateState:
     news: NewsGateState
     calendar: CalendarGateState
     spread: SpreadGateState
+    latency_data_status: DataStatus = "ok"
+    slippage_data_status: DataStatus = "ok"
+    profit_readiness_status: ProfitReadinessStatus = "ok"
     per_symbol: MutableMapping[str, GateBlockState] = field(default_factory=dict)
 
     @classmethod
@@ -160,6 +165,9 @@ class MarketGateState:
             "news": self.news.to_dict(),
             "calendar": self.calendar.to_dict(),
             "spread": self.spread.to_dict(),
+            "latency_data_status": self.latency_data_status,
+            "slippage_data_status": self.slippage_data_status,
+            "profit_readiness_status": self.profit_readiness_status,
         }
         if per_symbol_dict:
             data["per_symbol"] = per_symbol_dict
@@ -178,6 +186,9 @@ class MarketGateState:
             news=NewsGateState.from_dict(data["news"]),
             calendar=CalendarGateState.from_dict(data["calendar"]),
             spread=SpreadGateState.from_dict(data["spread"]),
+            latency_data_status=data.get("latency_data_status", "ok"),
+            slippage_data_status=data.get("slippage_data_status", "ok"),
+            profit_readiness_status=data.get("profit_readiness_status", "ok"),
             per_symbol=per_symbol,
         )
 
@@ -257,6 +268,7 @@ class GateState:
     market: MarketGateState = field(default_factory=MarketGateState.default)
     risk: RiskGateState = field(default_factory=RiskGateState.default)
     human: HumanGateState = field(default_factory=HumanGateState.default)
+    auto_execute: bool = False
     schema_version: SchemaVersion | None = None
 
     def to_dict(self) -> Dict[str, Any]:
@@ -265,6 +277,7 @@ class GateState:
             "risk": self.risk.to_dict(),
             "human": self.human.to_dict(),
         }
+        data["auto_execute"] = self.auto_execute
         if self.schema_version is not None:
             data["schema_version"] = self.schema_version
         return data
@@ -284,6 +297,7 @@ class GateState:
             market=MarketGateState.from_dict(data["market"]),
             risk=RiskGateState.from_dict(data["risk"]),
             human=HumanGateState.from_dict(data["human"]),
+            auto_execute=bool(data.get("auto_execute", False)),
             schema_version=data.get("schema_version"),
         )
         return state
@@ -353,6 +367,8 @@ class GateAggregator:
     ) -> None:
         if global_state is not None:
             self._state.market.spread = copy.deepcopy(global_state)
+            if global_state.state != "normal":
+                self.set_auto_execute(board_mode="guarded")
         if per_symbol is not None:
             for symbol, state in per_symbol.items():
                 self._assign_symbol_component(symbol, "spread", state)
@@ -374,9 +390,14 @@ class GateAggregator:
             state.kill_switch_recommendation = kill_switch_recommendation  # type: ignore[assignment]
         if kill_switch_reason is not self._UNSET:
             state.kill_switch_reason = kill_switch_reason  # type: ignore[assignment]
+        # Reduce-Only/kill switch conditions force auto_execute off
+        if state.reduce_only:
+            self._state.auto_execute = False
 
     def apply_risk_assessment(self, assessment: "RiskAssessment") -> None:
         self._state.risk = copy.deepcopy(assessment.risk_state)
+        if self._state.risk.reduce_only:
+            self._state.auto_execute = False
 
     def update_human(
         self,
@@ -404,6 +425,34 @@ class GateAggregator:
 
     def clear_symbol(self, symbol: str) -> None:
         self._state.market.per_symbol.pop(symbol, None)
+
+    def set_profit_readiness_status(
+        self,
+        status: ProfitReadinessStatus,
+        *,
+        board_mode: str = "normal",
+        allow_auto_execute: bool = False,
+    ) -> None:
+        """Update profit readiness status and optionally enable auto_execute when safe."""
+
+        self._state.market.profit_readiness_status = status
+        if not allow_auto_execute:
+            self._state.auto_execute = False
+            return
+        self._state.auto_execute = (
+            board_mode.lower() == "normal"
+            and status == "ok"
+            and not self._state.risk.reduce_only
+        )
+
+    def set_auto_execute(self, *, board_mode: str = "normal") -> None:
+        """Toggle auto_execute based on board_mode and current readiness/risk."""
+
+        self._state.auto_execute = (
+            board_mode.lower() == "normal"
+            and self._state.market.profit_readiness_status == "ok"
+            and not self._state.risk.reduce_only
+        )
 
     def persist_latest(self, path: Path | str = Path("snapshots/latest/gate_state.json"), *, indent: int | None = 2) -> Path:
         state = self.snapshot()

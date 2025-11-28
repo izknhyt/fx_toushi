@@ -151,6 +151,8 @@ class DeterministicExecutionModel(ExecutionModelProtocol):
         mode = self._extract_value(mode_context, "mode", default="backtest")
         deterministic_seed = int(self._extract_value(mode_context, "deterministic_seed", default=0))
         symbol = getattr(signal, "symbol", None)
+        latency_status = self._extract_value(mode_context, "latency_data_status", default="ok")
+        slippage_status = self._extract_value(mode_context, "slippage_data_status", default="ok")
 
         entry_mode = self._resolve_entry_mode(signal, state)
         mode_label = self._MODE_LABELS.get(entry_mode, entry_mode)
@@ -172,6 +174,9 @@ class DeterministicExecutionModel(ExecutionModelProtocol):
 
         expected_entry = self._resolve_expected_entry(signal, market_snapshot)
         expected_slippage = self._resolve_expected_slippage(state)
+
+        ttl_seconds = self._apply_ttl_fallback(ttl_seconds, latency_status)
+        expected_slippage = self._apply_slippage_fallback(expected_slippage, slippage_status)
 
         return ExecutionAdjustments(
             expected_entry=expected_entry,
@@ -216,6 +221,12 @@ class DeterministicExecutionModel(ExecutionModelProtocol):
                 )
             if value < 0:
                 raise ExecutionConfigError("ttl_seconds buckets must be non-negative")
+        fallbacks = defaults.get("fallbacks", {})
+        if fallbacks:
+            for key in ("slippage_fallback_pips", "ttl_fallback_sec"):
+                value = fallbacks.get(key)
+                if not isinstance(value, (int, float)):
+                    raise ExecutionConfigError(f"defaults.fallbacks.{key} must be numeric when provided")
 
         entry_defaults = defaults.get("entry_modes")
         if not isinstance(entry_defaults, Mapping):
@@ -327,6 +338,35 @@ class DeterministicExecutionModel(ExecutionModelProtocol):
         else:
             value = ttl_defaults.get("base", 0)
         return float(value)
+
+    def _apply_ttl_fallback(self, ttl_seconds: int, latency_status: str) -> int:
+        fallbacks = self._config.get("defaults", {}).get("fallbacks", {})
+        extra = 0.0
+        if not isinstance(fallbacks, Mapping):
+            return ttl_seconds
+        if latency_status in {"degraded", "halt_recommended"}:
+            extra = float(fallbacks.get("ttl_fallback_sec", 0.0))
+        ttl = ttl_seconds + extra
+        if latency_status == "halt_recommended":
+            ttl += extra  # double bump when hard degraded
+        return int(round(ttl))
+
+    def _apply_slippage_fallback(self, expected_slippage: float | None, slippage_status: str) -> float | None:
+        fallbacks = self._config.get("defaults", {}).get("fallbacks", {})
+        if not isinstance(fallbacks, Mapping):
+            return expected_slippage
+        fallback_value = fallbacks.get("slippage_fallback_pips")
+        if fallback_value is None:
+            return expected_slippage
+        try:
+            fallback = float(fallback_value)
+        except (TypeError, ValueError):
+            return expected_slippage
+        if slippage_status in {"degraded", "halt_recommended"}:
+            if expected_slippage is None:
+                return fallback
+            return max(expected_slippage, fallback)
+        return expected_slippage
 
     def _resolve_expected_entry(self, signal: Any, market_snapshot: Mapping[str, Any]) -> float | None:
         for attribute in ("expected_entry", "entry_price", "price", "mid"):

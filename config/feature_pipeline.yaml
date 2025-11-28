@@ -72,20 +72,31 @@ indicators:
       signal: macd_signal
       histogram: macd_hist
   donchian_20:
-    enabled: false
+    enabled: true
     window: 20
     timeframes:
+      - 1h
       - 1d
     output_keys:
-      upper: donchian_upper
-      lower: donchian_lower
-      mid: donchian_mid
+      upper: donchian_upper20
+      lower: donchian_lower20
+      mid: donchian_mid20
   zscore_20:
     enabled: false
     window: 20
     timeframes:
       - 1d
     output_key: zscore_20
+  session_tag:
+    enabled: true
+    timeframes:
+      - 5m
+    output_key: session_tag
+  regime_trend:
+    enabled: true
+    timeframes:
+      - 1h
+    output_key: regime_trend
 feature_flags:
   enable_pipeline_latency_metrics: true
   use_experimental_features: false

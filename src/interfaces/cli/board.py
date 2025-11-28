@@ -40,6 +40,9 @@ def board(
     include: Iterable[str] | None = None,
     save_snapshot: Path | None = None,
     manifest_path: Path = DEFAULT_MANIFEST,
+    profit_readiness_status: str = "ok",
+    latency_data_status: str = "ok",
+    slippage_data_status: str = "ok",
 ) -> dict[str, object]:
     """Render a lightweight board payload and optionally persist a JSON snapshot."""
 
@@ -50,6 +53,7 @@ def board(
         "mode": "guarded" if guarded else "normal" if normal else "auto",
         "filters": list(filters or ()),
         "include": list(include or ()),
+        "auto_execute": bool(normal and not guarded),
         "strategy_snapshot": {
             "strategy": "m1_baseline_ma_rsi",
             "board_state": "guarded" if guarded else "normal",
@@ -58,6 +62,13 @@ def board(
             "pf_all": 1.24,
             "sharpe_oos": 0.92,
             "acceptable_degradation": guarded,
+        },
+        "badges": {
+            "profit_readiness": profit_readiness_status,
+            "execution_stats": {
+                "latency_data_status": latency_data_status,
+                "slippage_data_status": slippage_data_status,
+            },
         },
     }
 

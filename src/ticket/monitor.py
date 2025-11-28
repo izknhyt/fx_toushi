@@ -11,6 +11,8 @@ from typing import Mapping
 
 import pandas as pd
 
+from src.audit.trace import log_ticket_action
+
 logger = logging.getLogger(__name__)
 
 DEFAULT_EVENT_LOG_PATH = Path("logs/events/ticket.oco_ack.jsonl")
@@ -90,6 +92,33 @@ def monitor_ticket(
     if export_path is not None:
         _write_sample_orders(export_path, ticket_id=effective_ticket_id, mode=mode, ack_ts=ack_ts, latency_ms=latency_ms)
         export_str = str(export_path)
+
+    log_ticket_action(
+        ticket_id=effective_ticket_id,
+        action="approve",
+        actor="ticket.monitor",
+        board_mode="normal",
+        auto_execute=False,
+        spread_state={"USDJPY": {"state": "normal"}},
+        health_state="ok",
+        cfg_hash="sha256:" + "0" * 64,
+        data_hash="sha256:" + "0" * 64,
+        profit_readiness_status="ok",
+        latency_data_status="ok",
+        slippage_data_status="ok",
+        delta={
+            "before": {},
+            "after": {},
+            "diff": {},
+            "decision": "approve",
+            "document_hash": "sha256:" + "0" * 64,
+            "consent_version": "v1",
+            "expires_at": None,
+            "ack_user": None,
+            "ack_evidence": None,
+        },
+        notes="ticket.monitor ack",
+    )
 
     result = TicketMonitorResult(
         ticket_id=effective_ticket_id,

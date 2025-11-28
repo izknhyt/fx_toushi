@@ -26,6 +26,9 @@ defaults:
     base: 90
     fast_path: 45
     slow_path: 180
+  fallbacks:
+    slippage_fallback_pips: 0.8
+    ttl_fallback_sec: 30
   entry_modes:
     market:
       max_spread_pips: 0.8

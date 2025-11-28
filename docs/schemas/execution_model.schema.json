@@ -94,6 +94,21 @@
         "minimum": 0
       }
     },
+    "fallbacks": {
+      "type": "object",
+      "description": "Optional fallbacks applied when telemetry is degraded.",
+      "additionalProperties": false,
+      "properties": {
+        "slippage_fallback_pips": {
+          "type": "number",
+          "minimum": 0
+        },
+        "ttl_fallback_sec": {
+          "type": "number",
+          "minimum": 0
+        }
+      }
+    },
     "entryModeThreshold": {
       "type": "object",
       "description": "Thresholds and boolean flags that govern entry mode selection.",
@@ -177,6 +192,7 @@
         "human_delay_seconds": {"$ref": "#/definitions/delayByMode"},
         "slippage_pips": {"$ref": "#/definitions/slippageBuckets"},
         "ttl_seconds": {"$ref": "#/definitions/ttlBuckets"},
+        "fallbacks": {"$ref": "#/definitions/fallbacks"},
         "entry_modes": {"$ref": "#/definitions/entryModeThresholds"}
       }
     },

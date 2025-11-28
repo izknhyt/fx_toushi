@@ -12,6 +12,12 @@ from typing import Any
 import pandas as pd
 
 from .board import _load_manifest_entry  # reuse manifest helper
+from src.backtest.paper_poc import (
+    DEFAULT_DATA_MANIFEST,
+    DEFAULT_RISK_POLICY,
+    simulate_paper_poc,
+    StrategyManifest,
+)
 
 
 @dataclass
@@ -190,3 +196,96 @@ def walk_forward_backtest(
         encoding="utf-8",
     )
     return payload
+
+
+def run_paper_poc(
+    *,
+    strategy: str,
+    profile: str,
+    window_from: str | None,
+    window_to: str | None,
+    spread_pips: float,
+    target_r: float,
+    ttl_bars: int,
+    risk_policy_path: Path,
+    data_manifest_path: Path,
+    feature_config_path: Path,
+    strategy_manifest_path: Path,
+    output: Path | None,
+) -> dict[str, Any]:
+    """Execute the paper-trading PoC simulator and optionally persist JSON output."""
+
+    result = simulate_paper_poc(
+        strategy=strategy,
+        profile=profile,
+        window_from=window_from,
+        window_to=window_to,
+        spread_pips=spread_pips,
+        risk_policy_path=risk_policy_path,
+        data_manifest_path=data_manifest_path,
+        feature_config_path=feature_config_path,
+        strategy_manifest_path=strategy_manifest_path,
+        target_r_multiple=target_r,
+        ttl_bars=ttl_bars,
+    )
+    payload = {
+        "strategy": strategy,
+        "profile": profile,
+        "window": result.window,
+        "dataset_path": result.dataset_path,
+        "dataset_hash": result.dataset_hash,
+        "metrics": dict(result.metrics),
+        "trades": result.as_dict()["trades"],
+    }
+
+    if output:
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    return payload
+
+
+def run_paper_poc_all(
+    *,
+    profile: str,
+    window_from: str | None,
+    window_to: str | None,
+    spread_pips: float,
+    target_r: float,
+    ttl_bars: int,
+    risk_policy_path: Path,
+    data_manifest_path: Path,
+    feature_config_path: Path,
+    strategy_manifest_path: Path,
+    output: Path | None,
+) -> dict[str, Any]:
+    """Execute PoC simulation for all enabled strategies in the manifest."""
+
+    manifest = StrategyManifest.load(strategy_manifest_path)
+    results: dict[str, Any] = {}
+    for strategy_id, entry in manifest.enabled_strategies():
+        payload = run_paper_poc(
+            strategy=strategy_id,
+            profile=profile,
+            window_from=window_from,
+            window_to=window_to,
+            spread_pips=spread_pips,
+            target_r=target_r,
+            ttl_bars=ttl_bars,
+            risk_policy_path=risk_policy_path,
+            data_manifest_path=data_manifest_path,
+            feature_config_path=feature_config_path,
+            strategy_manifest_path=strategy_manifest_path,
+            output=None,
+        )
+        results[strategy_id] = payload
+
+    aggregate = {
+        "profile": profile,
+        "window": {"from": window_from, "to": window_to},
+        "results": results,
+    }
+    if output:
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(json.dumps(aggregate, ensure_ascii=False, indent=2), encoding="utf-8")
+    return aggregate

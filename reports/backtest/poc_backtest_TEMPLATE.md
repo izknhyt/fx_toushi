@@ -1,0 +1,25 @@
+# PoC Backtest Report (Template)
+
+- strategy_id: <e.g., usd_jpy_breakout_h1>
+- symbol/timeframe: <USD_JPY / 1h>
+- data_source: Dukascopy (tick/1m) / yfinance (fallback)
+- window: <from-to>, bars=<n>, trades=<n>
+- seed / determinism: base_seed=<int>, feature_version=<str>, data_manifest_hash=<str>
+- cost_model:
+  - spread: mean=<pips>, stress_addon=<pips>
+  - slippage: <bps or pips>
+  - commission: <per 100k>
+- sizing / risk: risk_per_trade=<0.5%>, lot_floor=<>, lot_cap=<>
+- results (with costs):
+  - PF=
+  - WinRate=
+  - AvgR=
+  - Sharpe=
+  - MaxDD=
+  - Expectancy (R)=
+- KPI verdict (PF>1.3, WinRate>48%, MaxDD<8%): <pass/fail + reason>
+- artifacts:
+  - parquet/csv: reports/backtest/<id>.parquet
+  - charts: reports/backtest/<id>_equity.png
+  - metrics json: reports/backtest/<id>_metrics.json
+- notes / anomalies: <data gaps, outliers, retries>

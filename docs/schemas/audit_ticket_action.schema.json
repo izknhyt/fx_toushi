@@ -11,6 +11,7 @@
     "action",
     "actor",
     "board_mode",
+    "auto_execute",
     "spread_state",
     "health_state",
     "cfg_hash",
@@ -52,6 +53,10 @@
       "type": "string",
       "enum": ["normal", "guarded", "halted"]
     },
+    "auto_execute": {
+      "type": "boolean",
+      "description": "Hands-off flag at the moment of action; false for guarded/halted or Reduce-Only."
+    },
     "spread_state": {
       "type": "object",
       "description": "Snapshot of SpreadState per symbol captured at action time.",
@@ -71,6 +76,18 @@
     "data_hash": {
       "type": "string",
       "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "profit_readiness_status": {
+      "type": "string",
+      "enum": ["ok", "guarded", "halted", "stale"]
+    },
+    "latency_data_status": {
+      "type": "string",
+      "enum": ["ok", "degraded", "halt_recommended"]
+    },
+    "slippage_data_status": {
+      "type": "string",
+      "enum": ["ok", "degraded", "halt_recommended"]
     },
     "delta": {
       "type": "object",

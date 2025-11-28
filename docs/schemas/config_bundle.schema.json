@@ -17,6 +17,7 @@
     "reduce_only.yaml",
     "scoring.yaml",
     "scoreboard.yaml",
+    "alpha_profiles.yaml",
     "risk_live_guard.yaml",
     "ops_readiness.yaml",
     "profiles/backtest.yaml",
@@ -62,6 +63,9 @@
     },
     "scoreboard.yaml": {
       "$ref": "scoreboard.schema.json"
+    },
+    "alpha_profiles.yaml": {
+      "$ref": "alpha_profiles.schema.json"
     },
     "risk_live_guard.yaml": {
       "$ref": "risk_live_guard.schema.json"

@@ -1,0 +1,39 @@
+{
+  "ts": "2025-11-22T00:00:00Z",
+  "record_type": "ticket.action",
+  "ticket_id": "T-sample",
+  "action": "approve",
+  "actor": "tester",
+  "board_mode": "normal",
+  "auto_execute": true,
+  "spread_state": {
+    "EURUSD": {
+      "state": "normal",
+      "spread_pips": 0.8,
+      "percentile": 0.4,
+      "threshold_pips": 1.8,
+      "cooldown_eta": null,
+      "last_updated": "2025-11-22T00:00:00Z",
+      "lookback_window_sec": 300,
+      "reason": null
+    }
+  },
+  "health_state": "ok",
+  "cfg_hash": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+  "data_hash": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+  "profit_readiness_status": "ok",
+  "latency_data_status": "ok",
+  "slippage_data_status": "ok",
+  "delta": {
+    "before": {},
+    "after": {},
+    "diff": {},
+    "decision": "approve",
+    "document_hash": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    "consent_version": "v1",
+    "expires_at": null,
+    "ack_user": null,
+    "ack_evidence": null
+  },
+  "notes": "sample snapshot with auto_execute true"
+}

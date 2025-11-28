@@ -1,16 +1,26 @@
 {
-  "version": "2025-03-18",
-  "generated_at": "2025-11-11T00:00:00Z",
+  "version": "2025-11-28",
+  "generated_at": "2025-11-28T00:00:00Z",
   "strategies": {
     "m1_baseline_ma_rsi": {
-      "dataset_path": "data/research/curated/usdjpy/usdjpy_m5_20210101_20241231.parquet",
-      "dataset_sha256": "c2767c1b16d1ed5cde9dde93efa4309cf34f8ad53389cbeec0a8609cf1ca57d6",
+      "dataset_path": "data/research/curated/usdjpy/usdjpy_m5_20240101_20241231_parsed_naive.parquet",
+      "dataset_sha256": "49b0f10abcd9819a98716946f55309815d0cee87446dfc2424d670c194d85282",
       "dataset_window": {
-        "from": "2021-01-01",
+        "from": "2024-01-01",
         "to": "2024-12-31"
       },
-      "notes": "Synthetic USDJPY M5 sample for validation harness",
-      "updated_at": "2025-11-11T00:00:00Z"
+      "notes": "USDJPY 5m 2024, tz-naive (UTC removed)",
+      "updated_at": "2025-11-28T00:00:00Z"
+    },
+    "m1_baseline_donchian": {
+      "dataset_path": "data/research/curated/usdjpy/usdjpy_m5_20240101_20241231_parsed_naive.parquet",
+      "dataset_sha256": "49b0f10abcd9819a98716946f55309815d0cee87446dfc2424d670c194d85282",
+      "dataset_window": {
+        "from": "2024-01-01",
+        "to": "2024-12-31"
+      },
+      "notes": "USDJPY 5m 2024, tz-naive (UTC removed)",
+      "updated_at": "2025-11-28T00:00:00Z"
     }
   }
 }

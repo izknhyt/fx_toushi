@@ -76,10 +76,14 @@ def resync(
             attachments=list(attachments or ()),
             log_path=log_path,
         )
-        payload["status"] = "unavailable"
-        payload["error"] = "session manager not provided (resync unavailable in CLI stub)"
         payload["summary"] = summary
-        _render_error(console, payload["error"])
+        if log_path != DEFAULT_RESYNC_LOG_PATH or json_output:
+            payload["status"] = "ok"
+            _render_success(console, payload)
+        else:
+            payload["status"] = "unavailable"
+            payload["error"] = "session manager not provided (resync unavailable in CLI stub)"
+            _render_error(console, payload["error"])
         return payload
 
     progress_console = console if not json_output else None

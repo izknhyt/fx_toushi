@@ -1,0 +1,109 @@
+{
+  "strategy": "m1_baseline_ma_rsi",
+  "profile": "m1_baseline",
+  "window": {
+    "from": null,
+    "to": null
+  },
+  "dataset_path": "data/research/curated/usdjpy/usdjpy_m5_20210101_20241231.parquet",
+  "dataset_hash": "c2767c1b16d1ed5cde9dde93efa4309cf34f8ad53389cbeec0a8609cf1ca57d6",
+  "metrics": {
+    "pf_all": 0.8914,
+    "win_rate": 0.5,
+    "avg_r": -0.0299,
+    "max_drawdown": 0.0087,
+    "trades": 8,
+    "start_equity": 12000000.0,
+    "end_equity": 11977392.35
+  },
+  "trades": [
+    {
+      "opened_at": "2021-01-01T13:10:00",
+      "closed_at": "2021-01-01T14:00:00",
+      "direction": "long",
+      "entry": 109.26896545347029,
+      "exit": 109.13497282334471,
+      "stop": 109.13497282334471,
+      "target": 109.53695071372144,
+      "r_multiple": -1.0,
+      "pnl": -90000.0
+    },
+    {
+      "opened_at": "2021-01-01T15:35:00",
+      "closed_at": "2021-01-01T16:35:00",
+      "direction": "short",
+      "entry": 109.07056511595766,
+      "exit": 108.98024741010384,
+      "stop": 109.2044994972358,
+      "target": 108.80269635340139,
+      "r_multiple": 0.6743,
+      "pnl": 60235.68
+    },
+    {
+      "opened_at": "2021-01-01T16:40:00",
+      "closed_at": "2021-01-01T17:40:00",
+      "direction": "short",
+      "entry": 108.9522124858944,
+      "exit": 108.90316211698814,
+      "stop": 109.08887628230586,
+      "target": 108.6788848930715,
+      "r_multiple": 0.3589,
+      "pnl": 32222.02
+    },
+    {
+      "opened_at": "2021-01-01T17:45:00",
+      "closed_at": "2021-01-01T18:45:00",
+      "direction": "short",
+      "entry": 108.88015792093464,
+      "exit": 108.9025209153981,
+      "stop": 109.01677029692709,
+      "target": 108.60693316894972,
+      "r_multiple": -0.1637,
+      "pnl": -14735.72
+    },
+    {
+      "opened_at": "2021-01-01T23:40:00",
+      "closed_at": "2021-01-02T00:25:00",
+      "direction": "long",
+      "entry": 109.31579900938304,
+      "exit": 109.18077234430987,
+      "stop": 109.18077234430987,
+      "target": 109.58585233952938,
+      "r_multiple": -1.0,
+      "pnl": -89907.91
+    },
+    {
+      "opened_at": "2021-01-02T02:00:00",
+      "closed_at": "2021-01-02T03:00:00",
+      "direction": "short",
+      "entry": 109.12105545398096,
+      "exit": 109.03024293772874,
+      "stop": 109.25625621635946,
+      "target": 108.85065392922395,
+      "r_multiple": 0.6717,
+      "pnl": 59937.0
+    },
+    {
+      "opened_at": "2021-01-02T03:05:00",
+      "closed_at": "2021-01-02T04:05:00",
+      "direction": "short",
+      "entry": 109.00211376177508,
+      "exit": 108.95144710677859,
+      "stop": 109.13905461115426,
+      "target": 108.7282320630167,
+      "r_multiple": 0.37,
+      "pnl": 33181.8
+    },
+    {
+      "opened_at": "2021-01-02T04:10:00",
+      "closed_at": "2021-01-02T05:10:00",
+      "direction": "short",
+      "entry": 108.92827809228831,
+      "exit": 108.94856568919214,
+      "stop": 109.06302202468807,
+      "target": 108.6587902274888,
+      "r_multiple": -0.1506,
+      "pnl": -13540.53
+    }
+  ]
+}

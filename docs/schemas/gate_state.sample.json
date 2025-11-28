@@ -1,5 +1,6 @@
 {
-  "schema_version": "gate.state.v3",
+  "schema_version": "gate.state.v4",
+  "auto_execute": false,
   "market": {
     "news": {
       "blocked": false,

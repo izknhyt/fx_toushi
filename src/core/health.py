@@ -5,7 +5,10 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 import copy
-from typing import Any, Dict, Iterable
+from typing import TYPE_CHECKING, Any, Dict, Iterable
+
+if TYPE_CHECKING:  # pragma: no cover - type hints only
+    from src.core.gate import GateState
 
 __all__ = [
     "HealthMonitor",
@@ -151,11 +154,13 @@ class HealthMonitor:
         else:
             self._state.status = self._recompute_status()
 
-    def suggest_guarded(self, *, reason: str, runbook: str | None = None) -> None:
-        """Record a board mode suggestion for operators."""
+    def suggest_guarded(self, *, reason: str, runbook: str | None = None, gate_state: "GateState" | None = None) -> None:
+        """Record a board mode suggestion for operators and enforce auto-execute guard if provided."""
 
         self._state.board_mode_suggestion = reason
         self._state.board_mode_runbook = runbook
+        if gate_state is not None:
+            self.enforce_auto_execute_policy(gate_state)
 
     def suggest_kill_switch(
         self,
@@ -163,14 +168,17 @@ class HealthMonitor:
         state: str,
         reason: str,
         runbook: str | None = None,
+        gate_state: "GateState" | None = None,
     ) -> None:
-        """Record a kill switch recommendation."""
+        """Record a kill switch recommendation and guard auto-execute if provided."""
 
         self._state.kill_switch = KillSwitchSuggestion(
             state=state,
             reason=reason,
             runbook=runbook,
         )
+        if gate_state is not None:
+            gate_state.auto_execute = False
 
     def _recompute_status(self) -> str:
         status = "ok"
@@ -189,6 +197,16 @@ class HealthMonitor:
         except ValueError:
             incoming_idx = 1
         return _SEVERITY_ORDER[max(current_idx, incoming_idx)]
+
+    def enforce_auto_execute_policy(self, gate_state: "GateState") -> None:
+        """Apply board/health derived constraints to GateState.auto_execute."""
+
+        if self._state.status in {"degraded", "soft_stop", "hard_stop"}:
+            gate_state.auto_execute = False
+            return
+        suggestion = (self._state.board_mode_suggestion or "").lower()
+        if suggestion in {"guarded", "halted", "halt"}:
+            gate_state.auto_execute = False
 
 
 setattr(HealthMonitor, "raise", HealthMonitor.raise_condition)

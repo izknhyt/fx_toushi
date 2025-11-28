@@ -16,6 +16,9 @@
       "reason": "p95_exceeded",
       "cooldown_eta": "2025-03-14T12:45:00Z"
     },
+    "latency_data_status": "degraded",
+    "slippage_data_status": "degraded",
+    "profit_readiness_status": "guarded",
     "per_symbol": {
       "USDJPY": {
         "news": {

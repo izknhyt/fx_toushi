@@ -1,0 +1,27 @@
+# alpha_profiles.yaml -- Hands-off/dynamic sizing profiles (detailed_design §88)
+# スキーマ: docs/schemas/alpha_profiles.schema.json
+
+schema_version: 1
+profiles:
+  usd_jpy_breakout:
+    risk_budget_pct: 0.45
+    baseline_edge_bps: 4.2
+    max_lot: 1.8
+    min_conviction: 0.32
+    default_target_band: day15
+    playbooks:
+      - breakout
+      - pullback
+    max_dynamic_adjust_pct: 0.15  # Conviction/size補正の上限（±15%）
+    notes: "Hands-off昇格時に使用する基準プロファイル。Paper soak後にLiveへ昇格。"
+
+  eur_usd_range:
+    risk_budget_pct: 0.35
+    baseline_edge_bps: 3.5
+    max_lot: 1.2
+    min_conviction: 0.28
+    default_target_band: day5
+    playbooks:
+      - range_revert
+    max_dynamic_adjust_pct: 0.10
+    notes: "レンジ想定の控えめプロファイル。Guarded時はReduce-Only推奨。"

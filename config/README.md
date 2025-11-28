@@ -13,6 +13,7 @@
 | `execution_model.yaml` | `docs/schemas/execution_model.schema.json` | 詳細設計 §3.6, §4.4 | [RUN-HITL-01](../docs/runbooks/RUN-HITL-01.md), [RUN-RISK-01](../docs/runbooks/RUN-RISK-01.md), [`reports/validation_log/templates/weekly.md`](../reports/validation_log/templates/weekly.md) | ヒューマン遅延・スリッページ分布とエントリーモード閾値のベースライン。シンボル/レジーム別上書きを記録し、Runbook承認ログと紐付ける。 |
 | `scoring.yaml` | `docs/schemas/scoring_config.schema.json` | 詳細設計 §3.7, §4.4.4 | RUN-SCORE-01, `reports/diagnostics/scoring_<date>.md` | スコア係数・PF乖離ガード・診断閾値。`tradectl scoring diagnostics`と共有。 |
 | `scoreboard.yaml` | `docs/schemas/scoreboard.schema.json` | 付録G.1, §4.4.5 | RUN-GOV-BOARD-01, RUN-RISK-07 | Strategy Scoreboard のα/Decay閾値とウォッチリスト判定条件。 |
+| `alpha_profiles.yaml` | `docs/schemas/alpha_profiles.schema.json` | 詳細設計 §88, §4.4.7 | RUN-ALPHA-PROFILE-01, RUN-ALPHA-FEEDBACK-01 | Hands-off/動的サイジング用プロファイルと`max_dynamic_adjust_pct`上限。 |
 | `risk_live_guard.yaml` | `docs/schemas/risk_live_guard.schema.json` | 詳細設計 §3.8, §4.4.3 | RUN-RISK-07 | ライブ性能ガードのPF/Sharpe/Latency基準と通知ルール。 |
 | `ops_readiness.yaml` | `docs/schemas/ops_readiness.schema.json` | 詳細設計 §3.27, §4.4.6 | OPS-READINESS-01, RUN-RISK-07 | Ops レビュー重みと証跡パス。`make check-ops-readiness` の入力。 |
 | `reduce_only.yaml` | `docs/schemas/human_gate_config.schema.json` | 詳細設計 §3.5.6, §5.12 | RUN-RISK-02, RUN-RISK-03 | Human GateダブルアックとReduce-Only優先度の既定値。`config/profiles/*.yaml::gates`の上書きと整合させる。 |

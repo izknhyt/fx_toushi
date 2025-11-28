@@ -171,6 +171,7 @@ class DefaultTicketBuilder:
             "human_manual_comment": dict(manual_comment_metadata),
             "risk_reduce_only": gate_state.risk.reduce_only,
             "risk_reduce_only_reason": gate_state.risk.reduce_only_reason,
+            "auto_execute": gate_state.auto_execute,
         }
         return payload
 

@@ -30,6 +30,16 @@ from pathlib import Path
 from typing import Any, Iterable, Mapping, MutableMapping
 
 import yaml
+import pandas as pd
+
+_TIMEFRAME_RULES: Mapping[str, str] = {
+    "5m": "5t",
+    "15m": "15t",
+    "30m": "30t",
+    "1h": "1h",
+    "4h": "4h",
+    "1d": "1d",
+}
 
 __all__ = [
     "FeatureContext",
@@ -120,14 +130,157 @@ class FeaturePipeline:
         pipeline_cfg = config.get("pipeline", {})
         resample_cfg = pipeline_cfg.get("resample", {})
         timeframes = tuple(resample_cfg.get("timeframes", []))
+        default_tf_minutes = pipeline_cfg.get("default_timeframe_minutes", 5)
+        self._default_timeframe = f"{default_tf_minutes}m"
         self._timeframes = frozenset(timeframes)
+        base_price_keys = {
+            f"open_{self._default_timeframe}",
+            f"high_{self._default_timeframe}",
+            f"low_{self._default_timeframe}",
+            f"close_{self._default_timeframe}",
+            f"volume_{self._default_timeframe}",
+        }
         self._context = FeatureContext(
             symbols=frozenset(),
             timeframes=self._timeframes,
-            available_keys=frozenset(),
+            available_keys=frozenset(base_price_keys),
         )
 
+        self._available_keys.update(base_price_keys)
         self._load_enabled_indicators()
+
+    def _resample(self, df: pd.DataFrame, timeframe: str) -> pd.DataFrame:
+        """Return OHLCV frame resampled to the requested timeframe."""
+
+        rule = _TIMEFRAME_RULES.get(timeframe, timeframe)
+        aggregated = (
+            df.resample(rule)
+            .agg(
+                {
+                    "open": "first",
+                    "high": "max",
+                    "low": "min",
+                    "close": "last",
+                    "volume": "sum",
+                }
+            )
+            .dropna()
+        )
+        return aggregated
+
+    def _compute_indicator(self, indicator: IndicatorDefinition, frame: pd.DataFrame) -> Mapping[str, pd.Series]:
+        """Compute a single indicator over the provided price frame."""
+
+        close = frame["close"]
+        high = frame["high"]
+        low = frame["low"]
+        params = indicator.parameters
+        window = int(params.get("window", params.get("period", 14)))
+        outputs: dict[str, pd.Series] = {}
+
+        def _ema_slope(series: pd.Series, span: int) -> pd.Series:
+            ema = series.ewm(span=span, adjust=False).mean()
+            return ema.diff()
+
+        if indicator.identifier.startswith("sma"):
+            series = close.rolling(window=window, min_periods=window).mean()
+            outputs[indicator.output_keys["default"]] = series
+        elif indicator.identifier.startswith("ema") and indicator.identifier != "ema55_slope":
+            series = close.ewm(span=window, adjust=False).mean()
+            outputs[indicator.output_keys["default"]] = series
+        elif indicator.identifier.startswith("rsi"):
+            delta = close.diff()
+            gain = delta.clip(lower=0).rolling(window=window, min_periods=window).mean()
+            loss = -delta.clip(upper=0).rolling(window=window, min_periods=window).mean()
+            rs = gain / loss.replace(0, pd.NA)
+            rsi = 100 - (100 / (1 + rs))
+            outputs[indicator.output_keys["default"]] = rsi
+        elif indicator.identifier.startswith("atr"):
+            prev_close = close.shift(1)
+            tr = pd.concat(
+                [
+                    high - low,
+                    (high - prev_close).abs(),
+                    (low - prev_close).abs(),
+                ],
+                axis=1,
+            ).max(axis=1)
+            atr = tr.rolling(window=window, min_periods=window).mean()
+            outputs[indicator.output_keys["default"]] = atr
+        elif indicator.identifier.startswith("ema55_slope"):
+            slope = _ema_slope(close, span=window)
+            outputs[indicator.output_keys["default"]] = slope
+        elif indicator.identifier.startswith("donchian"):
+            upper = close.rolling(window=window, min_periods=window).max()
+            lower = close.rolling(window=window, min_periods=window).min()
+            mid = (upper + lower) / 2
+            outputs[indicator.output_keys.get("upper", "upper")] = upper
+            outputs[indicator.output_keys.get("lower", "lower")] = lower
+            outputs[indicator.output_keys.get("mid", "mid")] = mid
+        elif indicator.identifier.startswith("session_tag"):
+            def _session_label(ts: pd.Timestamp) -> str:
+                hour = ts.hour
+                if 0 <= hour < 7:
+                    return "asia"
+                if 7 <= hour < 12:
+                    return "london"
+                if 12 <= hour < 20:
+                    return "newyork"
+                return "overlap"
+
+            outputs[indicator.output_keys["default"]] = frame.index.to_series().map(_session_label)
+        elif indicator.identifier.startswith("regime_trend"):
+            slope = close.ewm(span=window, adjust=False).mean().diff()
+            regime = slope.apply(lambda v: 1 if v > 0 else (-1 if v < 0 else 0))
+            outputs[indicator.output_keys["default"]] = regime
+        else:  # pragma: no cover - defensive path for future indicators
+            raise ValueError(f"Indicator '{indicator.identifier}' not supported in PoC pipeline")
+
+        return outputs
+
+    def compute_feature_matrix(self, *, symbol: str, price_df: pd.DataFrame) -> pd.DataFrame:
+        """Return a feature matrix aligned to the base timeframe index.
+
+        The returned dataframe is indexed by the original ``timestamp`` index
+        and contains one column per expanded feature key (``<alias>_<tf>``).
+        Higher-timeframe indicators are forward-filled to the base index to
+        simplify per-bar strategy evaluation.
+        """
+
+        if price_df.empty:
+            return pd.DataFrame()
+
+        frame = price_df.copy()
+        frame["timestamp"] = pd.to_datetime(frame["timestamp"])
+        frame = frame.set_index("timestamp").sort_index()
+
+        feature_columns: dict[str, pd.Series] = {}
+        for indicator in self._indicators.values():
+            for timeframe in indicator.timeframes:
+                resampled = self._resample(frame, timeframe) if timeframe != self._default_timeframe else frame
+                computed = self._compute_indicator(indicator, resampled)
+                for alias, series in computed.items():
+                    column_name = f"{alias}_{timeframe}"
+                    aligned = series.rename(column_name)
+                    if timeframe != self._default_timeframe:
+                        aligned = aligned.reindex(frame.index, method="ffill")
+                    feature_columns[column_name] = aligned
+
+        matrix = pd.DataFrame(feature_columns, index=frame.index)
+        # add base OHLCV columns for strategy use
+        matrix[f"open_{self._default_timeframe}"] = frame["open"]
+        matrix[f"high_{self._default_timeframe}"] = frame["high"]
+        matrix[f"low_{self._default_timeframe}"] = frame["low"]
+        matrix[f"close_{self._default_timeframe}"] = frame["close"]
+        matrix[f"volume_{self._default_timeframe}"] = frame["volume"]
+        # refresh context so manifest validation can see the symbol set
+        self._context = FeatureContext(
+            symbols=frozenset({symbol}),
+            timeframes=self._timeframes,
+            available_keys=frozenset(self._available_keys),
+            _store=self._context._store,
+        )
+        return matrix
 
     # ------------------------------------------------------------------
     # Construction helpers
@@ -274,4 +427,3 @@ class FeaturePipeline:
         """Return the latest :class:`FeatureContext` snapshot."""
 
         return self._context
-

@@ -138,3 +138,13 @@ def test_risk_manager_reduce_only_merges_into_gate_state() -> None:
     assert updated.risk.reduce_only is False
     assert updated.risk.kill_switch_recommendation == "soft_stop"
     assert updated.risk.kill_switch_reason == "weekly_drawdown"
+
+
+def test_spread_guard_sets_auto_execute_false() -> None:
+    aggregator = GateAggregator()
+    aggregator.update_spread(global_state=SpreadGateState(state="normal"))
+    aggregator.set_profit_readiness_status("ok", board_mode="normal", allow_auto_execute=True)
+    assert aggregator.snapshot().auto_execute is True
+
+    aggregator.update_spread(global_state=SpreadGateState(state="cooldown"))
+    assert aggregator.snapshot().auto_execute is False

@@ -1,0 +1,82 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://fx-toushi.dev/schemas/alpha_profiles.schema.json",
+  "title": "AlphaProfilesConfig",
+  "description": "Alpha profiles for dynamic sizing/conviction adjustments per detailed design §88.",
+  "type": "object",
+  "required": [
+    "profiles"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "anyOf": [
+        {
+          "type": "integer",
+          "minimum": 0
+        },
+        {
+          "type": "string",
+          "pattern": "^[a-z0-9_.\\-]+$"
+        }
+      ]
+    },
+    "profiles": {
+      "type": "object",
+      "minProperties": 1,
+      "patternProperties": {
+        "^[a-z0-9_\\-]+$": {
+          "type": "object",
+          "required": [
+            "risk_budget_pct",
+            "baseline_edge_bps",
+            "max_lot",
+            "min_conviction",
+            "default_target_band",
+            "playbooks",
+            "max_dynamic_adjust_pct"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "risk_budget_pct": {
+              "type": "number",
+              "minimum": 0
+            },
+            "baseline_edge_bps": {
+              "type": "number"
+            },
+            "max_lot": {
+              "type": "number",
+              "minimum": 0
+            },
+            "min_conviction": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            "default_target_band": {
+              "type": "string",
+              "minLength": 1
+            },
+            "playbooks": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              },
+              "minItems": 1
+            },
+            "max_dynamic_adjust_pct": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            "notes": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    }
+  }
+}

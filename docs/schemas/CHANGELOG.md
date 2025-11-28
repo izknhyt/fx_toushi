@@ -4,6 +4,13 @@
 - Added `penalty_event.schema.json` capturing penalty ledger entries（event_ts/penalty_code/scope/value_bps/reason/approver） per detailed design §7.7. CI command `poetry run schema-validate metrics/penalty.jsonl --schema docs/schemas/penalty_event.schema.json` is now part of `PKG-STRAT-GOV`.
 - Published `docs/schemas/gate_state.sample.json` aligned with `gate_state.schema.json` v3 so GateAggregator/GateState validation, Runbook RUN-OPS-04, and CLI snapshots share a canonical instance for audits.
 
+## 2025-11-22
+- `gate_state.schema.json` v4: added `auto_execute` flag for Hands-off mode; sample updated to v4.
+- Added `alpha_profiles.schema.json` and scaffold `config/alpha_profiles.yaml` with `max_dynamic_adjust_pct` for dynamic sizing.
+- `risk_policy.schema.json` gains `lot_ladder` entries for sizing ramps; `config/risk_policy.yaml` scaffold updated accordingly.
+- `config_bundle.schema.json` now requires `alpha_profiles.yaml`; `Makefile` adds `check-alpha-profiles`.
+- `audit_ticket_action.schema.json` adds `auto_execute` to capture hands-off state in ticket action audits.
+
 ## 2025-03-21
 - Added `performance_snapshot.schema.json` capturing KPI snapshots (Sharpe, Sortino, drawdown, win rate, P&L metadata and governance state) for backtest/paper/live windows per detailed design §3.5.2/§7.6. Included curated sample `docs/schemas/examples/performance_snapshot.sample.json`, symlink `schema/performance_snapshot.schema.json`, and regression coverage via `tests/contracts/test_performance_snapshot_schema.py`.
 

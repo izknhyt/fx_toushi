@@ -139,6 +139,7 @@ def status(
     snapshot_manager = snapshot_manager or SnapshotManager()
 
     health_state = monitor.snapshot()
+    monitor.enforce_auto_execute_policy(gate_state)
     risk_state = gate_state.risk
     kill_switch_payload = {
         "suggestion": risk_state.kill_switch_recommendation,

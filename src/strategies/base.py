@@ -74,6 +74,9 @@ class MarketGateState(Protocol):
     news: NewsGateState
     calendar: CalendarGateState
     spread: SpreadGateState
+    latency_data_status: str
+    slippage_data_status: str
+    profit_readiness_status: str
     per_symbol: Mapping[str, GateBlockState]
     """Symbol-keyed overrides that shadow global news/calendar/spread slices."""
 

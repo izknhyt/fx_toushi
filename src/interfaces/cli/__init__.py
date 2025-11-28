@@ -16,8 +16,9 @@ from rich.panel import Panel
 from rich.pretty import Pretty
 
 from .alpha import AlphaReviewError, AlphaWatchlistAlert, review as alpha_review
-from .backtest import run_backtest, walk_forward_backtest
+from .backtest import run_backtest, walk_forward_backtest, run_paper_poc_all
 from .board import board as board_view
+from .backtest import run_paper_poc
 from .data import acknowledge_degradation, health_snapshot, status as data_status
 from .execution import ExecutionBridgeLogError, ExecutionEvidenceError, bridge_log, recalibrate
 from .funding import FundingSyncError, funding_status, funding_sync
@@ -91,6 +92,21 @@ def create_cli_app() -> typer.Typer:
             "--save-snapshot",
             help="Optional JSON file path for the rendered snapshot",
         ),
+        profit_status: str = typer.Option(
+            "ok",
+            "--profit-status",
+            help="Profit readiness badge status (ok|guarded|halted|stale).",
+        ),
+        latency_status: str = typer.Option(
+            "ok",
+            "--latency-status",
+            help="Latency data badge (ok|degraded|halt_recommended).",
+        ),
+        slippage_status: str = typer.Option(
+            "ok",
+            "--slippage-status",
+            help="Slippage data badge (ok|degraded|halt_recommended).",
+        ),
         manifest_path: Path = typer.Option(
             Path("reports") / "data_manifest.json",
             "--manifest",
@@ -110,6 +126,9 @@ def create_cli_app() -> typer.Typer:
             json_output=effective_json,
             save_snapshot=save_snapshot,
             manifest_path=manifest_path,
+            profit_readiness_status=profit_status,
+            latency_data_status=latency_status,
+            slippage_data_status=slippage_status,
         )
         _render_payload(console, payload, json_output=effective_json)
 
@@ -176,6 +195,124 @@ def create_cli_app() -> typer.Typer:
             window_to=window_to,
             out_dir=out_dir,
             manifest_path=manifest_path,
+        )
+        _render_payload(console, payload, json_output=effective_json)
+
+    @backtest_app.command("poc-paper")
+    def backtest_poc_paper_command(
+        ctx: typer.Context,
+        strategy: str = typer.Option("m1_baseline_ma_rsi", "--strategy", help="Strategy identifier."),
+        profile: str = typer.Option("m1_baseline", "--profile", help="Risk profile key"),
+        window_from: str | None = typer.Option(None, "--from", help="Start date (YYYY-MM-DD)", show_default=False),
+        window_to: str | None = typer.Option(None, "--to", help="End date (YYYY-MM-DD)", show_default=False),
+        spread_pips: float = typer.Option(0.01, "--spread", help="Assumed spread in price units"),
+        target_r: float = typer.Option(2.0, "--target-r", help="Target R multiple for take profit"),
+        ttl_bars: int = typer.Option(12, "--ttl-bars", help="Max bars to hold before exit"),
+        risk_policy_path: Path = typer.Option(
+            Path("config") / "risk_policy.yaml",
+            "--risk-policy",
+            help="Risk policy YAML used for risk_per_trade/base capital",
+            show_default=False,
+        ),
+        data_manifest_path: Path = typer.Option(
+            Path("reports") / "data_manifest.json",
+            "--data-manifest",
+            help="Data manifest with dataset path/hash",
+            show_default=False,
+        ),
+        feature_config_path: Path = typer.Option(
+            Path("config") / "feature_pipeline.yaml",
+            "--feature-config",
+            help="Feature pipeline config",
+            show_default=False,
+        ),
+        strategy_manifest_path: Path = typer.Option(
+            Path("config") / "strategy_manifest.yaml",
+            "--strategy-manifest",
+            help="Strategy manifest path",
+            show_default=False,
+        ),
+        output: Path | None = typer.Option(
+            None,
+            "--output",
+            help="Optional JSON output path for evidence logs",
+            show_default=False,
+        ),
+        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
+    ) -> None:
+        ctx_obj = ctx.obj or {"json": False}
+        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        payload = run_paper_poc(
+            strategy=strategy,
+            profile=profile,
+            window_from=window_from,
+            window_to=window_to,
+            spread_pips=spread_pips,
+            target_r=target_r,
+            ttl_bars=ttl_bars,
+            risk_policy_path=risk_policy_path,
+            data_manifest_path=data_manifest_path,
+            feature_config_path=feature_config_path,
+            strategy_manifest_path=strategy_manifest_path,
+            output=output,
+        )
+        _render_payload(console, payload, json_output=effective_json)
+
+    @backtest_app.command("poc-paper-all")
+    def backtest_poc_paper_all_command(
+        ctx: typer.Context,
+        profile: str = typer.Option("m1_baseline", "--profile", help="Risk profile key"),
+        window_from: str | None = typer.Option(None, "--from", help="Start date (YYYY-MM-DD)", show_default=False),
+        window_to: str | None = typer.Option(None, "--to", help="End date (YYYY-MM-DD)", show_default=False),
+        spread_pips: float = typer.Option(0.01, "--spread", help="Assumed spread in price units"),
+        target_r: float = typer.Option(2.0, "--target-r", help="Target R multiple for take profit"),
+        ttl_bars: int = typer.Option(12, "--ttl-bars", help="Max bars to hold before exit"),
+        risk_policy_path: Path = typer.Option(
+            Path("config") / "risk_policy.yaml",
+            "--risk-policy",
+            help="Risk policy YAML used for risk_per_trade/base capital",
+            show_default=False,
+        ),
+        data_manifest_path: Path = typer.Option(
+            Path("reports") / "data_manifest.json",
+            "--data-manifest",
+            help="Data manifest with dataset path/hash",
+            show_default=False,
+        ),
+        feature_config_path: Path = typer.Option(
+            Path("config") / "feature_pipeline.yaml",
+            "--feature-config",
+            help="Feature pipeline config",
+            show_default=False,
+        ),
+        strategy_manifest_path: Path = typer.Option(
+            Path("config") / "strategy_manifest.yaml",
+            "--strategy-manifest",
+            help="Strategy manifest path",
+            show_default=False,
+        ),
+        output: Path | None = typer.Option(
+            None,
+            "--output",
+            help="Optional JSON output path for evidence logs",
+            show_default=False,
+        ),
+        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
+    ) -> None:
+        ctx_obj = ctx.obj or {"json": False}
+        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        payload = run_paper_poc_all(
+            profile=profile,
+            window_from=window_from,
+            window_to=window_to,
+            spread_pips=spread_pips,
+            target_r=target_r,
+            ttl_bars=ttl_bars,
+            risk_policy_path=risk_policy_path,
+            data_manifest_path=data_manifest_path,
+            feature_config_path=feature_config_path,
+            strategy_manifest_path=strategy_manifest_path,
+            output=output,
         )
         _render_payload(console, payload, json_output=effective_json)
 
@@ -932,6 +1069,16 @@ def create_cli_app() -> typer.Typer:
             help="Evidence paths attached to --set-lever entries.",
             show_default=False,
         ),
+        verify: bool = typer.Option(False, "--verify", help="Verify profit readiness KPIs and evidence."),
+        window_days: int = typer.Option(30, "--window-days", help="Window for KPI computation in days."),
+        min_samples: int = typer.Option(20, "--min-samples", help="Minimum live samples required for verification."),
+        staleness_days: int = typer.Option(7, "--staleness-days", help="Max age in days for scoreboard/evidence."),
+        profit_loop_hours: int = typer.Option(48, "--profit-loop-hours", help="Max age in hours for profit_loop telemetry."),
+        require_auto_execute: bool = typer.Option(
+            False,
+            "--require-auto-execute",
+            help="Enforce hands-off auto_execute criteria when verifying profit readiness.",
+        ),
         note: str | None = typer.Option(None, "--note", help="Optional annotation for --set-lever."),
         actor: str | None = typer.Option(None, "--actor", help="Person recording --set-lever."),
         profit_path: Path = typer.Option(
@@ -957,10 +1104,17 @@ def create_cli_app() -> typer.Typer:
                 record_evidence=[str(path) for path in evidence],
                 record_notes=note,
                 record_actor=actor,
+                verify=verify,
+                window_days=window_days,
+                min_samples=min_samples,
+                staleness_days=staleness_days,
+                profit_loop_hours=profit_loop_hours,
+                require_auto_execute=require_auto_execute,
             )
         except RuntimeError as exc:  # pragma: no cover - user input validation
             typer.echo(f"[ops.readiness] {exc}", err=True)
-            raise typer.Exit(1) from exc
+            exit_code = getattr(exc, "exit_code", 1)
+            raise typer.Exit(exit_code) from exc
         _render_payload(console, payload, json_output=effective_json)
 
     app.add_typer(ops_app, name="ops")
