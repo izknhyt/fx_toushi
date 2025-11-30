@@ -32,6 +32,9 @@ class DonchianBreakoutStrategy(StrategyPluginProtocol):
                 "donchian_upper20_1h",
                 "donchian_lower20_1h",
                 "donchian_mid20_1h",
+                "donchian_upper20_1d",
+                "donchian_lower20_1d",
+                "donchian_mid20_1d",
                 "atr_14_1h",
                 "close_5m",
                 "regime_trend_1h",
@@ -103,7 +106,7 @@ class DonchianBreakoutStrategy(StrategyPluginProtocol):
             if upper_v is None or lower_v is None or close_v is None or atr_v is None:
                 continue
 
-            buffer = max(0.05, atr_v * 0.02)
+            buffer = max(0.08, atr_v * 0.03)
             breakout: str | None = None
             level = None
             rationale = ""

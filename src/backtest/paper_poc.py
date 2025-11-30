@@ -14,8 +14,10 @@ from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Iterable, Mapping
+import numpy as np
 
 import json
+import math
 import pandas as pd
 import yaml
 
@@ -59,6 +61,12 @@ class RiskProfileSettings:
     base_per_trade_pct: float
     streak: StreakRules
     per_strategy_limits: dict[str, StrategyRiskLimits]
+    total_risk_soft_pct: float | None = None
+    total_risk_hard_pct: float | None = None
+    bucket_risk_cap_pct: float | None = None
+    r_eff_soft: float | None = None
+    r_eff_hard: float | None = None
+    corr_group_risk_cap_pct: float | None = None
 
 
 @dataclass(slots=True)
@@ -67,6 +75,7 @@ class TradeRecord:
 
     opened_at: datetime
     closed_at: datetime
+    symbol: str
     direction: str
     entry: float
     exit: float
@@ -88,8 +97,8 @@ class PocResult:
 
     metrics: Mapping[str, float]
     trades: list[TradeRecord]
-    dataset_path: str
-    dataset_hash: str
+    dataset_path: str | list[str]
+    dataset_hash: str | list[str]
     window: Mapping[str, str | None]
 
     def as_dict(self) -> Mapping[str, Any]:
@@ -118,6 +127,11 @@ def _load_risk_policy(risk_policy_path: Path, profile: str) -> RiskProfileSettin
     profiles = policy.get("profiles", {})
     selected = profiles.get(profile, {})
     limits = selected.get("risk_limits", {})
+    total_risk_cfg = limits.get("total_open_risk_pct", {})
+    bucket_risk_cap_pct = limits.get("bucket_open_risk_pct")
+    r_eff_soft = float(limits.get("exposure_r_eff_soft_stop", 0)) or None
+    r_eff_hard = float(limits.get("exposure_r_eff_hard_stop", 0)) or None
+    corr_group_risk_cap_pct = limits.get("correlation_group_risk_pct")
 
     base_pct = float(limits.get("per_trade_risk_pct", 0.5))
     streak_cfg = limits.get("streak_adjustments", {})
@@ -151,6 +165,12 @@ def _load_risk_policy(risk_policy_path: Path, profile: str) -> RiskProfileSettin
         base_per_trade_pct=base_pct,
         streak=streak,
         per_strategy_limits=per_strategy_limits,
+        total_risk_soft_pct=float(total_risk_cfg.get("soft", 0)) or None,
+        total_risk_hard_pct=float(total_risk_cfg.get("hard", 0)) or None,
+        bucket_risk_cap_pct=float(bucket_risk_cap_pct or 0) or None,
+        r_eff_soft=r_eff_soft,
+        r_eff_hard=r_eff_hard,
+        corr_group_risk_cap_pct=float(corr_group_risk_cap_pct or 0) or None,
     )
 
 
@@ -210,6 +230,40 @@ def _feature_context_for_row(
     return context, clock
 
 
+def _spread_for(symbol: str, ts: pd.Timestamp, base_spread: float) -> float:
+    """Simple time-of-day and symbol-based spread model."""
+
+    hour = getattr(ts, "hour", None)
+    session_mult = 1.15 if hour is not None and (hour < 6 or hour >= 22) else 1.0
+    symbol_mult = {
+        "USDJPY": 1.0,
+        "EURUSD": 1.0,
+        "GBPUSD": 1.05,
+        "EURJPY": 1.05,
+        "AUDUSD": 1.05,
+    }.get(symbol.upper(), 1.1)
+    return base_spread * session_mult * symbol_mult
+
+
+def _slippage_for(symbol: str, ts: pd.Timestamp, mean: float, std: float) -> float:
+    """Sample slippage with symbol/time multipliers."""
+
+    hour = getattr(ts, "hour", None)
+    session_mult = 1.15 if hour is not None and (hour < 6 or hour >= 22) else 1.0
+    symbol_mult = {
+        "USDJPY": 1.0,
+        "EURUSD": 1.0,
+        "GBPUSD": 1.05,
+        "EURJPY": 1.05,
+        "AUDUSD": 1.05,
+    }.get(symbol.upper(), 1.1)
+    mu = mean * session_mult * symbol_mult
+    sigma = std * session_mult * symbol_mult
+    if sigma <= 0:
+        return mu
+    return float(np.random.normal(mu, sigma))
+
+
 def _timeframe_to_minutes(timeframe: str) -> int:
     """Convert timeframe token (e.g., '5m', '1h') to minutes."""
 
@@ -260,6 +314,10 @@ def simulate_paper_poc(
     window_from: str | None = None,
     window_to: str | None = None,
     spread_pips: float = 0.01,
+    slippage_pips: float = 0.0,
+    slippage_std: float = 0.0,
+    commission_pct: float = 0.0,
+    fixed_risk: bool = False,
     risk_policy_path: Path = DEFAULT_RISK_POLICY,
     strategy_manifest_path: Path = DEFAULT_STRATEGY_MANIFEST,
     data_manifest_path: Path = DEFAULT_DATA_MANIFEST,
@@ -270,68 +328,30 @@ def simulate_paper_poc(
     """Run a minimal paper-trading simulation and return aggregated metrics."""
 
     data_entry = _load_data_manifest(data_manifest_path, strategy)
-    dataset_path = Path(data_entry["dataset_path"])
-    dataset_hash = data_entry["dataset_sha256"]
-
     strategy_manifest = StrategyManifest.load(strategy_manifest_path)
     manifest_entry = strategy_manifest.strategies[strategy]
     # narrow manifest to the single strategy to avoid registry mismatch
     strategy_manifest.strategies = {strategy: manifest_entry}
     watchlist = manifest_entry.watchlist
     required_features = manifest_entry.metadata.required_feature_set
-    symbol = next(iter(watchlist or ("USDJPY",)))
+    symbols = list(watchlist or ("USDJPY",))
+    watchlist_datasets = data_entry.get("watchlist_datasets", {})
 
-    df = pd.read_parquet(dataset_path)
-    df["timestamp"] = pd.to_datetime(df["timestamp"])
-    if window_from:
-        df = df[df["timestamp"] >= pd.Timestamp(window_from)]
-    if window_to:
-        df = df[df["timestamp"] <= pd.Timestamp(window_to)]
-    df = df.sort_values("timestamp").reset_index(drop=True)
-    if df.empty:
-        empty_metrics = {
-            "pf_all": 1.0,
-            "win_rate": 0.0,
-            "avg_r": 0.0,
-            "max_drawdown": 0.0,
-            "trades": 0,
-            "start_equity": 0.0,
-            "end_equity": 0.0,
-        }
-        window = {"from": window_from, "to": window_to}
-        return PocResult(
-            metrics=empty_metrics,
-            trades=[],
-            dataset_path=str(dataset_path),
-            dataset_hash=dataset_hash,
-            window=window,
-        )
-    df = df.set_index("timestamp")
+    dataset_paths: list[str] = []
+    dataset_hashes: list[str] = []
 
     pipeline = FeaturePipeline.from_config_file(feature_config_path)
-    feature_matrix = pipeline.compute_feature_matrix(symbol=symbol, price_df=df.reset_index())
-    price_and_features = df.join(feature_matrix, how="left")
-
-    engine = StrategyEngine()
-    if strategy == "m1_baseline_ma_rsi":
-        engine.register_plugin(MovingAverageRsiStrategy())
-    elif strategy == "m1_baseline_donchian":
-        engine.register_plugin(DonchianBreakoutStrategy())
-    else:
-        raise KeyError(f"Unknown strategy '{strategy}' for PoC simulation")
-    engine._manifest = strategy_manifest  # type: ignore[attr-defined]
-
-    gate = _build_gate_state(watchlist)
+    gate = _build_gate_state(symbols)
     risk_settings = _load_risk_policy(risk_policy_path, profile)
     per_strategy_limits = risk_settings.per_strategy_limits.get(
         strategy, StrategyRiskLimits(per_trade_pct=risk_settings.base_per_trade_pct)
     )
     base_risk_pct = per_strategy_limits.per_trade_pct or risk_settings.base_per_trade_pct
-    risk_state = RiskState(current_risk_pct=base_risk_pct)
+
     equity = risk_settings.base_equity
-    trades: list[TradeRecord] = []
-    equity_curve: list[float] = [equity]
-    open_position: dict[str, Any] | None = None
+    all_trades: list[TradeRecord] = []
+    dd_curve: list[float] = [equity]
+
     entry_params = manifest_entry.parameters.get("entry", {}) if hasattr(manifest_entry, "parameters") else {}
     sizing_params = manifest_entry.parameters.get("sizing", {}) if hasattr(manifest_entry, "parameters") else {}
     entry_tf = str(entry_params.get("timeframe", "5m"))
@@ -339,62 +359,151 @@ def simulate_paper_poc(
     tp_r_multiple = float(sizing_params.get("tp_r_multiple", target_r_multiple))
     atr_sl_mult = float(sizing_params.get("atr_sl_mult", 1.0))
 
-    for ts, row in price_and_features.iterrows():
-        if open_position:
+    engine = StrategyEngine()
+    if strategy == "m1_baseline_ma_rsi":
+        ma_plugin = MovingAverageRsiStrategy()
+        entry_params = manifest_entry.parameters.get("entry", {}) if hasattr(manifest_entry, "parameters") else {}
+        sizing_params = manifest_entry.parameters.get("sizing", {}) if hasattr(manifest_entry, "parameters") else {}
+        ma_plugin.rsi_long_threshold = float(entry_params.get("rsi_long_threshold", ma_plugin.rsi_long_threshold))
+        ma_plugin.rsi_short_threshold = float(entry_params.get("rsi_short_threshold", ma_plugin.rsi_short_threshold))
+        ma_plugin.min_gap_pct = float(entry_params.get("min_gap_pct", ma_plugin.min_gap_pct))
+        ma_plugin._cooldown_bars = int(entry_params.get("cooldown_bars", ma_plugin.cooldown_bars()))
+        # TP/SL/TTL handled in sizing_params below
+        engine.register_plugin(ma_plugin)
+    elif strategy == "m1_baseline_donchian":
+        engine.register_plugin(DonchianBreakoutStrategy())
+    else:
+        raise KeyError(f"Unknown strategy '{strategy}' for PoC simulation")
+    engine._manifest = strategy_manifest  # type: ignore[attr-defined]
+
+    # preload price+feature frames per symbol
+    pf_by_symbol: dict[str, pd.DataFrame] = {}
+    for symbol in symbols:
+        ds_entry = watchlist_datasets.get(symbol) or {}
+        ds_path = Path(ds_entry.get("path", data_entry["dataset_path"]))
+        ds_hash = ds_entry.get("sha256", data_entry["dataset_sha256"])
+        dataset_paths.append(str(ds_path))
+        dataset_hashes.append(ds_hash)
+
+        df = pd.read_parquet(ds_path)
+        df["timestamp"] = pd.to_datetime(df["timestamp"])
+        if window_from:
+            df = df[df["timestamp"] >= pd.Timestamp(window_from)]
+        if window_to:
+            df = df[df["timestamp"] <= pd.Timestamp(window_to)]
+        df = df.sort_values("timestamp").reset_index(drop=True)
+        df = df.set_index("timestamp")
+        if df.empty:
+            continue
+        feature_matrix = pipeline.compute_feature_matrix(symbol=symbol, price_df=df.reset_index())
+        pf_by_symbol[symbol] = df.join(feature_matrix, how="left")
+
+    # build event stream
+    events: list[tuple[pd.Timestamp, str, pd.Series]] = []
+    for symbol, pf in pf_by_symbol.items():
+        for ts, row in pf.iterrows():
+            events.append((ts, symbol, row))
+    events.sort(key=lambda x: x[0])
+
+    risk_state = RiskState(current_risk_pct=base_risk_pct)
+    open_positions: dict[str, dict[str, Any]] = {}
+    overall_limit = per_strategy_limits.max_concurrent_overall
+    bucket_limit = per_strategy_limits.max_concurrent_bucket
+    total_risk_soft = risk_settings.total_risk_soft_pct
+    total_risk_hard = risk_settings.total_risk_hard_pct
+    bucket_risk_cap = risk_settings.bucket_risk_cap_pct
+    r_eff_soft = risk_settings.r_eff_soft or per_strategy_limits.r_eff_soft
+    r_eff_hard = risk_settings.r_eff_hard or per_strategy_limits.r_eff_hard
+
+    def _currencies(sym: str) -> tuple[str | None, str | None]:
+        base = sym[:3].upper() if len(sym) >= 3 else None
+        quote = sym[3:6].upper() if len(sym) >= 6 else None
+        return base, quote
+
+    # correlation matrix on closes (pct change)
+    corr_matrix: dict[tuple[str, str], float] = {}
+    if pf_by_symbol:
+        returns = {}
+        for sym, pf in pf_by_symbol.items():
+            close = pf["close"].astype(float)
+            returns[sym] = close.pct_change().dropna()
+        symbols_for_corr = list(returns)
+        for i, si in enumerate(symbols_for_corr):
+            for sj in symbols_for_corr[i + 1 :]:
+                if len(returns[si]) > 10 and len(returns[sj]) > 10:
+                    corr = float(returns[si].corr(returns[sj]))
+                    corr_matrix[(si, sj)] = corr
+                    corr_matrix[(sj, si)] = corr
+
+    for ts, symbol, row in events:
+        manifest_entry.watchlist = [symbol]
+        strategy_manifest.strategies[strategy] = manifest_entry
+
+        if symbol in open_positions:
+            pos = open_positions[symbol]
             low = float(row["low"])
             high = float(row["high"])
             close = float(row["close"])
-            direction = open_position["direction"]
+            direction = pos["direction"]
             exit_price: float | None = None
-            exit_reason: str | None = None
 
+            dyn_spread = _spread_for(symbol, ts, spread_pips)
             if direction == "long":
-                if low <= open_position["stop"]:
-                    exit_price, exit_reason = open_position["stop"], "stop"
-                elif high >= open_position["target"]:
-                    exit_price, exit_reason = open_position["target"], "target"
+                if low <= pos["stop"]:
+                    slip = _slippage_for(symbol, ts, slippage_pips, slippage_std)
+                    exit_price = pos["stop"] - slip
+                elif high >= pos["target"]:
+                    slip = _slippage_for(symbol, ts, slippage_pips, slippage_std)
+                    exit_price = pos["target"] - slip
             else:
-                if high >= open_position["stop"]:
-                    exit_price, exit_reason = open_position["stop"], "stop"
-                elif low <= open_position["target"]:
-                    exit_price, exit_reason = open_position["target"], "target"
+                if high >= pos["stop"]:
+                    slip = _slippage_for(symbol, ts, slippage_pips, slippage_std)
+                    exit_price = pos["stop"] + slip
+                elif low <= pos["target"]:
+                    slip = _slippage_for(symbol, ts, slippage_pips, slippage_std)
+                    exit_price = pos["target"] + slip
 
-            if exit_price is None and ts.to_pydatetime() >= open_position["expire_at"]:
-                padding = spread_pips if direction == "long" else -spread_pips
-                exit_price = close - padding
-                exit_reason = "ttl"
+            if exit_price is None and ts.to_pydatetime() >= pos["expire_at"]:
+                padding = dyn_spread if direction == "long" else -dyn_spread
+                slip = _slippage_for(symbol, ts, slippage_pips, slippage_std)
+                exit_price = close - padding - (slip if direction == "long" else -slip)
 
             if exit_price is not None:
-                risk_distance = open_position["risk_distance"]
+                risk_distance = pos["risk_distance"]
                 if direction == "long":
-                    r_multiple = (exit_price - open_position["entry"]) / risk_distance
-                    pnl = r_multiple * open_position["risk_amount"]
+                    r_multiple = (exit_price - pos["entry"]) / risk_distance
+                    pnl = r_multiple * pos["risk_amount"]
                 else:
-                    r_multiple = (open_position["entry"] - exit_price) / risk_distance
-                    pnl = r_multiple * open_position["risk_amount"]
+                    r_multiple = (pos["entry"] - exit_price) / risk_distance
+                    pnl = r_multiple * pos["risk_amount"]
+                if commission_pct:
+                    pnl -= pos["risk_amount"] * (commission_pct / 100.0)
                 equity += pnl
                 risk_state.update_after_trade(r_multiple, risk_settings.streak, base_risk_pct)
-                trades.append(
+                all_trades.append(
                     TradeRecord(
-                        opened_at=open_position["opened_at"].to_pydatetime(),
+                        opened_at=pos["opened_at"].to_pydatetime(),
                         closed_at=ts.to_pydatetime(),
+                        symbol=symbol,
                         direction=direction,
-                        entry=open_position["entry"],
+                        entry=pos["entry"],
                         exit=exit_price,
-                        stop=open_position["stop"],
-                        target=open_position["target"],
+                        stop=pos["stop"],
+                        target=pos["target"],
                         r_multiple=round(float(r_multiple), 4),
                         pnl=round(float(pnl), 2),
                     )
                 )
-                open_position = None
-            equity_curve.append(equity)
+                open_positions.pop(symbol, None)
+            dd_curve.append(equity)
             continue
 
-        feature_context, clock = _feature_context_for_row(pipeline, watchlist, row)
+        feature_context, clock = _feature_context_for_row(pipeline, [symbol], row)
         if not feature_context.feature_frame(symbol):
+            dd_curve.append(equity)
             continue
         if any(pd.isna(row.get(key)) for key in required_features):
+            dd_curve.append(equity)
             continue
 
         account = SimpleNamespace(equity=equity)
@@ -407,11 +516,11 @@ def simulate_paper_poc(
             account=account,
             config=config_snapshot,
             clock=clock,
-            watchlist=watchlist,
+            watchlist=[symbol],
             seed=manifest_entry.priority,
         )
         if not signals:
-            equity_curve.append(equity)
+            dd_curve.append(equity)
             continue
 
         signal = signals[0]
@@ -419,34 +528,92 @@ def simulate_paper_poc(
         close_price = float(row["close"])
         atr_value = float(row.get("atr_14_1h", 0) or 0)
 
-        # Strategy-specific sizing
+        dyn_spread = _spread_for(symbol, ts, spread_pips)
         if strategy == "m1_baseline_ma_rsi":
             stop_buffer = atr_value * atr_sl_mult
             if stop_buffer <= 0:
-                equity_curve.append(equity)
+                dd_curve.append(equity)
                 continue
-            entry_price = close_price + spread_pips if direction == "long" else close_price - spread_pips
+            slip = _slippage_for(symbol, ts, slippage_pips, slippage_std)
+            entry_price = close_price + dyn_spread + slip if direction == "long" else close_price - dyn_spread - slip
             stop_price = entry_price - stop_buffer if direction == "long" else entry_price + stop_buffer
-        else:  # donchian breakout
+        else:
             buffer = getattr(signal, "buffer", None)
             if buffer is None or buffer <= 0:
-                buffer = max(0.05, atr_value * 0.02)
+                buffer = max(0.08, atr_value * 0.03)
             level = getattr(signal, "level", close_price)
-            entry_price = close_price + spread_pips if direction == "long" else close_price - spread_pips
+            slip = _slippage_for(symbol, ts, slippage_pips, slippage_std)
+            entry_price = close_price + dyn_spread + slip if direction == "long" else close_price - dyn_spread - slip
             stop_price = (level - buffer) if direction == "long" else (level + buffer)
 
         risk_distance = abs(entry_price - stop_price)
         if risk_distance <= 0:
-            equity_curve.append(equity)
+            dd_curve.append(equity)
             continue
 
-        risk_amount = equity * (risk_state.current_risk_pct / 100)
+        # open risk constraints
+        def _open_risk_pct_total() -> float:
+            return sum((pos["risk_amount"] / equity) * 100 for pos in open_positions.values())
+
+        def _open_risk_pct_bucket(sym: str) -> float:
+            base, quote = _currencies(sym)
+            pct = 0.0
+            for s, pos in open_positions.items():
+                b, q = _currencies(s)
+                if (base and (b == base or q == base)) or (quote and (b == quote or q == quote)):
+                    pct += (pos["risk_amount"] / equity) * 100
+            return pct
+
+        new_risk_pct = risk_state.current_risk_pct
+        total_after = _open_risk_pct_total() + new_risk_pct
+        if total_risk_hard and total_after > total_risk_hard:
+            dd_curve.append(equity)
+            continue
+        if total_risk_soft and total_after > total_risk_soft:
+            dd_curve.append(equity)
+            continue
+        if bucket_risk_cap:
+            bucket_after = _open_risk_pct_bucket(symbol) + new_risk_pct
+            if bucket_after > bucket_risk_cap:
+                dd_curve.append(equity)
+                continue
+        if risk_settings.corr_group_risk_cap_pct and corr_matrix:
+            group_pct = new_risk_pct
+            for s, pos in open_positions.items():
+                corr = corr_matrix.get((symbol, s), 0.0)
+                if corr >= 0.7:
+                    group_pct += (pos["risk_amount"] / equity) * 100
+            if group_pct > risk_settings.corr_group_risk_cap_pct:
+                dd_curve.append(equity)
+                continue
+        if r_eff_hard and total_after > r_eff_hard:
+            dd_curve.append(equity)
+            continue
+        if r_eff_soft and total_after > r_eff_soft:
+            dd_curve.append(equity)
+            continue
+
+        if overall_limit is not None and len(open_positions) >= overall_limit:
+            dd_curve.append(equity)
+            continue
+        if bucket_limit is not None:
+            base, quote = _currencies(symbol)
+            def _overlaps(sym: str) -> bool:
+                b, q = _currencies(sym)
+                return (base and (b == base or q == base)) or (quote and (b == quote or q == quote))
+            open_count_same_bucket = sum(1 for sym in open_positions if _overlaps(sym))
+            if open_count_same_bucket >= bucket_limit:
+                dd_curve.append(equity)
+                continue
+
+        equity_for_risk = risk_settings.base_equity if fixed_risk else equity
+        risk_amount = equity_for_risk * (risk_state.current_risk_pct / 100)
         target_price = (
             entry_price + tp_r_multiple * risk_distance
             if direction == "long"
             else entry_price - tp_r_multiple * risk_distance
         )
-        open_position = {
+        open_positions[symbol] = {
             "direction": direction,
             "entry": entry_price,
             "stop": stop_price,
@@ -456,62 +623,70 @@ def simulate_paper_poc(
             "opened_at": ts,
             "expire_at": ts.to_pydatetime() + pd.Timedelta(minutes=ttl_minutes),
         }
-        equity_curve.append(equity)
+        dd_curve.append(equity)
 
-    if open_position and not price_and_features.empty:
-        last_row = price_and_features.iloc[-1]
-        close = float(last_row["close"])
-        exit_price = close - spread_pips if open_position["direction"] == "long" else close + spread_pips
-        risk_distance = open_position["risk_distance"]
-        if open_position["direction"] == "long":
-            r_multiple = (exit_price - open_position["entry"]) / risk_distance
-            pnl = r_multiple * open_position["risk_amount"]
-        else:
-            r_multiple = (open_position["entry"] - exit_price) / risk_distance
-            pnl = r_multiple * open_position["risk_amount"]
-        equity += pnl
-        risk_state.update_after_trade(r_multiple, risk_settings.streak, base_risk_pct)
-        trades.append(
-            TradeRecord(
-                opened_at=open_position["opened_at"].to_pydatetime(),
-                closed_at=price_and_features.index[-1].to_pydatetime(),
-                direction=open_position["direction"],
-                entry=open_position["entry"],
-                exit=exit_price,
-                stop=open_position["stop"],
-                target=open_position["target"],
-                r_multiple=round(float(r_multiple), 4),
-                pnl=round(float(pnl), 2),
+    # close any residual open positions at final price
+    if events and open_positions:
+        last_ts = events[-1][0]
+        for symbol, pos in list(open_positions.items()):
+            row = pf_by_symbol[symbol].iloc[-1]
+            close = float(row["close"])
+            dyn_spread = _spread_for(symbol, last_ts, spread_pips)
+            slip = _slippage_for(symbol, last_ts, slippage_pips, slippage_std)
+            exit_price = close - dyn_spread - slip if pos["direction"] == "long" else close + dyn_spread + slip
+            risk_distance = pos["risk_distance"]
+            if pos["direction"] == "long":
+                r_multiple = (exit_price - pos["entry"]) / risk_distance
+                pnl = r_multiple * pos["risk_amount"]
+            else:
+                r_multiple = (pos["entry"] - exit_price) / risk_distance
+                pnl = r_multiple * pos["risk_amount"]
+            if commission_pct:
+                pnl -= pos["risk_amount"] * (commission_pct / 100.0)
+            equity += pnl
+            risk_state.update_after_trade(r_multiple, risk_settings.streak, base_risk_pct)
+            all_trades.append(
+                TradeRecord(
+                    opened_at=pos["opened_at"].to_pydatetime(),
+                    closed_at=last_ts.to_pydatetime(),
+                    symbol=symbol,
+                    direction=pos["direction"],
+                    entry=pos["entry"],
+                    exit=exit_price,
+                    stop=pos["stop"],
+                    target=pos["target"],
+                    r_multiple=round(float(r_multiple), 4),
+                    pnl=round(float(pnl), 2),
+                )
             )
-        )
-        equity_curve.append(equity)
-        open_position = None
+            open_positions.pop(symbol, None)
+        dd_curve.append(equity)
 
-    wins = [t for t in trades if t.r_multiple > 0]
-    losses = [t for t in trades if t.r_multiple <= 0]
-    pf_all = (sum(t.pnl for t in wins) / abs(sum(t.pnl for t in losses)) if losses else 1.0) if trades else 1.0
-    win_rate = len(wins) / len(trades) if trades else 0.0
-    avg_r = sum(t.r_multiple for t in trades) / len(trades) if trades else 0.0
-    equity_series = pd.Series(equity_curve)
+    wins = [t for t in all_trades if t.r_multiple > 0]
+    losses = [t for t in all_trades if t.r_multiple <= 0]
+    pf_all = (sum(t.pnl for t in wins) / abs(sum(t.pnl for t in losses)) if losses else 1.0) if all_trades else 1.0
+    win_rate = len(wins) / len(all_trades) if all_trades else 0.0
+    avg_r = sum(t.r_multiple for t in all_trades) / len(all_trades) if all_trades else 0.0
+    equity_series = pd.Series(dd_curve)
     running_max = equity_series.cummax()
     drawdowns = (equity_series - running_max) / running_max.replace(0, pd.NA)
     max_drawdown = abs(drawdowns.min()) if not drawdowns.empty else 0.0
+    end_equity = equity
 
-    base_equity = risk_settings.base_equity
     metrics = {
         "pf_all": round(float(pf_all), 4),
         "win_rate": round(float(win_rate), 4),
         "avg_r": round(float(avg_r), 4),
         "max_drawdown": round(float(max_drawdown), 4),
-        "trades": len(trades),
-        "start_equity": round(float(base_equity), 2),
-        "end_equity": round(float(equity), 2),
+        "trades": len(all_trades),
+        "start_equity": round(float(risk_settings.base_equity), 2),
+        "end_equity": round(float(end_equity), 2),
     }
     window = {"from": window_from, "to": window_to}
     return PocResult(
         metrics=metrics,
-        trades=trades,
-        dataset_path=str(dataset_path),
-        dataset_hash=dataset_hash,
+        trades=all_trades,
+        dataset_path=dataset_paths if len(dataset_paths) > 1 else dataset_paths[0],
+        dataset_hash=dataset_hashes if len(dataset_hashes) > 1 else dataset_hashes[0],
         window=window,
     )

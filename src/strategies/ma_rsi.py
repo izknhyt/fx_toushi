@@ -27,6 +27,7 @@ class MovingAverageRsiStrategy(StrategyPluginProtocol):
     rsi_long_threshold = 55
     rsi_short_threshold = 45
     min_gap_pct = 0.0005
+    slope_min = 0.0
     metadata = StrategyMetadata(
         name="M1 Baseline MA/RSI",
         version="0.1.1",
@@ -71,7 +72,7 @@ class MovingAverageRsiStrategy(StrategyPluginProtocol):
 
     def _extract_features(
         self, context: StrategyContext, symbol: str
-    ) -> tuple[float | None, float | None, float | None, float | None, float | None, float | None]:
+    ) -> tuple[float | None, float | None, float | None, float | None, float | None, float | None, float | None]:
         features = context.features
         try:
             fast = features.lookup(symbol=symbol, feature="ema_fast_5m", timeframe="5m")
@@ -80,8 +81,9 @@ class MovingAverageRsiStrategy(StrategyPluginProtocol):
             atr = features.lookup(symbol=symbol, feature="atr_14_1h", timeframe="1h")
             slope = features.lookup(symbol=symbol, feature="ema55_slope_1h", timeframe="1h")
             close = features.lookup(symbol=symbol, feature="close_5m", timeframe="5m")
+            regime = features.lookup(symbol=symbol, feature="regime_trend_1h", timeframe="1h")
         except Exception:
-            return None, None, None, None, None, None
+            return None, None, None, None, None, None, None
         return (
             self._latest(fast),
             self._latest(slow),
@@ -89,6 +91,7 @@ class MovingAverageRsiStrategy(StrategyPluginProtocol):
             self._latest(atr),
             self._latest(slope),
             self._latest(close),
+            self._latest(regime),
         )
 
     def _session_allowed(self, ts: object) -> bool:
@@ -108,22 +111,23 @@ class MovingAverageRsiStrategy(StrategyPluginProtocol):
         symbols = sorted(context.watchlist or frozenset(self._default_watchlist))
         signals: list[StrategySignal] = []
         for index, symbol in enumerate(symbols):
-            fast, slow, rsi, atr, slope, close = self._extract_features(context, symbol)
-            if fast is None or slow is None or rsi is None or atr is None or close is None:
+            fast, slow, rsi, atr, slope, close, regime = self._extract_features(context, symbol)
+            if fast is None or slow is None or rsi is None or atr is None or close is None or regime is None:
                 continue
             if not self._session_allowed(context.clock.now):
                 continue
             trend_bias = fast - slow
             min_gap = abs(close) * self.min_gap_pct
             direction: str | None = None
-            if rsi <= self.rsi_short_threshold and trend_bias < -min_gap and (slope or -1) < 0:
+            slope_v = slope or 0.0
+            if rsi <= self.rsi_short_threshold and trend_bias < -min_gap and slope_v < -self.slope_min and regime < 0:
                 direction = "short"
-            elif rsi >= self.rsi_long_threshold and trend_bias > min_gap and (slope or 1) > 0:
+            elif rsi >= self.rsi_long_threshold and trend_bias > min_gap and slope_v > self.slope_min and regime > 0:
                 direction = "long"
             else:
                 continue
 
-            slope_hint = slope if slope is not None else trend_bias
+            slope_hint = slope_v if slope is not None else trend_bias
             confidence = min(max(abs(slope_hint) / max(atr, 1e-6), 0.1), 3.0)
             signals.append(
                 StrategySignal(
@@ -140,7 +144,7 @@ class MovingAverageRsiStrategy(StrategyPluginProtocol):
         return 250
 
     def cooldown_bars(self) -> int:
-        return 4
+        return getattr(self, "_cooldown_bars", 4)
 
     def evaluate(self, context: StrategyContext) -> Iterable[StrategySignal]:
         return self.generate_signals(context)

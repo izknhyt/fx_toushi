@@ -22,6 +22,11 @@ profiles:
 
     risk_limits:
       per_trade_risk_pct: 0.75  # 1トレード最大損失[%]（要件定義v1 §FR-05, docs/review_log.md CONFIG-SCAFF-01）。
+      total_open_risk_pct:
+        soft: 1.8   # 全ポジ合計リスクのソフト上限[% of equity]
+        hard: 2.2   # 全ポジ合計リスクのハード上限[% of equity]
+      bucket_open_risk_pct: 1.2  # 通貨バケット（base/quote共有）のオープンリスク上限[% of equity]
+      correlation_group_risk_pct: 1.0  # 高相関(ρ>=0.7)グループの合計オープンリスク上限[% of equity]
       max_concurrent_positions:
         overall: 4        # 同時保有上限。コンプライアンス層で broker_rules.yaml と照合。
         per_currency_bucket: 2  # 通貨バケット上限（detailed_design_fx_signal_tool_v1.md Table FR-06）。
@@ -29,8 +34,8 @@ profiles:
       exposure_r_eff_hard_stop: 2.5  # R_eff Kill Switch 閾値（docs/runbooks/RUN-RISK-01.md 手順2）。
       streak_adjustments:
         losing:
-          threshold_trades: 3       # 連敗3でリスク縮小
-          per_trade_risk_pct: 0.5   # 縮小後のリスク
+          threshold_trades: 2       # 連敗2でリスク縮小
+          per_trade_risk_pct: 0.3   # 縮小後のリスク
           reset_after_profitable: 1 # 1勝で標準リスクへ戻す
         winning:
           threshold_trades: 2       # 連勝2でリスク拡大を開始
@@ -39,12 +44,12 @@ profiles:
           reset_on_loss: true
       per_strategy_limits:
         m1_baseline_ma_rsi:
-          per_trade_risk_pct: 0.75
+          per_trade_risk_pct: 0.5
           max_concurrent_positions:
-            overall: 4
+            overall: 3
             per_currency_bucket: 2
-          exposure_r_eff_soft_stop: 2.0
-          exposure_r_eff_hard_stop: 2.5
+          exposure_r_eff_soft_stop: 1.8
+          exposure_r_eff_hard_stop: 2.2
         m1_baseline_donchian:
           per_trade_risk_pct: 0.75
           max_concurrent_positions:

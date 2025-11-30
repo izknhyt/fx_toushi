@@ -52,31 +52,32 @@ strategies:
       reviewers:
         - Quant Lead
         - Ops Manager
-    parameters:
+      parameters:
       entry:
         timeframe: 5m
         regime_timeframe: 1h
         ema_fast: 21
         ema_slow: 55
-        rsi_long_threshold: 55
-        rsi_short_threshold: 45
-        min_gap_pct: 0.0005
-        cooldown_bars: 4
+        rsi_long_threshold: 65
+        rsi_short_threshold: 35
+        min_gap_pct: 0.0035
+        slope_min: 0.01
+        cooldown_bars: 10
       sizing:
-        per_trade_risk_pct: 0.75
-        atr_sl_mult: 1.2
-        tp_r_multiple: 2.0
-        ttl_bars: 12
+        per_trade_risk_pct: 0.5
+        atr_sl_mult: 2.2
+        tp_r_multiple: 1.2
+        ttl_bars: 5
         max_concurrent_positions:
           overall: 4
           per_currency_bucket: 2
         r_eff_cap: 2.5
         reduce_only_on_guarded: true
       filters:
-        session_utc_range: "06-21"
+        session_utc_range: "09-17"
         spread_guard_multiplier: 2.0
         news_block_minutes: [-10, 20]
-        atr_volatility_ratio_band: [0.6, 1.8]
+        atr_volatility_ratio_band: [0.9, 1.2]
         correlation_guard: true
 
   m1_baseline_donchian:
@@ -90,6 +91,9 @@ strategies:
         - donchian_upper20_1h
         - donchian_lower20_1h
         - donchian_mid20_1h
+        - donchian_upper20_1d
+        - donchian_lower20_1d
+        - donchian_mid20_1d
         - atr_14_1h
         - close_5m
         - regime_trend_1h
@@ -124,13 +128,13 @@ strategies:
         fallback_timeframe: 1d
         channel_window: 20
         buffer:
-          atr_multiplier: 0.02
-          min_abs: 0.05
+          atr_multiplier: 0.03
+          min_abs: 0.08
         cooldown_bars: 3
       sizing:
         per_trade_risk_pct: 0.75
-        tp_r_multiple: 2.0
-        ttl_bars: 12
+        tp_r_multiple: 1.2
+        ttl_bars: 6
         max_concurrent_positions:
           overall: 2
           per_currency_bucket: 1
