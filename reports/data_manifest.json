@@ -3,64 +3,64 @@
   "generated_at": "2025-11-28T00:00:00Z",
   "strategies": {
     "m1_baseline_ma_rsi": {
-      "dataset_path": "data/research/curated/usdjpy/usdjpy_m5_20240101_20241231_dukascopy_clean.parquet",
-      "dataset_sha256": "dcc44ffd0501511a19c1761c93514ee81d0bb82c483e8e1cd915771d5670a0bd",
+      "dataset_path": "data/research/curated/usdjpy/usdjpy_m5_20220101_20241231_dukascopy_merged.parquet",
+      "dataset_sha256": "29f0d9b36ec265408539baf75407fe4184421a79721d490e40675fbf37d3a5c7",
       "dataset_window": {
-        "from": "2024-01-01",
+        "from": "2022-01-01",
         "to": "2024-12-31"
       },
-      "notes": "USDJPY 5m 2024 Dukascopy cleaned (scale normalized)",
+      "notes": "USDJPY 5m 2022-2024 Dukascopy merged (cleaned where available)",
       "watchlist_datasets": {
         "USDJPY": {
-          "path": "data/research/curated/usdjpy/usdjpy_m5_20240101_20241231_dukascopy_clean.parquet",
-          "sha256": "dcc44ffd0501511a19c1761c93514ee81d0bb82c483e8e1cd915771d5670a0bd"
+          "path": "data/research/curated/usdjpy/usdjpy_m5_20220101_20241231_dukascopy_merged.parquet",
+          "sha256": "29f0d9b36ec265408539baf75407fe4184421a79721d490e40675fbf37d3a5c7"
         },
         "EURUSD": {
-          "path": "data/research/curated/eurusd/eurusd_m5_20240101_20241231_dukascopy.parquet",
-          "sha256": "56f296524dd050ca8893ef2317ff84479d699133369b383794b5a2adda19d4cb"
+          "path": "data/research/curated/eurusd/eurusd_m5_20220101_20241231_dukascopy_merged.parquet",
+          "sha256": "750b9b40f5d62594a04959344c1ef8704a4243bebd9a29e48769443e1f79d516"
         },
         "GBPUSD": {
-          "path": "data/research/curated/gbpusd/gbpusd_m5_20240101_20241231_dukascopy.parquet",
-          "sha256": "ae5e68ee477855e24b2242648e2cf2462eb6511aca515cce7ed959153ab3ea79"
+          "path": "data/research/curated/gbpusd/gbpusd_m5_20220101_20241231_dukascopy_merged.parquet",
+          "sha256": "d24be0d0c62809226d0677d44b2b96e2200895df5fa004188516d4bc921a5f28"
         },
         "EURJPY": {
-          "path": "data/research/curated/eurjpy/eurjpy_m5_20240101_20241231_dukascopy_clean.parquet",
-          "sha256": "c5063c1a3e98aa11c3652f32303182aee52896e3378ec62675224cf319adff8d"
+          "path": "data/research/curated/eurjpy/eurjpy_m5_20220101_20241231_dukascopy_merged.parquet",
+          "sha256": "23bca50a268e71dd9619a3333b544412f6033898c26fca8de8cf4188078f085e"
         },
         "AUDUSD": {
-          "path": "data/research/curated/audusd/audusd_m5_20240101_20241231_dukascopy.parquet",
-          "sha256": "d002263c9e050217db0b4208543d4dc67e8bf06f7b3aa8bda9d328dce87912f6"
+          "path": "data/research/curated/audusd/audusd_m5_20220101_20241231_dukascopy_merged.parquet",
+          "sha256": "feff47e3b5506535ed03fe12550e4ae26624b14a9e10b9b7cd82051ff67d9076"
         }
       }
     },
     "m1_baseline_donchian": {
-      "dataset_path": "data/research/curated/usdjpy/usdjpy_m5_20240101_20241231_dukascopy_clean.parquet",
-      "dataset_sha256": "dcc44ffd0501511a19c1761c93514ee81d0bb82c483e8e1cd915771d5670a0bd",
+      "dataset_path": "data/research/curated/usdjpy/usdjpy_m5_20220101_20241231_dukascopy_merged.parquet",
+      "dataset_sha256": "29f0d9b36ec265408539baf75407fe4184421a79721d490e40675fbf37d3a5c7",
       "dataset_window": {
-        "from": "2024-01-01",
+        "from": "2022-01-01",
         "to": "2024-12-31"
       },
-      "notes": "USDJPY 5m 2024 Dukascopy cleaned (scale normalized)",
+      "notes": "USDJPY 5m 2022-2024 Dukascopy merged (cleaned where available)",
       "watchlist_datasets": {
         "USDJPY": {
-          "path": "data/research/curated/usdjpy/usdjpy_m5_20240101_20241231_dukascopy_clean.parquet",
-          "sha256": "dcc44ffd0501511a19c1761c93514ee81d0bb82c483e8e1cd915771d5670a0bd"
+          "path": "data/research/curated/usdjpy/usdjpy_m5_20220101_20241231_dukascopy_merged.parquet",
+          "sha256": "29f0d9b36ec265408539baf75407fe4184421a79721d490e40675fbf37d3a5c7"
         },
         "EURUSD": {
-          "path": "data/research/curated/eurusd/eurusd_m5_20240101_20241231_dukascopy.parquet",
-          "sha256": "56f296524dd050ca8893ef2317ff84479d699133369b383794b5a2adda19d4cb"
+          "path": "data/research/curated/eurusd/eurusd_m5_20220101_20241231_dukascopy_merged.parquet",
+          "sha256": "750b9b40f5d62594a04959344c1ef8704a4243bebd9a29e48769443e1f79d516"
         },
         "GBPUSD": {
-          "path": "data/research/curated/gbpusd/gbpusd_m5_20240101_20241231_dukascopy.parquet",
-          "sha256": "ae5e68ee477855e24b2242648e2cf2462eb6511aca515cce7ed959153ab3ea79"
+          "path": "data/research/curated/gbpusd/gbpusd_m5_20220101_20241231_dukascopy_merged.parquet",
+          "sha256": "d24be0d0c62809226d0677d44b2b96e2200895df5fa004188516d4bc921a5f28"
         },
         "EURJPY": {
-          "path": "data/research/curated/eurjpy/eurjpy_m5_20240101_20241231_dukascopy_clean.parquet",
-          "sha256": "c5063c1a3e98aa11c3652f32303182aee52896e3378ec62675224cf319adff8d"
+          "path": "data/research/curated/eurjpy/eurjpy_m5_20220101_20241231_dukascopy_merged.parquet",
+          "sha256": "23bca50a268e71dd9619a3333b544412f6033898c26fca8de8cf4188078f085e"
         },
         "AUDUSD": {
-          "path": "data/research/curated/audusd/audusd_m5_20240101_20241231_dukascopy.parquet",
-          "sha256": "d002263c9e050217db0b4208543d4dc67e8bf06f7b3aa8bda9d328dce87912f6"
+          "path": "data/research/curated/audusd/audusd_m5_20220101_20241231_dukascopy_merged.parquet",
+          "sha256": "feff47e3b5506535ed03fe12550e4ae26624b14a9e10b9b7cd82051ff67d9076"
         }
       }
     }
