@@ -1,0 +1,28 @@
+{
+  "summary": {
+    "job_id": "replay-b012e317",
+    "strategy_id": "a",
+    "event_count": 2,
+    "hashes": [
+      "h1",
+      "h2"
+    ],
+    "first_ts": "2024-01-02T00:00:00Z",
+    "last_ts": "2024-01-02T01:00:00Z",
+    "signals": null
+  },
+  "events": [
+    {
+      "event": "strategy.determinism",
+      "strategy_id": "a",
+      "determinism_hash": "h1",
+      "ts": "2024-01-02T00:00:00Z"
+    },
+    {
+      "event": "strategy.determinism",
+      "strategy_id": "a",
+      "determinism_hash": "h2",
+      "ts": "2024-01-02T01:00:00Z"
+    }
+  ]
+}

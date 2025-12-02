@@ -196,10 +196,11 @@ def test_audit_ticket_action_accepts_valid_record() -> None:
         "action": "approve",
         "actor": "ops_manager",
         "consent_reference_id": "018f96d8-1c2b-7def-8abc-1a2b3c4d5e6f",
-        "board_mode": "guarded",
-        "spread_state": {
-            "EURUSD": {
-                "state": "normal",
+            "board_mode": "guarded",
+            "auto_execute": False,
+            "spread_state": {
+                "EURUSD": {
+                    "state": "normal",
                 "spread_pips": 0.6,
                 "percentile": 0.42,
                 "threshold_pips": 1.2,

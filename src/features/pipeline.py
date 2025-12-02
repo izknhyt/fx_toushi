@@ -25,7 +25,9 @@ tests and other modules.
 
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable, Mapping, MutableMapping
 
@@ -45,12 +47,43 @@ __all__ = [
     "FeatureContext",
     "FeaturePipeline",
     "IndicatorDefinition",
+    "FeatureDeterminismMetadata",
     "RebuildReport",
 ]
 
 
 class FeatureLookupError(KeyError):
     """Raised when attempting to access a feature that was not computed."""
+
+
+@dataclass(slots=True, frozen=True)
+class FeatureDeterminismMetadata:
+    """Determinism metadata propagated through the feature pipeline."""
+
+    feature_version: str
+    data_manifest_hash: str
+    seed: int = 0
+    replay_window: str | None = None
+
+    def cache_key(self, *, symbol: str, timeframe: str) -> str:
+        """Return a deterministic cache key including versioned inputs."""
+
+        return f"{symbol}:{timeframe}:{self.feature_version}:{self.data_manifest_hash}"
+
+    @staticmethod
+    def _utcnow_iso() -> str:
+        return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+    def as_record(self) -> Mapping[str, Any]:
+        """Return a serialisable representation for telemetry/audit hooks."""
+
+        return {
+            "feature_version": self.feature_version,
+            "data_manifest_hash": self.data_manifest_hash,
+            "seed": self.seed,
+            "replay_window": self.replay_window,
+            "ts": self._utcnow_iso(),
+        }
 
 
 @dataclass(slots=True)
@@ -60,6 +93,7 @@ class FeatureContext:
     symbols: frozenset[str]
     timeframes: frozenset[str]
     available_keys: frozenset[str]
+    determinism: FeatureDeterminismMetadata | None = None
     _store: Mapping[str, Mapping[str, Mapping[str, Any]]] = field(
         default_factory=dict, repr=False
     )
@@ -121,8 +155,22 @@ class RebuildReport:
 class FeaturePipeline:
     """Configuration-driven feature pipeline scaffold."""
 
-    def __init__(self, *, config: Mapping[str, Any]):
+    def __init__(
+        self,
+        *,
+        config: Mapping[str, Any],
+        feature_version: str | None = None,
+        data_manifest_hash: str | None = None,
+        seed: int = 0,
+    ):
         self._config = config
+        self._feature_version = feature_version or self._load_feature_set_version(Path("config") / "features" / "feature_versions.yaml")
+        self._data_manifest_hash = data_manifest_hash or self._compute_data_manifest_hash(Path("reports") / "data_manifest.json")
+        self._determinism = FeatureDeterminismMetadata(
+            feature_version=self._feature_version,
+            data_manifest_hash=self._data_manifest_hash,
+            seed=seed,
+        )
         self._indicators: MutableMapping[str, IndicatorDefinition] = {}
         self._available_keys: set[str] = set()
         self._store: MutableMapping[str, MutableMapping[str, MutableMapping[str, Any]]] = {}
@@ -144,10 +192,44 @@ class FeaturePipeline:
             symbols=frozenset(),
             timeframes=self._timeframes,
             available_keys=frozenset(base_price_keys),
+            determinism=self._determinism,
         )
 
         self._available_keys.update(base_price_keys)
         self._load_enabled_indicators()
+
+    # ------------------------------------------------------------------
+    # Determinism helpers
+    # ------------------------------------------------------------------
+    def _load_feature_set_version(self, path: Path) -> str:
+        """Return the feature set version defined in the version map."""
+
+        if not path.exists():
+            return "unversioned"
+
+        try:
+            payload = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        except Exception:  # pragma: no cover - defensive fallback
+            return "unversioned"
+
+        version = payload.get("feature_set_version") or payload.get("version")
+        if isinstance(version, str) and version.strip():
+            return version.strip()
+        return "unversioned"
+
+    def _compute_data_manifest_hash(self, path: Path) -> str:
+        """Compute a stable hash of the data manifest for cache keys."""
+
+        if not path.exists():
+            return "missing"
+
+        digest = hashlib.sha256()
+        with path.open("rb") as handle:
+            for chunk in iter(lambda: handle.read(8192), b""):
+                if not chunk:
+                    break
+                digest.update(chunk)
+        return digest.hexdigest()
 
     def _resample(self, df: pd.DataFrame, timeframe: str) -> pd.DataFrame:
         """Return OHLCV frame resampled to the requested timeframe."""
@@ -278,6 +360,7 @@ class FeaturePipeline:
             symbols=frozenset({symbol}),
             timeframes=self._timeframes,
             available_keys=frozenset(self._available_keys),
+            determinism=self._determinism,
             _store=self._context._store,
         )
         return matrix
@@ -286,13 +369,25 @@ class FeaturePipeline:
     # Construction helpers
     # ------------------------------------------------------------------
     @classmethod
-    def from_config_file(cls, path: str | Path) -> "FeaturePipeline":
+    def from_config_file(
+        cls,
+        path: str | Path,
+        *,
+        feature_version: str | None = None,
+        data_manifest_hash: str | None = None,
+        seed: int = 0,
+    ) -> "FeaturePipeline":
         """Instantiate the pipeline from a YAML configuration file."""
 
         cfg_path = Path(path)
         with cfg_path.open("r", encoding="utf-8") as fh:
             config = yaml.safe_load(fh.read())
-        return cls(config=config)
+        return cls(
+            config=config,
+            feature_version=feature_version,
+            data_manifest_hash=data_manifest_hash,
+            seed=seed,
+        )
 
     # ------------------------------------------------------------------
     # Indicator registration
@@ -309,6 +404,7 @@ class FeaturePipeline:
             symbols=self._context.symbols,
             timeframes=self._timeframes,
             available_keys=frozenset(self._available_keys),
+            determinism=self._determinism,
             _store=self._context._store,
         )
 
@@ -373,6 +469,7 @@ class FeaturePipeline:
             symbols=symbol_set,
             timeframes=self._timeframes,
             available_keys=frozenset(self._available_keys),
+            determinism=self._determinism,
             _store=self._context._store,
         )
         return self._context
@@ -421,6 +518,29 @@ class FeaturePipeline:
         """Expose the registered indicators for inspection/testing."""
 
         return dict(self._indicators)
+
+    def feature_cache_key(self, *, symbol: str, timeframe: str) -> str:
+        """Return the deterministic cache key for a symbol/timeframe pair."""
+
+        return self._determinism.cache_key(symbol=symbol, timeframe=timeframe)
+
+    @property
+    def feature_version(self) -> str:
+        """Return the active feature set version."""
+
+        return self._feature_version
+
+    @property
+    def data_manifest_hash(self) -> str:
+        """Return the hash of the data manifest used for cache keys."""
+
+        return self._data_manifest_hash
+
+    @property
+    def determinism(self) -> FeatureDeterminismMetadata:
+        """Expose determinism metadata for downstream components."""
+
+        return self._determinism
 
     @property
     def context(self) -> FeatureContext:

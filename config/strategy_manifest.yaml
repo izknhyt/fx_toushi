@@ -20,6 +20,10 @@ strategies:
       name: "M1 Baseline MA/RSI"
       version: "0.1.1"
       required_features:
+        - open_5m
+        - high_5m
+        - low_5m
+        - volume_5m
         - ema_fast_5m
         - ema_slow_5m
         - rsi_14_5m
@@ -86,7 +90,7 @@ strategies:
     weight: 0.5
     metadata:
       name: "M1 Baseline Donchian"
-      version: "0.1.1"
+      version: "0.1.2"
       required_features:
         - donchian_upper20_1h
         - donchian_lower20_1h
@@ -128,13 +132,13 @@ strategies:
         fallback_timeframe: 1d
         channel_window: 20
         buffer:
-          atr_multiplier: 0.03
-          min_abs: 0.08
+          atr_multiplier: 0.02
+          min_abs: 0.05
         cooldown_bars: 3
       sizing:
         per_trade_risk_pct: 0.75
-        tp_r_multiple: 1.2
-        ttl_bars: 6
+        tp_r_multiple: 2.0
+        ttl_bars: 12
         max_concurrent_positions:
           overall: 2
           per_currency_bucket: 1

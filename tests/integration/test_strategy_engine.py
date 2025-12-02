@@ -34,15 +34,21 @@ class DeterministicStrategy(StrategyPluginProtocol):
     determinism_key = "m1_baseline_ma_rsi:v0"
     metadata = StrategyMetadata(
         name="M1 Baseline MA/RSI",
-        version="0.1.0",
+        version="0.1.1",
         required_features=frozenset(
             {
-                "sma_20_5m",
+                "open_5m",
+                "high_5m",
+                "low_5m",
+                "volume_5m",
                 "ema_fast_5m",
                 "ema_slow_5m",
                 "rsi_14_5m",
                 "atr_14_1h",
                 "ema55_slope_1h",
+                "close_5m",
+                "session_tag_5m",
+                "regime_trend_1h",
             }
         ),
         seed_offset=11,
@@ -88,11 +94,46 @@ def test_strategy_determinism_engine(project_root: Path, feature_pipeline: Featu
     engine = StrategyEngine()
     plugin = DeterministicStrategy()
     engine.register_plugin(plugin)
+    engine.register_plugin(
+        type(
+            "DonchianStrategy",
+            (StrategyPluginProtocol,),
+            {
+                "id": "m1_baseline_donchian",
+                "determinism_key": "m1_baseline_donchian:v0",
+                "metadata": StrategyMetadata(
+                    name="M1 Baseline Donchian",
+                    version="0.1.2",
+                    required_features=frozenset(
+                        {
+                            "donchian_upper20_1h",
+                            "donchian_lower20_1h",
+                            "donchian_mid20_1h",
+                            "donchian_upper20_1d",
+                            "donchian_lower20_1d",
+                            "donchian_mid20_1d",
+                            "atr_14_1h",
+                            "close_5m",
+                            "regime_trend_1h",
+                            "session_tag_5m",
+                        }
+                    ),
+                ),
+                "required_warmup_bars": lambda self: 0,
+                "cooldown_bars": lambda self: 0,
+                "generate_signals": lambda self, context: (),
+            },
+        )()
+    )
 
     manifest_path = project_root / "config" / "strategy_manifest.yaml"
     manifest = engine.load_manifest(manifest_path)
 
-    feature_context = feature_pipeline.update(symbols=["USDJPY", "EURUSD"])
+    manifest_symbols: set[str] = set()
+    for strategy in manifest.strategies.values():
+        if strategy.watchlist:
+            manifest_symbols.update(strategy.watchlist)
+    feature_context = feature_pipeline.update(symbols=manifest_symbols)
 
     gate_state = GateState()
     gate_state.market.news.blocked = True

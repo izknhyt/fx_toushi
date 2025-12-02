@@ -20,6 +20,8 @@ from .backtest import run_backtest, walk_forward_backtest, run_paper_poc_all
 from .board import board as board_view
 from .backtest import run_paper_poc
 from .data import acknowledge_degradation, health_snapshot, status as data_status
+from .diagnostics import DeterminismDiagnosticsError, load_determinism_events
+from .determinism import determinism_replay, _should_exit
 from .execution import ExecutionBridgeLogError, ExecutionEvidenceError, bridge_log, recalibrate
 from .funding import FundingSyncError, funding_status, funding_sync
 from .kill_switch import KillSwitchEvidenceError, ResumeBlocked, review as kill_switch_review
@@ -198,6 +200,124 @@ def create_cli_app() -> typer.Typer:
         )
         _render_payload(console, payload, json_output=effective_json)
 
+    diagnostics_app = typer.Typer(help="Diagnostics and determinism utilities")
+
+    @diagnostics_app.command("determinism")
+    def diagnostics_determinism_command(
+        ctx: typer.Context,
+        log_path: Path = typer.Option(
+            Path("logs") / "strategy" / "registry.log",
+            "--log",
+            help="Path to strategy determinism log",
+        ),
+        limit: int = typer.Option(20, "--limit", help="Number of recent events to show"),
+        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
+    ) -> None:
+        ctx_obj = ctx.obj or {"json": False}
+        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        try:
+            payload = load_determinism_events(log_path, limit=limit)
+        except DeterminismDiagnosticsError as exc:
+            typer.echo(f"determinism diagnostics failed: {exc}", err=True)
+            raise typer.Exit(code=1)
+        _render_payload(console, payload, json_output=effective_json)
+
+    determinism_app = typer.Typer(help="Determinism replay utilities")
+
+    @determinism_app.command("replay")
+    def determinism_replay_command(
+        ctx: typer.Context,
+        since: str = typer.Option(..., "--since", help="Start window (ISO date or relative)"),
+        until: str | None = typer.Option(None, "--until", help="End window (ISO date)"),
+        mode: str = typer.Option("paper", "--mode", help="Mode to replay (backtest|paper)"),
+        strategy: str | None = typer.Option(None, "--strategy", help="Strategy identifier filter"),
+        window: str | None = typer.Option(None, "--window", help="Bar window (e.g. 1000bars)"),
+        output: Path | None = typer.Option(None, "--output", help="Optional diff report output path"),
+        log_path: Path | None = typer.Option(
+            None,
+            "--log",
+            help="Optional determinism log to include in diagnostics",
+        ),
+        metrics_path: Path | None = typer.Option(
+            None,
+            "--metrics",
+            help="Optional metrics file to append replay summary",
+            hidden=True,
+        ),
+        signals_path: Path | None = typer.Option(
+            None,
+            "--signals",
+            help="Deprecated; use --signals-expected/--signals-actual",
+            show_default=False,
+            hidden=True,
+        ),
+        signals_expected: Path | None = typer.Option(
+            None,
+            "--signals-expected",
+            help="Expected SignalRecord JSONL (e.g. backtest)",
+            show_default=False,
+        ),
+        signals_actual: Path | None = typer.Option(
+            None,
+            "--signals-actual",
+            help="Actual SignalRecord JSONL (e.g. paper/live)",
+            show_default=False,
+        ),
+        signals_schema: Path | None = typer.Option(
+            None,
+            "--signals-schema",
+            help="SignalRecord JSON schema for validation (defaults to docs/schemas/signal_record.schema.json)",
+            show_default=False,
+        ),
+        allow_missing_signals: bool = typer.Option(
+            False,
+            "--allow-missing-signals",
+            help="Do not fail when expected/actual signals are missing",
+            show_default=False,
+        ),
+        allow_diff: bool = typer.Option(
+            False,
+            "--allow-diff",
+            help="Do not fail even if diff_count > 0",
+            show_default=False,
+        ),
+        allow_signals_invalid: bool = typer.Option(
+            False,
+            "--allow-signals-invalid",
+            help="Continue when SignalRecord JSONL rows are missing required fields",
+            show_default=False,
+        ),
+        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
+    ) -> None:
+        ctx_obj = ctx.obj or {"json": False}
+        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        payload = determinism_replay(
+            since=since,
+            until=until,
+            mode=mode,
+            strategy=strategy,
+            window=window,
+            output=output,
+            log_path=log_path,
+            metrics_path=metrics_path,
+            signals_expected=signals_expected or signals_path,
+            signals_actual=signals_actual or signals_path,
+            allow_missing_signals=allow_missing_signals,
+            allow_diff=allow_diff,
+            allow_signals_invalid=allow_signals_invalid,
+            signals_schema=signals_schema,
+        )
+        _render_payload(console, payload, json_output=effective_json)
+        exit_code = _should_exit(
+            signals_expected or signals_path,
+            signals_actual or signals_path,
+            allow_missing_signals,
+            allow_diff,
+            payload.get("summary", {}).get("diff_count", 0),
+        )
+        if exit_code:
+            raise typer.Exit(code=exit_code)
+
     @backtest_app.command("poc-paper")
     def backtest_poc_paper_command(
         ctx: typer.Context,
@@ -325,6 +445,8 @@ def create_cli_app() -> typer.Typer:
         _render_payload(console, payload, json_output=effective_json)
 
     app.add_typer(backtest_app, name="backtest")
+    app.add_typer(diagnostics_app, name="diagnostics")
+    app.add_typer(determinism_app, name="determinism")
 
     ticket_app = typer.Typer(help="Ticket HITL utilities")
 

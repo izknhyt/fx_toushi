@@ -74,6 +74,8 @@ def compute_deterministic_hash(
     seed: int,
     watchlist: Iterable[str],
     required_features: Iterable[str],
+    feature_version: str | None = None,
+    data_manifest_hash: str | None = None,
 ) -> str:
     """Return a deterministic digest summarising a strategy evaluation."""
 
@@ -84,6 +86,10 @@ def compute_deterministic_hash(
         "watchlist": sorted(watchlist),
         "required_features": sorted(required_features),
     }
+    if feature_version:
+        payload["feature_version"] = feature_version
+    if data_manifest_hash:
+        payload["data_manifest_hash"] = data_manifest_hash
     serialized = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
     return hashlib.blake2b(serialized, digest_size=16).hexdigest()
 
@@ -407,7 +413,7 @@ class StrategyManifest(BaseModel):
             if entry.effective_status(now=now) == "deprecated":
                 continue
             if entry.watchlist:
-                resolved.update(entry.watchlist)
+                resolved.update(frozenset(entry.watchlist) & symbol_set)
 
         if not resolved:
             resolved.update(symbol_set)
@@ -589,6 +595,11 @@ class StrategyEngine:
             key=lambda item: (item[1].priority, item[0]),
         )
 
+        determinism_meta = getattr(features, "determinism", None)
+        feature_version = getattr(determinism_meta, "feature_version", None)
+        data_manifest_hash = getattr(determinism_meta, "data_manifest_hash", None)
+        feature_seed = getattr(determinism_meta, "seed", None)
+
         results: list[Any] = []
         for strategy_id, entry in ordered_entries:
             plugin = self._plugins.get(strategy_id)
@@ -652,6 +663,8 @@ class StrategyEngine:
                 seed=context.seed,
                 watchlist=context.watchlist,
                 required_features=plugin_metadata.required_features,
+                feature_version=feature_version,
+                data_manifest_hash=data_manifest_hash,
             )
             event_payload = {
                 "event": "strategy.determinism",
@@ -659,7 +672,11 @@ class StrategyEngine:
                 "strategy_id": strategy_id,
                 "determinism_key": determinism_key,
                 "deterministic_hash": determinism_hash,
+                "determinism_hash": determinism_hash,
                 "seed": context.seed,
+                "feature_seed": feature_seed,
+                "feature_version": feature_version,
+                "data_manifest_hash": data_manifest_hash,
                 "watchlist": sorted(context.watchlist),
                 "required_features": sorted(plugin_metadata.required_features),
                 "signal_count": signal_count,

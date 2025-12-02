@@ -23,9 +23,9 @@ profiles:
     risk_limits:
       per_trade_risk_pct: 0.75  # 1トレード最大損失[%]（要件定義v1 §FR-05, docs/review_log.md CONFIG-SCAFF-01）。
       total_open_risk_pct:
-        soft: 1.8   # 全ポジ合計リスクのソフト上限[% of equity]
-        hard: 2.2   # 全ポジ合計リスクのハード上限[% of equity]
-      bucket_open_risk_pct: 1.2  # 通貨バケット（base/quote共有）のオープンリスク上限[% of equity]
+        soft: 1.5   # 全ポジ合計リスクのソフト上限[% of equity]
+        hard: 2.0   # 全ポジ合計リスクのハード上限[% of equity]
+      bucket_open_risk_pct: 1.0  # 通貨バケット（base/quote共有）のオープンリスク上限[% of equity]
       correlation_group_risk_pct: 1.0  # 高相関(ρ>=0.7)グループの合計オープンリスク上限[% of equity]
       max_concurrent_positions:
         overall: 4        # 同時保有上限。コンプライアンス層で broker_rules.yaml と照合。
@@ -35,7 +35,7 @@ profiles:
       streak_adjustments:
         losing:
           threshold_trades: 2       # 連敗2でリスク縮小
-          per_trade_risk_pct: 0.3   # 縮小後のリスク
+          per_trade_risk_pct: 0.2   # 縮小後のリスク
           reset_after_profitable: 1 # 1勝で標準リスクへ戻す
         winning:
           threshold_trades: 2       # 連勝2でリスク拡大を開始

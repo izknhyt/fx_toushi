@@ -22,12 +22,8 @@ class _RegistryStub(StrategyPluginProtocol):
     id = "m1_baseline_ma_rsi"
     determinism_key = "m1_baseline_ma_rsi:v0"
 
-    def __init__(self, *, required_features: frozenset[str]):
-        self.metadata = StrategyMetadata(
-            name="M1 Baseline MA/RSI",
-            version="0.1.0",
-            required_features=required_features,
-        )
+    def __init__(self, *, metadata: StrategyMetadata):
+        self.metadata = metadata
         self.context: StrategyContext | None = None
 
     def required_warmup_bars(self) -> int:
@@ -41,6 +37,13 @@ class _RegistryStub(StrategyPluginProtocol):
         return ()
 
 
+class _DonchianStub(_RegistryStub):
+    """Stub for the Donchian strategy entry."""
+
+    id = "m1_baseline_donchian"
+    determinism_key = "m1_baseline_donchian:v0"
+
+
 def _manifest_path(project_root: Path) -> Path:
     return project_root / "config" / "strategy_manifest.yaml"
 
@@ -51,9 +54,29 @@ def _required_features(project_root: Path) -> frozenset[str]:
     return entry.metadata.required_feature_set
 
 
+def _required_features_for(project_root: Path, strategy_id: str) -> frozenset[str]:
+    manifest = StrategyManifest.load(_manifest_path(project_root))
+    entry = manifest.strategies[strategy_id]
+    return entry.metadata.required_feature_set
+
+
+def _strategy_metadata(project_root: Path, strategy_id: str) -> StrategyMetadata:
+    manifest = StrategyManifest.load(_manifest_path(project_root))
+    return manifest.strategies[strategy_id].metadata.to_runtime()
+
+
+def _manifest_symbols(project_root: Path) -> list[str]:
+    manifest = StrategyManifest.load(_manifest_path(project_root))
+    symbols: set[str] = set()
+    for _, entry in manifest.enabled_strategies():
+        if entry.watchlist:
+            symbols.update(entry.watchlist)
+    return sorted(symbols)
+
+
 def _feature_context(project_root: Path):
     pipeline = FeaturePipeline.from_config_file(project_root / "config" / "feature_pipeline.yaml")
-    return pipeline.update(symbols=["USDJPY", "EURUSD"])
+    return pipeline.update(symbols=_manifest_symbols(project_root))
 
 
 def _dummy_context_args():
@@ -65,11 +88,11 @@ def test_registering_duplicate_strategy_id_fails(project_root) -> None:
     """StrategyRegistry must reject duplicate IDs to enforce determinism."""
 
     engine = StrategyEngine()
-    required = _required_features(project_root)
-    engine.register_plugin(_RegistryStub(required_features=required))
+    metadata = _strategy_metadata(project_root, "m1_baseline_ma_rsi")
+    engine.register_plugin(_RegistryStub(metadata=metadata))
 
     with pytest.raises(StrategyRegistrationError):
-        engine.register_plugin(_RegistryStub(required_features=required))
+        engine.register_plugin(_RegistryStub(metadata=metadata))
 
 
 def test_manifest_entries_require_registered_plugins(project_root) -> None:
@@ -92,7 +115,8 @@ def test_metadata_mismatch_between_manifest_and_plugin_is_rejected(project_root,
     mutated_path.write_text(mutated_text, encoding="utf-8")
 
     engine = StrategyEngine()
-    engine.register_plugin(_RegistryStub(required_features=_required_features(project_root)))
+    engine.register_plugin(_RegistryStub(metadata=_strategy_metadata(project_root, "m1_baseline_ma_rsi")))
+    engine.register_plugin(_DonchianStub(metadata=_strategy_metadata(project_root, "m1_baseline_donchian")))
     engine.load_manifest(mutated_path)
     features = _feature_context(project_root)
 
@@ -110,8 +134,11 @@ def test_strategy_registry_emits_determinism_hash(project_root, tmp_path) -> Non
 
     log_path = tmp_path / "registry.log"
     engine = StrategyEngine(determinism_log_path=log_path)
-    required = _required_features(project_root)
-    engine.register_plugin(_SignalStub(required_features=required))
+    ma_metadata = _strategy_metadata(project_root, "m1_baseline_ma_rsi")
+    donchian_metadata = _strategy_metadata(project_root, "m1_baseline_donchian")
+    required = ma_metadata.required_features
+    engine.register_plugin(_SignalStub(metadata=ma_metadata))
+    engine.register_plugin(_DonchianStub(metadata=donchian_metadata))
     engine.load_manifest(_manifest_path(project_root))
     features = _feature_context(project_root)
 
@@ -119,8 +146,9 @@ def test_strategy_registry_emits_determinism_hash(project_root, tmp_path) -> Non
     assert len(signals) == 1
 
     events = engine.last_run_determinism_events
-    assert len(events) == 1
-    event = events[0]
+    assert len(events) == 2
+    event_map = {e["strategy_id"]: e for e in events}
+    event = event_map["m1_baseline_ma_rsi"]
     assert event["event"] == "strategy.determinism"
     assert event["strategy_id"] == "m1_baseline_ma_rsi"
     assert event["signal_count"] == 1
@@ -130,8 +158,16 @@ def test_strategy_registry_emits_determinism_hash(project_root, tmp_path) -> Non
         seed=12345,
         watchlist=frozenset(event["watchlist"]),
         required_features=required,
+        feature_version=features.determinism.feature_version,
+        data_manifest_hash=features.determinism.data_manifest_hash,
     )
     assert event["deterministic_hash"] == expected_hash
+    assert event["determinism_hash"] == expected_hash
+    assert event["feature_version"] == features.determinism.feature_version
+    assert event["data_manifest_hash"] == features.determinism.data_manifest_hash
     assert log_path.exists()
-    payload = json.loads(log_path.read_text(encoding="utf-8").splitlines()[-1])
-    assert payload["deterministic_hash"] == expected_hash
+    payloads = [json.loads(line) for line in log_path.read_text(encoding="utf-8").splitlines()]
+    baseline_payload = next(p for p in payloads if p["strategy_id"] == "m1_baseline_ma_rsi")
+    assert baseline_payload["deterministic_hash"] == expected_hash
+    assert baseline_payload["feature_version"] == features.determinism.feature_version
+    assert baseline_payload["data_manifest_hash"] == features.determinism.data_manifest_hash

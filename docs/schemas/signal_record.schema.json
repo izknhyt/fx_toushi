@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://fx-toushi.dev/schemas/signal_record.schema.json",
+  "title": "SignalRecord",
+  "description": "Signal replay record used for determinism diff (design §91.5).",
+  "type": "object",
+  "required": [
+    "bar_ts",
+    "feature_hash",
+    "strategy_hash",
+    "ticket_hash"
+  ],
+  "additionalProperties": true,
+  "properties": {
+    "bar_ts": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "feature_hash": {
+      "type": "string",
+      "minLength": 1
+    },
+    "strategy_hash": {
+      "type": "string",
+      "minLength": 1
+    },
+    "ticket_hash": {
+      "type": "string",
+      "minLength": 1
+    },
+    "latency_ms": {
+      "type": ["number", "null"]
+    }
+  }
+}

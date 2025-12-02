@@ -11,7 +11,11 @@ future packets.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
+import os
 import random
+from datetime import datetime, timezone
+from pathlib import Path
 from types import MappingProxyType
 from typing import Any, Mapping, Protocol, runtime_checkable, cast
 
@@ -127,9 +131,18 @@ class DeterministicExecutionModel(ExecutionModelProtocol):
         }
     )
 
-    def __init__(self, config: Mapping[str, Any]) -> None:
+    def __init__(self, config: Mapping[str, Any], *, metrics_path: Path | None = None) -> None:
         self._config = config
         self._delay_stats_cache: dict[int, Mapping[str, float]] = {}
+        env_path = os.getenv("EXEC_DETERMINISM_METRICS")
+        if env_path is not None and env_path.strip() == "0":
+            self._metrics_path = None
+        else:
+            self._metrics_path = (
+                Path(env_path)
+                if env_path
+                else (Path(metrics_path) if metrics_path is not None else Path("metrics") / "execution_determinism.jsonl")
+            )
         self.validate_config(config)
 
     # ------------------------------------------------------------------
@@ -178,7 +191,7 @@ class DeterministicExecutionModel(ExecutionModelProtocol):
         ttl_seconds = self._apply_ttl_fallback(ttl_seconds, latency_status)
         expected_slippage = self._apply_slippage_fallback(expected_slippage, slippage_status)
 
-        return ExecutionAdjustments(
+        adjustments = ExecutionAdjustments(
             expected_entry=expected_entry,
             expected_slippage=expected_slippage,
             ttl_seconds=ttl_seconds,
@@ -186,6 +199,19 @@ class DeterministicExecutionModel(ExecutionModelProtocol):
             fill_policy=fill_policy,
             mode_label=mode_label,
         )
+        self._record_metrics(
+            signal=signal,
+            spread_state=state,
+            seed=deterministic_seed,
+            ttl_seconds=ttl_seconds,
+            human_delay=human_delay,
+            expected_slippage=expected_slippage,
+            latency_status=latency_status,
+            slippage_status=slippage_status,
+            mode=mode,
+            determinism=self._extract_value(mode_context, "determinism", default=None),
+        )
+        return adjustments
 
     def validate_config(self, config: Mapping[str, Any]) -> None:
         if not isinstance(config, Mapping):
@@ -251,7 +277,8 @@ class DeterministicExecutionModel(ExecutionModelProtocol):
         if maximum < minimum:
             maximum = minimum
         rng = random.Random(seed)
-        return rng.triangular(minimum, maximum, mode)
+        # Deterministic uniform draw; `mode` retained for compatibility but unused.
+        return rng.uniform(minimum, maximum)
 
     # ------------------------------------------------------------------
     # helpers
@@ -407,6 +434,50 @@ class DeterministicExecutionModel(ExecutionModelProtocol):
                 return None
             value = fallback
         return float(value)
+
+    def _record_metrics(
+        self,
+        *,
+        signal: Any,
+        spread_state: str,
+        seed: int,
+        ttl_seconds: int,
+        human_delay: float,
+        expected_slippage: float | None,
+        latency_status: str,
+        slippage_status: str,
+        mode: str,
+        determinism: Any = None,
+    ) -> None:
+        if self._metrics_path is None:
+            return
+        try:
+            self._metrics_path.parent.mkdir(parents=True, exist_ok=True)
+            feature_version = getattr(determinism, "feature_version", None)
+            data_manifest_hash = getattr(determinism, "data_manifest_hash", None)
+            determinism_hash = getattr(determinism, "determinism_hash", None)
+            payload = {
+                "event": "execution.determinism",
+                "strategy_id": getattr(signal, "strategy_id", None),
+                "symbol": getattr(signal, "symbol", None),
+                "spread_state": spread_state,
+                "seed": seed,
+                "mode": mode,
+                "ttl_seconds": ttl_seconds,
+                "human_delay_ms": int(round(human_delay * 1000)),
+                "expected_slippage_pips": expected_slippage,
+                "latency_status": latency_status,
+                "slippage_status": slippage_status,
+                "feature_version": feature_version,
+                "data_manifest_hash": data_manifest_hash,
+                "determinism_hash": determinism_hash,
+                "ts": datetime.utcnow().replace(microsecond=0).isoformat() + "Z",
+            }
+            with self._metrics_path.open("a", encoding="utf-8") as handle:
+                handle.write(json.dumps(payload, ensure_ascii=False))
+                handle.write("\n")
+        except OSError:
+            pass
 
     def _validate_delay_stats(self, stats: Mapping[str, Any], *, context: str) -> None:
         for key in ("min", "p50", "p95"):

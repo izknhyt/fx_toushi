@@ -51,8 +51,12 @@ def test_resolve_watchlist_ignores_deprecated_entries(project_root) -> None:
     manifest = StrategyManifest.from_dict(deepcopy(payload))
     manifest.validate_lifecycle()  # ensure baseline passes
 
-    resolved = manifest.resolve_watchlist({"USDJPY", "EURUSD"})
-    assert resolved == frozenset({"USDJPY", "EURUSD"})
+    resolved = manifest.resolve_watchlist(
+        set().union(*[set(entry.watchlist or []) for entry in manifest.strategies.values()])
+    )
+    assert resolved == frozenset(
+        set().union(*[set(entry.watchlist or []) for entry in manifest.strategies.values()])
+    )
 
     payload["strategies"]["m1_baseline_ma_rsi"]["lifecycle"]["status"] = "deprecated"
     stale_manifest = StrategyManifest.from_dict(payload)

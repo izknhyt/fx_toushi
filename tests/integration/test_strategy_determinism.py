@@ -35,6 +35,7 @@ class _FeatureContextStub:
     symbols: frozenset[str]
     timeframes: frozenset[str]
     available_keys: frozenset[str]
+    determinism: object | None = None
 
     def lookup(self, *, symbol: str, feature: str, timeframe: str) -> None:  # pragma: no cover - unused
         raise NotImplementedError
@@ -86,8 +87,38 @@ class _DeterministicStrategy(StrategyPluginProtocol):
         )
 
 
+class _SilentDonchianStrategy(StrategyPluginProtocol):
+    """Minimal stub for the Donchian strategy entry."""
+
+    id = "m1_baseline_donchian"
+    determinism_key = "m1_baseline_donchian:vdeterminism"
+
+    def __init__(self, metadata: StrategyMetadata) -> None:
+        self.metadata = metadata
+        self.contexts: list[StrategyContext] = []
+
+    def required_warmup_bars(self) -> int:
+        return 0
+
+    def cooldown_bars(self) -> int:
+        return 0
+
+    def generate_signals(self, context: StrategyContext) -> Iterable[dict[str, object]]:
+        self.contexts.append(context)
+        return ()
+
+
 def _load_manifest(project_root: Path) -> StrategyManifest:
     return StrategyManifest.load(project_root / "config" / "strategy_manifest.yaml")
+
+
+def _manifest_symbols(project_root: Path) -> list[str]:
+    manifest = _load_manifest(project_root)
+    symbols: set[str] = set()
+    for _, entry in manifest.enabled_strategies():
+        if entry.watchlist:
+            symbols.update(entry.watchlist)
+    return sorted(symbols)
 
 
 def _build_feature_context(project_root: Path, symbols: list[str]) -> _FeatureContextStub:
@@ -97,6 +128,7 @@ def _build_feature_context(project_root: Path, symbols: list[str]) -> _FeatureCo
         symbols=frozenset(symbols),
         timeframes=ctx.timeframes,
         available_keys=ctx.available_keys,
+        determinism=ctx.determinism,
     )
 
 
@@ -106,12 +138,16 @@ def test_strategy_determinism_replay(project_root, tmp_path) -> None:
     manifest = _load_manifest(project_root)
     entry = manifest.strategies["m1_baseline_ma_rsi"]
     plugin = _DeterministicStrategy(metadata=entry.metadata.to_runtime())
+    donchian_entry = manifest.strategies["m1_baseline_donchian"]
+    donchian_plugin = _SilentDonchianStrategy(metadata=donchian_entry.metadata.to_runtime())
 
     engine = StrategyEngine()
     engine.register_plugin(plugin)
+    engine.register_plugin(donchian_plugin)
     engine.load_manifest(project_root / "config" / "strategy_manifest.yaml")
 
-    feature_context = _build_feature_context(project_root, ["USDJPY", "EURUSD"])
+    symbols = _manifest_symbols(project_root)
+    feature_context = _build_feature_context(project_root, symbols)
     deterministic_seed = 987_654
     regime = object()
     gate = object()
@@ -141,5 +177,12 @@ def test_strategy_determinism_replay(project_root, tmp_path) -> None:
     captured_watchlists = {tuple(sorted(ctx.watchlist)) for ctx in plugin.contexts}
     captured_seeds = {ctx.seed for ctx in plugin.contexts}
 
-    assert captured_watchlists == {("EURUSD", "USDJPY")}
+    assert captured_watchlists == {tuple(sorted(symbols))}
     assert captured_seeds == {deterministic_seed}
+
+    events = engine.last_run_determinism_events
+    assert len(events) == 2
+    event_map = {e["strategy_id"]: e for e in events}
+    base_event = event_map["m1_baseline_ma_rsi"]
+    assert base_event["feature_version"] == feature_context.determinism.feature_version
+    assert base_event["data_manifest_hash"] == feature_context.determinism.data_manifest_hash

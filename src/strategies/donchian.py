@@ -26,7 +26,7 @@ class DonchianBreakoutStrategy(StrategyPluginProtocol):
     determinism_key = "donchian_v1"
     metadata = StrategyMetadata(
         name="M1 Baseline Donchian",
-        version="0.1.1",
+        version="0.1.2",
         required_features=frozenset(
             {
                 "donchian_upper20_1h",
@@ -46,7 +46,7 @@ class DonchianBreakoutStrategy(StrategyPluginProtocol):
     context: StrategyContext | None = None
 
     def __init__(self, *, default_watchlist: Sequence[str] | None = None) -> None:
-        self._default_watchlist = tuple(default_watchlist or ("GBPJPY", "AUDUSD"))
+        self._default_watchlist = tuple(default_watchlist or ("USDJPY", "EURUSD", "GBPUSD", "EURJPY", "AUDUSD"))
 
     @staticmethod
     def _latest(value: object) -> float | None:
@@ -106,7 +106,7 @@ class DonchianBreakoutStrategy(StrategyPluginProtocol):
             if upper_v is None or lower_v is None or close_v is None or atr_v is None:
                 continue
 
-            buffer = max(0.08, atr_v * 0.03)
+            buffer = max(0.05, atr_v * 0.02)
             breakout: str | None = None
             level = None
             rationale = ""

@@ -4,7 +4,7 @@
   "strategies": {
     "m1_baseline_ma_rsi": {
       "dataset_path": "data/research/curated/usdjpy/usdjpy_m5_20220101_20241231_dukascopy_merged.parquet",
-      "dataset_sha256": "29f0d9b36ec265408539baf75407fe4184421a79721d490e40675fbf37d3a5c7",
+      "dataset_sha256": "75fdf7c353e0ac7997b5a8472f7419ed3eee18b01fae4b43423b38a78ff2e294",
       "dataset_window": {
         "from": "2022-01-01",
         "to": "2024-12-31"
@@ -13,7 +13,7 @@
       "watchlist_datasets": {
         "USDJPY": {
           "path": "data/research/curated/usdjpy/usdjpy_m5_20220101_20241231_dukascopy_merged.parquet",
-          "sha256": "29f0d9b36ec265408539baf75407fe4184421a79721d490e40675fbf37d3a5c7"
+          "sha256": "75fdf7c353e0ac7997b5a8472f7419ed3eee18b01fae4b43423b38a78ff2e294"
         },
         "EURUSD": {
           "path": "data/research/curated/eurusd/eurusd_m5_20220101_20241231_dukascopy_merged.parquet",
@@ -25,7 +25,7 @@
         },
         "EURJPY": {
           "path": "data/research/curated/eurjpy/eurjpy_m5_20220101_20241231_dukascopy_merged.parquet",
-          "sha256": "23bca50a268e71dd9619a3333b544412f6033898c26fca8de8cf4188078f085e"
+          "sha256": "10d1742c49cad2f326008c98bb422727650517b952735fefb6e03a6e9f20e7d0"
         },
         "AUDUSD": {
           "path": "data/research/curated/audusd/audusd_m5_20220101_20241231_dukascopy_merged.parquet",
@@ -35,7 +35,7 @@
     },
     "m1_baseline_donchian": {
       "dataset_path": "data/research/curated/usdjpy/usdjpy_m5_20220101_20241231_dukascopy_merged.parquet",
-      "dataset_sha256": "29f0d9b36ec265408539baf75407fe4184421a79721d490e40675fbf37d3a5c7",
+      "dataset_sha256": "75fdf7c353e0ac7997b5a8472f7419ed3eee18b01fae4b43423b38a78ff2e294",
       "dataset_window": {
         "from": "2022-01-01",
         "to": "2024-12-31"
@@ -44,7 +44,7 @@
       "watchlist_datasets": {
         "USDJPY": {
           "path": "data/research/curated/usdjpy/usdjpy_m5_20220101_20241231_dukascopy_merged.parquet",
-          "sha256": "29f0d9b36ec265408539baf75407fe4184421a79721d490e40675fbf37d3a5c7"
+          "sha256": "75fdf7c353e0ac7997b5a8472f7419ed3eee18b01fae4b43423b38a78ff2e294"
         },
         "EURUSD": {
           "path": "data/research/curated/eurusd/eurusd_m5_20220101_20241231_dukascopy_merged.parquet",
@@ -56,7 +56,7 @@
         },
         "EURJPY": {
           "path": "data/research/curated/eurjpy/eurjpy_m5_20220101_20241231_dukascopy_merged.parquet",
-          "sha256": "23bca50a268e71dd9619a3333b544412f6033898c26fca8de8cf4188078f085e"
+          "sha256": "10d1742c49cad2f326008c98bb422727650517b952735fefb6e03a6e9f20e7d0"
         },
         "AUDUSD": {
           "path": "data/research/curated/audusd/audusd_m5_20220101_20241231_dukascopy_merged.parquet",
