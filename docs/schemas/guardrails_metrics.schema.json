@@ -1,0 +1,26 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "guardrails_metrics_v1",
+  "type": "object",
+  "required": [
+    "timestamp",
+    "health_state",
+    "board_mode",
+    "kill_switch",
+    "spread_status",
+    "exit_code"
+  ],
+  "properties": {
+    "timestamp": { "type": "string", "format": "date-time" },
+    "health_state": { "type": "string", "enum": ["ok", "warn", "degraded", "soft_stop", "hard_stop"] },
+    "board_mode": { "type": "string", "enum": ["normal", "guarded", "halted"] },
+    "kill_switch": { "type": "string", "enum": ["none", "soft_stop", "hard_stop"] },
+    "spread_status": { "type": "string", "enum": ["normal", "cooldown", "block"] },
+    "reason": { "type": ["string", "null"] },
+    "reasons": { "type": "array", "items": { "type": "string" } },
+    "exit_code": { "type": "integer" },
+    "reduce_only": { "type": "boolean" },
+    "ack_user": { "type": ["string", "null"] }
+  },
+  "additionalProperties": true
+}

@@ -1,0 +1,21 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "audit.health_action_v1",
+  "type": "object",
+  "required": ["ts", "action_id", "status", "actor"],
+  "properties": {
+    "ts": { "type": "string", "format": "date-time" },
+    "event": { "type": "string", "enum": ["health_action.ack"] },
+    "action_id": { "type": "string" },
+    "status": { "type": "string", "enum": ["acknowledged", "not_found", "blocked"] },
+    "actor": { "type": "string" },
+    "reason": { "type": ["string", "null"] },
+    "action": { "type": ["string", "null"] },
+    "ack_ts": { "type": ["string", "null"], "format": "date-time" },
+    "evidence": {
+      "type": "array",
+      "items": { "type": "string" }
+    }
+  },
+  "additionalProperties": true
+}

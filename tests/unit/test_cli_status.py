@@ -34,12 +34,13 @@ def test_status_returns_health_and_kill_switch_snapshot() -> None:
 
     payload = status(monitor=monitor, gate_state=gate_state, snapshot_manager=_SnapshotManagerStub())
 
+    assert payload["exit_code"] == 62
+    guardrails = payload["guardrails"]
+    assert guardrails["board_mode"] == "guarded"
+    assert guardrails["kill_switch_state"] == "soft_stop"
     assert payload["health"]["status"] == "degraded"
-    assert payload["kill_switch"] == {
-        "suggestion": "soft_stop",
-        "reason": "weekly_drawdown",
-        "requested_transition": None,
-    }
+    assert payload["kill_switch"]["state"] == "soft_stop"
+    assert payload["kill_switch"]["reason"] == "weekly_drawdown"
     snapshots = payload["snapshots"]
     assert snapshots["status"] == "ok"
     assert snapshots["state"] == {"session": "backtest", "id": "session-123"}
@@ -63,6 +64,7 @@ def test_status_banner_shown_when_reduce_only_active() -> None:
 
     payload = status(monitor=monitor, gate_state=gate_state)
 
+    assert payload["exit_code"] == 21
     banner = payload["ops"]["banner"]
     assert banner is not None
     assert banner["kind"] == "acceptable_degradation"
@@ -88,6 +90,10 @@ def test_status_tracks_ops_action_requests() -> None:
     )
 
     actions = payload["ops"]["actions"]
-    assert actions["ack"] == {"requested": True, "reference": "RUN-DATA-05#step2", "status": "queued"}
+    assert actions["ack"]["requested"] is True
+    assert actions["ack"]["reference"] == "RUN-DATA-05#step2"
+    assert actions["ack"]["status"] == "queued"
+    assert actions["ack"]["result"]["status"] == "not_found"
     assert actions["kill_switch"]["requested"] is True
+    assert actions["kill_switch"]["requested_state"] == "soft_stop"
     assert actions["board"]["reference"] == "guarded"

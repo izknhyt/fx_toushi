@@ -26,7 +26,7 @@
 1. Ops Managerがアラートを受信したら`tradectl spread status --window 1h`を実行し、影響範囲と直近の閾値を確認。
 2. `python tools/spread_diff.py --base data/spread_metrics.parquet --target data/spread_metrics_latest.parquet`で差分を算出し、結果を`reports/performance/spread/spread_diff_<date>.md`へ保存。
 3. フェイルオーバーが必要な場合は`tradectl spread switch --to <provider>`を実行し、理由・時間帯・承認者を`reports/audit/spread/<date>.md`に記録。
-4. Reduce-Onlyへ切り替える場合は`tradectl spread ack --provider <name> --mode reduce-only`を実行し、`docs/runbooks/RUN-RISK-01.md`に従ってKill Switch状態を監視。
+4. Reduce-Onlyへ切り替える場合は`tradectl spread ack --provider <name> --mode reduce-only`を実行し、`docs/runbooks/RUN-RISK-01.md`に従ってKill Switch状態を監視。`tradectl spread inspect --json --metrics-path metrics/spread_cooldown.jsonl --audit-path logs/audit/spread_guard.jsonl`を実行し、`status=block/cooldown`と`cooldown_reason`を`reports/validation_log/AC-22_<date>.md`に貼付する（`metrics/spread_cooldown.jsonl`/`logs/audit/spread_guard.jsonl`への記録をEvidenceとして残す）。
 5. 影響が解消したら`tradectl spread resume --provider <name>`で通常運用へ戻し、`HealthMonitor`のイベントが`resolved`になったことを確認。
 6. `reports/validation_log/AC-22_<date>.md`および`reports/validation_log/AC-45_sla_<date>.md`に結果を追記し、担当者サインを残す。
 

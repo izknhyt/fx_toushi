@@ -1,0 +1,19 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "audit.kill_switch_v1",
+  "type": "object",
+  "required": ["ts", "action", "state_after", "actor"],
+  "properties": {
+    "ts": { "type": "string", "format": "date-time" },
+    "action": { "type": "string", "const": "kill_switch.set" },
+    "state_before": { "type": ["string", "null"] },
+    "state_after": { "type": "string", "enum": ["none", "soft_stop", "hard_stop"] },
+    "actor": { "type": "string" },
+    "reason": { "type": ["string", "null"] },
+    "evidence": {
+      "type": "array",
+      "items": { "type": "string" }
+    }
+  },
+  "additionalProperties": true
+}

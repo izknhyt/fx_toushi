@@ -1,0 +1,15 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "audit.spread_guard_v1",
+  "type": "object",
+  "required": ["ts", "event", "symbol", "status"],
+  "properties": {
+    "ts": { "type": "string", "format": "date-time" },
+    "event": { "type": "string", "enum": ["spread_guard.evaluate"] },
+    "symbol": { "type": "string" },
+    "status": { "type": "string", "enum": ["normal", "cooldown", "block"] },
+    "cooldown_reason": { "type": ["string", "null"] },
+    "expires_at": { "type": ["string", "null"], "format": "date-time" }
+  },
+  "additionalProperties": true
+}

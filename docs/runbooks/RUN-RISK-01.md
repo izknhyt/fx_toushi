@@ -23,6 +23,7 @@
 - `config/strategy_manifest.yaml`の`schema_version`と`strategies`節を確認し、停止予定の戦略が`enabled=false`で反映済みかをチェックする。
 - `schema/gate_state.sample.json`が`docs/schemas/gate_state.schema.json`および`pytest -k config_schema_smoke`で検証済みで、Reduce-Only理由やSpreadクールダウン文言が運用と一致していること。
 - `reports/audit/drawdown_guard/`と`reports/performance/paper/latency_stats.json`への書き込み権限を確認する。
+- Kill Switch監査ログ出力先（`logs/audit/kill_switch.jsonl`）と状態スナップショット（`snapshots/latest/kill_switch_state.json`）が存在することを確認し、未作成の場合は`tradectl kill-switch set --state none --runbook RUN-RISK-01`で初期化する。
 - Kill Switch解除権限を持つプロダクトオーナーがSlack/電話で即応できる体制。
 
 ## 手順

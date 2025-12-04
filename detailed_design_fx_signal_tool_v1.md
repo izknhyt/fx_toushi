@@ -9928,3 +9928,31 @@ TicketRecord:
   1. Ticket JSON/CLI/GUI/監査/Reporterが同じフィールド名・順序で表現し、差分が一箇所で把握できる。
   2. Reduce-Only/Kill Switch/Spread異常などの背景が即座に表示され、RunbookやOps Agendaとの連携が途切れない。
   3. TR-03〜TR-05トレーダー受入シナリオを実施し、UX改善が確認できる（チェックリスト未完率<5%、承認時間中央値-10%目標）。
+
+#### 92.8 推奨設定と互換ポリシー（EP04）
+
+- **TicketRecord v2互換**: 永続/リプレイは`TicketRecordAdapter.from_v1`で受け入れ、欠損は`guardrails={...defaults...}`/`risk_summary.risk_disclosure="pending"`で補完。JSON Schemaは新規フィールドを`required`にしつつ`additionalProperties=true`で旧フィールド混在を許容。`determinism_hash`はEP02の計算式（features+outputs+params, blake2b, version=1）を維持し、`guardrails`やHITL署名はハッシュ対象に含めない。`audit_refs`に`determinism_version=1`を追加して将来の切り替えに備える。
+- **CLI互換/Exit Code**: デフォルトはExit 0/61/62/63を厳格に運用。自動化を壊さないため`--compat v1`（または環境変数`TRADECTL_COMPAT=v1`）を用意し、(a) テーブル列/順序を旧仕様に固定、(b) Guardrails/Disclosureブロック時は警告表示のみでExit 0にダウングレードする。スナップショットは通常モードと`--compat v1`の双方を保持する。
+- **HITLロック/ダブルエントリー**: `ticket approve/edit`実行時に`TicketLock{owner, acquired_at, ttl=15m}`を記録し、成功/失敗/キャンセルで解放。TTL超過は`--takeover --reason <text>`で奪取可能。`--double-entry <user>`は`GateState.human.double_entry_required=true`時に必須で、チェックリスト`double_entry_confirmed.ack_by`へ署名を書き込む。監査には`lock_owner/before/after`と`consent_reference_id`を記録。
+- **IPC/GUI同期**: `board_get_snapshot`レスポンスに`ticket_payload_version=2`, `gate_state`, `tickets:[TicketRecord v2]`, `data_manifest_hash`, `feature_version`, `determinism_hash`を同梱し、CLIと同じシリアライザ`TicketPayloadSerializer`を使用。`kill_switch_set`はCLIと同じ監査・メトリクス・validation_logフォーマットを流用し、成功後に`board_get_snapshot`を再フェッチするのを推奨。
+- **スナップショット/テスト運用**: Packetごとにまとめて更新する—EP04-P1で`tests/unit/test_ticket_builder.py`とSchema、EP04-P2で`tests/approval/board/*.txt`/CLIユニット、EP04-P3で`tests/integration/test_ticket_audit.py`/Reporter/GUIスナップショット。`--compat v1`系スナップショットは別フォルダ`tests/approval/board_compat/`に保存し、Nightly `make regression-hitl`で両モードを検証する。
+
+#### 92.9 実装時の固定ルール（曖昧点の解消）
+
+- **TicketBuilder→TicketRecord v2マッピング**: `gate_context`は`guardrails`へ写す。`kill_switch_state/reason`→`guardrails.kill_switch/reason`、`risk_reduce_only`→`guardrails.reduce_only`、`spread.state/reason`→`guardrails.spread_status/reason`（`halt`→`block`、`watch`→`cooldown`）。`auto_execute`は`guardrails.auto_execute`へコピー。TTLは`ExecutionModel.compute_ttl(seed, volatility)`で算出し、`TicketBuilder`はTTLを受け取って`protect.ttl_seconds`に格納するだけにする。`position.size_hint`は`metadata.size_hint_min/max`から、方向は`action`(buy/sell)で決定。
+- **determinism_hashの責務と境界**: ハッシュ計算はStrategy側（EP02と同じ`features+outputs+params` blake2b, version=1）が行い、TicketBuilder/CLIは受け取った値を`audit_refs.determinism_hash`と`audit_refs.determinism_version=1`に格納するだけ。`guardrails`やHITL署名/ロック情報はハッシュ対象外とし、Audit/Reporterはハッシュを変更しない。
+- **Audit diff/consent**: `audit.ticket_action.v2.diff_before_after`はJSON Patch (RFC6902)で固定。`consent_reference_id`はRiskDisclosureフローのID（`RiskDisclosureService.record_consent`の返り値）をそのまま使用し、未承諾時はnull。`lock_owner_before/after`（`TicketLock`）と`double_entry_ack_by`を追加メタとして監査に残す。
+- **Reporter TicketSummary順序**: `ticket_id, strategy_id, pair, board_mode, guardrails.kill_switch, guardrails.spread_status, reduce_only, risk_disclosure, badges, checklist_progress, determinism_hash`の順で固定し、GUI/CLIと同じフィールド名を使う。Snapshotテストはこの順序を前提にする。
+
+#### 92.10 Reporter/IPC実装メモ（記載漏れ補完）
+
+- **Reporter TicketSummary呼び出し**: `ReportGenerator.render_ticket_summary`で`weekly_m1_core.md`のTicket Summaryブロックを埋める。`{board_mode, guardrails.kill_switch, guardrails.spread_status, guardrails.reduce_only, risk_disclosure_pending, tickets_overview, determinism_hashes}`を文脈として渡し、週次生成コードでは必ず本関数を呼ぶ（呼び出し地点の明示が未記載だったためここで固定）。
+- **GUI/Tauri kill_switch_set接続**: IPC `kill_switch_set`は`tradectl kill-switch set`相当のCLI経路へ委譲し、成功/失敗ともにCLIと同じ`audit/metrics/validation_log`フォーマットを返す契約とする。成功後は`board_get_snapshot`を再フェッチしてUI更新。Playwright等がない場合はIPC単体テストで応答を検証する。
+- **Playwrightスカフォールド**: `playwright.config.ts`＋`tests/gui/`配下にChromiumヘッドレス前提のシナリオを置く。IPCモック前提でキルスイッチの`status=accepted`応答とバナー更新を確認する簡易テストを追加。CIで`npx playwright install chromium`を前提に実行。
+
+### 86.x GUI/Tauri Guardrails連携メモ（EP03）
+- **データ取得**: `snapshots/latest/gate_state.json`とBoard CLIペイロードをIPC `board_get_snapshot`（新設）で返却。`reports/data_manifest.json`から`strategy/dataset_hash`も同梱。
+- **表示要素**: バナーに`kill_switch_state/reason/runbook`、`spread_status/reason`、`reduce_only`、`auto_execute`、`board_mode`を表示。Guarded/Halted時は操作ボタンを無効化し、解除ボタンのみ有効。
+- **操作**: Kill Switch変更はIPC `kill_switch_set`（CLIと同等のaudit/metrics/validation_logを発火）。成功時に最新`gate_state`を再取得してUIを更新。
+- **メトリクス/監査**: CLIと同じフォーマットを使用（kill_switch metricsに`actor/runbook/reason`、audit.determinism/kill_switchを共有）。
+- **テスト推奨**: GUI単体（バナー表示/ボタン状態/IPC呼び出し）、IPCテスト（board_get_snapshot/kill_switch_setの正常系・エラー系）。必要ならPlaywright等でバナーの表示と操作ガードを確認。

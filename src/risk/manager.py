@@ -5,9 +5,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Dict
 
-from src.core.gate import RiskGateState
+from src.core.gate import GateState, RiskGateState
 
-__all__ = ["RiskAssessment", "RiskManager", "RiskSnapshot"]
+__all__ = ["RiskAssessment", "RiskDecision", "RiskManager", "RiskSnapshot"]
 
 
 @dataclass(slots=True)
@@ -33,6 +33,30 @@ class RiskAssessment:
             "risk_state": self.risk_state.to_dict(),
             "kill_switch_suggestion": self.kill_switch_suggestion,
             "kill_switch_reason": self.kill_switch_reason,
+        }
+
+
+@dataclass(slots=True)
+class RiskDecision:
+    """Decision payload for ticket/board evaluation."""
+
+    allowed: bool
+    reduce_only: bool
+    board_mode: str
+    kill_switch_state: str
+    spread_status: str
+    reason: str | None
+    exit_code: int
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "allowed": self.allowed,
+            "reduce_only": self.reduce_only,
+            "board_mode": self.board_mode,
+            "kill_switch_state": self.kill_switch_state,
+            "spread_status": self.spread_status,
+            "reason": self.reason,
+            "exit_code": self.exit_code,
         }
 
 
@@ -96,4 +120,75 @@ class RiskManager:
             risk_state=risk_state,
             kill_switch_suggestion=kill_switch,
             kill_switch_reason=kill_switch_reason,
+        )
+
+    @staticmethod
+    def _normalise_spread_state(spread_state: str | None) -> str:
+        if spread_state in {"halt", "block"}:
+            return "block"
+        if spread_state in {"cooldown", "watch"}:
+            return "cooldown"
+        return "normal"
+
+    def evaluate_ticket(
+        self,
+        *,
+        gate_state: GateState | None = None,
+        assessment: RiskAssessment | None = None,
+        spread_status: str | None = None,
+        kill_switch_state: str | None = None,
+        actor: str | None = None,
+        runbook: str | None = None,
+    ) -> RiskDecision:
+        """Evaluate guardrails for ticket/board operations."""
+
+        gate = gate_state or GateState()
+        effective_spread = self._normalise_spread_state(
+            spread_status or gate.market.spread.state
+        )
+        kill_switch_effective = (
+            kill_switch_state
+            or (assessment.kill_switch_suggestion if assessment else None)
+            or gate.risk.kill_switch_recommendation
+            or "none"
+        )
+
+        reduce_only = gate.risk.reduce_only or (assessment.risk_state.reduce_only if assessment else False)
+        reason = gate.market.spread.reason or gate.risk.kill_switch_reason or (assessment.kill_switch_reason if assessment else None)
+
+        board_mode = "normal"
+        allowed = True
+        exit_code = 0
+
+        if kill_switch_effective == "hard_stop":
+            board_mode = "halted"
+            allowed = False
+            exit_code = 63
+            reason = reason or "kill_switch_hard_stop"
+        elif effective_spread == "block":
+            board_mode = "guarded"
+            allowed = False
+            reduce_only = True
+            exit_code = 62
+            reason = reason or "spread_block"
+            kill_switch_effective = kill_switch_effective or "soft_stop"
+        elif kill_switch_effective == "soft_stop":
+            board_mode = "guarded"
+            allowed = False
+            reduce_only = True
+            exit_code = 62
+            reason = reason or "kill_switch_soft_stop"
+        elif effective_spread == "cooldown" or reduce_only:
+            board_mode = "guarded"
+            exit_code = 21
+            reason = reason or ("reduce_only" if reduce_only else "spread_cooldown")
+
+        return RiskDecision(
+            allowed=allowed,
+            reduce_only=reduce_only,
+            board_mode=board_mode,
+            kill_switch_state=kill_switch_effective,
+            spread_status=effective_spread,
+            reason=reason,
+            exit_code=exit_code,
         )

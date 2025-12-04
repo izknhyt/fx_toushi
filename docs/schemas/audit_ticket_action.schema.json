@@ -12,11 +12,10 @@
     "actor",
     "board_mode",
     "auto_execute",
-    "spread_state",
-    "health_state",
-    "cfg_hash",
-    "data_hash",
-    "delta"
+    "guardrails",
+    "delta",
+    "determinism_hash",
+    "determinism_version"
   ],
   "additionalProperties": false,
   "properties": {
@@ -57,51 +56,27 @@
       "type": "boolean",
       "description": "Hands-off flag at the moment of action; false for guarded/halted or Reduce-Only."
     },
-    "spread_state": {
+    "guardrails": {
       "type": "object",
-      "description": "Snapshot of SpreadState per symbol captured at action time.",
-      "minProperties": 1,
-      "additionalProperties": {
-        "$ref": "#/definitions/SpreadState"
-      }
+      "required": ["kill_switch", "spread_status", "reduce_only"],
+      "properties": {
+        "kill_switch": { "type": "string", "enum": ["none", "soft_stop", "hard_stop"] },
+        "spread_status": { "type": "string", "enum": ["normal", "cooldown", "block"] },
+        "health_state": { "type": ["string", "null"], "enum": ["ok", "degraded", "halted", null] },
+        "reduce_only": { "type": "boolean" },
+        "reason": { "type": ["string", "null"] }
+      },
+      "additionalProperties": true
     },
-    "health_state": {
-      "type": "string",
-      "enum": ["ok", "degraded", "soft_stop", "hard_stop"]
-    },
-    "cfg_hash": {
-      "type": "string",
-      "pattern": "^sha256:[0-9a-f]{64}$"
-    },
-    "data_hash": {
-      "type": "string",
-      "pattern": "^sha256:[0-9a-f]{64}$"
-    },
-    "profit_readiness_status": {
-      "type": "string",
-      "enum": ["ok", "guarded", "halted", "stale"]
-    },
-    "latency_data_status": {
-      "type": "string",
-      "enum": ["ok", "degraded", "halt_recommended"]
-    },
-    "slippage_data_status": {
-      "type": "string",
-      "enum": ["ok", "degraded", "halt_recommended"]
-    },
+    "determinism_hash": { "type": ["string", "null"] },
+    "determinism_version": { "type": "integer" },
     "delta": {
       "type": "object",
       "description": "Before/after diff with consent metadata required by compliance export.",
       "required": [
         "before",
         "after",
-        "diff",
-        "decision",
-        "document_hash",
-        "consent_version",
-        "expires_at",
-        "ack_user",
-        "ack_evidence"
+        "diff"
       ],
       "additionalProperties": true,
       "properties": {
@@ -119,24 +94,20 @@
           "enum": ["approve", "reject", "edit", "expire"]
         },
         "document_hash": {
-          "type": "string",
-          "pattern": "^sha256:[0-9a-f]{64}$"
+          "type": "string"
         },
         "consent_version": {
-          "type": "string",
-          "pattern": "^[A-Za-z0-9_.-]+$"
+          "type": "string"
         },
         "expires_at": {
           "type": ["string", "null"],
           "format": "date-time"
         },
         "ack_user": {
-          "type": ["string", "null"],
-          "minLength": 1
+          "type": ["string", "null"]
         },
         "ack_evidence": {
-          "type": ["string", "null"],
-          "minLength": 1
+          "type": ["string", "null"]
         }
       }
     },

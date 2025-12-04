@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from dataclasses import asdict
 from datetime import date, datetime
 from pathlib import Path
@@ -24,8 +25,21 @@ from .diagnostics import DeterminismDiagnosticsError, load_determinism_events
 from .determinism import determinism_replay, _should_exit
 from .execution import ExecutionBridgeLogError, ExecutionEvidenceError, bridge_log, recalibrate
 from .funding import FundingSyncError, funding_status, funding_sync
-from .kill_switch import KillSwitchEvidenceError, ResumeBlocked, review as kill_switch_review
+from .kill_switch import (
+    DEFAULT_KILL_SWITCH_AUDIT,
+    DEFAULT_KILL_SWITCH_LOG,
+    DEFAULT_KILL_SWITCH_STATE,
+    KillSwitchEvidenceError,
+    ResumeBlocked,
+    review as kill_switch_review,
+    set_state as kill_switch_set_state,
+)
 from .ops import action_item_sync, readiness
+from .spread import (
+    DEFAULT_SPREAD_AUDIT,
+    DEFAULT_SPREAD_METRICS,
+    inspect as spread_inspect,
+)
 from .resync import resync
 from .session import start_session, stop_session
 from .scoring import (
@@ -34,9 +48,18 @@ from .scoring import (
     generate_scoreboard_bridge,
     run_diagnostics,
 )
-from .status import status
+from .status import (
+    DEFAULT_GATE_STATE_PATH,
+    DEFAULT_GUARDRAILS_METRICS,
+    DEFAULT_HEALTH_ACTION_AUDIT,
+    DEFAULT_HEALTH_STATE_PATH,
+    DEFAULT_KILL_SWITCH_STATE_PATH,
+    status,
+)
 from src.audit.trace import DEFAULT_AUDIT_LOG, trace_order
 from src.metrics.reports import generate_latency_report
+from src.reporter.generator import ReportGenerator
+from src.interfaces.cli import tickets as tickets_actions
 from src.ticket.monitor import (
     DEFAULT_EVENT_LOG_PATH as DEFAULT_TICKET_EVENT_LOG_PATH,
     DEFAULT_EXPORT_PATH as DEFAULT_TICKET_EXPORT_PATH,
@@ -62,6 +85,32 @@ def _merge_with_context(option: bool | None, ctx_value: bool) -> bool:
 
 def _normalise_multi(value: Iterable[str] | None) -> list[str]:
     return list(value or ())
+
+
+def _determine_board_exit_code(
+    *,
+    kill_switch: str,
+    spread_status: str,
+    reduce_only: bool,
+    risk_disclosure: str,
+    compat: str | None,
+) -> int:
+    """Resolve exit codes with a compatibility escape hatch."""
+
+    if compat == "v1":
+        return 0
+    normalized_rd = (risk_disclosure or "").lower()
+    if normalized_rd == "pending":
+        return 61
+    if kill_switch == "hard_stop":
+        return 63
+    if kill_switch in {"soft_stop", "guarded"}:
+        return 62
+    if spread_status == "block":
+        return 62
+    if spread_status == "cooldown" or reduce_only:
+        return 21
+    return 0
 
 
 def create_cli_app() -> typer.Typer:
@@ -94,6 +143,21 @@ def create_cli_app() -> typer.Typer:
             "--save-snapshot",
             help="Optional JSON file path for the rendered snapshot",
         ),
+        kill_switch: str = typer.Option(
+            "none",
+            "--kill-switch",
+            help="Kill switch state badge (none|soft_stop|hard_stop)",
+        ),
+        spread_status: str = typer.Option(
+            "normal",
+            "--spread-status",
+            help="Spread status badge (normal|cooldown|block)",
+        ),
+        reduce_only: bool = typer.Option(
+            False,
+            "--reduce-only",
+            help="Reduce-Only badge to reflect guardrail status",
+        ),
         profit_status: str = typer.Option(
             "ok",
             "--profit-status",
@@ -109,6 +173,17 @@ def create_cli_app() -> typer.Typer:
             "--slippage-status",
             help="Slippage data badge (ok|degraded|halt_recommended).",
         ),
+        risk_disclosure: str = typer.Option(
+            "signed",
+            "--risk-disclosure",
+            help="Risk disclosure status (signed|pending)",
+            hidden=True,
+        ),
+        compat: str | None = typer.Option(
+            None,
+            "--compat",
+            help="Compatibility mode (e.g. v1) to relax exit codes/output shape.",
+        ),
         manifest_path: Path = typer.Option(
             Path("reports") / "data_manifest.json",
             "--manifest",
@@ -119,11 +194,15 @@ def create_cli_app() -> typer.Typer:
     ) -> None:
         ctx_obj = ctx.obj or {"json": False}
         effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        compat_mode = compat or os.getenv("TRADECTL_COMPAT")
         payload = board_view(
             filters=filters,
             view=view,
             guarded=guarded,
             normal=normal,
+            kill_switch_state=kill_switch,
+            spread_status=spread_status,
+            reduce_only=reduce_only,
             include=include,
             json_output=effective_json,
             save_snapshot=save_snapshot,
@@ -131,8 +210,18 @@ def create_cli_app() -> typer.Typer:
             profit_readiness_status=profit_status,
             latency_data_status=latency_status,
             slippage_data_status=slippage_status,
+            risk_disclosure_status=risk_disclosure,
+            compat_mode=compat_mode,
         )
         _render_payload(console, payload, json_output=effective_json)
+        exit_code = _determine_board_exit_code(
+            kill_switch=kill_switch,
+            spread_status=spread_status,
+            reduce_only=reduce_only,
+            risk_disclosure=risk_disclosure,
+            compat=compat_mode,
+        )
+        raise typer.Exit(code=exit_code)
 
     backtest_app = typer.Typer(help="Backtest utilities")
 
@@ -480,6 +569,97 @@ def create_cli_app() -> typer.Typer:
         )
         _render_payload(console, result.to_mapping(), json_output=effective_json)
 
+    @ticket_app.command("reject")
+    def ticket_reject_command(
+        ctx: typer.Context,
+        ticket_id: str = typer.Option(..., "--id", help="Ticket identifier"),
+        reason: str | None = typer.Option(None, "--reason", help="Rejection reason"),
+        user: str | None = typer.Option(None, "--user", help="Actor"),
+        take_over: bool = typer.Option(False, "--takeover", help="Take lock from another owner"),
+        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
+    ) -> None:
+        ctx_obj = ctx.obj or {"json": False}
+        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        try:
+            result = tickets_actions.reject(
+                ticket_id,
+                reason=reason,
+                user=user,
+                take_over=take_over,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.error("cli.ticket.reject.failed", extra={"ticket_id": ticket_id, "error": str(exc)})
+            raise typer.Exit(code=1) from exc
+        _render_payload(console, result, json_output=effective_json)
+
+    @ticket_app.command("approve")
+    def ticket_approve_command(
+        ctx: typer.Context,
+        ticket_id: str = typer.Option(..., "--id", help="Ticket identifier"),
+        note: str | None = typer.Option(None, "--note", help="Optional approval note"),
+        user: str | None = typer.Option(None, "--user", help="Actor"),
+        force_consent: bool = typer.Option(False, "--force-consent", help="Bypass RiskDisclosure pending"),
+        consent_reference_id: str | None = typer.Option(None, "--consent-ref", help="RiskDisclosure reference id"),
+        double_entry_user: str | None = typer.Option(None, "--double-entry", help="Second operator user id"),
+        require_double_entry: bool = typer.Option(False, "--require-double-entry", help="Enforce double-entry"),
+        take_over: bool = typer.Option(False, "--takeover", help="Take lock from another owner"),
+        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
+    ) -> None:
+        ctx_obj = ctx.obj or {"json": False}
+        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        try:
+            result = tickets_actions.approve(
+                ticket_id,
+                note=note,
+                user=user,
+                force_consent=force_consent,
+                consent_reference_id=consent_reference_id,
+                double_entry_user=double_entry_user,
+                require_double_entry=require_double_entry,
+                take_over=take_over,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.error("cli.ticket.approve.failed", extra={"ticket_id": ticket_id, "error": str(exc)})
+            raise typer.Exit(code=1) from exc
+        _render_payload(console, result, json_output=effective_json)
+
+    @ticket_app.command("edit")
+    def ticket_edit_command(
+        ctx: typer.Context,
+        ticket_id: str = typer.Option(..., "--id", help="Ticket identifier"),
+        field: str = typer.Option(..., "--field", help="Field to edit"),
+        value: str = typer.Option(..., "--value", help="New value"),
+        user: str | None = typer.Option(None, "--user", help="Actor"),
+        take_over: bool = typer.Option(False, "--takeover", help="Take lock from another owner"),
+        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
+    ) -> None:
+        ctx_obj = ctx.obj or {"json": False}
+        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        try:
+            result = tickets_actions.edit(
+                ticket_id,
+                field=field,
+                value=value,
+                user=user,
+                take_over=take_over,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.error("cli.ticket.edit.failed", extra={"ticket_id": ticket_id, "error": str(exc)})
+            raise typer.Exit(code=1) from exc
+        _render_payload(console, result, json_output=effective_json)
+
+    @ticket_app.command("list")
+    def ticket_list_command(
+        ctx: typer.Context,
+        status: str | None = typer.Option(None, "--status", help="Filter by status"),
+        include_history: bool = typer.Option(False, "--history", help="Include history/diff"),
+        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
+    ) -> None:
+        ctx_obj = ctx.obj or {"json": False}
+        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        records = tickets_actions.list_tickets(status=status, include_history=include_history, json_output=effective_json)
+        _render_payload(console, {"tickets": records}, json_output=effective_json)
+
     app.add_typer(ticket_app, name="ticket")
 
     metrics_app = typer.Typer(help="Metrics reporting utilities")
@@ -511,6 +691,33 @@ def create_cli_app() -> typer.Typer:
 
     app.add_typer(metrics_app, name="metrics")
 
+    report_app = typer.Typer(help="Reporting utilities")
+
+    @report_app.command("weekly")
+    def report_weekly_command(
+        ctx: typer.Context,
+        profile: str = typer.Option("m1", "--profile", help="Report profile"),
+        out: Path | None = typer.Option(None, "--out", help="Output markdown path"),
+        template: Path = typer.Option(
+            Path("src/reporter/templates/weekly_m1_core.md"),
+            "--template",
+            help="Ticket Summary template",
+            hidden=True,
+        ),
+        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
+    ) -> None:
+        ctx_obj = ctx.obj or {"json": False}
+        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        tickets = tickets_actions.list_tickets(include_history=False, json_output=effective_json)
+        summary = ReportGenerator().render_ticket_summary(tickets=tickets, template_path=template)
+        output_path = out or Path("reports/auto/weekly_ticket_summary.md")
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(summary, encoding="utf-8")
+        payload = {"profile": profile, "ticket_summary": summary, "path": str(output_path)}
+        _render_payload(console, payload, json_output=effective_json)
+
+    app.add_typer(report_app, name="report")
+
     audit_app = typer.Typer(help="Audit tooling")
 
     @audit_app.command("trace")
@@ -537,6 +744,89 @@ def create_cli_app() -> typer.Typer:
 
     app.add_typer(audit_app, name="audit")
 
+    spread_app = typer.Typer(help="Spread guard utilities")
+
+    @spread_app.command("inspect")
+    def spread_inspect_command(
+        ctx: typer.Context,
+        symbol: str = typer.Option("USDJPY", "--symbol", "-s", help="Symbol to inspect"),
+        window: str = typer.Option("30m", "--window", help="Lookback window"),
+        p95: float = typer.Option(..., "--p95", help="Spread p95 (pips)"),
+        p99: float = typer.Option(..., "--p99", help="Spread p99 (pips)"),
+        ntp_drift_ms: int = typer.Option(0, "--ntp-drift-ms", help="NTP drift in milliseconds"),
+        news_event: str | None = typer.Option(
+            None,
+            "--news-event",
+            help="Upcoming or active high-impact news identifier",
+        ),
+        cooldown_threshold: float = typer.Option(
+            1.8,
+            "--cooldown-threshold",
+            help="Cooldown threshold in pips",
+        ),
+        block_threshold: float = typer.Option(
+            2.5,
+            "--block-threshold",
+            help="Block threshold in pips",
+        ),
+        ntp_max_ms: int = typer.Option(
+            50,
+            "--ntp-max-ms",
+            help="Maximum tolerated NTP drift (ms)",
+        ),
+        cooldown_minutes: int = typer.Option(
+            5,
+            "--cooldown-minutes",
+            help="Cooldown duration in minutes",
+        ),
+        metrics_path: Path = typer.Option(
+            DEFAULT_SPREAD_METRICS,
+            "--metrics-path",
+            help="Spread metrics jsonl output path",
+            hidden=True,
+        ),
+        audit_path: Path = typer.Option(
+            DEFAULT_SPREAD_AUDIT,
+            "--audit-path",
+            help="Spread audit jsonl output path",
+            hidden=True,
+        ),
+        gate_state_path: Path | None = typer.Option(
+            None,
+            "--gate-state",
+            help="Optional gate_state.json path to update",
+            hidden=True,
+        ),
+        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
+    ) -> None:
+        ctx_obj = ctx.obj or {"json": False}
+        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        try:
+            payload = spread_inspect(
+                symbol,
+                window=window,
+                percentile=95,
+                fail_on_gap=False,
+                p95=p95,
+                p99=p99,
+                ntp_drift_ms=ntp_drift_ms,
+                news_event=news_event,
+                cooldown_threshold=cooldown_threshold,
+                block_threshold=block_threshold,
+                ntp_max_ms=ntp_max_ms,
+                cooldown_minutes=cooldown_minutes,
+                metrics_path=metrics_path,
+                audit_path=audit_path,
+                gate_state_path=gate_state_path,
+            )
+        except ValueError as exc:
+            typer.echo(str(exc), err=True)
+            raise typer.Exit(code=1)
+        _render_payload(console, payload, json_output=effective_json)
+        raise typer.Exit(code=int(payload.get("exit_code", 0)))
+
+    app.add_typer(spread_app, name="spread")
+
     @app.command("status")
     def status_command(
         ctx: typer.Context,
@@ -550,6 +840,42 @@ def create_cli_app() -> typer.Typer:
         ),
         verbose: bool | None = typer.Option(None, "--verbose", "-v", help="Override verbose flag"),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
+        metrics_path: Path = typer.Option(
+            DEFAULT_GUARDRAILS_METRICS,
+            "--metrics-path",
+            help="Guardrails metrics output path",
+            hidden=True,
+        ),
+        audit_path: Path = typer.Option(
+            DEFAULT_HEALTH_ACTION_AUDIT,
+            "--audit-path",
+            help="Health action audit log path",
+            hidden=True,
+        ),
+        gate_state_path: Path | None = typer.Option(
+            None,
+            "--gate-state",
+            help="Optional GateState JSON path",
+            hidden=True,
+        ),
+        health_state_path: Path | None = typer.Option(
+            None,
+            "--health-state",
+            help="Optional HealthState JSON path",
+            hidden=True,
+        ),
+        kill_switch_state_path: Path | None = typer.Option(
+            DEFAULT_KILL_SWITCH_STATE_PATH,
+            "--kill-switch-state",
+            help="Optional kill switch state JSON path",
+            hidden=True,
+        ),
+        actor: str = typer.Option(
+            "cli",
+            "--actor",
+            help="Actor ID used for audit logging",
+            hidden=True,
+        ),
     ) -> None:
         ctx_obj = ctx.obj or {"verbose": False, "json": False}
         effective_verbose = _merge_with_context(verbose, ctx_obj.get("verbose", False))
@@ -562,8 +888,16 @@ def create_cli_app() -> typer.Typer:
             kill_switch=kill_switch,
             board=board,
             history=history,
+            metrics_path=metrics_path,
+            audit_path=audit_path,
+            gate_state_path=gate_state_path,
+            health_state_path=health_state_path,
+            kill_switch_state_path=kill_switch_state_path,
+            actor=actor,
         )
         _render_payload(console, payload, json_output=effective_json)
+        exit_code = int(payload.get("exit_code", 0))
+        raise typer.Exit(code=exit_code)
 
     @app.command("resync")
     def resync_command(
@@ -1083,6 +1417,58 @@ def create_cli_app() -> typer.Typer:
     app.add_typer(alpha_app, name="alpha")
 
     kill_switch_app = typer.Typer(help="Kill switch review utilities")
+
+    @kill_switch_app.command("set")
+    def kill_switch_set_command(
+        ctx: typer.Context,
+        state: str = typer.Option(..., "--state", help="Kill switch state (none|soft_stop|hard_stop)"),
+        reason: str | None = typer.Option(None, "--reason", help="Reason for the state change"),
+        actor: str = typer.Option("cli", "--actor", help="Actor ID for audit logging", hidden=True),
+        evidence: list[Path] = typer.Option(
+            [],
+            "--evidence",
+            help="Evidence attachments supporting the change",
+            show_default=False,
+        ),
+        state_path: Path = typer.Option(
+            DEFAULT_KILL_SWITCH_STATE,
+            "--state-path",
+            help="Kill switch state snapshot path",
+            hidden=True,
+        ),
+        audit_path: Path = typer.Option(
+            DEFAULT_KILL_SWITCH_AUDIT,
+            "--audit-path",
+            help="Audit log output path",
+            hidden=True,
+        ),
+        log_path: Path = typer.Option(
+            DEFAULT_KILL_SWITCH_LOG,
+            "--log-path",
+            help="Kill switch history log path",
+            hidden=True,
+        ),
+        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
+    ) -> None:
+        ctx_obj = ctx.obj or {"json": False}
+        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        try:
+            payload = dict(
+                kill_switch_set_state(
+                    state=state,
+                    reason=reason,
+                    actor=actor,
+                    evidence=evidence,
+                    state_path=state_path,
+                    audit_path=audit_path,
+                    log_path=log_path,
+                )
+            )
+        except KillSwitchEvidenceError as exc:
+            typer.echo(f"[kill-switch.set] {exc}", err=True)
+            raise typer.Exit(1) from exc
+        _render_payload(console, payload, json_output=effective_json)
+        raise typer.Exit(code=int(payload.get("exit_code", 0)))
 
     @kill_switch_app.command("review")
     def kill_switch_review_command(

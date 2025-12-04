@@ -1,0 +1,20 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "spread_cooldown_metrics_v1",
+  "type": "object",
+  "required": ["timestamp", "symbol", "window", "status", "p95", "p99", "exit_code"],
+  "properties": {
+    "timestamp": { "type": "string", "format": "date-time" },
+    "symbol": { "type": "string" },
+    "window": { "type": "string" },
+    "status": { "type": "string", "enum": ["normal", "cooldown", "block"] },
+    "p95": { "type": "number" },
+    "p99": { "type": "number" },
+    "cooldown_reason": { "type": ["string", "null"] },
+    "ntp_drift_ms": { "type": ["integer", "null"] },
+    "news_id": { "type": ["string", "null"] },
+    "cooldown_eta": { "type": ["string", "null"], "format": "date-time" },
+    "exit_code": { "type": "integer" }
+  },
+  "additionalProperties": true
+}

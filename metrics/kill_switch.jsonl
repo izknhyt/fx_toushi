@@ -1,0 +1,5 @@
+{"ts": "2025-12-03T12:58:35Z", "state": "soft_stop", "previous_state": "none", "reason": "spread_block", "actor": "tester"}
+{"ts": "2025-12-03T13:00:50Z", "state": "soft_stop", "previous_state": "none", "reason": "spread_block", "actor": "tester"}
+{"ts": "2025-12-03T13:00:56Z", "state": "soft_stop", "previous_state": "none", "reason": "spread_block", "actor": "tester"}
+{"ts": "2025-12-03T13:05:01Z", "state": "soft_stop", "previous_state": "none", "reason": "spread_block", "actor": "tester", "runbook": null}
+{"ts": "2025-12-03T13:11:49Z", "state": "soft_stop", "previous_state": "none", "reason": "spread_block", "actor": "tester", "runbook": null}

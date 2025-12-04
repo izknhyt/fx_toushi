@@ -4,18 +4,121 @@ from __future__ import annotations
 
 import json
 import logging
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping, MutableMapping
 
 from src.core.gate import GateState
-from src.core.health import HealthMonitor, HealthReason
+from src.core.health import (
+    GuardrailSnapshot,
+    HealthAction,
+    HealthMonitor,
+    HealthReason,
+    HealthState,
+    KillSwitchSuggestion,
+)
 from src.core.snapshot import SnapshotManager, SnapshotRestoreResult
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_KILL_SWITCH_LOG = Path("logs/events/risk.kill_switch.jsonl")
+DEFAULT_GUARDRAILS_METRICS = Path("metrics/guardrails.jsonl")
+DEFAULT_HEALTH_ACTION_AUDIT = Path("logs/audit/health_action.jsonl")
+DEFAULT_GATE_STATE_PATH = Path("snapshots/latest/gate_state.json")
+DEFAULT_HEALTH_STATE_PATH = Path("snapshots/latest/health_state.json")
+DEFAULT_KILL_SWITCH_STATE_PATH = Path("snapshots/latest/kill_switch_state.json")
 
-__all__ = ["status", "DEFAULT_KILL_SWITCH_LOG"]
+__all__ = [
+    "status",
+    "DEFAULT_KILL_SWITCH_LOG",
+    "DEFAULT_GUARDRAILS_METRICS",
+    "DEFAULT_HEALTH_ACTION_AUDIT",
+    "DEFAULT_GATE_STATE_PATH",
+    "DEFAULT_HEALTH_STATE_PATH",
+    "DEFAULT_KILL_SWITCH_STATE_PATH",
+]
+
+
+def _utcnow_iso() -> str:
+    return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def _append_jsonl(path: Path, payload: Mapping[str, object]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(payload, ensure_ascii=False))
+        handle.write("\n")
+
+
+def _parse_dt(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    text = value.strip()
+    if text.endswith("Z"):
+        text = text[:-1] + "+00:00"
+    try:
+        return datetime.fromisoformat(text)
+    except ValueError:
+        return None
+
+
+def _load_health_state(monitor: HealthMonitor, path: Path) -> None:
+    if not path.exists():
+        return
+    data = json.loads(path.read_text(encoding="utf-8"))
+    reasons: list[HealthReason] = []
+    for item in data.get("reasons", []):
+        reasons.append(
+            HealthReason(
+                code=item.get("code", "unknown"),
+                level=item.get("level", "degraded"),
+                detail=item.get("detail"),
+                recommended_action=item.get("recommended_action"),
+                raised_at=_parse_dt(item.get("raised_at")) or datetime.now(timezone.utc),
+            )
+        )
+    kill_switch_data = data.get("kill_switch")
+    kill_switch = (
+        KillSwitchSuggestion(
+            state=kill_switch_data.get("state", "none"),
+            reason=kill_switch_data.get("reason", "unspecified"),
+            runbook=kill_switch_data.get("runbook"),
+        )
+        if kill_switch_data
+        else None
+    )
+    monitor._state = HealthState(  # type: ignore[attr-defined]
+        status=data.get("status", "ok"),
+        reasons=reasons,
+        board_mode_suggestion=data.get("board_mode_suggestion"),
+        board_mode_runbook=data.get("board_mode_runbook"),
+        kill_switch=kill_switch,
+    )
+    actions: list[HealthAction] = []
+    for action in data.get("actions", []):
+        actions.append(
+            HealthAction(
+                id=action.get("id", action.get("reason", "action")),
+                action=action.get("action", "guarded"),
+                reason=action.get("reason", "unspecified"),
+                evidence=list(action.get("evidence", [])),
+                expires_at=_parse_dt(action.get("expires_at")),
+                queued_at=_parse_dt(action.get("queued_at")) or datetime.now(timezone.utc),
+            )
+        )
+    monitor._actions = actions  # type: ignore[attr-defined]
+
+
+def _load_kill_switch_state(path: Path) -> tuple[str, str | None]:
+    if not path or not path.exists():
+        return "none", None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return "none", None
+    state = data.get("state", "none")
+    reason = data.get("reason")
+    return state, reason
 
 
 def _serialise_snapshot_restore(result: SnapshotRestoreResult) -> Mapping[str, Any]:
@@ -71,28 +174,32 @@ def _snapshot_section(manager: SnapshotManager) -> Mapping[str, Any]:
 
 def _build_banner(
     *,
-    reasons: list[HealthReason],
-    board_mode_suggestion: str | None,
-    board_mode_runbook: str | None,
-    status: str,
+    health: HealthState,
+    guardrail: GuardrailSnapshot,
     reduce_only: bool,
-    kill_switch_recommendation: str | None,
 ) -> Mapping[str, Any] | None:
     """Construct the Acceptable Degradation banner payload when needed."""
 
-    if status not in {"degraded", "soft_stop", "hard_stop"} and not reduce_only:
+    if guardrail.board_mode == "normal" and not reduce_only:
         return None
 
-    reason_codes = [reason.code for reason in reasons]
-    banner_message = board_mode_suggestion or (reason_codes[0] if reason_codes else None)
+    reason_codes = [reason.code for reason in health.reasons]
+    if guardrail.spread_reason:
+        reason_codes.append(guardrail.spread_reason)
+    if guardrail.reduce_only_reason:
+        reason_codes.append(guardrail.reduce_only_reason)
+    if guardrail.kill_switch_reason:
+        reason_codes.append(guardrail.kill_switch_reason)
+    banner_message = health.board_mode_suggestion or guardrail.banner or (reason_codes[0] if reason_codes else None)
     return {
         "kind": "acceptable_degradation",
-        "severity": status,
+        "severity": guardrail.health_status,
         "message": banner_message,
         "reason_codes": reason_codes,
-        "runbook": board_mode_runbook,
+        "runbook": guardrail.runbook or health.board_mode_runbook,
         "reduce_only": reduce_only,
-        "kill_switch_recommendation": kill_switch_recommendation,
+        "kill_switch_recommendation": guardrail.kill_switch_state,
+        "board_mode": guardrail.board_mode,
         "visible": True,
     }
 
@@ -131,32 +238,50 @@ def status(
     snapshot_manager: SnapshotManager | None = None,
     history: str | None = None,
     kill_switch_log_path: Path = DEFAULT_KILL_SWITCH_LOG,
+    metrics_path: Path = DEFAULT_GUARDRAILS_METRICS,
+    audit_path: Path = DEFAULT_HEALTH_ACTION_AUDIT,
+    gate_state_path: Path | None = None,
+    health_state_path: Path | None = None,
+    kill_switch_state_path: Path | None = DEFAULT_KILL_SWITCH_STATE_PATH,
+    actor: str = "cli",
 ) -> Mapping[str, object]:
     """Return the current status snapshot for operators."""
 
     monitor = monitor or HealthMonitor()
-    gate_state = gate_state or GateState()
+    if health_state_path is not None:
+        _load_health_state(monitor, health_state_path)
+    gate_state = gate_state or (GateState.load(gate_state_path) if gate_state_path else GateState())
     snapshot_manager = snapshot_manager or SnapshotManager()
 
-    health_state = monitor.snapshot()
+    raw_kill_switch_state, kill_switch_reason = _load_kill_switch_state(kill_switch_state_path) if kill_switch_state_path else ("none", None)
+    kill_switch_override = None if raw_kill_switch_state in {None, "none"} else raw_kill_switch_state
     monitor.enforce_auto_execute_policy(gate_state)
+    health_state = monitor.snapshot()
     risk_state = gate_state.risk
-    kill_switch_payload = {
-        "suggestion": risk_state.kill_switch_recommendation,
-        "reason": risk_state.kill_switch_reason,
-        "requested_transition": kill_switch,
-    }
+    guardrail = monitor.guardrail_snapshot(gate_state, kill_switch_state=kill_switch_override)
+    kill_switch_state_value = kill_switch_override or guardrail.kill_switch_state
+    kill_switch_reason = kill_switch_reason or guardrail.kill_switch_reason or risk_state.kill_switch_reason
+
+    ack_result: Mapping[str, Any] | None = None
+    if ack:
+        ack_result = monitor.ack_action(ack, actor=actor)
+        audit_payload: dict[str, object] = {
+            "event": "health_action.ack",
+            "ts": _utcnow_iso(),
+            **ack_result,
+        }
+        try:
+            _append_jsonl(audit_path, audit_payload)
+        except OSError as exc:  # pragma: no cover - defensive
+            logger.exception("cli.status.audit_write_failed", exc_info=exc)
 
     banner = _build_banner(
-        reasons=list(health_state.reasons),
-        board_mode_suggestion=health_state.board_mode_suggestion,
-        board_mode_runbook=health_state.board_mode_runbook,
-        status=health_state.status,
+        health=health_state,
+        guardrail=guardrail,
         reduce_only=risk_state.reduce_only,
-        kill_switch_recommendation=risk_state.kill_switch_recommendation,
     )
 
-    ops_actions: Mapping[str, Any] = {
+    ops_actions: MutableMapping[str, Any] = {
         "ack": {
             "requested": bool(ack),
             "reference": ack,
@@ -172,13 +297,26 @@ def status(
             "reference": board,
             "status": "queued" if board else "idle",
         },
+        "pending": [action.to_dict() for action in monitor.actions()],
+    }
+    if ack_result:
+        ops_actions["ack"]["result"] = ack_result
+
+    kill_switch_payload = {
+        "state": kill_switch_state_value,
+        "reason": kill_switch_reason,
+        "suggestion": risk_state.kill_switch_recommendation,
+        "requested_transition": kill_switch,
     }
 
+    guardrail_payload = guardrail.to_dict()
+    guardrail_payload["pending_actions"] = ops_actions["pending"]
     result: MutableMapping[str, object] = {
         "health": health_state.to_dict(),
         "gate": gate_state.to_dict(),
         "risk": risk_state.to_dict(),
         "kill_switch": kill_switch_payload,
+        "guardrails": guardrail_payload,
         "snapshots": _snapshot_section(snapshot_manager),
         "ops": {
             "banner": banner,
@@ -188,6 +326,7 @@ def status(
             "json_output": json_output,
             "verbose": verbose,
         },
+        "exit_code": guardrail.exit_code,
     }
 
     if history:
@@ -212,7 +351,25 @@ def status(
             "board": board,
             "health_status": health_state.status,
             "reduce_only": risk_state.reduce_only,
+            "exit_code": guardrail.exit_code,
         },
     )
+
+    metrics_payload = {
+        "timestamp": _utcnow_iso(),
+        "health_state": guardrail.health_status,
+        "board_mode": guardrail.board_mode,
+        "kill_switch": guardrail.kill_switch_state,
+        "spread_status": guardrail.spread_status,
+        "reason": guardrail.banner or guardrail.spread_reason or guardrail.kill_switch_reason,
+        "reasons": guardrail.reasons,
+        "exit_code": guardrail.exit_code,
+        "reduce_only": guardrail.reduce_only,
+        "ack_user": actor if ack else None,
+    }
+    try:
+        _append_jsonl(metrics_path, metrics_payload)
+    except OSError as exc:  # pragma: no cover - defensive
+        logger.exception("cli.status.metrics_write_failed", exc_info=exc)
 
     return result

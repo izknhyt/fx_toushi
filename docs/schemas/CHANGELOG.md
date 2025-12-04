@@ -1,5 +1,8 @@
 # Schema Registry Change Log
 
+## 2025-11-23
+- Added guardrail-related schemas: `guardrails_metrics.schema.json`, `spread_cooldown.schema.json`, `audit.health_action.schema.json`, `audit.kill_switch.schema.json`, and `audit.spread_guard.schema.json` to codify metrics/audit outputs for EP03 Guardrails (§90.1.1/§90.3). These back `metrics/guardrails.jsonl`, `metrics/spread_cooldown.jsonl`, `logs/audit/health_action.jsonl`, `logs/audit/kill_switch.jsonl`, and `logs/audit/spread_guard.jsonl`, aligning Runbook RUN-DATA-05 / RUN-RISK-02 / RUN-SPREAD-03 evidence.
+
 ## 2025-03-22
 - Added `penalty_event.schema.json` capturing penalty ledger entries（event_ts/penalty_code/scope/value_bps/reason/approver） per detailed design §7.7. CI command `poetry run schema-validate metrics/penalty.jsonl --schema docs/schemas/penalty_event.schema.json` is now part of `PKG-STRAT-GOV`.
 - Published `docs/schemas/gate_state.sample.json` aligned with `gate_state.schema.json` v3 so GateAggregator/GateState validation, Runbook RUN-OPS-04, and CLI snapshots share a canonical instance for audits.

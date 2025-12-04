@@ -40,6 +40,11 @@ materials stored here serve as the authoritative source for governance reviews a
   (§3.7/§4.4.4). Governs `config/scoring.yaml`.
 - `scoreboard.schema.json` – Strategy Scoreboard thresholds, weightings, and watchlist rules
   (付録G.1/§4.4.5). Governs `config/scoreboard.yaml`.
+- `guardrails_metrics.schema.json` – Guardrail telemetry (health/board_mode/kill_switch/spread_status/exit_code) logged to `metrics/guardrails.jsonl` per detailed design §90.1.1 / status CLI.
+- `spread_cooldown.schema.json` – Spread/NTP/News guard metrics for `metrics/spread_cooldown.jsonl` per §90.3 and `tradectl spread inspect`.
+- `audit.health_action.schema.json` – Health action ack records (`logs/audit/health_action.jsonl`) for `tradectl status --ack` / Runbook RUN-DATA-05 evidence.
+- `audit.kill_switch.schema.json` – Kill switch state transitions (`logs/audit/kill_switch.jsonl`) per §90.1.1 and `tradectl kill-switch set`.
+- `audit.spread_guard.schema.json` – Spread guard audit entries (`logs/audit/spread_guard.jsonl`) produced by `tradectl spread inspect`.
 - `performance_snapshot.schema.json` – KPI snapshot contract for backtest/paper/live modes (Sharpe,
   Sortino, max drawdown, win rate, P&L metadata) per detailed design §3.5.2/§7.6. A curated payload
   is stored at `docs/schemas/examples/performance_snapshot.sample.json`, and regression coverage
