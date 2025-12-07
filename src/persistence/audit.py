@@ -17,6 +17,12 @@ class AuditLogger:
 
         entry: MutableMapping[str, object] = dict(payload)
         entry.setdefault("schema_version", "ticket.action.v2")
+        entry.setdefault("record_type", "ticket.action")
+        entry.setdefault("kill_switch_state", "none")
+        entry.setdefault("spread_status", "normal")
+        entry.setdefault("profit_readiness_status", "ok")
+        entry.setdefault("reduce_only", False)
+        entry.setdefault("risk_disclosure_state", "pending")
         delta = entry.get("delta")
         if not isinstance(delta, Mapping):
             delta = {"before": {}, "after": {}, "diff": {}}

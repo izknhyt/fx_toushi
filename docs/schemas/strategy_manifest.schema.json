@@ -49,7 +49,8 @@
           "required": [
             "enabled",
             "priority",
-            "weight"
+            "weight",
+            "determinism_key"
           ],
           "properties": {
             "enabled": {
@@ -64,6 +65,12 @@
               "type": "number",
               "minimum": 0,
               "maximum": 1
+            },
+            "determinism_key": {
+              "type": "string",
+              "description": "Determinism fingerprint key used in strategy.determinism hashing.",
+              "pattern": "^[A-Za-z0-9_.-]+$",
+              "minLength": 1
             },
             "feature_flags": {
               "type": "object",

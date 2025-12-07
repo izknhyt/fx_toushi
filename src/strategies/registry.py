@@ -76,6 +76,7 @@ def compute_deterministic_hash(
     required_features: Iterable[str],
     feature_version: str | None = None,
     data_manifest_hash: str | None = None,
+    strategy_config: Mapping[str, Any] | None = None,
 ) -> str:
     """Return a deterministic digest summarising a strategy evaluation."""
 
@@ -90,6 +91,8 @@ def compute_deterministic_hash(
         payload["feature_version"] = feature_version
     if data_manifest_hash:
         payload["data_manifest_hash"] = data_manifest_hash
+    if strategy_config:
+        payload["strategy_config"] = strategy_config
     serialized = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
     return hashlib.blake2b(serialized, digest_size=16).hexdigest()
 
@@ -247,6 +250,7 @@ class StrategyEntry(BaseModel):
     watchlist: tuple[str, ...] | None = None
     lifecycle: StrategyLifecycle | None = None
     parameters: Mapping[str, Any] = Field(default_factory=dict)
+    determinism_key: str
 
     @field_validator("feature_flags")
     @classmethod
@@ -271,6 +275,14 @@ class StrategyEntry(BaseModel):
                 normalised.append(token)
                 seen.add(token)
         return tuple(normalised) if normalised else None
+
+    @field_validator("determinism_key")
+    @classmethod
+    def _validate_determinism_key(cls, value: str) -> str:
+        token = value.strip()
+        if not token:
+            raise ValueError("determinism_key must be a non-empty string")
+        return token
 
     @property
     def enabled_feature_flags(self) -> frozenset[str]:
@@ -665,6 +677,7 @@ class StrategyEngine:
                 required_features=plugin_metadata.required_features,
                 feature_version=feature_version,
                 data_manifest_hash=data_manifest_hash,
+                strategy_config=entry.parameters,
             )
             event_payload = {
                 "event": "strategy.determinism",

@@ -6,6 +6,8 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from pathlib import Path
 from typing import Iterable, Optional
+import json
+import hashlib
 
 AUTOMATION_EFFECT_JSONL_PATH = Path("automation_effect.jsonl")
 """Default ledger containing automation effect measurements."""
@@ -61,9 +63,73 @@ class AutomationEffectTracker:
     def apply(self, delta: AutomationEffectDelta) -> AutomationEffectEntry:
         """Apply *delta* and emit ``automation.effect_achieved`` when the gain exceeds policy."""
 
-        raise NotImplementedError("AutomationEffectTracker.apply is not implemented in the scaffold")
+        if delta.task is None:
+            raise AutomationEffectValidationError("task is required")
+        entry = AutomationEffectEntry(
+            schema_version="automation.effect.v1",
+            ts=datetime.utcnow(),
+            task=delta.task,
+            before_min=delta.before_min or 0,
+            after_min=delta.after_min or 0,
+            gain_min=(delta.before_min or 0) - (delta.after_min or 0),
+            effective_date=delta.effective_date or date.today(),
+            runbook_ref=delta.runbook_ref or "",
+            status="ok",
+            evidence=list(delta.evidence or []),
+        )
+        payload = {
+            "schema_version": entry.schema_version,
+            "ts": entry.ts.isoformat().replace("+00:00", "Z"),
+            "task": entry.task,
+            "before_min": entry.before_min,
+            "after_min": entry.after_min,
+            "gain_min": entry.gain_min,
+            "effective_date": entry.effective_date.isoformat(),
+            "runbook_ref": entry.runbook_ref,
+            "status": entry.status,
+            "evidence": entry.evidence,
+        }
+        self._ledger_path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            with self._ledger_path.open("a", encoding="utf-8") as handle:
+                handle.write(json.dumps(payload, ensure_ascii=False))
+                handle.write("\n")
+        except OSError as exc:
+            raise AutomationEffectError(str(exc)) from exc
+        return entry
 
     def iter_effects(self, task: Optional[str] = None) -> Iterable[AutomationEffectEntry]:
         """Iterate over persisted automation effect entries, optionally filtered by *task*."""
 
-        raise NotImplementedError("AutomationEffectTracker.iter_effects is not implemented in the scaffold")
+        if not self._ledger_path.exists():
+            return ()
+        entries: list[AutomationEffectEntry] = []
+        for line in self._ledger_path.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            try:
+                data = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if task and data.get("task") != task:
+                continue
+            try:
+                ts = datetime.fromisoformat(str(data.get("ts")).replace("Z", "+00:00"))
+                effective_date = date.fromisoformat(str(data.get("effective_date")))
+            except Exception:
+                continue
+            entries.append(
+                AutomationEffectEntry(
+                    schema_version=str(data.get("schema_version", "")),
+                    ts=ts,
+                    task=str(data.get("task", "")),
+                    before_min=int(data.get("before_min", 0)),
+                    after_min=int(data.get("after_min", 0)),
+                    gain_min=int(data.get("gain_min", 0)),
+                    effective_date=effective_date,
+                    runbook_ref=str(data.get("runbook_ref", "")),
+                    status=str(data.get("status", "")),
+                    evidence=list(data.get("evidence", [])),
+                )
+            )
+        return entries

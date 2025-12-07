@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+import hashlib
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -78,14 +80,73 @@ class OpsWorklogService:
     def record(self, entry: OpsWorklogEntry) -> RecordResult:
         """Persist *entry* into ``ops_worklog.jsonl`` and emit ``ops_worklog.recorded``."""
 
-        raise NotImplementedError("OpsWorklogService.record is not implemented in the scaffold")
+        if not entry.task or not entry.owner:
+            raise WorklogValidationError("task and owner are required")
+        payload = {
+            "schema_version": entry.schema_version,
+            "ts": entry.ts.isoformat().replace("+00:00", "Z"),
+            "task": entry.task,
+            "duration_min": entry.duration_min,
+            "owner": entry.owner,
+            "mode": entry.mode,
+            "source": entry.source,
+            "related_artifacts": list(entry.related_artifacts),
+            "health_state": entry.health_state,
+            "board_mode": entry.board_mode,
+            "notes": entry.notes,
+        }
+        self._ledger_path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            with self._ledger_path.open("a", encoding="utf-8") as handle:
+                handle.write(json.dumps(payload, ensure_ascii=False))
+                handle.write("\n")
+        except OSError as exc:
+            raise WorklogWriteError(str(exc)) from exc
+        entry_hash = hashlib.sha256(json.dumps(payload, sort_keys=True).encode("utf-8")).hexdigest()
+        return RecordResult(path=self._ledger_path, entry_hash=entry_hash)
 
     def flush_pending(self) -> FlushResult:
         """Force writing any buffered worklog entries and emit failure events when needed."""
 
-        raise NotImplementedError("OpsWorklogService.flush_pending is not implemented in the scaffold")
+        # JSONL append is synchronous; nothing buffered in this scaffold.
+        exists = self._ledger_path.exists()
+        return FlushResult(path=self._ledger_path, flushed=exists, pending_entries=0)
 
     def query(self, *, window: timedelta, task: Optional[str] = None) -> Iterable[OpsWorklogEntry]:
         """Yield worklog entries within *window*, optionally filtered by *task*."""
 
-        raise NotImplementedError("OpsWorklogService.query is not implemented in the scaffold")
+        if not self._ledger_path.exists():
+            return ()
+        cutoff = datetime.utcnow() - window
+        results: list[OpsWorklogEntry] = []
+        for line in self._ledger_path.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            try:
+                data = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            try:
+                ts = datetime.fromisoformat(str(data.get("ts")).replace("Z", "+00:00"))
+            except Exception:
+                continue
+            if ts < cutoff:
+                continue
+            if task and data.get("task") != task:
+                continue
+            results.append(
+                OpsWorklogEntry(
+                    schema_version=str(data.get("schema_version", "")),
+                    ts=ts,
+                    task=str(data.get("task", "")),
+                    duration_min=int(data.get("duration_min", 0)),
+                    owner=str(data.get("owner", "")),
+                    mode=str(data.get("mode", "")),
+                    source=str(data.get("source", "")),
+                    related_artifacts=list(data.get("related_artifacts", [])),
+                    health_state=str(data.get("health_state", "")),
+                    board_mode=str(data.get("board_mode", "")),
+                    notes=data.get("notes"),
+                )
+            )
+        return results

@@ -16,6 +16,7 @@ strategies:
     enabled: true
     priority: 50
     weight: 0.5
+    determinism_key: "ma_rsi_v1"
     metadata:
       name: "M1 Baseline MA/RSI"
       version: "0.1.1"
@@ -88,6 +89,7 @@ strategies:
     enabled: true
     priority: 60
     weight: 0.5
+    determinism_key: "donchian_v1"
     metadata:
       name: "M1 Baseline Donchian"
       version: "0.1.2"

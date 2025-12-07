@@ -197,6 +197,11 @@ def test_audit_ticket_action_accepts_valid_record() -> None:
         "actor": "ops_manager",
         "consent_reference_id": "018f96d8-1c2b-7def-8abc-1a2b3c4d5e6f",
         "board_mode": "guarded",
+        "kill_switch_state": "soft_stop",
+        "spread_status": "cooldown",
+        "profit_readiness_status": "guarded",
+        "reduce_only": True,
+        "risk_disclosure_state": "pending",
         "auto_execute": False,
         "guardrails": {
             "kill_switch": "soft_stop",

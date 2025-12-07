@@ -95,16 +95,20 @@ def log_ticket_action(
     action: str,
     actor: str,
     board_mode: str,
-    auto_execute: bool,
-    guardrails: Mapping[str, object] | None = None,
-    spread_state: Mapping[str, object] | None,
-    health_state: str,
+    kill_switch_state: str,
+    spread_status: str,
+    profit_readiness_status: str,
+    reduce_only: bool,
+    risk_disclosure_state: str,
     cfg_hash: str,
     data_hash: str,
-    profit_readiness_status: str,
-    latency_data_status: str,
-    slippage_data_status: str,
-    delta: Mapping[str, object],
+    auto_execute: bool = False,
+    guardrails: Mapping[str, object] | None = None,
+    spread_state: Mapping[str, object] | None = None,
+    health_state: str = "ok",
+    latency_data_status: str = "ok",
+    slippage_data_status: str = "ok",
+    delta: Mapping[str, object] | None = None,
     consent_reference_id: str | None = None,
     notes: str | None = None,
     path: Path = DEFAULT_TICKET_ACTION_LOG,
@@ -112,10 +116,11 @@ def log_ticket_action(
     """Append a ticket.action audit entry including auto_execute flag."""
 
     guardrails_payload = dict(guardrails or {})
-    guardrails_payload.setdefault("kill_switch", "none")
-    guardrails_payload.setdefault("spread_status", "normal")
-    guardrails_payload.setdefault("reduce_only", False)
+    guardrails_payload.setdefault("kill_switch", kill_switch_state)
+    guardrails_payload.setdefault("spread_status", spread_status)
+    guardrails_payload.setdefault("reduce_only", reduce_only)
     guardrails_payload.setdefault("health_state", health_state)
+    guardrails_payload.setdefault("profit_readiness_status", profit_readiness_status)
 
     record: dict[str, object] = {
         "ts": _now(),
@@ -125,16 +130,20 @@ def log_ticket_action(
         "action": action,
         "actor": actor,
         "board_mode": board_mode,
+        "kill_switch_state": kill_switch_state,
+        "spread_status": spread_status,
+        "profit_readiness_status": profit_readiness_status,
+        "reduce_only": bool(reduce_only),
+        "risk_disclosure_state": risk_disclosure_state,
         "auto_execute": bool(auto_execute),
         "guardrails": guardrails_payload,
         "spread_state": spread_state or {},
         "health_state": health_state,
         "cfg_hash": cfg_hash,
         "data_hash": data_hash,
-        "profit_readiness_status": profit_readiness_status,
         "latency_data_status": latency_data_status,
         "slippage_data_status": slippage_data_status,
-        "delta": delta,
+        "delta": delta or {"before": {}, "after": {}, "diff": {}, "decision": action},
         "consent_reference_id": consent_reference_id,
     }
     if notes:

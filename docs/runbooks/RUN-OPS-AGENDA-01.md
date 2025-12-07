@@ -40,6 +40,11 @@
 - Validation: `reports/validation_log/AC-51_ops_<対象日>.md`へアジェンダファイルとCLI出力ハッシュを貼付。
 - リンク更新: `docs/review_log.md`「Ops Agenda Export」に`reports/ops/daily_agenda/<対象日>.md`を追記。
 
+## Board Mode/Acceptable Degradation 解除チェック（手動）
+- 解除条件: (1) 直近15分の`metrics/data_ingestion_sla.jsonl`と`metrics/spread_guard.jsonl`が正常ステータス、(2) `health.status ∈ {ok}`かつ`kill_switch_state != hard_stop`、(3) Runbook該当原因コードの解消を確認。
+- 手順: `tradectl status --json`で`board_mode_suggestion`を確認→`tradectl board --normal`で解除→`ops_worklog.jsonl`に`task=board_mode_release`として記録し、`reports/validation_log/CHK-0.6.9_mode_context_*.md`へリンク。
+- 監査: 解除時の`board_mode`, `kill_switch_state`, `spread_status`, `profit_readiness_status`, `risk_disclosure_state`, `cfg_hash`, `data_hash`, `consent_reference_id`を記録し、`audit.ticket_action.v2`スキーマで検証する。
+
 ## 関連リンク
 - [詳細設計 §18.3 Opsワークロードレポートテンプレ](../../detailed_design_fx_signal_tool_v1.md#183-opsワークロードレポートテンプレ-toolsops_workload_reportpy)
 - [reports/ops/daily_agenda/README.md](../../reports/ops/daily_agenda/README.md)

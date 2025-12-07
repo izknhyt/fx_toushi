@@ -6,6 +6,8 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Iterable, Optional
+import json
+import yaml
 
 DRILL_SCENARIOS_CATALOG_PATH = Path("config/ops/drill_scenarios.yaml")
 """Canonical YAML catalog for registered drill scenarios."""
@@ -161,39 +163,183 @@ class OpsDrillService:
     def register_scenario(self, scenario: DrillScenario) -> DrillScenario:
         """Persist *scenario* to ``drill_scenarios.yaml`` and emit audit events."""
 
-        raise NotImplementedError("OpsDrillService.register_scenario is not implemented in the scaffold")
+        catalog: dict[str, object] = {}
+        if self._scenarios_catalog.exists():
+            try:
+                catalog = yaml.safe_load(self._scenarios_catalog.read_text(encoding="utf-8")) or {}
+            except yaml.YAMLError:
+                catalog = {}
+        scenarios = catalog.get("scenarios", {})
+        if scenario.scenario_id in scenarios:
+            raise DrillScenarioExists(scenario.scenario_id)
+        scenarios[scenario.scenario_id] = {
+            "title": scenario.title,
+            "runbook_refs": list(scenario.runbook_refs),
+            "validation_playbook_ids": list(scenario.validation_playbook_ids),
+            "trigger": scenario.trigger,
+            "expected_duration_min": scenario.expected_duration_min,
+            "impact_tags": sorted(scenario.impact_tags),
+        }
+        catalog["scenarios"] = scenarios
+        self._scenarios_catalog.parent.mkdir(parents=True, exist_ok=True)
+        self._scenarios_catalog.write_text(yaml.safe_dump(catalog, allow_unicode=True), encoding="utf-8")
+        return scenario
 
     def schedule(self, plan: DrillPlan) -> DrillPlan:
         """Schedule *plan* into ``drill_plan.jsonl`` subject to capacity checks."""
 
-        raise NotImplementedError("OpsDrillService.schedule is not implemented in the scaffold")
+        record = {
+            "plan_id": plan.plan_id,
+            "scenario_id": plan.scenario_id,
+            "scheduled_for": plan.scheduled_for.isoformat().replace("+00:00", "Z"),
+            "owner": plan.owner,
+            "participants": list(plan.participants),
+            "board_mode_on_start": plan.board_mode_on_start,
+            "acceptance_conditions": list(plan.acceptance_conditions),
+        }
+        with self._plans_log.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(record, ensure_ascii=False))
+            handle.write("\n")
+        return plan
 
     def start(self, plan_id: str, *, actor: str) -> DrillExecution:
         """Transition the referenced plan to ``running`` and emit ``ops.drill.started``."""
 
-        raise NotImplementedError("OpsDrillService.start is not implemented in the scaffold")
+        execution_id = f"{plan_id}-run"
+        execution = DrillExecution(
+            execution_id=execution_id,
+            plan_id=plan_id,
+            started_at=datetime.utcnow(),
+            ended_at=None,
+            status="running",
+            kill_switch_state="none",
+            board_mode="normal",
+            notes=f"started_by={actor}",
+        )
+        self._append_execution(execution)
+        return execution
 
     def record_step(self, execution_id: str, step: DrillStep) -> None:
         """Record *step* progress, append to metrics logs, and update the worklog."""
 
-        raise NotImplementedError("OpsDrillService.record_step is not implemented in the scaffold")
+        payload = {
+            "execution_id": execution_id,
+            "runbook_step": step.runbook_step,
+            "duration_min": step.duration_min,
+            "comment": step.comment,
+            "evidence_paths": step.evidence_paths,
+            "metrics": step.metrics,
+            "ts": datetime.utcnow().isoformat().replace("+00:00", "Z"),
+        }
+        self._executions_log.parent.mkdir(parents=True, exist_ok=True)
+        with self._executions_log.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(payload, ensure_ascii=False))
+            handle.write("\n")
 
     def complete(self, execution_id: str, outcome: DrillOutcome) -> DrillOutcome:
         """Finalize the drill execution and emit ``ops.drill.completed``."""
 
-        raise NotImplementedError("OpsDrillService.complete is not implemented in the scaffold")
+        payload = {
+            "execution_id": execution_id,
+            "status": "completed" if outcome.success else "failed",
+            "metrics": outcome.metrics,
+            "follow_up_tickets": outcome.follow_up_tickets,
+            "evidence_paths": outcome.evidence_paths,
+            "sign_offs": [
+                {"role": s.role, "actor": s.actor, "status": s.status, "timestamp": s.timestamp.isoformat().replace("+00:00", "Z")}
+                for s in outcome.sign_offs
+            ],
+            "ts": datetime.utcnow().isoformat().replace("+00:00", "Z"),
+        }
+        with self._executions_log.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(payload, ensure_ascii=False))
+            handle.write("\n")
+        return outcome
 
     def abort(self, execution_id: str, *, reason: str, actor: str) -> DrillExecution:
         """Abort the running drill execution and emit ``ops.drill.aborted``."""
 
-        raise NotImplementedError("OpsDrillService.abort is not implemented in the scaffold")
+        execution = DrillExecution(
+            execution_id=execution_id,
+            plan_id=execution_id.split("-")[0],
+            started_at=None,
+            ended_at=datetime.utcnow(),
+            status="aborted",
+            kill_switch_state="none",
+            board_mode="guarded",
+            notes=f"aborted_by={actor}; reason={reason}",
+        )
+        self._append_execution(execution)
+        return execution
 
     def list_scenarios(self) -> Iterable[DrillScenario]:
         """Iterate the registered drill scenarios from the catalog."""
 
-        raise NotImplementedError("OpsDrillService.list_scenarios is not implemented in the scaffold")
+        if not self._scenarios_catalog.exists():
+            return ()
+        try:
+            catalog = yaml.safe_load(self._scenarios_catalog.read_text(encoding="utf-8")) or {}
+        except yaml.YAMLError:
+            return ()
+        scenarios = catalog.get("scenarios", {})
+        result: list[DrillScenario] = []
+        for scenario_id, data in scenarios.items():
+            result.append(
+                DrillScenario(
+                    scenario_id=scenario_id,
+                    title=data.get("title", ""),
+                    runbook_refs=list(data.get("runbook_refs", [])),
+                    validation_playbook_ids=list(data.get("validation_playbook_ids", [])),
+                    trigger=data.get("trigger", ""),
+                    expected_duration_min=int(data.get("expected_duration_min", 0)),
+                    impact_tags=set(data.get("impact_tags", [])),
+                )
+            )
+        return result
 
     def list_plans(self, *, include_completed: bool = False) -> Iterable[DrillPlan]:
         """Iterate scheduled drill plans optionally including completed ones."""
 
-        raise NotImplementedError("OpsDrillService.list_plans is not implemented in the scaffold")
+        if not self._plans_log.exists():
+            return ()
+        plans: list[DrillPlan] = []
+        for line in self._plans_log.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            try:
+                data = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            try:
+                scheduled_for = datetime.fromisoformat(str(data.get("scheduled_for")).replace("Z", "+00:00"))
+            except Exception:
+                continue
+            plans.append(
+                DrillPlan(
+                    plan_id=str(data.get("plan_id", "")),
+                    scenario_id=str(data.get("scenario_id", "")),
+                    scheduled_for=scheduled_for,
+                    owner=str(data.get("owner", "")),
+                    participants=list(data.get("participants", [])),
+                    board_mode_on_start=str(data.get("board_mode_on_start", "")),
+                    acceptance_conditions=list(data.get("acceptance_conditions", [])),
+                )
+            )
+        if include_completed:
+            return plans
+        return [p for p in plans if p.scheduled_for >= datetime.utcnow()]
+
+    def _append_execution(self, execution: DrillExecution) -> None:
+        payload = {
+            "execution_id": execution.execution_id,
+            "plan_id": execution.plan_id,
+            "started_at": execution.started_at.isoformat().replace("+00:00", "Z") if execution.started_at else None,
+            "ended_at": execution.ended_at.isoformat().replace("+00:00", "Z") if execution.ended_at else None,
+            "status": execution.status,
+            "kill_switch_state": execution.kill_switch_state,
+            "board_mode": execution.board_mode,
+            "notes": execution.notes,
+        }
+        with self._executions_log.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(payload, ensure_ascii=False))
+            handle.write("\n")

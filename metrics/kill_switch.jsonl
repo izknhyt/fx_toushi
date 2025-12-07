@@ -4,3 +4,16 @@
 {"ts": "2025-12-03T13:05:01Z", "state": "soft_stop", "previous_state": "none", "reason": "spread_block", "actor": "tester", "runbook": null}
 {"ts": "2025-12-03T13:11:49Z", "state": "soft_stop", "previous_state": "none", "reason": "spread_block", "actor": "tester", "runbook": null}
 {"ts": "2025-12-07T04:18:52Z", "state": "soft_stop", "previous_state": "none", "reason": "spread_block", "actor": "tester", "runbook": null}
+{"ts": "2025-12-07T05:42:37Z", "state": "soft_stop", "previous_state": "none", "reason": "spread_block", "actor": "tester", "runbook": null}
+{"ts": "2025-12-07T05:48:20Z", "state": "soft_stop", "previous_state": "none", "reason": "spread_block", "actor": "tester", "runbook": null}
+{"ts": "2025-12-07T05:49:49Z", "state": "soft_stop", "previous_state": "none", "reason": "spread_block", "actor": "tester", "runbook": null}
+{"ts": "2025-12-07T05:50:07Z", "state": "soft_stop", "previous_state": "none", "reason": "spread_block", "actor": "tester", "runbook": null}
+{"ts": "2025-12-07T05:50:36Z", "state": "soft_stop", "previous_state": "none", "reason": "spread_block", "actor": "tester", "runbook": null}
+{"ts": "2025-12-07T10:34:13Z", "state": "soft_stop", "previous_state": "none", "reason": "spread_block", "actor": "tester", "runbook": null}
+{"ts": "2025-12-07T10:40:31Z", "state": "soft_stop", "previous_state": "none", "reason": "spread_block", "actor": "tester", "runbook": null}
+{"ts": "2025-12-07T10:53:08Z", "state": "soft_stop", "previous_state": "none", "reason": "spread_block", "actor": "tester", "runbook": null}
+{"ts": "2025-12-07T11:33:27Z", "state": "soft_stop", "previous_state": "none", "reason": "spread_block", "actor": "tester", "runbook": null}
+{"ts": "2025-12-07T11:36:29Z", "state": "soft_stop", "previous_state": "none", "reason": "spread_block", "actor": "tester", "runbook": null}
+{"ts": "2025-12-07T11:53:02Z", "state": "soft_stop", "previous_state": "none", "reason": "spread_block", "actor": "tester", "runbook": null}
+{"ts": "2025-12-07T11:55:55Z", "state": "soft_stop", "previous_state": "none", "reason": "spread_block", "actor": "tester", "runbook": null}
+{"ts": "2025-12-07T12:10:36Z", "state": "soft_stop", "previous_state": "none", "reason": "spread_block", "actor": "tester", "runbook": null}

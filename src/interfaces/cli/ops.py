@@ -6,13 +6,10 @@ import logging
 
 from pathlib import Path
 from typing import Iterable
+from datetime import datetime, date
 
-from src.ops import (
-    AutomationEffectTracker,
-    OpsAgendaService,
-    OpsDrillService,
-    OpsWorklogService,
-)
+from src.ops import AutomationEffectTracker, OpsAgendaService, OpsDrillService, OpsWorklogService
+from src.ops.automation import AutomationEffectDelta
 from src.ops.action_sync import ActionSyncError, sync_action_items
 from src.ops.profit_readiness import (
     DEFAULT_PROFIT_READINESS_PATH,
@@ -139,20 +136,25 @@ def readiness(
 
 
 def agenda(date: str, *, out: str | None = None) -> str:
-    """Stub for generating Ops agendas."""
+    """Generate an Ops agenda using the template."""
 
-    logger.info("cli.ops.agenda.stub", extra={"date": date, "out": out})
-    raise NotImplementedError("tradectl ops agenda is not implemented in the M1 scaffold")
+    target_date = datetime.fromisoformat(date).date() if date else datetime.utcnow().date()
+    service = OpsAgendaService()
+    path = service.generate(target_date=target_date, force=bool(out and Path(out).exists()))
+    if out:
+        dest = Path(out)
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_text(Path(path).read_text(encoding="utf-8"), encoding="utf-8")
+        return str(dest)
+    return str(path)
 
 
 def automation_log(*, task: str, before: int | None = None, after: int | None = None) -> None:
-    """Stub for recording automation log entries."""
+    """Record automation effect delta to automation_effect.jsonl."""
 
-    logger.info(
-        "cli.ops.automation.stub",
-        extra={"task": task, "before": before, "after": after},
-    )
-    raise NotImplementedError("tradectl ops automation log is not implemented in the M1 scaffold")
+    tracker = AutomationEffectTracker()
+    tracker.apply(AutomationEffectDelta(task=task, before_min=before, after_min=after))
+    logger.info("cli.ops.automation.completed", extra={"task": task})
 
 
 def action_item_sync(

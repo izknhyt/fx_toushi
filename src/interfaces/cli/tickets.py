@@ -35,6 +35,7 @@ DEFAULT_GUARDRAILS = {
     "reduce_only": False,
     "reason": None,
     "risk_disclosure": "pending",
+    "profit_readiness_status": "ok",
 }
 DEFAULT_CHECKLIST_PROGRESS = {"completed": 0, "total": 0, "pending_ids": []}
 DEFAULT_WATCHLIST_REASONS: list[str] = []
@@ -321,7 +322,12 @@ def _build_audit_entry(
         "action": action,
         "actor": user,
         "board_mode": board_mode,
-        "auto_execute": board_mode == "normal",
+        "kill_switch_state": guardrails.get("kill_switch", "none"),
+        "spread_status": guardrails.get("spread_status", "normal"),
+        "profit_readiness_status": guardrails.get("profit_readiness_status", "ok"),
+        "reduce_only": guardrails.get("reduce_only", False),
+        "risk_disclosure_state": guardrails.get("risk_disclosure", "pending"),
+        "auto_execute": board_mode == "normal" and not guardrails.get("reduce_only", False),
         "guardrails": dict(guardrails),
         "determinism_hash": determinism_hash,
         "determinism_version": determinism_version,

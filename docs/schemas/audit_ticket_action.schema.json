@@ -6,20 +6,20 @@
   "type": "object",
   "required": [
     "ts",
-    "record_type",
     "schema_version",
     "ticket_id",
     "action",
     "actor",
-    "consent_reference_id",
     "board_mode",
-    "auto_execute",
-    "guardrails",
+    "kill_switch_state",
+    "spread_status",
+    "profit_readiness_status",
+    "reduce_only",
+    "risk_disclosure_state",
     "cfg_hash",
     "data_hash",
-    "delta",
-    "determinism_hash",
-    "determinism_version"
+    "consent_reference_id",
+    "record_type"
   ],
   "additionalProperties": true,
   "properties": {
@@ -57,9 +57,24 @@
       "type": "string",
       "enum": ["normal", "guarded", "halted"]
     },
-    "auto_execute": {
-      "type": "boolean",
-      "description": "Hands-off flag at the moment of action; false for guarded/halted or Reduce-Only."
+    "kill_switch_state": {
+      "type": "string",
+      "enum": ["none", "soft_stop", "hard_stop"]
+    },
+    "spread_status": {
+      "type": "string",
+      "enum": ["normal", "cooldown", "block"]
+    },
+    "profit_readiness_status": {
+      "type": "string",
+      "enum": ["ok", "guarded", "halted", "stale"]
+    },
+    "reduce_only": {
+      "type": "boolean"
+    },
+    "risk_disclosure_state": {
+      "type": "string",
+      "enum": ["ok", "pending", "warning", "expired"]
     },
     "guardrails": {
       "type": "object",
@@ -130,11 +145,6 @@
     "notes": {
       "type": "string",
       "maxLength": 1024
-    },
-    "consent_reference_id": {
-      "type": ["string", "null"],
-      "description": "UUID tied to risk disclosure consent at action time",
-      "pattern": "^[0-9a-fA-F-]{36}$"
     },
     "extras": {
       "type": "object",

@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import logging
+import json
+import hashlib
+import os
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
@@ -73,6 +76,8 @@ class SnapshotManager:
     ) -> SnapshotPersistResult:
         """Atomically write the provided snapshot to disk."""
 
+        if not cfg_hash or not data_hash:
+            raise RuntimeError(SnapshotError.SNAPSHOT_HASH_ERROR.value)
         metadata = SnapshotMetadata(
             cfg_hash=cfg_hash,
             data_hash=data_hash,
@@ -80,20 +85,55 @@ class SnapshotManager:
             created_at=datetime.utcnow(),
         )
         self._logger.debug("Preparing snapshot persist: base=%s", self.base_path)
-        raise NotImplementedError("SnapshotManager.persist is pending Codex implementation.")
+        target_dir = Path(self.base_path)
+        target_dir.mkdir(parents=True, exist_ok=True)
+        target = target_dir / "latest.json"
+        tmp_path = target.with_suffix(".tmp")
+        payload = {
+            "metadata": {
+                "cfg_hash": metadata.cfg_hash,
+                "data_hash": metadata.data_hash,
+                "actor": metadata.actor,
+                "created_at": metadata.created_at.isoformat().replace("+00:00", "Z"),
+            },
+            "state": snapshot,
+        }
+        try:
+            with tmp_path.open("w", encoding="utf-8") as handle:
+                json.dump(payload, handle, ensure_ascii=False, indent=2)
+                handle.flush()
+                os.fsync(handle.fileno())
+            tmp_path.replace(target)
+            checksum = _sha256_path(target)
+        except OSError as exc:
+            self._logger.error("snapshot.persist_failed", extra={"error": str(exc)})
+            raise RuntimeError(SnapshotError.SNAPSHOT_PERSIST_ERROR.value) from exc
+        return SnapshotPersistResult(path=target, checksum=checksum)
 
     def restore(self, path: Optional[Path] = None) -> SnapshotRestoreResult:
         """Restore the most recent snapshot from disk."""
 
         target = path or self.base_path / "latest.json"
         self._logger.debug("Restoring snapshot: path=%s", target)
-        raise NotImplementedError("SnapshotManager.restore is pending Codex implementation.")
+        if not target.exists():
+            raise FileNotFoundError(target)
+        try:
+            data = json.loads(target.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as exc:
+            raise RuntimeError(SnapshotError.SNAPSHOT_CORRUPTED_ERROR.value) from exc
+        metadata = data.get("metadata") or {}
+        cfg_hash = metadata.get("cfg_hash")
+        data_hash = metadata.get("data_hash")
+        if not cfg_hash or not data_hash:
+            raise RuntimeError(SnapshotError.SNAPSHOT_HASH_ERROR.value)
+        state = data.get("state")
+        return SnapshotRestoreResult(state=state, warnings=tuple())
 
     def compare_hash(self, data_hash: str, expected_hash: str) -> HashComparisonReport:
         """Compare the current data hash with the stored expectation."""
 
         if not data_hash or not expected_hash:
-            raise NotImplementedError("Hash computation guard has not been implemented yet.")
+            raise RuntimeError(SnapshotError.HASH_COMPUTATION_ERROR.value)
         matches = data_hash == expected_hash
         if not matches:
             self._emit_data_mismatch(data_hash=data_hash, expected_hash=expected_hash)
@@ -105,4 +145,12 @@ class SnapshotManager:
         self._logger.error(
             "Data mismatch detected: expected=%s actual=%s", expected_hash, data_hash
         )
-        raise NotImplementedError("Data mismatch emission is pending Codex implementation.")
+        raise RuntimeError(SnapshotError.DATA_MISMATCH_DETECTED.value)
+
+
+def _sha256_path(path: Path) -> str:
+    h = hashlib.sha256()
+    with path.open("rb") as fp:
+        for chunk in iter(lambda: fp.read(8192), b""):
+            h.update(chunk)
+    return f"sha256:{h.hexdigest()}"

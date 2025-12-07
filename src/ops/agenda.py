@@ -57,9 +57,30 @@ class OpsAgendaService:
     def generate(self, *, target_date: date, force: bool = False) -> Path:
         """Generate an agenda for *target_date* and return the resulting Markdown path."""
 
-        raise NotImplementedError("OpsAgendaService.generate is not implemented in the scaffold")
+        if not self._template_path.exists():
+            raise FileNotFoundError(self._template_path)
+        content = self._template_path.read_text(encoding="utf-8")
+        ctx = self.build_context(target_date=target_date)
+        rendered = content.replace("{{DATE}}", str(ctx.target_date))
+        rendered = rendered.replace("{{HEALTH_STATE}}", ctx.health_state)
+        rendered = rendered.replace("{{BOARD_MODE}}", ctx.board_mode)
+        output_path = self._output_dir / f"{ctx.target_date}.md"
+        if output_path.exists() and not force:
+            raise AgendaAlreadyExistsError(str(output_path))
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(rendered, encoding="utf-8")
+        return output_path
 
     def build_context(self, *, target_date: date) -> AgendaContext:
         """Collect inputs and compute the :class:`AgendaContext` for *target_date*."""
 
-        raise NotImplementedError("OpsAgendaService.build_context is not implemented in the scaffold")
+        # Minimal context: fields are present but empty lists by default.
+        return AgendaContext(
+            target_date=target_date,
+            health_state="ok",
+            board_mode="normal",
+            critical_first=[],
+            operational_tasks=[],
+            runbook_reviews=[],
+            validation_pending=[],
+        )

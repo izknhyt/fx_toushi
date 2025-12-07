@@ -473,6 +473,33 @@ M1 Issue/Packetでは下表の「M1 Core」列のみをDone条件とし、Bridge
 - **テレメトリ/監査スキーマ同期**: 付録スキーマに`metrics/profit_loop.jsonl`, `metrics/scoreboard_bridge.jsonl`, `metrics/execution_bridge.jsonl`, `logs/scoreboard_watchlist.jsonl`, `audit.ticket_action.v2`の最新フィールドと`schema_version`を反映（W13 Snapshotを例示）。
 - **残TODO表示**: M2+スタブ（Idea Pipeline, Ops Readiness Evaluator, Scoreboard本拡張）が未着手である旨を各節末尾に記し、M2移行トリガ（必要週数、Watchlist件数、Opsスコア閾値）を併記する。
 
+#### 0.6.17 未確定項目の設計固定（2025-12-07）
+- **Scheduler（§2.3）**: `AsyncIntervalJob`/`AsyncOneShotJob`のデフォルトを`max_retries=3`, `jitter_ratio=0.1`, `max_skips=1`とし、開始遅延が`max(interval*1.5, 2s)`を超えた場合に`SchedulerLagWarning`を記録する。遅延計測は`time.monotonic()`を使用し、メトリクスは`metrics/scheduler.jsonl`へ`{job_id, scheduled_at, started_at, lag_ms, status}`で追記する。
+- **EventBus（§2.4）**: `backpressure_policy='block'`時は`queue.put`待ちを採用し、待機が100ms超なら`queue_wait_ms`をメトリクスに残す。ローテーションはUTC日次＋50MB超のサイズ閾値で即ローテートし、`logs/events/<date>.jsonl`を`retention_days=7`で保持、アーカイブは`gz`圧縮で`logs/events/archive/`に移動する。`queue_depth>=0.8*maxsize`で`metrics/event_bus_queue.jsonl`に`{event_type, queue_depth, policy, ts}`を追記する。
+- **SnapshotManager（§2.4）**: `persist(state, cfg_hash, data_hash, actor='system')`は`cfg_hash`/`data_hash`が`None`なら`SnapshotPersistError`でfail-fast。復旧時にハッシュ不一致があれば`SnapshotCorruptedError`を返し、`health.status=hard_stop`を推奨する。復旧直後のBoardModeは`paused`相当とし、OpsがRunbook承認後に`resume`する。
+- **DataIngestion/Manual CSV（§3.1/§17.6）**: プロバイダ優先度は`provider_priority`順に最大2回リトライ（500msバックオフ）。`quality_flag`: `0=ok`, `1=missing_bars`, `2=dup_bars`, `3=out_of_order`, `4=ts_mismatch`。Manual CSV検証必須: (a) 5m/1hのバー境界整合、(b) UTC/JSTカラム一致、(c) `low ≤ open,close ≤ high`、(d) 双子CSV（`op`/`review`）のSHA256一致。Exit code 120で不合格とし、`reports/validation_log/manual_csv_<...>.md`に理由を出力。
+- **Acceptable Degradation/Board Mode（§2.5/§17.2）**: 自動遷移は行わず「推奨」フラグのみ。`health.status in {degraded, soft_stop}`または`spread.state in {cooldown, block}`で`board_mode_suggestion=guarded`を提示し、`health.status=hard_stop`または`kill_switch_state=hard_stop`で`halted`を提示。解除条件は「原因コード解消＋直近15分の`metrics/data_ingestion_sla.jsonl`と`metrics/spread_guard.jsonl`が正常」で、OpsがRunbookに従い手動解除。
+- **Determinism/Manifest（§3.5/§15.2/§27）**: `determinism_key`はManifest必須。`determinism_hash = blake2b(feature_version + data_manifest_hash + determinism_key + strategy_config + seed)`と定義し、`AuditRecord.determinism_hash`に必須で記録する。Manifest必須フィールド: `id`, `version`, `owner`, `determinism_key`, `entrypoint`, `required_features`, `default_watchlist`, `validation.tests`, `schema_version`. 欠落時は`StrategyManifestError`でfail-fast。
+- **Ticket Clarity/Audit（§92）**: `audit.ticket_action.v2`の必須フィールドを固定: `ticket_id`, `action`, `actor`, `board_mode`, `kill_switch_state`, `spread_status`, `profit_readiness_status`, `reduce_only`, `risk_disclosure_state`, `cfg_hash`, `data_hash`, `consent_reference_id`, `ts`. CLI/GUIはこれらを全て埋めて監査へ書き出す。
+- **Ops Worklog/Agenda（§18/§0.6.7）**: `ops_worklog.jsonl`のキーを`{timestamp, task, week, mode?, runbooks, command?, evidence, notes}`に固定し、Agenda生成時に`task`と`runbooks`を必須入力とする。CLI/自動化はこのスキーマに従う（例: `tradectl ops readiness --profit --log`）。
+- **Broker Stage/Order Lifecycle（§84/§85/§17.x）**: APIエラー分類を`retryable={timeout, throttled, transient_5xx}`, `fatal={auth, permission, instrument_closed, invalid_params}`, `circuit_breaker={rate_limit_exceeded, venue_halt}`で固定。Retryポリシーは`max_retries=2`, `backoff=1.0s`, `jitter=0.2s`。Stage Guard状態遷移は`paper_live_bridge -> live_shadow -> live`の順、失敗時は一段ロールバックしてRunbook `RUN-BROKER-01`で再実施。
+- **推奨デフォルト（運用前提の細目）**:
+  - EventBus replay/retention: ローテーション済みgzを含め当日＋直近7日を対象に`replay(from_ts, to_ts, event_types)`でフィルタ、バッチ256件。起動時＋日次00:10 UTCにretentionクリーンを実行。
+  - Schedulerポリシー: `max_retries=3`, `retry_backoff=1s`, `jitter=10%`, `max_skips=1`, `lag_warn = max(interval*1.5, 2s)`をデフォルトにし、ジョブ引数で上書き可。
+  - Data/Resync: provider優先順で2回リトライ（500msバックオフ）、SLAメトリクス`{ts, provider, fetch_p95_ms, fetch_p99_ms, bars, 429_rate, latency_status}`を`metrics/data_ingestion_sla.jsonl`に追記。Resyncエビデンスは`logs/resync/resync_events.jsonl`＋`reports/ops/resync/<ts>.md`。
+  - Ops自動化: `automation_effect.jsonl`は`{timestamp, task, before, after, delta, runbook_ref, evidence}`を必須キーとする。
+  - GUI/Tauri: EventBusチャネル名を`ticket.*`, `gate.*`, `health.*`, `execution.*`に予約。`ticket.action`イベントでは`kill_switch_state/spread_status/profit_readiness_status/reduce_only/risk_disclosure_state/cfg_hash/data_hash`を必須表示。
+  - 依存データ/モック: Resync用サンプルCSVを`data/manual_fallback/<provider>/<symbol>/<date>/`に配置（5m/1hのop/review雛形）。Brokerモックは`config/broker_rules.yaml`にダミーエンドポイントとエラーコード対応表を追記する。
+
+##### 0.6.17 追加の推奨設定（未確定項目の確定）
+- **Data/Resync 実プロバイダ**: `provider_priority`で決定した順に最大2回リトライ（初回500msバックオフ、2回目1s）。遅延SLAは`fetch_p95_ms/p99_ms`と`latency_status∈{ok,watch,breach}`を`metrics/data_ingestion_sla.jsonl`へ記録。CLI `tradectl resync run --provider <id>`は`reports/ops/resync/<ts>.md`へ結果を必ず書き出し、失敗時はExit 120でRunbook遷移。
+- **Broker フォールト注入/分類**: `OrderLifecycleManager.classify_error`は`timeout/429/5xx`をretryable、`auth/permission/invalid_params/instrument_closed`をfatal、`rate_limit_exceeded/venue_halt`をcircuit_breakerで固定。`max_retries=2, backoff=1s, jitter=0.2s`をデフォルトにし、circuit_breaker発火時は`StageGuard`を一段ロールバック。`broker_fault` CLIのデフォルトシナリオは`timeout`, `429`, `venue_halt`の3種を提供。
+- **GUI/Tauri バックログ**: 初回ロード時は`events_lookback=7d`、チャネル別に最新10件まで返却し、`ticket.action`は`kill_switch_state/spread_status/profit_readiness_status/reduce_only/risk_disclosure_state/cfg_hash/data_hash/consent_reference_id/auto_execute`を必須表示。バックログ欠損はWARNログのみでUIは継続。
+- **Acceptable Degradation解除 Runbook同期**: 解除判定は「原因コード解消＋直近15分の`metrics/data_ingestion_sla.jsonl`/`metrics/spread_guard.jsonl`が正常」で固定。解除時に`audit.ticket_action`相当の記録（`board_mode`, `kill_switch_state`, `spread_status`, `profit_readiness_status`, `risk_disclosure_state`, `cfg_hash`, `data_hash`, `consent_reference_id`)を残すことをRunbookに明示。
+- **Broker Faultメトリクス/監査**: `tradectl broker simulate fault`は`metrics/broker_faults.jsonl`へ`{scenario, error_class, stage_from, stage_to, recovery, runbook_ref, ts}`を追記し、fatal系は`RUN-BROKER-AUTH`、circuit_breaker系は`RUN-BROKER-01`をRunbook参照として返す。`audit.order_recovery_planned.*`と整合。
+- **Data実プロバイダハンドラ**: ローカルParquetベースのプロバイダ`parquet_provider`を提供し、`provider_handlers`へ挿入するだけで実データ読み込み＋実測レイテンシをSLAに記録できる。閾値は`provider_sla_thresholds={'provider': (warn_ms, breach_ms)}`で調整する。
+- **GUI/Tauriプレースホルダ**: EventBus/監査ログが空でも`ticket/gate/health/execution`各チャネルにプレースホルダイベントを返し、UIレンダリングが途切れないようにする。
+
 #### 4.4.4 `config/scoring.yaml`
 - **用途**: ScoringService（§3.7）、Strategy Scoreboard（付録G.1）、`tradectl scoring diagnostics`（§6.5）で共通利用する係数と閾値を管理。
 - **構成例**:
