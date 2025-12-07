@@ -4023,6 +4023,10 @@ def test_<case>(...):
 - **Stress/Journal出力パス**: 実装は`reports/stress/<scenario>_report.md`と`reports/journal/<week>.md`に書き出し、週次レポートはこれらを読み込む前提。Docsテンプレ（`docs/reports/templates/...`）が未整備の場合は`src/reporter/templates/weekly_m1_core.md`をデフォルトとする。
 - **GUI IPC範囲**: Tauri側はシリアライザのみ（TicketRecord v2への正規化とBoard再利用）。Audit連携/コマンドハンドラは未実装であることを注記し、EP04-P3以降で拡張する。
 - **ops_worklogフィールド**: `ticket_action`追記時に`cfg_hash`/`data_hash`/`consent_reference_id`/`guardrails`（kill_switch/spread/reduce_only/risk_disclosure）を含める現行実装を仕様として明記する。
+- **準備テクニック（先回り対策）**:
+  - BoardスナップショットはRiskDisclosureバナー/guardrails列/Spreadバッジ差分が出やすいため、主要5ケースを`tests/approval/board/`に事前整形し、`TRADECTL_COMPAT`は基本unset（v1互換が必要なら`tests/approval/board_compat/`に分離）。
+  - 週次Reporterはテンプレのデフォルトを`src/reporter/templates/weekly_m1_core.md`に固定し、`reports/stress/`と`reports/journal/`はテスト前にディレクトリを作成（空でも可）して読み込みエラーを防ぐ。
+  - Audit v2は`cfg_hash`/`data_hash`/`consent_reference_id`/`delta.decision`を必須とし、ハッシュ未取得時は`sha256:0{64}`のダミーを埋める。CLI側はGateState→ENV→manifestのフォールバックを強制し、欠損時に未知文字列を出さない。
 
 <レビューポイント>
   - Spread/NTP/Kill Switch連携 など

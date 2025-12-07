@@ -1,0 +1,37 @@
+{
+  "summary": {
+    "job_id": "replay-d3baa65f",
+    "strategy_id": "a",
+    "event_count": 2,
+    "hashes": [
+      "h1",
+      "h2"
+    ],
+    "first_ts": "2024-01-02T00:00:00Z",
+    "last_ts": "2024-01-02T01:00:00Z",
+    "signals": {
+      "expected_count": 1,
+      "actual_count": 1,
+      "matched": 1,
+      "diff_count": 0,
+      "expected_hash": "0bb5a37264d40f900352f5a9be90c853",
+      "actual_hash": "0bb5a37264d40f900352f5a9be90c853"
+    },
+    "signals_markdown": "|bar_ts|status|feature_hash_expected|feature_hash_actual|strategy_hash_expected|strategy_hash_actual|ticket_hash_expected|ticket_hash_actual|latency_expected_ms|latency_actual_ms|\n|---|---|---|---|---|---|---|---|---|---|"
+  },
+  "events": [
+    {
+      "event": "strategy.determinism",
+      "strategy_id": "a",
+      "determinism_hash": "h1",
+      "ts": "2024-01-02T00:00:00Z"
+    },
+    {
+      "event": "strategy.determinism",
+      "strategy_id": "a",
+      "determinism_hash": "h2",
+      "ts": "2024-01-02T01:00:00Z"
+    }
+  ],
+  "signals_markdown": "|bar_ts|status|feature_hash_expected|feature_hash_actual|strategy_hash_expected|strategy_hash_actual|ticket_hash_expected|ticket_hash_actual|latency_expected_ms|latency_actual_ms|\n|---|---|---|---|---|---|---|---|---|---|"
+}

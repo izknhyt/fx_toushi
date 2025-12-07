@@ -26,8 +26,8 @@ METRICS_PATH = Path("metrics") / "tickets.jsonl"
 AUDIT_PATH = Path("audit") / "ticket_actions.jsonl"
 OPS_WORKLOG_PATH = Path("ops_worklog.jsonl")
 TICKET_STORE_PATH = Path("snapshots") / "tickets" / "ticket_records.jsonl"
-DEFAULT_CFG_HASH = "sha256:unknown_cfg"
-DEFAULT_DATA_HASH = "sha256:unknown_data"
+DEFAULT_CFG_HASH = "sha256:" + "0" * 64
+DEFAULT_DATA_HASH = "sha256:" + "0" * 64
 DEFAULT_GUARDRAILS = {
     "kill_switch": "none",
     "spread_status": "normal",
