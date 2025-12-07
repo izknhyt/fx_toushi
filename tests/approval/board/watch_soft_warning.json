@@ -1,0 +1,96 @@
+{
+  "board_mode": "guarded",
+  "guardrails": {
+    "kill_switch_state": "soft_stop",
+    "spread_status": "watch",
+    "reduce_only": true,
+    "risk_disclosure": "warning",
+    "risk_disclosure_consent_id": null
+  },
+  "tickets": [
+    {
+      "ticket_id": "TK-WATCH-SOFT",
+      "symbol": "EURGBP",
+      "timeframe": "M15",
+      "strategy_id": "m1_baseline_ma_rsi",
+      "action": "buy",
+      "quantity": 65000,
+      "position": {
+        "direction": "long",
+        "size_lot": 0.65,
+        "reduce_only": true
+      },
+      "regime_context": {
+        "regime": "guarded",
+        "conviction": "low"
+      },
+      "entry": {
+        "type": "market",
+        "price": 0.8575,
+        "spread_badge": "watch"
+      },
+      "protect": {
+        "stop_loss": 0.854,
+        "take_profit": 0.863,
+        "trailing": false,
+        "ttl_seconds": 550
+      },
+      "guardrails": {
+        "kill_switch": "soft_stop",
+        "spread_status": "watch",
+        "reduce_only": true,
+        "reason": "health_soft_stop"
+      },
+      "badges": [
+        "spread_watch",
+        "reduce_only_enforced",
+        "rd_warning"
+      ],
+      "checklist": [
+        {
+          "id": "spread_window_clear",
+          "label": "Spread & news window clear",
+          "status": "warn",
+          "mandatory": true,
+          "metadata": {
+            "state": "watch"
+          }
+        },
+        {
+          "id": "double_entry_confirmed",
+          "label": "Double-entry confirmed",
+          "status": "ok",
+          "mandatory": true
+        }
+      ],
+      "risk_summary": {
+        "risk_disclosure": "warning",
+        "account_risk_pct": 0.18,
+        "r_multiple": 0.5
+      },
+      "notes": {
+        "manual_comment": "Soft stop + RD warning"
+      },
+      "gate_context": {
+        "spread": {
+          "state": "watch",
+          "reason": "vol spike"
+        }
+      },
+      "audit_refs": {
+        "manifest_hash": "sha256:cfg-watchsoft",
+        "data_hash": "sha256:data-watchsoft",
+        "determinism_hash": "deadbeef10"
+      }
+    }
+  ],
+  "auto_execute": false,
+  "banner": {
+    "kind": "kill_switch",
+    "message": "Kill Switch SOFT_STOP",
+    "severity": "soft",
+    "runbook": "docs/runbooks/RUN-RISK-01.md"
+  },
+  "render_summary": "mode=guarded | banner=Kill Switch SOFT_STOP | ks=soft_stop, spread=watch, reduce_only=True | risk_disclosure=warning | badges: profit=ok, latency=ok, slippage=ok | tickets=1",
+  "rendered_table": "                                                                                                Tickets                                                                                                 \n┏━━━━━━━━━━━━━━┳━━━━━━━━┳━━━━━━━━┳━━━━━━━┳━━━━━━━━┳━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━┳━━━━━━━━┳━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━┓\n┃Ticket ID     ┃ Symbol ┃ Action ┃ Qty   ┃ TTL(s) ┃ Entry           ┃ SL/TP           ┃ Guardrails     ┃ Badges          ┃ Checklist      ┃ RiskDisclosure ┃ Spread ┃ Notes           ┃ AuditRefs      ┃\n┡━━━━━━━━━━━━━━╇━━━━━━━━╇━━━━━━━━╇━━━━━━━╇━━━━━━━━╇━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━╇━━━━━━━━╇━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━┩\n│TK-WATCH-SOFT │ EURGBP │ buy    │ 65000 │ 550    │ market @0.8575  │ SL=0.854        │ ks=soft_stop(… │ spread_watch,r… │ 1/2 (pending:  │ warning        │ watch  │ Soft stop + RD  │ cfg=sha256:cfg…│\n│              │        │        │       │        │                 │ TP=0.863        │ spread=watch,  │                 │ spread_window… │                │        │ warning         │ data=sha256:da…│\n│              │        │        │       │        │                 │ TTL=550         │ ro=True        │                 │                │                │        │                 │ det=deadbeef10 │\n└──────────────┴────────┴────────┴───────┴────────┴─────────────────┴─────────────────┴────────────────┴─────────────────┴────────────────┴────────────────┴────────┴─────────────────┴────────────────┘\n"
+}

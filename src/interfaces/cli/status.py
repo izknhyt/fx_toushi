@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 import logging
+import os
+import hashlib
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping, MutableMapping
@@ -226,6 +228,14 @@ def _kill_switch_history(path: Path, *, limit: int = 10) -> Mapping[str, Any]:
     }
 
 
+def _sha256_path(path: Path) -> str:
+    h = hashlib.sha256()
+    with path.open("rb") as fp:
+        for chunk in iter(lambda: fp.read(8192), b""):
+            h.update(chunk)
+    return f"sha256:{h.hexdigest()}"
+
+
 def status(
     *,
     verbose: bool = False,
@@ -248,10 +258,43 @@ def status(
     """Return the current status snapshot for operators."""
 
     monitor = monitor or HealthMonitor()
+    guardrails: dict[str, object] = {}
+    if metrics_path and metrics_path.exists():
+        try:
+            last_line = [line for line in metrics_path.read_text(encoding="utf-8").splitlines() if line.strip()][-1]
+            guardrails = json.loads(last_line)
+        except Exception:  # pragma: no cover - defensive
+            guardrails = {}
     if health_state_path is not None:
         _load_health_state(monitor, health_state_path)
     gate_state = gate_state or (GateState.load(gate_state_path) if gate_state_path else GateState())
     snapshot_manager = snapshot_manager or SnapshotManager()
+    # propagate manifest hashes from guardrails metrics when present
+    if guardrails.get("manifest_hash") and not gate_state.cfg_hash:
+        gate_state.cfg_hash = guardrails.get("manifest_hash")
+    if guardrails.get("data_hash") and not gate_state.data_hash:
+        gate_state.data_hash = guardrails.get("data_hash")
+    # fallback to env/manifest if still missing
+    if not gate_state.cfg_hash:
+        cfg_path_env = os.getenv("TRADECTL_CFG_PATH")
+        cfg_env = os.getenv("TRADECTL_CFG_HASH")
+        if cfg_path_env and Path(cfg_path_env).exists():
+            gate_state.cfg_hash = _sha256_path(Path(cfg_path_env))
+        elif cfg_env:
+            gate_state.cfg_hash = cfg_env
+    if not gate_state.data_hash:
+        data_env = os.getenv("TRADECTL_DATA_HASH")
+        if data_env:
+            gate_state.data_hash = data_env
+        else:
+            manifest_path = Path("reports") / "data_manifest.json"
+            if manifest_path.exists():
+                try:
+                    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+                    entry = (manifest.get("strategies") or {}).get("m1_baseline_ma_rsi") or {}
+                    gate_state.data_hash = entry.get("dataset_sha256")
+                except json.JSONDecodeError:
+                    gate_state.data_hash = None
 
     raw_kill_switch_state, kill_switch_reason = _load_kill_switch_state(kill_switch_state_path) if kill_switch_state_path else ("none", None)
     kill_switch_override = None if raw_kill_switch_state in {None, "none"} else raw_kill_switch_state

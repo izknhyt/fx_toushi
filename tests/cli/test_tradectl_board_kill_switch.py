@@ -35,6 +35,8 @@ def test_tradectl_board_includes_kill_switch_banner(tmp_path: Path) -> None:
             "--manifest",
             str(manifest_path),
             "--guarded",
+            "--risk-disclosure",
+            "signed",
             "--json",
         ],
     )

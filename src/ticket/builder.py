@@ -7,6 +7,8 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Mapping, Protocol, runtime_checkable
 
+from src.execution import ExecutionAdjustments
+
 from src.core.gate import GateState
 
 from .checklist import ChecklistBuilder, ChecklistItem
@@ -29,7 +31,7 @@ class TicketDraft:
     symbol: str
     action: str
     qty: float
-    metadata: Mapping[str, str]
+    metadata: Mapping[str, object]
 
 
 @dataclass(slots=True)
@@ -78,7 +80,12 @@ class DefaultTicketBuilder:
     def __init__(self) -> None:
         self._checklist_builder = ChecklistBuilder()
 
-    def build(self, draft: TicketDraft, gate_state: GateState) -> TicketArtifact:
+    def build(
+        self,
+        draft: TicketDraft,
+        gate_state: GateState,
+        execution_adjustments: ExecutionAdjustments | None = None,
+    ) -> TicketArtifact:
         """Construct a :class:`TicketArtifact` while applying gate constraints."""
 
         validate_market_open(draft.symbol, gate_state)
@@ -129,6 +136,7 @@ class DefaultTicketBuilder:
         payload = self._build_payload(
             draft=draft,
             gate_state=gate_state,
+            execution_adjustments=execution_adjustments,
             spread_metadata=spread_metadata,
             double_entry_metadata=double_entry_metadata,
             manual_comment_metadata=manual_comment_metadata,
@@ -142,6 +150,7 @@ class DefaultTicketBuilder:
             checklist=checklist,
             badges=tuple(badges),
             spread_metadata=spread_metadata,
+            ttl_seconds=payload["metadata"].get("ttl_seconds"),
         )
 
         logger.info(
@@ -168,10 +177,12 @@ class DefaultTicketBuilder:
         *,
         draft: TicketDraft,
         gate_state: GateState,
+        execution_adjustments: ExecutionAdjustments | None,
         spread_metadata: Mapping[str, object],
         double_entry_metadata: Mapping[str, object],
         manual_comment_metadata: Mapping[str, object],
     ) -> Mapping[str, object]:
+        ttl_seconds = _resolve_ttl(draft=draft, execution_adjustments=execution_adjustments)
         payload: dict[str, object] = {
             "symbol": draft.symbol,
             "action": draft.action,
@@ -188,6 +199,7 @@ class DefaultTicketBuilder:
             "kill_switch_reason": gate_state.risk.kill_switch_reason,
             "auto_execute": gate_state.auto_execute,
         }
+        payload["metadata"]["ttl_seconds"] = ttl_seconds
         return payload
 
     def _build_ticket_record(
@@ -201,6 +213,7 @@ class DefaultTicketBuilder:
         checklist: tuple[ChecklistItem, ...],
         badges: tuple[TicketBadge, ...],
         spread_metadata: Mapping[str, object],
+        ttl_seconds: object,
     ) -> TicketRecord:
         spread_state = str(spread_metadata.get("state", "normal"))
         guardrails = Guardrails(
@@ -237,7 +250,7 @@ class DefaultTicketBuilder:
                 "stop_loss": draft.metadata.get("stop_loss"),
                 "take_profit": draft.metadata.get("take_profit"),
                 "trailing": draft.metadata.get("trailing"),
-                "ttl_seconds": draft.metadata.get("ttl_seconds"),
+                "ttl_seconds": ttl_seconds,
             },
             entry={
                 "type": draft.metadata.get("entry_type", "market"),
@@ -282,6 +295,25 @@ def _normalize_spread_state(state: str) -> str:
     if normalized == "watch":
         return "cooldown"
     return normalized
+
+
+def _resolve_ttl(
+    *,
+    draft: TicketDraft,
+    execution_adjustments: ExecutionAdjustments | None,
+) -> int | float | None:
+    if execution_adjustments is not None:
+        return execution_adjustments.ttl_seconds
+    ttl = draft.metadata.get("ttl_seconds")
+    if ttl is None:
+        return None
+    try:
+        return int(ttl)
+    except (TypeError, ValueError):
+        try:
+            return float(ttl)  # type: ignore[return-value]
+        except (TypeError, ValueError):
+            return None
 
 
 __all__ = [

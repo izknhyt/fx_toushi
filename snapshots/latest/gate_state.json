@@ -1,0 +1,40 @@
+{
+  "auto_execute": false,
+  "cfg_hash": "sha256:58814e9f643aac19e8d99c0f4ecc8023c32dd4f45c9c6a1c87ce4ada2c2bac43",
+  "data_hash": "sha256:75fdf7c353e0ac7997b5a8472f7419ed3eee18b01fae4b43423b38a78ff2e294",
+  "human": {
+    "ack_deadline": null,
+    "acknowledged_roles": [],
+    "comment_min_length": 0,
+    "double_entry_required": false,
+    "manual_comment_required": false,
+    "required_roles": []
+  },
+  "market": {
+    "calendar": {
+      "blocked": false,
+      "holiday_block": false,
+      "reason": null
+    },
+    "latency_data_status": "ok",
+    "news": {
+      "blocked": false,
+      "reason": null,
+      "release_ts": null
+    },
+    "per_symbol": {},
+    "profit_readiness_status": "ok",
+    "slippage_data_status": "ok",
+    "spread": {
+      "cooldown_eta": null,
+      "reason": null,
+      "state": "normal"
+    }
+  },
+  "risk": {
+    "kill_switch_reason": null,
+    "kill_switch_recommendation": null,
+    "reduce_only": false,
+    "reduce_only_reason": null
+  }
+}

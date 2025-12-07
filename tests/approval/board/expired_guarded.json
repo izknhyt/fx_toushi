@@ -1,0 +1,89 @@
+{
+  "board_mode": "guarded",
+  "guardrails": {
+    "kill_switch_state": "guarded",
+    "spread_status": "normal",
+    "reduce_only": false,
+    "risk_disclosure": "expired",
+    "risk_disclosure_consent_id": null
+  },
+  "tickets": [
+    {
+      "ticket_id": "TK-EXP-1",
+      "symbol": "AUDCAD",
+      "timeframe": "H1",
+      "strategy_id": "m1_baseline_ma_rsi",
+      "action": "buy",
+      "quantity": 60000,
+      "position": {
+        "direction": "long",
+        "size_lot": 0.6,
+        "reduce_only": false
+      },
+      "regime_context": {
+        "regime": "stale_consent",
+        "conviction": "medium"
+      },
+      "entry": {
+        "type": "limit",
+        "price": 0.9105,
+        "spread_badge": "normal"
+      },
+      "protect": {
+        "stop_loss": 0.907,
+        "take_profit": 0.916,
+        "trailing": true,
+        "ttl_seconds": 800
+      },
+      "guardrails": {
+        "kill_switch": "guarded",
+        "spread_status": "normal",
+        "reduce_only": false
+      },
+      "badges": [
+        "consent_expired"
+      ],
+      "checklist": [
+        {
+          "id": "risk_disclosure_refresh",
+          "label": "RiskDisclosure refresh required",
+          "status": "pending",
+          "mandatory": true
+        },
+        {
+          "id": "double_entry_confirmed",
+          "label": "Double-entry confirmed",
+          "status": "ok",
+          "mandatory": true
+        }
+      ],
+      "risk_summary": {
+        "risk_disclosure": "expired",
+        "account_risk_pct": 0.25,
+        "r_multiple": 1.0
+      },
+      "notes": {
+        "manual_comment": "Consent renewal needed"
+      },
+      "gate_context": {
+        "spread": {
+          "state": "normal"
+        }
+      },
+      "audit_refs": {
+        "manifest_hash": "sha256:cfg-exp",
+        "data_hash": "sha256:data-exp",
+        "determinism_hash": "deadbeef07"
+      }
+    }
+  ],
+  "auto_execute": false,
+  "banner": {
+    "kind": "risk_disclosure",
+    "message": "RiskDisclosure expired",
+    "severity": "warn",
+    "runbook": "docs/runbooks/RUN-HITL-01.md"
+  },
+  "render_summary": "mode=guarded | banner=RiskDisclosure expired | ks=guarded, spread=normal, reduce_only=False | risk_disclosure=expired | badges: profit=ok, latency=ok, slippage=ok | tickets=1",
+  "rendered_table": "                                                                                                Tickets                                                                                                 \n┏━━━━━━━━━━┳━━━━━━━━┳━━━━━━━━┳━━━━━━━┳━━━━━━━━┳━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━┳━━━━━━━━┳━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━┓\n┃Ticket ID ┃ Symbol ┃ Action ┃ Qty   ┃ TTL(s) ┃ Entry          ┃ SL/TP           ┃ Guardrails       ┃ Badges          ┃ Checklist       ┃ RiskDisclosure ┃ Spread ┃ Notes            ┃ AuditRefs       ┃\n┡━━━━━━━━━━╇━━━━━━━━╇━━━━━━━━╇━━━━━━━╇━━━━━━━━╇━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━╇━━━━━━━━╇━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━┩\n│TK-EXP-1  │ AUDCAD │ buy    │ 60000 │ 800    │ limit @0.9105  │ SL=0.907        │ ks=guarded,      │ consent_expired │ 1/2 (pending:   │ expired        │ normal │ Consent renewal  │ cfg=sha256:cfg-…│\n│          │        │        │       │        │                │ TP=0.916 TRAIL  │ spread=normal,   │                 │ risk_disclosur… │                │        │ needed           │ data=sha256:dat…│\n│          │        │        │       │        │                │ TTL=800         │ ro=False         │                 │                 │                │        │                  │ det=deadbeef07  │\n└──────────┴────────┴────────┴───────┴────────┴────────────────┴─────────────────┴──────────────────┴─────────────────┴─────────────────┴────────────────┴────────┴──────────────────┴─────────────────┘\n"
+}

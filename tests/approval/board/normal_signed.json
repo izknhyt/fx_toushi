@@ -1,0 +1,94 @@
+{
+  "board_mode": "normal",
+  "guardrails": {
+    "kill_switch_state": "none",
+    "spread_status": "normal",
+    "reduce_only": false,
+    "risk_disclosure": "signed",
+    "risk_disclosure_consent_id": null
+  },
+  "tickets": [
+    {
+      "ticket_id": "TK-NORMAL-1",
+      "symbol": "GBPUSD",
+      "timeframe": "M5",
+      "strategy_id": "m1_baseline_ma_rsi",
+      "action": "buy",
+      "quantity": 150000,
+      "position": {
+        "direction": "long",
+        "size_lot": 1.5,
+        "reduce_only": false
+      },
+      "regime_context": {
+        "regime": "normal",
+        "conviction": "high"
+      },
+      "entry": {
+        "type": "limit_requote",
+        "price": 1.30012,
+        "spread_badge": "watch"
+      },
+      "protect": {
+        "stop_loss": 1.2971,
+        "take_profit": 1.3065,
+        "trailing": true,
+        "ttl_seconds": 1200
+      },
+      "guardrails": {
+        "kill_switch": "none",
+        "spread_status": "normal",
+        "reduce_only": false
+      },
+      "badges": [
+        "spread_watch",
+        "latency_ok"
+      ],
+      "checklist": [
+        {
+          "id": "spread_window_clear",
+          "label": "Spread & news window clear",
+          "status": "ok",
+          "mandatory": true,
+          "metadata": {
+            "state": "watch"
+          }
+        },
+        {
+          "id": "double_entry_confirmed",
+          "label": "Double-entry confirmed",
+          "status": "ok",
+          "mandatory": true,
+          "ack_by": "desk1"
+        }
+      ],
+      "risk_summary": {
+        "risk_disclosure": "signed",
+        "account_risk_pct": 0.4,
+        "r_multiple": 1.1,
+        "exposure_bucket": "core"
+      },
+      "notes": {
+        "manual_comment": "TP adjusted after news"
+      },
+      "gate_context": {
+        "spread": {
+          "state": "watch",
+          "reason": "pre-open"
+        }
+      },
+      "audit_refs": {
+        "manifest_hash": "sha256:cfg-live",
+        "data_hash": "sha256:data-live",
+        "determinism_hash": "deadbeef01"
+      }
+    }
+  ],
+  "auto_execute": true,
+  "banner": {
+    "kind": "normal",
+    "message": "Board mode normal"
+  },
+  "render_summary": "mode=normal | banner=Board mode normal | ks=none, spread=normal, reduce_only=False | risk_disclosure=signed | badges: profit=ok, latency=ok, slippage=ok | tickets=1",
+  "rendered_table": "                                                                                                Tickets                                                                                                 \n┏━━━━━━━━━━━━┳━━━━━━━━┳━━━━━━━━┳━━━━━━━━┳━━━━━━━━┳━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━┳━━━━━━━━━━━━━━━━┳━━━━━━━━┳━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━┓\n┃Ticket ID   ┃ Symbol ┃ Action ┃ Qty    ┃ TTL(s) ┃ Entry            ┃ SL/TP            ┃ Guardrails       ┃ Badges          ┃ Checklist ┃ RiskDisclosure ┃ Spread ┃ Notes            ┃ AuditRefs       ┃\n┡━━━━━━━━━━━━╇━━━━━━━━╇━━━━━━━━╇━━━━━━━━╇━━━━━━━━╇━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━╇━━━━━━━━━━━━━━━━╇━━━━━━━━╇━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━┩\n│TK-NORMAL-1 │ GBPUSD │ buy    │ 150000 │ 1200   │ limit_requote    │ SL=1.2971        │ ks=none,         │ spread_watch,l… │ 2/2       │ signed         │ watch  │ TP adjusted      │ cfg=sha256:cfg-…│\n│            │        │        │        │        │ @1.30012         │ TP=1.3065 TRAIL  │ spread=normal,   │                 │           │                │        │ after news       │ data=sha256:dat…│\n│            │        │        │        │        │                  │ TTL=1200         │ ro=False         │                 │           │                │        │                  │ det=deadbeef01  │\n└────────────┴────────┴────────┴────────┴────────┴──────────────────┴──────────────────┴──────────────────┴─────────────────┴───────────┴────────────────┴────────┴──────────────────┴─────────────────┘\n"
+}

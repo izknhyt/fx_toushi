@@ -1,0 +1,95 @@
+{
+  "board_mode": "guarded",
+  "guardrails": {
+    "kill_switch_state": "none",
+    "spread_status": "cooldown",
+    "reduce_only": true,
+    "risk_disclosure": "warning",
+    "risk_disclosure_consent_id": null
+  },
+  "tickets": [
+    {
+      "ticket_id": "TK-RO-1",
+      "symbol": "USDCHF",
+      "timeframe": "H1",
+      "strategy_id": "m1_baseline_ma_rsi",
+      "action": "buy",
+      "quantity": 50000,
+      "position": {
+        "direction": "long",
+        "size_lot": 0.5,
+        "reduce_only": true
+      },
+      "regime_context": {
+        "regime": "acceptable_degradation",
+        "conviction": "medium"
+      },
+      "entry": {
+        "type": "market",
+        "price": 0.9123,
+        "spread_badge": "cooldown"
+      },
+      "protect": {
+        "stop_loss": 0.907,
+        "take_profit": 0.919,
+        "trailing": true,
+        "ttl_seconds": 450
+      },
+      "guardrails": {
+        "kill_switch": "none",
+        "spread_status": "cooldown",
+        "reduce_only": true,
+        "reason": "latency_degradation"
+      },
+      "badges": [
+        "reduce_only_advisor",
+        "latency_warn"
+      ],
+      "checklist": [
+        {
+          "id": "spread_window_clear",
+          "label": "Spread & news window clear",
+          "status": "warn",
+          "mandatory": true,
+          "metadata": {
+            "state": "cooldown"
+          }
+        },
+        {
+          "id": "double_entry_confirmed",
+          "label": "Double-entry confirmed",
+          "status": "ok",
+          "mandatory": true
+        }
+      ],
+      "risk_summary": {
+        "risk_disclosure": "warning",
+        "account_risk_pct": 0.2,
+        "r_multiple": 0.8
+      },
+      "notes": {
+        "manual_comment": "RiskDisclosure warning acknowledged"
+      },
+      "gate_context": {
+        "spread": {
+          "state": "cooldown",
+          "reason": "wide-spread"
+        }
+      },
+      "audit_refs": {
+        "manifest_hash": "sha256:cfg-ro",
+        "data_hash": "sha256:data-ro",
+        "determinism_hash": "deadbeef05"
+      }
+    }
+  ],
+  "auto_execute": false,
+  "banner": {
+    "kind": "spread_guard",
+    "message": "Spread cooldown",
+    "severity": "warn",
+    "runbook": "docs/runbooks/RUN-SPREAD-03.md"
+  },
+  "render_summary": "mode=guarded | banner=Spread cooldown | ks=none, spread=cooldown, reduce_only=True | risk_disclosure=warning | badges: profit=ok, latency=ok, slippage=ok | tickets=1",
+  "rendered_table": "                                                                                                Tickets                                                                                                 \n┏━━━━━━━━━━┳━━━━━━━━┳━━━━━━━━┳━━━━━━━┳━━━━━━━━┳━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━┳━━━━━━━━━━┳━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━┓\n┃Ticket ID ┃ Symbol ┃ Action ┃ Qty   ┃ TTL(s) ┃ Entry           ┃ SL/TP           ┃ Guardrails      ┃ Badges          ┃ Checklist       ┃ RiskDisclosure ┃ Spread   ┃ Notes           ┃ AuditRefs      ┃\n┡━━━━━━━━━━╇━━━━━━━━╇━━━━━━━━╇━━━━━━━╇━━━━━━━━╇━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━╇━━━━━━━━━━╇━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━┩\n│TK-RO-1   │ USDCHF │ buy    │ 50000 │ 450    │ market @0.9123  │ SL=0.907        │ ks=none(latenc… │ reduce_only_ad… │ 1/2 (pending:   │ warning        │ cooldown │ RiskDisclosure  │ cfg=sha256:cfg…│\n│          │        │        │       │        │                 │ TP=0.919 TRAIL  │ spread=cooldow… │                 │ spread_window_… │                │          │ warning         │ data=sha256:da…│\n│          │        │        │       │        │                 │ TTL=450         │ ro=True         │                 │                 │                │          │ acknowledged    │ det=deadbeef05 │\n└──────────┴────────┴────────┴───────┴────────┴─────────────────┴─────────────────┴─────────────────┴─────────────────┴─────────────────┴────────────────┴──────────┴─────────────────┴────────────────┘\n"
+}

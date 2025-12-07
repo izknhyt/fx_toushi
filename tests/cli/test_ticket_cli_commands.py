@@ -14,6 +14,8 @@ def test_ticket_approve_cli_writes_json(monkeypatch: "MonkeyPatch", tmp_path: Pa
     runner = CliRunner()
     monkeypatch.setattr(tickets_actions, "METRICS_PATH", tmp_path / "metrics.jsonl")
     monkeypatch.setattr(tickets_actions, "AUDIT_PATH", tmp_path / "audit.jsonl")
+    monkeypatch.setattr(tickets_actions, "OPS_WORKLOG_PATH", tmp_path / "ops_worklog.jsonl")
+    monkeypatch.setattr(tickets_actions, "TICKET_STORE_PATH", tmp_path / "tickets.jsonl")
     result = runner.invoke(
         app,
         [
@@ -29,8 +31,11 @@ def test_ticket_approve_cli_writes_json(monkeypatch: "MonkeyPatch", tmp_path: Pa
     assert result.exit_code == 0
     audit_entry = json.loads((tmp_path / "audit.jsonl").read_text(encoding="utf-8"))
     assert audit_entry["action"] == "approve"
+    assert audit_entry["cfg_hash"].startswith("sha256:")
     metrics_entry = json.loads((tmp_path / "metrics.jsonl").read_text(encoding="utf-8"))
     assert metrics_entry["action"] == "approve"
+    worklog_entry = json.loads((tmp_path / "ops_worklog.jsonl").read_text(encoding="utf-8"))
+    assert worklog_entry["ticket_id"] == "T1"
 
 
 def test_ticket_edit_cli_writes_diff(monkeypatch: "MonkeyPatch", tmp_path: Path) -> None:
@@ -38,6 +43,8 @@ def test_ticket_edit_cli_writes_diff(monkeypatch: "MonkeyPatch", tmp_path: Path)
     runner = CliRunner()
     monkeypatch.setattr(tickets_actions, "METRICS_PATH", tmp_path / "metrics.jsonl")
     monkeypatch.setattr(tickets_actions, "AUDIT_PATH", tmp_path / "audit.jsonl")
+    monkeypatch.setattr(tickets_actions, "OPS_WORKLOG_PATH", tmp_path / "ops_worklog.jsonl")
+    monkeypatch.setattr(tickets_actions, "TICKET_STORE_PATH", tmp_path / "tickets.jsonl")
     result = runner.invoke(
         app,
         [
@@ -54,7 +61,8 @@ def test_ticket_edit_cli_writes_diff(monkeypatch: "MonkeyPatch", tmp_path: Path)
     )
     assert result.exit_code == 0
     audit_entry = json.loads((tmp_path / "audit.jsonl").read_text(encoding="utf-8"))
-    assert audit_entry["diff_before_after"][0]["path"] == "/size_lot"
+    patch = audit_entry["delta"]["diff"]["patch"]
+    assert patch[0]["path"] == "/size_lot"
 
 
 def test_ticket_reject_cli_records_audit(monkeypatch: "MonkeyPatch", tmp_path: Path) -> None:
@@ -63,6 +71,7 @@ def test_ticket_reject_cli_records_audit(monkeypatch: "MonkeyPatch", tmp_path: P
     monkeypatch.setattr(tickets_actions, "METRICS_PATH", tmp_path / "metrics.jsonl")
     monkeypatch.setattr(tickets_actions, "AUDIT_PATH", tmp_path / "audit.jsonl")
     monkeypatch.setattr(tickets_actions, "TICKET_STORE_PATH", tmp_path / "tickets.jsonl")
+    monkeypatch.setattr(tickets_actions, "OPS_WORKLOG_PATH", tmp_path / "ops_worklog.jsonl")
     result = runner.invoke(
         app,
         [

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+import json
 
 from src.core.gate import (
     CalendarGateState,
@@ -148,3 +149,15 @@ def test_spread_guard_sets_auto_execute_false() -> None:
 
     aggregator.update_spread(global_state=SpreadGateState(state="cooldown"))
     assert aggregator.snapshot().auto_execute is False
+
+
+def test_persist_latest_uses_env_hashes(monkeypatch, tmp_path) -> None:
+    cfg_path = tmp_path / "cfg.yaml"
+    cfg_path.write_text("dummy", encoding="utf-8")
+    monkeypatch.setenv("TRADECTL_CFG_PATH", str(cfg_path))
+    monkeypatch.setenv("TRADECTL_DATA_HASH", "sha256:data-env")
+    aggregator = GateAggregator()
+    out = aggregator.persist_latest(path=tmp_path / "gate.json")
+    payload = json.loads(out.read_text(encoding="utf-8"))
+    assert payload["cfg_hash"].startswith("sha256:")
+    assert payload["data_hash"] == "sha256:data-env"

@@ -51,7 +51,8 @@
 ### 5. ログ保全とフォローアップ
 1. 上記チェックで作成した検証チケットの`ticket_id`、承認者、検証時刻、主要結果を`reports/validation_log/AC-02_<date>.md`へMarkdownテーブルで記録する。
 2. 週次レポート生成後（`tradectl report weekly --profile m1-core`）、同レポート内に本Runbook手順の完了ステータスを添付する。
-3. 未解決の課題は`tickets/model_revalidate/`または`reports/audit/hitl_incident/`配下にIssueとして起票し、進捗を追跡する。
+3. Stress/Journal証跡を固定: `reports/stress/<scenario>_report.md` と `reports/journal/<week>.md` を `src/reporter/templates/weekly_m1_core.md` 経由で週次レポートにリンクさせ、Runbook差分とops_worklogへパスを追記する。
+4. 未解決の課題は`tickets/model_revalidate/`または`reports/audit/hitl_incident/`配下にIssueとして起票し、進捗を追跡する。
 
 ## チェックリスト
 - [ ] `tradectl status --mode paper --detail`で`HealthState=operational`かつ`Spread & news window clear`バッジが緑である

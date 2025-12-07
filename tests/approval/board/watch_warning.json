@@ -1,0 +1,94 @@
+{
+  "board_mode": "normal",
+  "guardrails": {
+    "kill_switch_state": "none",
+    "spread_status": "watch",
+    "reduce_only": false,
+    "risk_disclosure": "warning",
+    "risk_disclosure_consent_id": null
+  },
+  "tickets": [
+    {
+      "ticket_id": "TK-WARN-1",
+      "symbol": "NZDUSD",
+      "timeframe": "M30",
+      "strategy_id": "m1_baseline_ma_rsi",
+      "action": "buy",
+      "quantity": 90000,
+      "position": {
+        "direction": "long",
+        "size_lot": 0.9,
+        "reduce_only": false
+      },
+      "regime_context": {
+        "regime": "normal",
+        "conviction": "medium"
+      },
+      "entry": {
+        "type": "market",
+        "price": 0.6123,
+        "spread_badge": "watch"
+      },
+      "protect": {
+        "stop_loss": 0.609,
+        "take_profit": 0.618,
+        "trailing": false,
+        "ttl_seconds": 650
+      },
+      "guardrails": {
+        "kill_switch": "none",
+        "spread_status": "watch",
+        "reduce_only": false
+      },
+      "badges": [
+        "spread_watch",
+        "rd_warning"
+      ],
+      "checklist": [
+        {
+          "id": "spread_window_clear",
+          "label": "Spread & news window clear",
+          "status": "warn",
+          "mandatory": true,
+          "metadata": {
+            "state": "watch"
+          }
+        },
+        {
+          "id": "double_entry_confirmed",
+          "label": "Double-entry confirmed",
+          "status": "ok",
+          "mandatory": true
+        }
+      ],
+      "risk_summary": {
+        "risk_disclosure": "warning",
+        "account_risk_pct": 0.22,
+        "r_multiple": 0.95
+      },
+      "notes": {
+        "manual_comment": "RiskDisclosure warning acknowledged"
+      },
+      "gate_context": {
+        "spread": {
+          "state": "watch",
+          "reason": "news_window"
+        }
+      },
+      "audit_refs": {
+        "manifest_hash": "sha256:cfg-watch",
+        "data_hash": "sha256:data-watch",
+        "determinism_hash": "deadbeef08"
+      }
+    }
+  ],
+  "auto_execute": true,
+  "banner": {
+    "kind": "risk_disclosure",
+    "message": "RiskDisclosure warning",
+    "severity": "warn",
+    "runbook": "docs/runbooks/RUN-HITL-01.md"
+  },
+  "render_summary": "mode=normal | banner=RiskDisclosure warning | ks=none, spread=watch, reduce_only=False | risk_disclosure=warning | badges: profit=ok, latency=ok, slippage=ok | tickets=1",
+  "rendered_table": "                                                                                                Tickets                                                                                                 \n┏━━━━━━━━━━┳━━━━━━━━┳━━━━━━━━┳━━━━━━━┳━━━━━━━━┳━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━┳━━━━━━━━┳━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━┓\n┃Ticket ID ┃ Symbol ┃ Action ┃ Qty   ┃ TTL(s) ┃ Entry           ┃ SL/TP           ┃ Guardrails      ┃ Badges          ┃ Checklist       ┃ RiskDisclosure ┃ Spread ┃ Notes           ┃ AuditRefs        ┃\n┡━━━━━━━━━━╇━━━━━━━━╇━━━━━━━━╇━━━━━━━╇━━━━━━━━╇━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━╇━━━━━━━━╇━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━┩\n│TK-WARN-1 │ NZDUSD │ buy    │ 90000 │ 650    │ market @0.6123  │ SL=0.609        │ ks=none,        │ spread_watch,r… │ 1/2 (pending:   │ warning        │ watch  │ RiskDisclosure  │ cfg=sha256:cfg-w…│\n│          │        │        │       │        │                 │ TP=0.618        │ spread=watch,   │                 │ spread_window_… │                │        │ warning         │ data=sha256:data…│\n│          │        │        │       │        │                 │ TTL=650         │ ro=False        │                 │                 │                │        │ acknowledged    │ det=deadbeef08   │\n└──────────┴────────┴────────┴───────┴────────┴─────────────────┴─────────────────┴─────────────────┴─────────────────┴─────────────────┴────────────────┴────────┴─────────────────┴──────────────────┘\n"
+}

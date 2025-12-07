@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from pytest import MonkeyPatch
 
 from src.interfaces.gui.tauri_app.serializer import board_get_snapshot, TicketPayloadSerializer
 
 
-def test_board_snapshot_includes_ticket_payload_version(tmp_path: Path) -> None:
+def test_board_snapshot_includes_ticket_payload_version(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
     manifest = tmp_path / "data_manifest.json"
     manifest.write_text(
         json.dumps(
@@ -21,6 +22,7 @@ def test_board_snapshot_includes_ticket_payload_version(tmp_path: Path) -> None:
         ),
         encoding="utf-8",
     )
+    monkeypatch.setenv("RISK_DISCLOSURE_STATE_PATH", str(tmp_path / "risk_state.json"))
     ticket = {
         "ticket_id": "T1",
         "symbol": "USDJPY",

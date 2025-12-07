@@ -45,6 +45,34 @@ jobs:
           make verify-config-evidence ARGS="--grace-days 2"
         displayName: 'Verify CONFIG-SCAFF-01 evidence bundle'
 
+      - script: |
+          CFG_HASH=$(python - <<'PY'
+import hashlib, pathlib
+path = pathlib.Path("config/ops.yaml")
+data = path.read_bytes()
+h = hashlib.sha256()
+h.update(data)
+print("sha256:" + h.hexdigest())
+PY
+)
+          DATA_HASH=$(python - <<'PY'
+import json, pathlib
+manifest_path = pathlib.Path("reports/data_manifest.json")
+manifest = json.loads(manifest_path.read_text())
+print(manifest.get("strategies", {}).get("m1_baseline_ma_rsi", {}).get("dataset_sha256", ""))
+PY
+)
+          mkdir -p snapshots/latest
+          PYTHONPATH=.:src python3 tools/persist_gate_state.py \
+            --path snapshots/latest/gate_state.json \
+            --cfg-hash "$CFG_HASH" \
+            --data-hash "$DATA_HASH"
+        displayName: 'Persist gate_state with cfg/data hashes'
+
+      - script: |
+          make report-weekly
+        displayName: 'Generate weekly ticket summary (smoke)'
+
       - task: PublishPipelineArtifact@1
         displayName: 'Publish smoke logs'
         condition: succeededOrFailed()

@@ -1,0 +1,94 @@
+{
+  "board_mode": "normal",
+  "guardrails": {
+    "kill_switch_state": "none",
+    "spread_status": "cooldown",
+    "reduce_only": false,
+    "risk_disclosure": "signed",
+    "risk_disclosure_consent_id": null
+  },
+  "tickets": [
+    {
+      "ticket_id": "TK-COOL-1",
+      "symbol": "EURJPY",
+      "timeframe": "M15",
+      "strategy_id": "m1_baseline_ma_rsi",
+      "action": "sell",
+      "quantity": 80000,
+      "position": {
+        "direction": "short",
+        "size_lot": 0.8,
+        "reduce_only": false
+      },
+      "regime_context": {
+        "regime": "guarded",
+        "conviction": "medium"
+      },
+      "entry": {
+        "type": "market",
+        "price": 162.45,
+        "spread_badge": "cooldown"
+      },
+      "protect": {
+        "stop_loss": 162.9,
+        "take_profit": 161.6,
+        "trailing": false,
+        "ttl_seconds": 700
+      },
+      "guardrails": {
+        "kill_switch": "none",
+        "spread_status": "cooldown",
+        "reduce_only": false,
+        "reason": "wide_spread"
+      },
+      "badges": [
+        "spread_cooldown"
+      ],
+      "checklist": [
+        {
+          "id": "spread_window_clear",
+          "label": "Spread & news window clear",
+          "status": "warn",
+          "mandatory": true,
+          "metadata": {
+            "state": "cooldown"
+          }
+        },
+        {
+          "id": "double_entry_confirmed",
+          "label": "Double-entry confirmed",
+          "status": "ok",
+          "mandatory": true
+        }
+      ],
+      "risk_summary": {
+        "risk_disclosure": "signed",
+        "account_risk_pct": 0.3,
+        "r_multiple": 0.9
+      },
+      "notes": {
+        "manual_comment": "Cooldown watch"
+      },
+      "gate_context": {
+        "spread": {
+          "state": "cooldown",
+          "reason": "latency"
+        }
+      },
+      "audit_refs": {
+        "manifest_hash": "sha256:cfg-cool",
+        "data_hash": "sha256:data-cool",
+        "determinism_hash": "deadbeef06"
+      }
+    }
+  ],
+  "auto_execute": true,
+  "banner": {
+    "kind": "spread_guard",
+    "message": "Spread cooldown",
+    "severity": "warn",
+    "runbook": "docs/runbooks/RUN-SPREAD-03.md"
+  },
+  "render_summary": "mode=normal | banner=Spread cooldown | ks=none, spread=cooldown, reduce_only=False | risk_disclosure=signed | badges: profit=ok, latency=ok, slippage=ok | tickets=1",
+  "rendered_table": "                                                                                                Tickets                                                                                                 \n┏━━━━━━━━━━┳━━━━━━━━┳━━━━━━━━┳━━━━━━━┳━━━━━━━━┳━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━┳━━━━━━━━━━┳━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━┓\n┃Ticket ID ┃ Symbol ┃ Action ┃ Qty   ┃ TTL(s) ┃ Entry           ┃ SL/TP           ┃ Guardrails      ┃ Badges          ┃ Checklist       ┃ RiskDisclosure ┃ Spread   ┃ Notes          ┃ AuditRefs       ┃\n┡━━━━━━━━━━╇━━━━━━━━╇━━━━━━━━╇━━━━━━━╇━━━━━━━━╇━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━╇━━━━━━━━━━╇━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━┩\n│TK-COOL-1 │ EURJPY │ sell   │ 80000 │ 700    │ market @162.45  │ SL=162.9        │ ks=none(wide_s… │ spread_cooldown │ 1/2 (pending:   │ signed         │ cooldown │ Cooldown watch │ cfg=sha256:cfg-…│\n│          │        │        │       │        │                 │ TP=161.6        │ spread=cooldow… │                 │ spread_window_… │                │          │                │ data=sha256:dat…│\n│          │        │        │       │        │                 │ TTL=700         │ ro=False        │                 │                 │                │          │                │ det=deadbeef06  │\n└──────────┴────────┴────────┴───────┴────────┴─────────────────┴─────────────────┴─────────────────┴─────────────────┴─────────────────┴────────────────┴──────────┴────────────────┴─────────────────┘\n"
+}

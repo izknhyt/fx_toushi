@@ -9,12 +9,14 @@ structure follows :mod:`docs/schemas/gate_state.schema.json`.
 
 from __future__ import annotations
 
+import copy
+import hashlib
+import json
+import os
 from dataclasses import dataclass, field
 from datetime import datetime
-import json
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, Literal, Mapping, MutableMapping, Sequence
-import copy
 
 if TYPE_CHECKING:
     from src.risk.manager import RiskAssessment
@@ -269,6 +271,8 @@ class GateState:
     risk: RiskGateState = field(default_factory=RiskGateState.default)
     human: HumanGateState = field(default_factory=HumanGateState.default)
     auto_execute: bool = False
+    cfg_hash: str | None = None
+    data_hash: str | None = None
     schema_version: SchemaVersion | None = None
 
     def to_dict(self) -> Dict[str, Any]:
@@ -278,6 +282,10 @@ class GateState:
             "human": self.human.to_dict(),
         }
         data["auto_execute"] = self.auto_execute
+        if self.cfg_hash is not None:
+            data["cfg_hash"] = self.cfg_hash
+        if self.data_hash is not None:
+            data["data_hash"] = self.data_hash
         if self.schema_version is not None:
             data["schema_version"] = self.schema_version
         return data
@@ -298,6 +306,8 @@ class GateState:
             risk=RiskGateState.from_dict(data["risk"]),
             human=HumanGateState.from_dict(data["human"]),
             auto_execute=bool(data.get("auto_execute", False)),
+            cfg_hash=data.get("cfg_hash"),
+            data_hash=data.get("data_hash"),
             schema_version=data.get("schema_version"),
         )
         return state
@@ -331,6 +341,18 @@ class GateAggregator:
 
     def set_schema_version(self, version: SchemaVersion | None) -> None:
         self._state.schema_version = version
+        if self._state.cfg_hash is None and hasattr(version, "cfg_hash"):
+            self._state.cfg_hash = getattr(version, "cfg_hash")
+        if self._state.data_hash is None and hasattr(version, "data_hash"):
+            self._state.data_hash = getattr(version, "data_hash")
+
+    def set_hashes(self, *, cfg_hash: str | None = None, data_hash: str | None = None) -> None:
+        """Attach manifest/data hashes to the gate state for downstream consumers."""
+
+        if cfg_hash:
+            self._state.cfg_hash = cfg_hash
+        if data_hash:
+            self._state.data_hash = data_hash
 
     def snapshot(self) -> GateState:
         return copy.deepcopy(self._state)
@@ -454,7 +476,16 @@ class GateAggregator:
             and not self._state.risk.reduce_only
         )
 
-    def persist_latest(self, path: Path | str = Path("snapshots/latest/gate_state.json"), *, indent: int | None = 2) -> Path:
+    def persist_latest(
+        self,
+        path: Path | str = Path("snapshots/latest/gate_state.json"),
+        *,
+        indent: int | None = 2,
+        cfg_hash: str | None = None,
+        data_hash: str | None = None,
+    ) -> Path:
+        cfg_resolved, data_resolved = self._resolve_hashes(cfg_hash, data_hash)
+        self.set_hashes(cfg_hash=cfg_resolved, data_hash=data_resolved)
         state = self.snapshot()
         return state.dump(path, indent=indent)
 
@@ -478,6 +509,39 @@ class GateAggregator:
             block = GateBlockState()
             self._state.market.per_symbol[symbol] = block
         setattr(block, component, copy.deepcopy(value))
+
+    def _resolve_hashes(self, cfg_hash: str | None, data_hash: str | None) -> tuple[str | None, str | None]:
+        cfg_resolved = cfg_hash
+        data_resolved = data_hash
+        if not cfg_resolved:
+            cfg_path_env = os.getenv("TRADECTL_CFG_PATH")
+            cfg_env = os.getenv("TRADECTL_CFG_HASH")
+            if cfg_path_env and Path(cfg_path_env).exists():
+                cfg_resolved = _sha256_path(Path(cfg_path_env))
+            elif cfg_env:
+                cfg_resolved = cfg_env
+        if not data_resolved:
+            data_env = os.getenv("TRADECTL_DATA_HASH")
+            if data_env:
+                data_resolved = data_env
+            else:
+                manifest_path = Path("reports") / "data_manifest.json"
+                if manifest_path.exists():
+                    try:
+                        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+                        entry = (manifest.get("strategies") or {}).get("m1_baseline_ma_rsi") or {}
+                        data_resolved = entry.get("dataset_sha256")
+                    except json.JSONDecodeError:
+                        data_resolved = None
+        return cfg_resolved, data_resolved
+
+
+def _sha256_path(path: Path) -> str:
+    h = hashlib.sha256()
+    with path.open("rb") as fp:
+        for chunk in iter(lambda: fp.read(8192), b""):
+            h.update(chunk)
+    return f"sha256:{h.hexdigest()}"
 
 
 __all__ = [

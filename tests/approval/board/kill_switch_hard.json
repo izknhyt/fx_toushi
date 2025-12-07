@@ -1,0 +1,91 @@
+{
+  "board_mode": "guarded",
+  "guardrails": {
+    "kill_switch_state": "hard_stop",
+    "spread_status": "normal",
+    "reduce_only": true,
+    "risk_disclosure": "signed",
+    "risk_disclosure_consent_id": null
+  },
+  "tickets": [
+    {
+      "ticket_id": "TK-KILL-1",
+      "symbol": "AUDJPY",
+      "timeframe": "M30",
+      "strategy_id": "m1_baseline_ma_rsi",
+      "action": "sell",
+      "quantity": 120000,
+      "position": {
+        "direction": "short",
+        "size_lot": 1.2,
+        "reduce_only": true
+      },
+      "regime_context": {
+        "regime": "halted",
+        "conviction": "low"
+      },
+      "entry": {
+        "type": "market",
+        "price": 92.15,
+        "spread_badge": "normal"
+      },
+      "protect": {
+        "stop_loss": 92.6,
+        "take_profit": 91.2,
+        "trailing": false,
+        "ttl_seconds": 300
+      },
+      "guardrails": {
+        "kill_switch": "hard_stop",
+        "spread_status": "normal",
+        "reduce_only": true,
+        "reason": "health.halt"
+      },
+      "badges": [
+        "kill_switch_hard",
+        "reduce_only_enforced"
+      ],
+      "checklist": [
+        {
+          "id": "kill_switch_ack",
+          "label": "Kill switch acknowledged",
+          "status": "pending",
+          "mandatory": true
+        },
+        {
+          "id": "double_entry_confirmed",
+          "label": "Double-entry confirmed",
+          "status": "ok",
+          "mandatory": true
+        }
+      ],
+      "risk_summary": {
+        "risk_disclosure": "signed",
+        "account_risk_pct": 0.3,
+        "r_multiple": -0.2
+      },
+      "notes": {
+        "manual_comment": "Manual halt - liquidity stress"
+      },
+      "gate_context": {
+        "spread": {
+          "state": "normal"
+        }
+      },
+      "audit_refs": {
+        "manifest_hash": "sha256:cfg-halt",
+        "data_hash": "sha256:data-halt",
+        "determinism_hash": "deadbeef04"
+      }
+    }
+  ],
+  "auto_execute": false,
+  "banner": {
+    "kind": "kill_switch",
+    "message": "Kill Switch HARD_STOP",
+    "severity": "hard",
+    "runbook": "docs/runbooks/RUN-RISK-01.md"
+  },
+  "render_summary": "mode=guarded | banner=Kill Switch HARD_STOP | ks=hard_stop, spread=normal, reduce_only=True | risk_disclosure=signed | badges: profit=ok, latency=ok, slippage=ok | tickets=1",
+  "rendered_table": "                                                                                                Tickets                                                                                                 \n┏━━━━━━━━━━┳━━━━━━━━┳━━━━━━━━┳━━━━━━━━┳━━━━━━━━┳━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━┳━━━━━━━━┳━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━┓\n┃Ticket ID ┃ Symbol ┃ Action ┃ Qty    ┃ TTL(s) ┃ Entry          ┃ SL/TP           ┃ Guardrails      ┃ Badges          ┃ Checklist       ┃ RiskDisclosure ┃ Spread ┃ Notes           ┃ AuditRefs        ┃\n┡━━━━━━━━━━╇━━━━━━━━╇━━━━━━━━╇━━━━━━━━╇━━━━━━━━╇━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━╇━━━━━━━━╇━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━┩\n│TK-KILL-1 │ AUDJPY │ sell   │ 120000 │ 300    │ market @92.15  │ SL=92.6 TP=91.2 │ ks=hard_stop(h… │ kill_switch_ha… │ 1/2 (pending:   │ signed         │ normal │ Manual halt -   │ cfg=sha256:cfg-h…│\n│          │        │        │        │        │                │ TTL=300         │ spread=normal,  │                 │ kill_switch_ac… │                │        │ liquidity       │ data=sha256:data…│\n│          │        │        │        │        │                │                 │ ro=True         │                 │                 │                │        │ stress          │ det=deadbeef04   │\n└──────────┴────────┴────────┴────────┴────────┴────────────────┴─────────────────┴─────────────────┴─────────────────┴─────────────────┴────────────────┴────────┴─────────────────┴──────────────────┘\n"
+}

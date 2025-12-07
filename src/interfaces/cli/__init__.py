@@ -60,6 +60,9 @@ from src.audit.trace import DEFAULT_AUDIT_LOG, trace_order
 from src.metrics.reports import generate_latency_report
 from src.reporter.generator import ReportGenerator
 from src.interfaces.cli import tickets as tickets_actions
+from src.stress import ScenarioDatasetRegistry, StressTestEngine
+from src.journal import TradeJournalService
+from src.core.gate import GateState, GateAggregator
 from src.ticket.monitor import (
     DEFAULT_EVENT_LOG_PATH as DEFAULT_TICKET_EVENT_LOG_PATH,
     DEFAULT_EXPORT_PATH as DEFAULT_TICKET_EXPORT_PATH,
@@ -76,7 +79,22 @@ def _render_payload(console: Console, payload: Mapping[str, Any], *, json_output
     if json_output:
         typer.echo(json.dumps(safe_payload, ensure_ascii=False))
         return
+    summary = safe_payload.get("render_summary")
+    if summary:
+        console.print(Panel.fit(summary, title="Board"))
     console.print(Panel.fit(Pretty(safe_payload)))
+
+
+def _load_stress_registry(config: Path) -> ScenarioDatasetRegistry:
+    if not config.exists():
+        return ScenarioDatasetRegistry()
+    try:
+        payload = json.loads(config.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"invalid JSON: {exc}") from exc
+    if not isinstance(payload, list):
+        raise ValueError("config must be a JSON list of scenarios")
+    return ScenarioDatasetRegistry.from_mapping(payload)
 
 
 def _merge_with_context(option: bool | None, ctx_value: bool) -> bool:
@@ -85,6 +103,26 @@ def _merge_with_context(option: bool | None, ctx_value: bool) -> bool:
 
 def _normalise_multi(value: Iterable[str] | None) -> list[str]:
     return list(value or ())
+
+
+def _load_stress_runs_from_reports(stress_dir: Path) -> list[Mapping[str, object]]:
+    """Collect stress run artifacts from reports/stress directory."""
+
+    if not stress_dir.exists():
+        return []
+    runs: list[Mapping[str, object]] = []
+    for path in sorted(stress_dir.glob("*_report.md")):
+        summary = ""
+        try:
+            for line in path.read_text(encoding="utf-8").splitlines():
+                if line.strip():
+                    summary = line.strip("# ").strip()
+                    break
+        except OSError:
+            summary = ""
+        scenario = path.stem.replace("_report", "")
+        runs.append({"scenario": scenario, "status": "ok", "summary": summary, "artifacts": [str(path)]})
+    return runs
 
 
 def _determine_board_exit_code(
@@ -100,7 +138,7 @@ def _determine_board_exit_code(
     if compat == "v1":
         return 0
     normalized_rd = (risk_disclosure or "").lower()
-    if normalized_rd == "pending":
+    if normalized_rd in {"pending", "warning", "expired"}:
         return 61
     if kill_switch == "hard_stop":
         return 63
@@ -173,11 +211,12 @@ def create_cli_app() -> typer.Typer:
             "--slippage-status",
             help="Slippage data badge (ok|degraded|halt_recommended).",
         ),
-        risk_disclosure: str = typer.Option(
-            "signed",
+        risk_disclosure: str | None = typer.Option(
+            None,
             "--risk-disclosure",
-            help="Risk disclosure status (signed|pending)",
-            hidden=True,
+            help="Risk disclosure status (signed|pending|auto)",
+            hidden=False,
+            show_default=False,
         ),
         compat: str | None = typer.Option(
             None,
@@ -214,11 +253,12 @@ def create_cli_app() -> typer.Typer:
             compat_mode=compat_mode,
         )
         _render_payload(console, payload, json_output=effective_json)
+        rd_status = payload.get("guardrails", {}).get("risk_disclosure", risk_disclosure or "signed")
         exit_code = _determine_board_exit_code(
             kill_switch=kill_switch,
             spread_status=spread_status,
             reduce_only=reduce_only,
-            risk_disclosure=risk_disclosure,
+            risk_disclosure=str(rd_status),
             compat=compat_mode,
         )
         raise typer.Exit(code=exit_code)
@@ -309,6 +349,38 @@ def create_cli_app() -> typer.Typer:
         except DeterminismDiagnosticsError as exc:
             typer.echo(f"determinism diagnostics failed: {exc}", err=True)
             raise typer.Exit(code=1)
+        _render_payload(console, payload, json_output=effective_json)
+
+    @diagnostics_app.command("stress-test")
+    def diagnostics_stress_test_command(
+        ctx: typer.Context,
+        scenario: str | None = typer.Option(None, "--scenario", help="Scenario name to run"),
+        config: Path = typer.Option(Path("config") / "stress_scenarios.json", "--config", help="Scenario registry JSON"),
+        export_dir: Path | None = typer.Option(None, "--export-dir", help="Optional directory to export report artifacts"),
+        list_only: bool = typer.Option(False, "--list", help="List scenarios without running"),
+        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
+    ) -> None:
+        ctx_obj = ctx.obj or {"json": False}
+        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        try:
+            registry = _load_stress_registry(config)
+        except ValueError as exc:
+            typer.echo(f"stress-test config error: {exc}", err=True)
+            raise typer.Exit(code=1)
+        engine = StressTestEngine(registry=registry)
+        if list_only or scenario is None:
+            payload = {
+                "config": str(config),
+                "scenarios": [ds.to_dict() for ds in registry.list()],
+            }
+            _render_payload(console, payload, json_output=effective_json)
+            return
+        try:
+            result = engine.run(scenario, export_dir=export_dir)
+        except KeyError as exc:
+            typer.echo(str(exc), err=True)
+            raise typer.Exit(code=1)
+        payload = {"config": str(config), "result": result.to_dict()}
         _render_payload(console, payload, json_output=effective_json)
 
     determinism_app = typer.Typer(help="Determinism replay utilities")
@@ -536,6 +608,66 @@ def create_cli_app() -> typer.Typer:
     app.add_typer(backtest_app, name="backtest")
     app.add_typer(diagnostics_app, name="diagnostics")
     app.add_typer(determinism_app, name="determinism")
+    gate_app = typer.Typer(help="Gate state utilities")
+
+    @gate_app.command("persist")
+    def gate_persist_command(
+        ctx: typer.Context,
+        path: Path = typer.Option(Path("snapshots/latest/gate_state.json"), "--path", help="Gate state output path"),
+        cfg_hash: str | None = typer.Option(None, "--cfg-hash", help="Config hash override (sha256:...)"),
+        data_hash: str | None = typer.Option(None, "--data-hash", help="Data hash override (sha256:...)"),
+        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
+    ) -> None:
+        ctx_obj = ctx.obj or {"json": False}
+        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        state = GateState.load(path) if path.exists() else GateState()
+        agg = GateAggregator(initial_state=state)
+        persisted = agg.persist_latest(path=path, cfg_hash=cfg_hash, data_hash=data_hash)
+        snapshot = agg.snapshot()
+        payload = {
+            "status": "ok",
+            "path": str(persisted),
+            "cfg_hash": snapshot.cfg_hash,
+            "data_hash": snapshot.data_hash,
+        }
+        _render_payload(console, payload, json_output=effective_json)
+
+    app.add_typer(gate_app, name="gate")
+    journal_app = typer.Typer(help="Trade journal utilities")
+
+    @journal_app.command("add")
+    def journal_add_command(
+        ctx: typer.Context,
+        ticket_id: str = typer.Option(..., "--ticket-id", help="Ticket id to log"),
+        user: str = typer.Option(..., "--user", help="Actor name"),
+        note: str = typer.Option(..., "--note", help="Journal note"),
+        week: str | None = typer.Option(None, "--week", help="ISO week (e.g. 2025-W12)"),
+        path: Path = typer.Option(Path("logs/journal/entries.jsonl"), "--path", help="Journal file path"),
+        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
+    ) -> None:
+        ctx_obj = ctx.obj or {"json": False}
+        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        service = TradeJournalService(path=path)
+        entry = service.from_ticket_action(ticket_id=ticket_id, user=user, note=note, week=week)
+        service.append(entry)
+        payload = {"status": "ok", "entry": entry.to_dict()}
+        _render_payload(console, payload, json_output=effective_json)
+
+    @journal_app.command("list")
+    def journal_list_command(
+        ctx: typer.Context,
+        week: str | None = typer.Option(None, "--week", help="Filter by ISO week"),
+        path: Path = typer.Option(Path("logs/journal/entries.jsonl"), "--path", help="Journal file path"),
+        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
+    ) -> None:
+        ctx_obj = ctx.obj or {"json": False}
+        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        service = TradeJournalService(path=path)
+        entries = service.list(week=week)
+        payload = {"entries": entries, "count": len(entries)}
+        _render_payload(console, payload, json_output=effective_json)
+
+    app.add_typer(journal_app, name="journal")
 
     ticket_app = typer.Typer(help="Ticket HITL utilities")
 
@@ -576,16 +708,22 @@ def create_cli_app() -> typer.Typer:
         reason: str | None = typer.Option(None, "--reason", help="Rejection reason"),
         user: str | None = typer.Option(None, "--user", help="Actor"),
         take_over: bool = typer.Option(False, "--takeover", help="Take lock from another owner"),
+        cfg_hash: str | None = typer.Option(None, "--cfg-hash", help="Config hash override"),
+        data_hash: str | None = typer.Option(None, "--data-hash", help="Data hash override"),
+        gate_state_path: Path | None = typer.Option(None, "--gate-state", help="Optional GateState JSON (for hashes/guardrails)"),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
         ctx_obj = ctx.obj or {"json": False}
         effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        gate_state = GateState.load(gate_state_path) if gate_state_path else None
         try:
             result = tickets_actions.reject(
                 ticket_id,
                 reason=reason,
                 user=user,
                 take_over=take_over,
+                guardrails={"cfg_hash": cfg_hash, "data_hash": data_hash} if cfg_hash or data_hash else None,
+                gate_state=gate_state,
             )
         except Exception as exc:  # noqa: BLE001
             logger.error("cli.ticket.reject.failed", extra={"ticket_id": ticket_id, "error": str(exc)})
@@ -603,10 +741,14 @@ def create_cli_app() -> typer.Typer:
         double_entry_user: str | None = typer.Option(None, "--double-entry", help="Second operator user id"),
         require_double_entry: bool = typer.Option(False, "--require-double-entry", help="Enforce double-entry"),
         take_over: bool = typer.Option(False, "--takeover", help="Take lock from another owner"),
+        cfg_hash: str | None = typer.Option(None, "--cfg-hash", help="Config hash override"),
+        data_hash: str | None = typer.Option(None, "--data-hash", help="Data hash override"),
+        gate_state_path: Path | None = typer.Option(None, "--gate-state", help="Optional GateState JSON (for hashes/guardrails)"),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
         ctx_obj = ctx.obj or {"json": False}
         effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        gate_state = GateState.load(gate_state_path) if gate_state_path else None
         try:
             result = tickets_actions.approve(
                 ticket_id,
@@ -617,6 +759,8 @@ def create_cli_app() -> typer.Typer:
                 double_entry_user=double_entry_user,
                 require_double_entry=require_double_entry,
                 take_over=take_over,
+                guardrails={"cfg_hash": cfg_hash, "data_hash": data_hash} if cfg_hash or data_hash else None,
+                gate_state=gate_state,
             )
         except Exception as exc:  # noqa: BLE001
             logger.error("cli.ticket.approve.failed", extra={"ticket_id": ticket_id, "error": str(exc)})
@@ -631,10 +775,14 @@ def create_cli_app() -> typer.Typer:
         value: str = typer.Option(..., "--value", help="New value"),
         user: str | None = typer.Option(None, "--user", help="Actor"),
         take_over: bool = typer.Option(False, "--takeover", help="Take lock from another owner"),
+        cfg_hash: str | None = typer.Option(None, "--cfg-hash", help="Config hash override"),
+        data_hash: str | None = typer.Option(None, "--data-hash", help="Data hash override"),
+        gate_state_path: Path | None = typer.Option(None, "--gate-state", help="Optional GateState JSON (for hashes/guardrails)"),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
         ctx_obj = ctx.obj or {"json": False}
         effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        gate_state = GateState.load(gate_state_path) if gate_state_path else None
         try:
             result = tickets_actions.edit(
                 ticket_id,
@@ -642,6 +790,8 @@ def create_cli_app() -> typer.Typer:
                 value=value,
                 user=user,
                 take_over=take_over,
+                guardrails={"cfg_hash": cfg_hash, "data_hash": data_hash} if cfg_hash or data_hash else None,
+                gate_state=gate_state,
             )
         except Exception as exc:  # noqa: BLE001
             logger.error("cli.ticket.edit.failed", extra={"ticket_id": ticket_id, "error": str(exc)})
@@ -698,22 +848,49 @@ def create_cli_app() -> typer.Typer:
         ctx: typer.Context,
         profile: str = typer.Option("m1", "--profile", help="Report profile"),
         out: Path | None = typer.Option(None, "--out", help="Output markdown path"),
-        template: Path = typer.Option(
-            Path("src/reporter/templates/weekly_m1_core.md"),
+        week: str | None = typer.Option(None, "--week", help="ISO week to render (e.g. 2025-W12)"),
+        template: Path | None = typer.Option(
+            None,
             "--template",
-            help="Ticket Summary template",
+            help="Ticket Summary template (defaults to profile-specific if present)",
             hidden=True,
         ),
+        stress_dir: Path = typer.Option(Path("reports") / "stress", "--stress-dir", help="Stress run artifacts directory"),
+        journal_path: Path = typer.Option(Path("logs") / "journal" / "entries.jsonl", "--journal-path", help="Journal JSONL path"),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
         ctx_obj = ctx.obj or {"json": False}
         effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
         tickets = tickets_actions.list_tickets(include_history=False, json_output=effective_json)
-        summary = ReportGenerator().render_ticket_summary(tickets=tickets, template_path=template)
+        iso_week = week or date.today().strftime("%G-W%V")
+        stress_runs = _load_stress_runs_from_reports(stress_dir)
+        journal_service = TradeJournalService(path=journal_path)
+        journal_entries = journal_service.list(week=iso_week)
+        journal_export = journal_service.export_weekly(week=iso_week, output_dir=Path("reports") / "journal")
+        template_path = template
+        if template_path is None:
+            candidate = Path("src") / "reporter" / "templates" / f"weekly_{profile}.md"
+            docs_candidate = Path("docs") / "templates" / "reports" / f"weekly_{profile}.md"
+            template_path = candidate if candidate.exists() else docs_candidate if docs_candidate.exists() else Path("src") / "reporter" / "templates" / "weekly_m1_core.md"
+        summary = ReportGenerator().render_weekly_report(
+            week=iso_week,
+            tickets=tickets,
+            stress_runs=stress_runs,
+            journal_entries=journal_entries,
+            template_path=template_path,
+        )
         output_path = out or Path("reports/auto/weekly_ticket_summary.md")
         output_path.parent.mkdir(parents=True, exist_ok=True)
         output_path.write_text(summary, encoding="utf-8")
-        payload = {"profile": profile, "ticket_summary": summary, "path": str(output_path)}
+        payload = {
+            "profile": profile,
+            "ticket_summary": summary,
+            "path": str(output_path),
+            "week": iso_week,
+            "stress_runs": stress_runs,
+            "journal_entries": journal_entries,
+            "journal_export": str(journal_export),
+        }
         _render_payload(console, payload, json_output=effective_json)
 
     app.add_typer(report_app, name="report")

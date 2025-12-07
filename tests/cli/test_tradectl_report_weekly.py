@@ -29,6 +29,15 @@ def test_report_weekly_renders_ticket_summary(monkeypatch: "MonkeyPatch", tmp_pa
     )
     monkeypatch.setattr(tickets_actions, "TICKET_STORE_PATH", store_path)
     out_path = tmp_path / "weekly.md"
+    stress_dir = tmp_path / "reports" / "stress"
+    stress_dir.mkdir(parents=True, exist_ok=True)
+    (stress_dir / "brexit_report.md").write_text("# Stress Test Report: brexit\nresult: ok\n", encoding="utf-8")
+    journal_path = tmp_path / "logs" / "journal" / "entries.jsonl"
+    journal_path.parent.mkdir(parents=True, exist_ok=True)
+    journal_path.write_text(
+        json.dumps({"ts": "2025-03-20T12:00:00Z", "ticket_id": "T1", "user": "alice", "note": "approved", "week": "2025-W12"}),
+        encoding="utf-8",
+    )
     result = runner.invoke(
         app,
         [
@@ -36,6 +45,12 @@ def test_report_weekly_renders_ticket_summary(monkeypatch: "MonkeyPatch", tmp_pa
             "weekly",
             "--out",
             str(out_path),
+            "--stress-dir",
+            str(stress_dir),
+            "--journal-path",
+            str(journal_path),
+            "--week",
+            "2025-W12",
             "--json",
         ],
     )
@@ -43,3 +58,7 @@ def test_report_weekly_renders_ticket_summary(monkeypatch: "MonkeyPatch", tmp_pa
     payload = json.loads(result.stdout)
     assert "ticket_summary" in payload
     assert out_path.exists()
+    assert payload["week"] == "2025-W12"
+    assert payload["stress_runs"][0]["scenario"] == "brexit"
+    assert payload["journal_entries"][0]["ticket_id"] == "T1"
+    assert payload["journal_export"].endswith("reports/journal/2025-W12.md")

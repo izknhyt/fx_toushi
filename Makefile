@@ -71,3 +71,17 @@ check-alpha-profiles:
 	else \
 		PYTHONPATH=src python3 -m src.interfaces.cli.schema_validate config/alpha_profiles.yaml --schema docs/schemas/alpha_profiles.schema.json; \
 	fi
+
+report-weekly:
+	@if command -v poetry >/dev/null 2>&1; then \
+		poetry run tradectl report weekly --json; \
+	else \
+		PYTHONPATH=src python3 -m src.interfaces.cli.main report weekly --json; \
+	fi
+
+gate-persist:
+	@if command -v poetry >/dev/null 2>&1; then \
+		poetry run python tools/persist_gate_state.py $(ARGS); \
+	else \
+		PYTHONPATH=src python3 tools/persist_gate_state.py $(ARGS); \
+	fi

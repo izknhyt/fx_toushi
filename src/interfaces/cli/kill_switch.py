@@ -156,16 +156,17 @@ def set_state(
     gate_state_snapshot: str | None = None
     if gate_state_path:
         try:
-            from src.core.gate import GateState  # local import to avoid cycles
+            from src.core.gate import GateState, GateAggregator  # local import to avoid cycles
 
             if gate_state_path.exists():
                 gate_state = GateState.load(gate_state_path)
             else:
                 gate_state = GateState()
-            gate_state.risk.kill_switch_recommendation = None if state_value == "none" else state_value
-            gate_state.risk.kill_switch_reason = reason
-            gate_state.auto_execute = state_value == "none" and not gate_state.risk.reduce_only
-            gate_state_snapshot = str(gate_state.dump(gate_state_path))
+            aggregator = GateAggregator(initial_state=gate_state)
+            aggregator._state.risk.kill_switch_recommendation = None if state_value == "none" else state_value  # type: ignore[attr-defined]
+            aggregator._state.risk.kill_switch_reason = reason  # type: ignore[attr-defined]
+            aggregator._state.auto_execute = state_value == "none" and not aggregator._state.risk.reduce_only  # type: ignore[attr-defined]
+            gate_state_snapshot = str(aggregator.persist_latest(path=gate_state_path))
         except Exception as exc:  # pragma: no cover - defensive
             logger.exception("kill_switch.gate_state_update_failed", exc_info=exc)
 

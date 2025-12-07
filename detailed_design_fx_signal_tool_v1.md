@@ -4008,7 +4008,21 @@ Codexへ渡すコード断片は以下のテンプレートに従う。特に`da
 def test_<case>(...):
     ...
 ```
+
+### 12.4 EP04 追加実装メモ（Board/Audit/Stress/Journal）
+- **Boardレンダリング仕様（EP04-P1/P2）**: Richテーブル列は`ticket_id, symbol, action, qty, ttl_seconds, entry(type/price/spread_badge), protect(SL/TP/trailing), guardrails(kill_switch/spread_status/reduce_only), badges, checklist(progress/pending_ids), risk_disclosure, spread, notes`とする。spread_badgeの色付け: block/red, cooldown/watch/yellow, normal/green。RiskDisclosure: pending/warning/expired=yellow, signed/accepted=green。Guardrails列は`ks=<state>, spread=<status>, ro=<bool>`表記。
+- **Approvalスナップショット範囲**: 最低限のケースを`tests/approval/board/`に保持する: (1) normal/signed (watch spread), (2) guarded/pending, (3) spread block + reduce_only, (4) kill_switch=hard_stop, (5) reduce_only true + risk_disclosure warning。各スナップショットは上記列を含むテーブルをテキスト化する。
+- **Auditハッシュ解決**: cfg_hashは`TRADECTL_CFG_PATH`（デフォルト: `reports/data_manifest.json`と同列の設定ファイルが無い場合は環境変数`TRADECTL_CFG_HASH`）をsha256計算して利用。data_hashは`reports/data_manifest.json.strategies.m1_baseline_ma_rsi.dataset_sha256`を第一候補、指定が無い場合は`TRADECTL_DATA_HASH`環境変数。GateStateにcfg_hash/data_hashが存在する場合はそれを最優先で使用。
+- **Audit delta.after**: TicketRecordスキーマを準拠し、`position/protect/entry/risk_summary/checklist/badges/notes/guardrails/audit_refs/board_mode`を含める。patch適用後に不足フィールドはデフォルトで埋め、RiskDisclosureはguardrails/risk_summaryいずれかから整合させる。
+- **Stress/JournalのReporter連携**: StressTestEngineは`reports/stress/<scenario>_report.md`へ出力し、週次レポートに「Stress Runs」セクションを追加する（シナリオ名・結果・artifactパス列挙）。TradeJournalは週次Markdownを`reports/journal/<week>.md`にエクスポートし、Reporter Weeklyに「Trade Journal」サマリ（ts/ticket/user/note箇条書き）を挿入。Runbook/テンプレは`docs/reports/templates/weekly_m1_core.md`と`docs/runbooks/RUN-HITL-01.md`該当節へリンクを追記する。
   - CLI/コマンド例 (`tradectl ...`)
+
+#### 12.4.1 実装補足・設計追記（EP04時点のスタブ状態）
+- **AuditWriter現状**: `src/persistence/audit.py`は`audit.ticket_action.v2`要件を満たさないJSON追記スタブ（diff_before_after/consent_reference_id/guardrail拡張なし）。本節のv2仕様との差分として明記し、実装時に置換する。
+- **Ticket CLIハッシュ解決優先度**: `GateState(cfg_hash/data_hash)`→環境変数`TRADECTL_CFG_PATH`/`TRADECTL_CFG_HASH`/`TRADECTL_DATA_HASH`→`reports/data_manifest.json.strategies.m1_baseline_ma_rsi.dataset_sha256`の順で解決。設計上の優先度として固定する。
+- **Stress/Journal出力パス**: 実装は`reports/stress/<scenario>_report.md`と`reports/journal/<week>.md`に書き出し、週次レポートはこれらを読み込む前提。Docsテンプレ（`docs/reports/templates/...`）が未整備の場合は`src/reporter/templates/weekly_m1_core.md`をデフォルトとする。
+- **GUI IPC範囲**: Tauri側はシリアライザのみ（TicketRecord v2への正規化とBoard再利用）。Audit連携/コマンドハンドラは未実装であることを注記し、EP04-P3以降で拡張する。
+- **ops_worklogフィールド**: `ticket_action`追記時に`cfg_hash`/`data_hash`/`consent_reference_id`/`guardrails`（kill_switch/spread/reduce_only/risk_disclosure）を含める現行実装を仕様として明記する。
 
 <レビューポイント>
   - Spread/NTP/Kill Switch連携 など
@@ -9949,6 +9963,7 @@ TicketRecord:
 - **Reporter TicketSummary呼び出し**: `ReportGenerator.render_ticket_summary`で`weekly_m1_core.md`のTicket Summaryブロックを埋める。`{board_mode, guardrails.kill_switch, guardrails.spread_status, guardrails.reduce_only, risk_disclosure_pending, tickets_overview, determinism_hashes}`を文脈として渡し、週次生成コードでは必ず本関数を呼ぶ（呼び出し地点の明示が未記載だったためここで固定）。
 - **GUI/Tauri kill_switch_set接続**: IPC `kill_switch_set`は`tradectl kill-switch set`相当のCLI経路へ委譲し、成功/失敗ともにCLIと同じ`audit/metrics/validation_log`フォーマットを返す契約とする。成功後は`board_get_snapshot`を再フェッチしてUI更新。Playwright等がない場合はIPC単体テストで応答を検証する。
 - **Playwrightスカフォールド**: `playwright.config.ts`＋`tests/gui/`配下にChromiumヘッドレス前提のシナリオを置く。IPCモック前提でキルスイッチの`status=accepted`応答とバナー更新を確認する簡易テストを追加。CIで`npx playwright install chromium`を前提に実行。
+- **UI未配置時の扱い**: 現リポジトリに実UI（Tauri/SPA）が存在しないため、Playwrightはモックテストのみ稼働。実UI E2Eを有効化するには、(1) フロント資材を追加し`npm run dev`等で起動可能にする、(2) `playwright.config.ts`の`baseURL`を実UIに合わせる、(3) 画面要素に`data-testid`を付与してkill_switchバナー更新を検証する、の手順を追加する。
 
 ### 86.x GUI/Tauri Guardrails連携メモ（EP03）
 - **データ取得**: `snapshots/latest/gate_state.json`とBoard CLIペイロードをIPC `board_get_snapshot`（新設）で返却。`reports/data_manifest.json`から`strategy/dataset_hash`も同梱。

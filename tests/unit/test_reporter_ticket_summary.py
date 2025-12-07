@@ -28,3 +28,12 @@ def test_ticket_summary_renders_guardrails(tmp_path: Path) -> None:
     assert "KillSwitch: soft_stop" in summary
     assert "Pending: 1" in summary
     assert "Det: deadbeef" in summary
+
+
+def test_journal_summary_renders_entries() -> None:
+    entries = [
+        {"ts": "2025-03-20T12:00:00Z", "ticket_id": "T1", "user": "alice", "note": "approved"},
+        {"ts": "2025-03-21T09:00:00Z", "ticket_id": "T2", "user": "bob", "note": "rejected"},
+    ]
+    text = ReportGenerator().render_journal_summary(entries)
+    assert "T1" in text and "approved" in text

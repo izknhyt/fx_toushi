@@ -1,0 +1,87 @@
+{
+  "board_mode": "normal",
+  "guardrails": {
+    "kill_switch_state": "none",
+    "spread_status": "normal",
+    "reduce_only": false,
+    "risk_disclosure": "signed",
+    "risk_disclosure_consent_id": null
+  },
+  "tickets": [
+    {
+      "ticket_id": "TK-DOUBLE-PEND",
+      "symbol": "GBPJPY",
+      "timeframe": "M15",
+      "strategy_id": "m1_baseline_ma_rsi",
+      "action": "buy",
+      "quantity": 100000,
+      "position": {
+        "direction": "long",
+        "size_lot": 1.0,
+        "reduce_only": false
+      },
+      "regime_context": {
+        "regime": "normal",
+        "conviction": "high"
+      },
+      "entry": {
+        "type": "limit",
+        "price": 191.25,
+        "spread_badge": "normal"
+      },
+      "protect": {
+        "stop_loss": 190.8,
+        "take_profit": 192.1,
+        "trailing": true,
+        "ttl_seconds": 900
+      },
+      "guardrails": {
+        "kill_switch": "none",
+        "spread_status": "normal",
+        "reduce_only": false
+      },
+      "badges": [
+        "double_entry_pending"
+      ],
+      "checklist": [
+        {
+          "id": "spread_window_clear",
+          "label": "Spread & news window clear",
+          "status": "ok",
+          "mandatory": true
+        },
+        {
+          "id": "double_entry_confirmed",
+          "label": "Double-entry confirmed",
+          "status": "pending",
+          "mandatory": true
+        }
+      ],
+      "risk_summary": {
+        "risk_disclosure": "signed",
+        "account_risk_pct": 0.3,
+        "r_multiple": 1.2
+      },
+      "notes": {
+        "manual_comment": "Awaiting second approver"
+      },
+      "gate_context": {
+        "spread": {
+          "state": "normal"
+        }
+      },
+      "audit_refs": {
+        "manifest_hash": "sha256:cfg-double",
+        "data_hash": "sha256:data-double",
+        "determinism_hash": "deadbeef13"
+      }
+    }
+  ],
+  "auto_execute": true,
+  "banner": {
+    "kind": "normal",
+    "message": "Board mode normal"
+  },
+  "render_summary": "mode=normal | banner=Board mode normal | ks=none, spread=normal, reduce_only=False | risk_disclosure=signed | badges: profit=ok, latency=ok, slippage=ok | tickets=1",
+  "rendered_table": "                                                                                                Tickets                                                                                                 \n┏━━━━━━━━━━━━━━━┳━━━━━━━━┳━━━━━━━━┳━━━━━━━━┳━━━━━━━━┳━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━┳━━━━━━━━┳━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━┓\n┃Ticket ID      ┃ Symbol ┃ Action ┃ Qty    ┃ TTL(s) ┃ Entry          ┃ SL/TP          ┃ Guardrails     ┃ Badges         ┃ Checklist       ┃ RiskDisclosure ┃ Spread ┃ Notes          ┃ AuditRefs       ┃\n┡━━━━━━━━━━━━━━━╇━━━━━━━━╇━━━━━━━━╇━━━━━━━━╇━━━━━━━━╇━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━╇━━━━━━━━╇━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━┩\n│TK-DOUBLE-PEND │ GBPJPY │ buy    │ 100000 │ 900    │ limit @191.25  │ SL=190.8       │ ks=none,       │ double_entry_… │ 1/2 (pending:   │ signed         │ normal │ Awaiting       │ cfg=sha256:cfg-…│\n│               │        │        │        │        │                │ TP=192.1 TRAIL │ spread=normal, │                │ double_entry_c… │                │        │ second         │ data=sha256:dat…│\n│               │        │        │        │        │                │ TTL=900        │ ro=False       │                │                 │                │        │ approver       │ det=deadbeef13  │\n└───────────────┴────────┴────────┴────────┴────────┴────────────────┴────────────────┴────────────────┴────────────────┴─────────────────┴────────────────┴────────┴────────────────┴─────────────────┘\n"
+}

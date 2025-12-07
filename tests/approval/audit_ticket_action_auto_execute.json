@@ -1,26 +1,23 @@
 {
   "ts": "2025-11-22T00:00:00Z",
+  "schema_version": "ticket.action.v2",
   "record_type": "ticket.action",
   "ticket_id": "T-sample",
   "action": "approve",
   "actor": "tester",
+  "consent_reference_id": null,
   "board_mode": "normal",
   "auto_execute": true,
-  "spread_state": {
-    "EURUSD": {
-      "state": "normal",
-      "spread_pips": 0.8,
-      "percentile": 0.4,
-      "threshold_pips": 1.8,
-      "cooldown_eta": null,
-      "last_updated": "2025-11-22T00:00:00Z",
-      "lookback_window_sec": 300,
-      "reason": null
-    }
+  "guardrails": {
+    "kill_switch": "none",
+    "spread_status": "normal",
+    "health_state": "ok",
+    "reduce_only": false
   },
-  "health_state": "ok",
   "cfg_hash": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
   "data_hash": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+  "determinism_hash": null,
+  "determinism_version": 1,
   "profit_readiness_status": "ok",
   "latency_data_status": "ok",
   "slippage_data_status": "ok",

@@ -23,35 +23,79 @@ class ReportGenerator:
         path.write_text("\n".join(lines) + "\n", encoding="utf-8")
         return path
 
-    def render_ticket_summary(self, *, tickets: Sequence[Mapping[str, object]], template_path: Path | None = None) -> str:
+    def render_ticket_summary(
+        self, *, tickets: Sequence[Mapping[str, object]], template_path: Path | None = None, extra_context: Mapping[str, object] | None = None
+    ) -> str:
         template = template_path or TICKET_SUMMARY_TEMPLATE
         tpl = template.read_text(encoding="utf-8")
-        guardrails = _summarise_guardrails(tickets)
-        risk_pending = sum(1 for t in tickets if (t.get("risk_summary") or {}).get("risk_disclosure") == "pending")
-        determinism_hashes = ", ".join(
+        context = _build_ticket_context(tickets)
+        context.setdefault("stress_runs", "- No stress runs")
+        context.setdefault("trade_journal", "- No entries")
+        if extra_context:
+            context.update(extra_context)
+        return tpl.format(**context)
+
+    def render_journal_summary(self, entries: Sequence[Mapping[str, object]], *, with_header: bool = True) -> str:
+        """Render a simple journal summary block for reports."""
+
+        lines: list[str] = []
+        if with_header:
+            lines.extend(["## Trade Journal", ""])
+        if not entries:
+            lines.append("- No entries")
+            return "\n".join(lines)
+        for entry in entries:
+            ts = entry.get("ts") or "unknown"
+            ticket = entry.get("ticket_id") or "unknown"
+            user = entry.get("user") or "unknown"
+            note = entry.get("note") or ""
+            lines.append(f"- {ts} [{ticket}] {user}: {note}")
+        return "\n".join(lines)
+
+    def render_stress_runs(self, runs: Sequence[Mapping[str, object]], *, with_header: bool = False) -> str:
+        """Render Stress Test summaries for weekly/ops reports."""
+
+        lines: list[str] = []
+        if with_header:
+            lines.extend(["## Stress Runs", ""])
+        if not runs:
+            lines.append("- No stress runs")
+            return "\n".join(lines)
+        for run in runs:
+            scenario = run.get("scenario") or run.get("name") or "unknown"
+            status = run.get("status") or "unknown"
+            summary = run.get("summary") or ""
+            artifacts = ", ".join(run.get("artifacts") or [])
+            line = f"- {scenario}: {status}"
+            if summary:
+                line = f"{line} ({summary})"
+            lines.append(line)
+            if artifacts:
+                lines.append(f"  artifacts: {artifacts}")
+        return "\n".join(lines)
+
+    def render_weekly_report(
+        self,
+        *,
+        week: str,
+        tickets: Sequence[Mapping[str, object]],
+        stress_runs: Sequence[Mapping[str, object]] = (),
+        journal_entries: Sequence[Mapping[str, object]] = (),
+        template_path: Path | None = None,
+    ) -> str:
+        """Compose weekly report content with ticket summary, stress runs, and journal."""
+
+        stress_block = self.render_stress_runs(stress_runs, with_header=False)
+        journal_block = self.render_journal_summary(journal_entries, with_header=False)
+        context = _build_ticket_context(tickets)
+        context.update(
             {
-                str((t.get("audit_refs") or {}).get("determinism_hash", ""))
-                for t in tickets
-                if t.get("audit_refs")
+                "week": week,
+                "stress_runs": stress_block,
+                "trade_journal": journal_block,
             }
         )
-        tickets_overview = f"{len(tickets)} tickets (pending risk disclosure: {risk_pending})"
-        context = {
-            "board_mode": guardrails.get("board_mode") or "unknown",
-            "risk_disclosure_pending": risk_pending,
-            "tickets_overview": tickets_overview,
-            "determinism_hashes": determinism_hashes,
-        }
-        # flatten guardrails fields for template safety
-        guardrails_obj = SimpleNamespace(
-            kill_switch=guardrails.get("kill_switch"),
-            spread_status=guardrails.get("spread_status"),
-            reduce_only=guardrails.get("reduce_only"),
-        )
-        context["guardrails"] = guardrails_obj
-        context["guardrails.kill_switch"] = guardrails_obj.kill_switch
-        context["guardrails.spread_status"] = guardrails_obj.spread_status
-        context["guardrails.reduce_only"] = guardrails_obj.reduce_only
+        tpl = (template_path or TICKET_SUMMARY_TEMPLATE).read_text(encoding="utf-8")
         return tpl.format(**context)
 
 
@@ -64,6 +108,35 @@ def _summarise_guardrails(tickets: Iterable[Mapping[str, object]]) -> dict[str, 
         guard["reduce_only"] = guard["reduce_only"] or bool(g.get("reduce_only"))
         guard["board_mode"] = guard["board_mode"] or ticket.get("board_mode")
     return guard
+
+
+def _build_ticket_context(tickets: Sequence[Mapping[str, object]]) -> dict[str, object]:
+    guardrails = _summarise_guardrails(tickets)
+    risk_pending = sum(1 for t in tickets if (t.get("risk_summary") or {}).get("risk_disclosure") == "pending")
+    determinism_hashes = ", ".join(
+        {
+            str((t.get("audit_refs") or {}).get("determinism_hash", ""))
+            for t in tickets
+            if t.get("audit_refs")
+        }
+    )
+    tickets_overview = f"{len(tickets)} tickets (pending risk disclosure: {risk_pending})"
+    context = {
+        "board_mode": guardrails.get("board_mode") or "unknown",
+        "risk_disclosure_pending": risk_pending,
+        "tickets_overview": tickets_overview,
+        "determinism_hashes": determinism_hashes,
+    }
+    guardrails_obj = SimpleNamespace(
+        kill_switch=guardrails.get("kill_switch"),
+        spread_status=guardrails.get("spread_status"),
+        reduce_only=guardrails.get("reduce_only"),
+    )
+    context["guardrails"] = guardrails_obj
+    context["guardrails.kill_switch"] = guardrails_obj.kill_switch
+    context["guardrails.spread_status"] = guardrails_obj.spread_status
+    context["guardrails.reduce_only"] = guardrails_obj.reduce_only
+    return context
 
 
 __all__ = ["ReportGenerator"]

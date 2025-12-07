@@ -7,22 +7,27 @@
   "required": [
     "ts",
     "record_type",
+    "schema_version",
     "ticket_id",
     "action",
     "actor",
+    "consent_reference_id",
     "board_mode",
     "auto_execute",
     "guardrails",
+    "cfg_hash",
+    "data_hash",
     "delta",
     "determinism_hash",
     "determinism_version"
   ],
-  "additionalProperties": false,
+  "additionalProperties": true,
   "properties": {
     "schema_version": {
       "type": "string",
-      "description": "Version tag for the audit record layout (e.g. ticket.action.v1).",
-      "pattern": "^ticket\\.action\\.v[0-9]+$"
+      "description": "Version tag for the audit record layout (e.g. ticket.action.v1 or ticket.action.v2).",
+      "pattern": "^ticket\\.action\\.v[0-9]+$",
+      "default": "ticket.action.v2"
     },
     "ts": {
       "type": "string",
@@ -70,13 +75,24 @@
     },
     "determinism_hash": { "type": ["string", "null"] },
     "determinism_version": { "type": "integer" },
+    "cfg_hash": {
+      "type": "string",
+      "description": "sha256 hash of config bundle",
+      "pattern": "^sha256:[a-fA-F0-9]{64}$"
+    },
+    "data_hash": {
+      "type": "string",
+      "description": "sha256 hash of dataset/manifest",
+      "pattern": "^sha256:[a-fA-F0-9]{64}$"
+    },
     "delta": {
       "type": "object",
       "description": "Before/after diff with consent metadata required by compliance export.",
       "required": [
         "before",
         "after",
-        "diff"
+        "diff",
+        "decision"
       ],
       "additionalProperties": true,
       "properties": {
@@ -114,6 +130,11 @@
     "notes": {
       "type": "string",
       "maxLength": 1024
+    },
+    "consent_reference_id": {
+      "type": ["string", "null"],
+      "description": "UUID tied to risk disclosure consent at action time",
+      "pattern": "^[0-9a-fA-F-]{36}$"
     },
     "extras": {
       "type": "object",

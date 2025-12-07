@@ -1,4 +1,6 @@
 {
+  "cfg_hash": "sha256:example_cfg_hash",
+  "data_hash": "sha256:example_data_hash",
   "schema_version": "gate.state.v4",
   "auto_execute": false,
   "market": {

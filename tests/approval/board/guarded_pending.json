@@ -1,0 +1,96 @@
+{
+  "board_mode": "guarded",
+  "guardrails": {
+    "kill_switch_state": "guarded",
+    "spread_status": "normal",
+    "reduce_only": false,
+    "risk_disclosure": "pending",
+    "risk_disclosure_consent_id": null
+  },
+  "tickets": [
+    {
+      "ticket_id": "TK-GUARD-1",
+      "symbol": "USDJPY",
+      "timeframe": "M15",
+      "strategy_id": "m1_baseline_ma_rsi",
+      "action": "buy",
+      "quantity": 100000,
+      "position": {
+        "direction": "long",
+        "size_lot": 1.0,
+        "reduce_only": false
+      },
+      "regime_context": {
+        "regime": "degraded",
+        "conviction": "medium"
+      },
+      "entry": {
+        "type": "market",
+        "price": 151.23,
+        "spread_badge": "normal"
+      },
+      "protect": {
+        "stop_loss": 150.9,
+        "take_profit": 151.9,
+        "trailing": false,
+        "ttl_seconds": 600
+      },
+      "guardrails": {
+        "kill_switch": "guarded",
+        "spread_status": "normal",
+        "reduce_only": false
+      },
+      "badges": [
+        "double_entry_pending",
+        "comment_required"
+      ],
+      "checklist": [
+        {
+          "id": "spread_window_clear",
+          "label": "Spread & news window clear",
+          "status": "ok",
+          "mandatory": true
+        },
+        {
+          "id": "double_entry_confirmed",
+          "label": "Double-entry confirmed",
+          "status": "pending",
+          "mandatory": true
+        },
+        {
+          "id": "manual_comment_recorded",
+          "label": "Manual comment recorded",
+          "status": "warn",
+          "mandatory": true
+        }
+      ],
+      "risk_summary": {
+        "risk_disclosure": "pending",
+        "account_risk_pct": 0.5,
+        "r_multiple": 1.2
+      },
+      "notes": {
+        "manual_comment": "Awaiting double entry"
+      },
+      "gate_context": {
+        "spread": {
+          "state": "normal"
+        }
+      },
+      "audit_refs": {
+        "manifest_hash": "sha256:cfg-ops",
+        "data_hash": "sha256:data-ops",
+        "determinism_hash": "deadbeef02"
+      }
+    }
+  ],
+  "auto_execute": false,
+  "banner": {
+    "kind": "risk_disclosure",
+    "message": "RiskDisclosure pending",
+    "severity": "warn",
+    "runbook": "docs/runbooks/RUN-HITL-01.md"
+  },
+  "render_summary": "mode=guarded | banner=RiskDisclosure pending | ks=guarded, spread=normal, reduce_only=False | risk_disclosure=pending | badges: profit=ok, latency=ok, slippage=ok | tickets=1",
+  "rendered_table": "                                                                                                Tickets                                                                                                 \n┏━━━━━━━━━━━┳━━━━━━━━┳━━━━━━━━┳━━━━━━━━┳━━━━━━━━┳━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━┳━━━━━━━━┳━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━┓\n┃Ticket ID  ┃ Symbol ┃ Action ┃ Qty    ┃ TTL(s) ┃ Entry           ┃ SL/TP           ┃ Guardrails      ┃ Badges          ┃ Checklist       ┃ RiskDisclosure ┃ Spread ┃ Notes           ┃ AuditRefs      ┃\n┡━━━━━━━━━━━╇━━━━━━━━╇━━━━━━━━╇━━━━━━━━╇━━━━━━━━╇━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━╇━━━━━━━━╇━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━┩\n│TK-GUARD-1 │ USDJPY │ buy    │ 100000 │ 600    │ market @151.23  │ SL=150.9        │ ks=guarded,     │ double_entry_p… │ 1/3 (pending:   │ pending        │ normal │ Awaiting double │ cfg=sha256:cfg…│\n│           │        │        │        │        │                 │ TP=151.9        │ spread=normal,  │                 │ double_entry_c… │                │        │ entry           │ data=sha256:da…│\n│           │        │        │        │        │                 │ TTL=600         │ ro=False        │                 │                 │                │        │                 │ det=deadbeef02 │\n└───────────┴────────┴────────┴────────┴────────┴─────────────────┴─────────────────┴─────────────────┴─────────────────┴─────────────────┴────────────────┴────────┴─────────────────┴────────────────┘\n"
+}

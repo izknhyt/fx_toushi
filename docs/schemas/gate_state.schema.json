@@ -11,6 +11,16 @@
   ],
   "additionalProperties": false,
   "properties": {
+    "cfg_hash": {
+      "type": "string",
+      "description": "sha256 hash of current config bundle",
+      "pattern": "^sha256:[a-fA-F0-9]{64}$"
+    },
+    "data_hash": {
+      "type": "string",
+      "description": "sha256 hash of dataset/manifest",
+      "pattern": "^sha256:[a-fA-F0-9]{64}$"
+    },
     "schema_version": {
       "anyOf": [
         {

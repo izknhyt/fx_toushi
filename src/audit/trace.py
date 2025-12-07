@@ -96,6 +96,7 @@ def log_ticket_action(
     actor: str,
     board_mode: str,
     auto_execute: bool,
+    guardrails: Mapping[str, object] | None = None,
     spread_state: Mapping[str, object] | None,
     health_state: str,
     cfg_hash: str,
@@ -104,19 +105,28 @@ def log_ticket_action(
     latency_data_status: str,
     slippage_data_status: str,
     delta: Mapping[str, object],
+    consent_reference_id: str | None = None,
     notes: str | None = None,
     path: Path = DEFAULT_TICKET_ACTION_LOG,
 ) -> Mapping[str, object]:
     """Append a ticket.action audit entry including auto_execute flag."""
 
+    guardrails_payload = dict(guardrails or {})
+    guardrails_payload.setdefault("kill_switch", "none")
+    guardrails_payload.setdefault("spread_status", "normal")
+    guardrails_payload.setdefault("reduce_only", False)
+    guardrails_payload.setdefault("health_state", health_state)
+
     record: dict[str, object] = {
         "ts": _now(),
         "record_type": "ticket.action",
+        "schema_version": "ticket.action.v2",
         "ticket_id": ticket_id,
         "action": action,
         "actor": actor,
         "board_mode": board_mode,
         "auto_execute": bool(auto_execute),
+        "guardrails": guardrails_payload,
         "spread_state": spread_state or {},
         "health_state": health_state,
         "cfg_hash": cfg_hash,
@@ -125,6 +135,7 @@ def log_ticket_action(
         "latency_data_status": latency_data_status,
         "slippage_data_status": slippage_data_status,
         "delta": delta,
+        "consent_reference_id": consent_reference_id,
     }
     if notes:
         record["notes"] = notes

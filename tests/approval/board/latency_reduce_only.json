@@ -1,0 +1,91 @@
+{
+  "board_mode": "guarded",
+  "guardrails": {
+    "kill_switch_state": "none",
+    "spread_status": "normal",
+    "reduce_only": true,
+    "risk_disclosure": "signed",
+    "risk_disclosure_consent_id": null
+  },
+  "tickets": [
+    {
+      "ticket_id": "TK-LAT-RO",
+      "symbol": "AUDUSD",
+      "timeframe": "M5",
+      "strategy_id": "m1_baseline_ma_rsi",
+      "action": "sell",
+      "quantity": 50000,
+      "position": {
+        "direction": "short",
+        "size_lot": 0.5,
+        "reduce_only": true
+      },
+      "regime_context": {
+        "regime": "acceptable_degradation",
+        "conviction": "medium"
+      },
+      "entry": {
+        "type": "market",
+        "price": 0.6588,
+        "spread_badge": "normal"
+      },
+      "protect": {
+        "stop_loss": 0.662,
+        "take_profit": 0.653,
+        "trailing": false,
+        "ttl_seconds": 480
+      },
+      "guardrails": {
+        "kill_switch": "none",
+        "spread_status": "normal",
+        "reduce_only": true,
+        "reason": "latency_degraded"
+      },
+      "badges": [
+        "latency_warn",
+        "reduce_only_enforced"
+      ],
+      "checklist": [
+        {
+          "id": "latency_ack",
+          "label": "Latency degraded acknowledged",
+          "status": "pending",
+          "mandatory": true
+        },
+        {
+          "id": "double_entry_confirmed",
+          "label": "Double-entry confirmed",
+          "status": "ok",
+          "mandatory": true
+        }
+      ],
+      "risk_summary": {
+        "risk_disclosure": "signed",
+        "account_risk_pct": 0.18,
+        "r_multiple": 0.6
+      },
+      "notes": {
+        "manual_comment": "Reduce-only due to latency"
+      },
+      "gate_context": {
+        "spread": {
+          "state": "normal"
+        }
+      },
+      "audit_refs": {
+        "manifest_hash": "sha256:cfg-lat",
+        "data_hash": "sha256:data-lat",
+        "determinism_hash": "deadbeef14"
+      }
+    }
+  ],
+  "auto_execute": false,
+  "banner": {
+    "kind": "acceptable_degradation",
+    "message": "Reduce-Only enforced",
+    "severity": "warn",
+    "runbook": "docs/runbooks/RUN-DATA-05.md"
+  },
+  "render_summary": "mode=guarded | banner=Reduce-Only enforced | ks=none, spread=normal, reduce_only=True | risk_disclosure=signed | badges: profit=ok, latency=ok, slippage=ok | tickets=1",
+  "rendered_table": "                                                                                                Tickets                                                                                                 \n┏━━━━━━━━━━┳━━━━━━━━┳━━━━━━━━┳━━━━━━━┳━━━━━━━━┳━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━┳━━━━━━━━┳━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━┓\n┃Ticket ID ┃ Symbol ┃ Action ┃ Qty   ┃ TTL(s) ┃ Entry           ┃ SL/TP           ┃ Guardrails      ┃ Badges          ┃ Checklist       ┃ RiskDisclosure ┃ Spread ┃ Notes           ┃ AuditRefs        ┃\n┡━━━━━━━━━━╇━━━━━━━━╇━━━━━━━━╇━━━━━━━╇━━━━━━━━╇━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━╇━━━━━━━━╇━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━┩\n│TK-LAT-RO │ AUDUSD │ sell   │ 50000 │ 480    │ market @0.6588  │ SL=0.662        │ ks=none(latenc… │ latency_warn,r… │ 1/2 (pending:   │ signed         │ normal │ Reduce-only due │ cfg=sha256:cfg-l…│\n│          │        │        │       │        │                 │ TP=0.653        │ spread=normal,  │                 │ latency_ack)    │                │        │ to latency      │ data=sha256:data…│\n│          │        │        │       │        │                 │ TTL=480         │ ro=True         │                 │                 │                │        │                 │ det=deadbeef14   │\n└──────────┴────────┴────────┴───────┴────────┴─────────────────┴─────────────────┴─────────────────┴─────────────────┴─────────────────┴────────────────┴────────┴─────────────────┴──────────────────┘\n"
+}

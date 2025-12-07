@@ -189,30 +189,26 @@ def test_event_resync_completed_rejects_missing_hash() -> None:
 def test_audit_ticket_action_accepts_valid_record() -> None:
     validator = _build_validator("docs/schemas/audit_ticket_action.schema.json")
     record = {
-        "schema_version": "ticket.action.v1",
+        "schema_version": "ticket.action.v2",
         "ts": "2025-03-08T12:50:30Z",
         "record_type": "ticket.action",
         "ticket_id": "TCK-20250308-001",
         "action": "approve",
         "actor": "ops_manager",
         "consent_reference_id": "018f96d8-1c2b-7def-8abc-1a2b3c4d5e6f",
-            "board_mode": "guarded",
-            "auto_execute": False,
-            "spread_state": {
-                "EURUSD": {
-                    "state": "normal",
-                "spread_pips": 0.6,
-                "percentile": 0.42,
-                "threshold_pips": 1.2,
-                "cooldown_eta": None,
-                "last_updated": "2025-03-08T12:50:00Z",
-                "lookback_window_sec": 900,
-                "reason": None,
-            }
+        "board_mode": "guarded",
+        "auto_execute": False,
+        "guardrails": {
+            "kill_switch": "soft_stop",
+            "spread_status": "cooldown",
+            "health_state": "ok",
+            "reduce_only": True,
+            "reason": "cooldown"
         },
-        "health_state": "degraded",
         "cfg_hash": "sha256:9c3dbe9b6f7a21c4d5e68f9a3c7d2e1f6b8c4d2a1e6f7c8b9d3a0e5f6b8c4d2a",
         "data_hash": "sha256:5f6b8c4d2a1e6f7c8b9d3a0e5f6b8c4d2a1e6f7c8b9d3a0e5f6b8c4d2a1e6f7c",
+        "determinism_hash": "deadbeef",
+        "determinism_version": 1,
         "delta": {
             "before": {"status": "pending"},
             "after": {"status": "approved"},
@@ -234,31 +230,27 @@ def test_audit_ticket_action_accepts_valid_record() -> None:
 def test_audit_ticket_action_rejects_missing_delta_fields() -> None:
     validator = _build_validator("docs/schemas/audit_ticket_action.schema.json")
     invalid = {
-        "schema_version": "ticket.action.v1",
+        "schema_version": "ticket.action.v2",
         "ts": "2025-03-08T12:50:30Z",
         "record_type": "ticket.action",
         "ticket_id": "TCK-20250308-002",
         "action": "reject",
         "actor": "ops_manager",
+        "consent_reference_id": None,
         "board_mode": "guarded",
-        "spread_state": {
-            "USDJPY": {
-                "state": "watch",
-                "spread_pips": 1.4,
-                "percentile": 0.78,
-                "threshold_pips": 1.5,
-                "cooldown_eta": "2025-03-08T13:00:00Z",
-                "last_updated": "2025-03-08T12:48:00Z",
-                "lookback_window_sec": 900,
-            }
+        "guardrails": {
+            "kill_switch": "soft_stop",
+            "spread_status": "cooldown",
+            "health_state": "degraded",
+            "reduce_only": False,
         },
-        "health_state": "degraded",
         "cfg_hash": "sha256:1e6f7c8b9d3a0e5f6b8c4d2a1e6f7c8b9d3a0e5f6b8c4d2a1e6f7c8b9d3a0e5f",
         "data_hash": "sha256:7c8b9d3a0e5f6b8c4d2a1e6f7c8b9d3a0e5f6b8c4d2a1e6f7c8b9d3a0e5f6b8c",
+        "determinism_hash": None,
+        "determinism_version": 1,
         "delta": {
             "before": {"status": "pending"},
             "after": {"status": "rejected"},
-            "diff": {"status": "rejected"},
             "decision": "reject",
             "consent_version": "2.3.1",
             "expires_at": "2025-06-01T00:00:00Z",
