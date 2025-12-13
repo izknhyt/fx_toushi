@@ -1,0 +1,11 @@
+
+# local artifacts
+logs/
+*.log
+
+# python virtual env
+.venv/
+
+# node deps (念のため)
+ui/node_modules/
+
