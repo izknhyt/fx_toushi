@@ -479,7 +479,7 @@ M1 Issue/Packetでは下表の「M1 Core」列のみをDone条件とし、Bridge
 - **SnapshotManager（§2.4）**: `persist(state, cfg_hash, data_hash, actor='system')`は`cfg_hash`/`data_hash`が`None`なら`SnapshotPersistError`でfail-fast。復旧時にハッシュ不一致があれば`SnapshotCorruptedError`を返し、`health.status=hard_stop`を推奨する。復旧直後のBoardModeは`paused`相当とし、OpsがRunbook承認後に`resume`する。
 - **DataIngestion/Manual CSV（§3.1/§17.6）**: プロバイダ優先度は`provider_priority`順に最大2回リトライ（500msバックオフ）。`quality_flag`: `0=ok`, `1=missing_bars`, `2=dup_bars`, `3=out_of_order`, `4=ts_mismatch`。Manual CSV検証必須: (a) 5m/1hのバー境界整合、(b) UTC/JSTカラム一致、(c) `low ≤ open,close ≤ high`、(d) 双子CSV（`op`/`review`）のSHA256一致。Exit code 120で不合格とし、`reports/validation_log/manual_csv_<...>.md`に理由を出力。
 - **Acceptable Degradation/Board Mode（§2.5/§17.2）**: 自動遷移は行わず「推奨」フラグのみ。`health.status in {degraded, soft_stop}`または`spread.state in {cooldown, block}`で`board_mode_suggestion=guarded`を提示し、`health.status=hard_stop`または`kill_switch_state=hard_stop`で`halted`を提示。解除条件は「原因コード解消＋直近15分の`metrics/data_ingestion_sla.jsonl`と`metrics/spread_guard.jsonl`が正常」で、OpsがRunbookに従い手動解除。
-- **Determinism/Manifest（§3.5/§15.2/§27）**: `determinism_key`はManifest必須。`determinism_hash = blake2b(feature_version + data_manifest_hash + determinism_key + strategy_config + seed)`と定義し、`AuditRecord.determinism_hash`に必須で記録する。Manifest必須フィールド: `id`, `version`, `owner`, `determinism_key`, `entrypoint`, `required_features`, `default_watchlist`, `validation.tests`, `schema_version`. 欠落時は`StrategyManifestError`でfail-fast。
+- **Determinism/Manifest（§3.5/§15.2/§27）**: `determinism_key`はManifest必須。`determinism_hash = blake2b(feature_version + data_manifest_hash + determinism_key + strategy_config + seed)`と定義し、`AuditRecord.determinism_hash`に必須で記録する。Manifest必須フィールド: `id`, `version`, `owner`, `determinism_key`, `entrypoint`, `required_features`, `default_watchlist`, `validation.tests`, `schema_version`. 欠落時は`StrategyManifestError`でfail-fast。**TicketDraft.metadataにも`determinism_hash`を必須とし、未設定時はTicketBuilderが`determinism_hash_missing`でfail-fastする。**
 - **Ticket Clarity/Audit（§92）**: `audit.ticket_action.v2`の必須フィールドを固定: `ticket_id`, `action`, `actor`, `board_mode`, `kill_switch_state`, `spread_status`, `profit_readiness_status`, `reduce_only`, `risk_disclosure_state`, `cfg_hash`, `data_hash`, `consent_reference_id`, `ts`. CLI/GUIはこれらを全て埋めて監査へ書き出す。
 - **Ops Worklog/Agenda（§18/§0.6.7）**: `ops_worklog.jsonl`のキーを`{timestamp, task, week, mode?, runbooks, command?, evidence, notes}`に固定し、Agenda生成時に`task`と`runbooks`を必須入力とする。CLI/自動化はこのスキーマに従う（例: `tradectl ops readiness --profit --log`）。
 - **Broker Stage/Order Lifecycle（§84/§85/§17.x）**: APIエラー分類を`retryable={timeout, throttled, transient_5xx}`, `fatal={auth, permission, instrument_closed, invalid_params}`, `circuit_breaker={rate_limit_exceeded, venue_halt}`で固定。Retryポリシーは`max_retries=2`, `backoff=1.0s`, `jitter=0.2s`。Stage Guard状態遷移は`paper_live_bridge -> live_shadow -> live`の順、失敗時は一段ロールバックしてRunbook `RUN-BROKER-01`で再実施。
@@ -9685,8 +9685,13 @@ EP-03では、データ/リスク/オペレーションの状態を単一ソー�
     "kill_switch": {"type": "string", "enum": ["none", "soft_stop", "hard_stop"]},
     "reason": {"type": "string"},
     "spread_status": {"type": "string", "enum": ["normal", "cooldown", "block"]},
-    "suggested_action": {"type": "string"},
-    "ack_user": {"type": ["string", "null"]}
+    "suggested_action": {"type": ["string", "null"]},
+    "reasons": {"type": "array", "items": {"type": "string"}},
+    "exit_code": {"type": "integer"},
+    "reduce_only": {"type": "boolean"},
+    "ack_user": {"type": ["string", "null"]},
+    "manifest_hash": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "data_hash": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}
   },
   "additionalProperties": true
 }

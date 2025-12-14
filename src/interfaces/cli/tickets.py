@@ -36,9 +36,13 @@ DEFAULT_GUARDRAILS = {
     "reason": None,
     "risk_disclosure": "pending",
     "profit_readiness_status": "ok",
+    "determinism_hash": DEFAULT_DETERMINISM_HASH,
+    "determinism_version": DEFAULT_DETERMINISM_VERSION,
 }
 DEFAULT_CHECKLIST_PROGRESS = {"completed": 0, "total": 0, "pending_ids": []}
 DEFAULT_WATCHLIST_REASONS: list[str] = []
+DEFAULT_DETERMINISM_HASH = "unknown"
+DEFAULT_DETERMINISM_VERSION = 1
 
 
 def approve(
@@ -72,6 +76,8 @@ def approve(
 
     diff = [{"op": "replace", "path": "/status", "value": "approved"}]
     cfg_hash, data_hash = _extract_hashes(guardrails_payload, gate_state=gate_state)
+    determinism_hash = guardrails_payload.get("determinism_hash")
+    determinism_version = guardrails_payload.get("determinism_version", DEFAULT_DETERMINISM_VERSION)
     audit_entry = _build_audit_entry(
         ticket_id=ticket_id,
         action="approve",
@@ -136,6 +142,8 @@ def reject(
     _acquire_lock(ticket_id, owner=actor, take_over=take_over, reason="reject")
     diff = [{"op": "replace", "path": "/status", "value": "rejected"}]
     cfg_hash, data_hash = _extract_hashes(guardrails_payload, gate_state=gate_state)
+    determinism_hash = guardrails_payload.get("determinism_hash")
+    determinism_version = guardrails_payload.get("determinism_version", DEFAULT_DETERMINISM_VERSION)
     audit_entry = _build_audit_entry(
         ticket_id=ticket_id,
         action="reject",
@@ -144,8 +152,8 @@ def reject(
         diff=diff,
         board_mode=board_mode,
         guardrails=guardrails_payload,
-        determinism_hash=None,
-        determinism_version=1,
+        determinism_hash=determinism_hash,
+        determinism_version=determinism_version,
         checklist_progress=DEFAULT_CHECKLIST_PROGRESS,
         watchlist_reasons=DEFAULT_WATCHLIST_REASONS,
         lock_owner_before=None,
@@ -202,6 +210,8 @@ def edit(
     _acquire_lock(ticket_id, owner=actor, take_over=take_over, reason="edit")
     diff = [{"op": "replace", "path": f"/{field}", "value": value}]
     cfg_hash, data_hash = _extract_hashes(guardrails_payload, gate_state=gate_state)
+    determinism_hash = guardrails_payload.get("determinism_hash")
+    determinism_version = guardrails_payload.get("determinism_version", DEFAULT_DETERMINISM_VERSION)
     audit_entry = _build_audit_entry(
         ticket_id=ticket_id,
         action="edit",
@@ -294,6 +304,15 @@ def _build_audit_entry(
 ) -> Mapping[str, object]:
     ts = datetime.now(timezone.utc).isoformat()
     before = _load_ticket_before(ticket_id)
+    if determinism_hash is None:
+        existing_refs = before.get("audit_refs") or {}
+        determinism_hash = (
+            existing_refs.get("determinism_hash")
+            or before.get("determinism_hash")
+            or DEFAULT_DETERMINISM_HASH
+        )
+    if determinism_version is None:
+        determinism_version = (before.get("audit_refs") or {}).get("determinism_version", DEFAULT_DETERMINISM_VERSION)
     patch = diff or []
     after = _build_after_payload(
         ticket_id=ticket_id,
@@ -493,8 +512,11 @@ def _build_after_payload(
     audit_refs = dict(merged.get("audit_refs") or {})
     audit_refs.setdefault("manifest_hash", cfg_hash)
     audit_refs.setdefault("feature_version", None)
-    audit_refs["determinism_hash"] = determinism_hash
-    audit_refs["determinism_version"] = determinism_version
+    if determinism_hash is not None:
+        audit_refs["determinism_hash"] = determinism_hash
+    else:
+        audit_refs.setdefault("determinism_hash", DEFAULT_DETERMINISM_HASH)
+    audit_refs["determinism_version"] = determinism_version or DEFAULT_DETERMINISM_VERSION
     audit_refs.setdefault("data_hash", data_hash)
     merged["audit_refs"] = audit_refs
     merged.setdefault("regime_context", {})

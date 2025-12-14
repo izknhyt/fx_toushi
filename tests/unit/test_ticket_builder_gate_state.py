@@ -15,7 +15,7 @@ def _make_draft() -> TicketDraft:
         symbol="USDJPY",
         action="buy",
         qty=100_000,
-        metadata={"ticket_id": "TCK-900"},
+        metadata={"ticket_id": "TCK-900", "determinism_hash": "deadbeef02"},
     )
 
 

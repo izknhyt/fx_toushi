@@ -11,7 +11,12 @@ from src.ticket import DefaultTicketBuilder, TicketBlockedError, TicketDraft
 
 
 def _make_draft() -> TicketDraft:
-    return TicketDraft(symbol="USDJPY", action="buy", qty=100_000, metadata={"ticket_id": "TCK-001"})
+    return TicketDraft(
+        symbol="USDJPY",
+        action="buy",
+        qty=100_000,
+        metadata={"ticket_id": "TCK-001", "determinism_hash": "deadbeef01"},
+    )
 
 
 def test_spread_cooldown_generates_warn_checklist_entry() -> None:
@@ -95,3 +100,11 @@ def test_manual_comment_optional_defaults_to_ok_status() -> None:
 
     manual_comment = next(item for item in artifact.checklist if item.field == "manual_comment_logged")
     assert manual_comment.status == "ok"
+
+
+def test_missing_determinism_hash_raises() -> None:
+    draft = TicketDraft(symbol="USDJPY", action="buy", qty=100_000, metadata={"ticket_id": "TCK-002"})
+    builder = DefaultTicketBuilder()
+    with pytest.raises(TicketBlockedError) as excinfo:
+        builder.build(draft, GateState())
+    assert excinfo.value.code == "determinism_hash_missing"

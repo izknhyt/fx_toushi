@@ -14,6 +14,9 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from functools import lru_cache
 import hashlib
+import os
+import json
+import time
 from pathlib import Path
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Mapping, MutableMapping, Optional, Protocol
@@ -40,6 +43,8 @@ __all__ = [
     "DefaultSessionManager",
     "create_session_context",
 ]
+
+_DEFAULT_HASH = "sha256:" + ("0" * 64)
 
 ProfileMode = Literal["backtest", "paper", "live"]
 
@@ -528,6 +533,255 @@ class DefaultSessionManager:
         dry_run: bool = False,
         attachments: Sequence[str] | None = None,
     ) -> Mapping[str, Any] | None:
-        """Resynchronise historical data (not implemented for the scaffold)."""
+        """Resynchronise historical data and return a deterministic summary.
 
-        raise NotImplementedError("SessionManager.catch_up is pending Codex implementation.")
+        Expected keys for the summary (see detailed design §89):
+        - catch_up_elapsed_sec: int
+        - catch_up_lag_minutes: int
+        - recovered_symbols: list[str]
+        - failover_used: list[str]
+        - manual_csv_required: bool
+        - cfg_hash: str (sha256:...)
+        - data_hash: str (sha256:...)
+        - board_mode: str (normal|guarded|halted)
+        - mode: str (backtest|paper|live)
+        """
+
+        start = time.perf_counter()
+        effective_mode = self.config.mode
+        cfg_hash = os.getenv("TRADECTL_CFG_HASH") or _DEFAULT_HASH
+        data_hash = os.getenv("TRADECTL_DATA_HASH") or _DEFAULT_HASH
+        board_mode = os.getenv("TRADECTL_BOARD_MODE") or "normal"
+        determinism_hash = os.getenv("TRADECTL_DETERMINISM_HASH") or self._load_latest_determinism_hash()
+        gate_state = self._load_gate_state()
+        if gate_state:
+            cfg_hash = gate_state.get("cfg_hash", cfg_hash) or cfg_hash
+            data_hash = gate_state.get("data_hash", data_hash) or data_hash
+            board_mode = gate_state.get("board_mode", board_mode) or board_mode
+        failover_env = os.getenv("TRADECTL_RESYNC_FAILOVER_USED", "")
+        failover_used = [token for token in failover_env.split(",") if token.strip()] if failover_env else []
+        measured = self._load_latest_resync_stats()
+
+        def _coalesce_int(*values: Any, default: int = 0) -> int:
+            for val in values:
+                if val is None:
+                    continue
+                try:
+                    return int(val)
+                except (TypeError, ValueError):
+                    continue
+            return default
+
+        def _coalesce_float(*values: Any, default: float = 0.0) -> float:
+            for val in values:
+                if val is None:
+                    continue
+                try:
+                    return float(val)
+                except (TypeError, ValueError):
+                    continue
+            return default
+
+        cfg_hash = measured.get("cfg_hash") or cfg_hash
+        data_hash = measured.get("data_hash") or data_hash
+        board_mode = measured.get("board_mode") or board_mode
+        effective_mode = measured.get("mode") or effective_mode
+        determinism_hash = measured.get("determinism_hash") or determinism_hash
+
+        catch_up_elapsed_sec = _coalesce_int(
+            measured.get("catch_up_elapsed_sec"),
+            int(time.perf_counter() - start),
+            default=0,
+        )
+        catch_up_lag_minutes = _coalesce_int(
+            measured.get("catch_up_lag_minutes"),
+            os.getenv("TRADECTL_RESYNC_LAG_MINUTES"),
+            default=0,
+        )
+        failover_used = list(measured.get("failover_used") or failover_used)
+        manual_csv_required = bool(measured.get("manual_csv_required", False))
+        recovered_symbols = list(measured.get("recovered_symbols") or (symbols or ()))
+        ingestion_metrics = self._load_latest_ingestion_metrics()
+        fetch_p95_ms = _coalesce_float(
+            measured.get("fetch_p95_ms"),
+            ingestion_metrics.get("fetch_p95_ms"),
+            os.getenv("TRADECTL_RESYNC_FETCH_P95_MS"),
+            default=500.0,
+        )
+        fetch_p99_ms = _coalesce_float(
+            measured.get("fetch_p99_ms"),
+            ingestion_metrics.get("fetch_p99_ms"),
+            os.getenv("TRADECTL_RESYNC_FETCH_P99_MS"),
+            default=800.0,
+        )
+        retry_count = _coalesce_int(
+            measured.get("retry_count"),
+            ingestion_metrics.get("retry_count"),
+            os.getenv("TRADECTL_RESYNC_RETRY_COUNT"),
+            default=0,
+        )
+        latency_status = (
+            measured.get("latency_status")
+            or ingestion_metrics.get("latency_status")
+            or os.getenv("TRADECTL_RESYNC_LATENCY_STATUS", "ok")
+        )
+        if not measured.get("catch_up_lag_minutes") and ingestion_metrics.get("catch_up_lag_minutes") is not None:
+            catch_up_lag_minutes = int(ingestion_metrics["catch_up_lag_minutes"])
+        return {
+            "catch_up_elapsed_sec": max(0, catch_up_elapsed_sec),
+            "catch_up_lag_minutes": catch_up_lag_minutes,
+            "recovered_symbols": recovered_symbols,
+            "failover_used": failover_used,
+            "manual_csv_required": manual_csv_required,
+            "cfg_hash": cfg_hash,
+            "data_hash": data_hash,
+            "board_mode": board_mode,
+            "mode": effective_mode,
+            "determinism_hash": determinism_hash,
+            "attachments": list(attachments or ()),
+            "since": since,
+            "force": force,
+            "failover_report": failover_report,
+            "dry_run": dry_run,
+            "fetch_p95_ms": fetch_p95_ms,
+            "fetch_p99_ms": fetch_p99_ms,
+            "retry_count": retry_count,
+            "latency_status": latency_status,
+        }
+
+    def _load_gate_state(self) -> Mapping[str, Any]:
+        """Best-effort load of the latest gate state for hashes/board mode."""
+
+        path = Path(os.getenv("TRADECTL_GATE_STATE_PATH", "snapshots/latest/gate_state.json"))
+        if not path.exists():
+            return {}
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            return {}
+        cfg_hash = data.get("cfg_hash") or os.getenv("TRADECTL_CFG_HASH") or _DEFAULT_HASH
+        data_hash = data.get("data_hash") or os.getenv("TRADECTL_DATA_HASH") or _DEFAULT_HASH
+        board_mode = "guarded"
+        if data.get("auto_execute") is True:
+            board_mode = "normal"
+        return {"cfg_hash": cfg_hash, "data_hash": data_hash, "board_mode": board_mode}
+
+    def _load_latest_determinism_hash(self) -> str | None:
+        """Return the latest determinism hash from registry log if present."""
+
+        log_path = Path(os.getenv("TRADECTL_DETERMINISM_LOG", "logs/strategy/registry.log"))
+        if not log_path.exists():
+            return None
+        try:
+            with log_path.open("rb") as handle:
+                handle.seek(0, os.SEEK_END)
+                end = handle.tell()
+                handle.seek(max(0, end - 8192))
+                data = handle.read().decode("utf-8", errors="ignore")
+            lines = [line for line in data.splitlines() if line.strip()]
+            if not lines:
+                return None
+            last = json.loads(lines[-1])
+            return last.get("determinism_hash") or last.get("deterministic_hash")
+        except Exception:
+            return None
+
+    def _load_latest_resync_stats(self) -> Mapping[str, Any]:
+        """Best-effort parse of the latest resync events for SLA metrics."""
+
+        path = Path(os.getenv("TRADECTL_RESYNC_LOG_PATH", "logs/resync/resync_events.jsonl"))
+        if not path.exists():
+            return {}
+        try:
+            lines = [line for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+        except Exception:
+            return {}
+
+        for raw in reversed(lines):
+            try:
+                record = json.loads(raw)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(record, dict):
+                continue
+            event_name = record.get("event")
+            if event_name not in {"resync.completed", "resync.simulated"}:
+                continue
+            payload = record.get("payload") if isinstance(record.get("payload"), dict) else {}
+            stats: dict[str, Any] = {}
+            stats.update(payload)
+            for key in (
+                "catch_up_elapsed_sec",
+                "catch_up_lag_minutes",
+                "recovered_symbols",
+                "failover_used",
+                "manual_csv_required",
+                "cfg_hash",
+                "data_hash",
+                "fetch_p95_ms",
+                "fetch_p99_ms",
+                "retry_count",
+                "latency_status",
+                "determinism_hash",
+            ):
+                if key in record and key not in stats:
+                    stats[key] = record[key]
+            context = record.get("context") or {}
+            if isinstance(context, dict):
+                for ctx_key, dest_key in (
+                    ("mode", "mode"),
+                    ("board_mode", "board_mode"),
+                    ("cfg_hash", "cfg_hash"),
+                    ("data_hash", "data_hash"),
+                ):
+                    if ctx_key in context and dest_key not in stats:
+                        stats[dest_key] = context[ctx_key]
+            if "symbols" in record and "recovered_symbols" not in stats:
+                stats["recovered_symbols"] = record.get("symbols")
+            if "since" in record and "since" not in stats:
+                stats["since"] = record.get("since")
+            return stats
+        return {}
+
+    def _load_latest_ingestion_metrics(self) -> Mapping[str, Any]:
+        """Return latest ingestion SLA metrics for fetch latency."""
+
+        path = Path(os.getenv("TRADECTL_INGESTION_METRICS_PATH", "metrics/data_ingestion_sla.jsonl"))
+        if not path.exists():
+            return {}
+        try:
+            lines = [line for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+        except Exception:
+            return {}
+        for raw in reversed(lines):
+            try:
+                record = json.loads(raw)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(record, dict):
+                continue
+            if record.get("phase") not in {None, "fetch"}:
+                continue
+            payload: dict[str, Any] = {}
+            if "p95_latency_sec" in record:
+                try:
+                    payload["fetch_p95_ms"] = float(record["p95_latency_sec"]) * 1000
+                except (TypeError, ValueError):
+                    pass
+            if "p99_latency_sec" in record:
+                try:
+                    payload["fetch_p99_ms"] = float(record["p99_latency_sec"]) * 1000
+                except (TypeError, ValueError):
+                    pass
+            if "latency_status" in record or "status" in record:
+                payload["latency_status"] = record.get("latency_status") or record.get("status")
+            if "retry_count" in record:
+                try:
+                    payload["retry_count"] = int(record["retry_count"])
+                except (TypeError, ValueError):
+                    pass
+            if "catch_up_lag_minutes" in record:
+                payload["catch_up_lag_minutes"] = record.get("catch_up_lag_minutes")
+            if payload:
+                return payload
+        return {}

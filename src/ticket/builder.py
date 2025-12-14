@@ -89,6 +89,12 @@ class DefaultTicketBuilder:
         """Construct a :class:`TicketArtifact` while applying gate constraints."""
 
         validate_market_open(draft.symbol, gate_state)
+        if "determinism_hash" not in draft.metadata or not isinstance(draft.metadata.get("determinism_hash"), str):
+            raise TicketBlockedError(
+                code="determinism_hash_missing",
+                message="determinism_hash required in draft metadata",
+                details={"reason": "determinism_hash required in draft metadata"},
+            )
 
         spread_status, spread_metadata = evaluate_spread(draft.symbol, gate_state)
         double_entry_status, double_entry_metadata = evaluate_double_entry(gate_state)

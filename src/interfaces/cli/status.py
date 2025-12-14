@@ -404,12 +404,19 @@ def status(
         "board_mode": guardrail.board_mode,
         "kill_switch": guardrail.kill_switch_state,
         "spread_status": guardrail.spread_status,
-        "reason": guardrail.banner or guardrail.spread_reason or guardrail.kill_switch_reason,
+        "reason": guardrail.banner or guardrail.spread_reason or guardrail.kill_switch_reason or "ok",
+        "suggested_action": guardrail.runbook,
         "reasons": guardrail.reasons,
         "exit_code": guardrail.exit_code,
         "reduce_only": guardrail.reduce_only,
         "ack_user": actor if ack else None,
+        "manifest_hash": gate_state.cfg_hash,
+        "data_hash": gate_state.data_hash,
     }
+    if metrics_payload["manifest_hash"] is None:
+        metrics_payload.pop("manifest_hash")
+    if metrics_payload["data_hash"] is None:
+        metrics_payload.pop("data_hash")
     try:
         _append_jsonl(metrics_path, metrics_payload)
     except OSError as exc:  # pragma: no cover - defensive

@@ -10,10 +10,12 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from dataclasses import dataclass
 from datetime import datetime
+from collections import deque
 from pathlib import Path
-from typing import Callable, Sequence, Mapping
+from typing import Callable, Sequence, Mapping, Iterable, Any
 
 __all__ = [
     "MarketRequest",
@@ -33,6 +35,7 @@ __all__ = [
     "spawn_provider_workers",
     "drain_buffers",
     "load_provider_sla_thresholds",
+    "IngestionMetricsCollector",
 ]
 
 logger = logging.getLogger(__name__)
@@ -73,6 +76,154 @@ class ProviderResult:
     p95_ms: float
     p99_ms: float
     rate_limit_ratio: float = 0.0
+
+
+# ---------------------------------------------------------------------------
+# Metrics collector
+# ---------------------------------------------------------------------------
+
+
+class IngestionMetricsCollector:
+    """In-memory latency collector with optional raw logging and snapshots."""
+
+    def __init__(
+        self,
+        *,
+        window_size: int = 200,
+        warn_ms: float = 1_000.0,
+        breach_ms: float = 1_500.0,
+        raw_log_dir: Path | None = None,
+        max_raw_lines: int = 100_000,
+    ) -> None:
+        self.window_size = window_size
+        self.warn_ms = warn_ms
+        self.breach_ms = breach_ms
+        self.raw_log_dir = Path(raw_log_dir) if raw_log_dir else None
+        self.max_raw_lines = max_raw_lines
+        self._latencies: deque[float] = deque(maxlen=window_size)
+        self._failures: int = 0
+        self._last_bars: int = 0
+        self._last_provider: str | None = None
+        self._last_symbols: list[str] = []
+        self._last_stage: str = "fetch"
+        self._last_timeframe: str = "unknown"
+
+    def observe(
+        self,
+        *,
+        provider: str,
+        symbols: Iterable[str],
+        timeframe: str,
+        latency_ms: float,
+        bars: int,
+        stage: str = "fetch",
+        rate_limit_ratio: float = 0.0,
+        success: bool = True,
+    ) -> None:
+        """Record a single attempt latency and optionally write raw log."""
+
+        now = _utcnow_iso()
+        self._last_provider = provider
+        self._last_symbols = list(symbols)
+        self._last_stage = stage
+        self._last_timeframe = timeframe
+        self._last_bars = bars
+        if success:
+            self._latencies.append(float(latency_ms))
+        else:
+            self._failures += 1
+        record = {
+            "ts": now,
+            "provider": provider,
+            "stage": stage,
+            "timeframe": timeframe,
+            "symbols": list(symbols),
+            "latency_ms": float(latency_ms),
+            "bars": bars,
+            "rate_limit_ratio": float(rate_limit_ratio),
+            "success": bool(success),
+        }
+        self._write_raw_record(record)
+
+    def snapshot(self) -> Mapping[str, Any]:
+        """Return p95/p99 and retry_count based on observed latencies."""
+
+        p95 = _percentile(self._latencies, 95)
+        p99 = _percentile(self._latencies, 99)
+        status = "unknown"
+        if p95 is not None:
+            status = _compute_latency_status(p95, warn_ms=self.warn_ms, breach_ms=self.breach_ms)
+        return {
+            "fetch_p95_ms": p95,
+            "fetch_p99_ms": p99,
+            "retry_count": self._failures,
+            "latency_status": status,
+            "bars": self._last_bars,
+            "provider": self._last_provider,
+            "symbols": list(self._last_symbols),
+            "stage": self._last_stage,
+            "timeframe": self._last_timeframe,
+        }
+
+    def write_snapshot(self, *, metrics_path: Path = DEFAULT_METRICS_PATH) -> None:
+        """Append a snapshot to the SLA metrics log if observations exist."""
+
+        snap = self.snapshot()
+        if snap.get("fetch_p95_ms") is None:
+            return
+        _log_sla_entry(
+            provider=snap.get("provider") or "resync",
+            timeframe=snap.get("timeframe") or "unknown",
+            symbols=snap.get("symbols") or [],
+            stage=snap.get("stage") or "fetch",
+            p95_ms=float(snap["fetch_p95_ms"]),
+            p99_ms=float(snap.get("fetch_p99_ms") or snap["fetch_p95_ms"]),
+            bars=int(snap.get("bars") or 0),
+            status=snap.get("latency_status") or "unknown",
+            rate_limit_ratio=0.0,
+            metrics_path=metrics_path,
+            latency_status=snap.get("latency_status"),
+        )
+
+    def _write_raw_record(self, record: Mapping[str, Any]) -> None:
+        if not self.raw_log_dir:
+            return
+        ts = str(record.get("ts") or _utcnow_iso())
+        date_part = ts.split("T")[0]
+        base = self.raw_log_dir / f"data_ingestion_raw_{date_part}.jsonl"
+        path = self._ensure_capacity(base)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            with path.open("a", encoding="utf-8") as handle:
+                handle.write(json.dumps(record, ensure_ascii=False))
+                handle.write("\n")
+        except OSError:
+            return
+
+    def _ensure_capacity(self, path: Path) -> Path:
+        """Rotate raw log if max_raw_lines exceeded."""
+
+        if self.max_raw_lines <= 0:
+            return path
+        if path.exists():
+            try:
+                line_count = sum(1 for _ in path.open("r", encoding="utf-8"))
+            except OSError:
+                return path
+            if line_count < self.max_raw_lines:
+                return path
+        suffix = 1
+        while True:
+            candidate = path.with_name(f"{path.stem}_part{suffix}{path.suffix}")
+            if not candidate.exists():
+                return candidate
+            try:
+                line_count = sum(1 for _ in candidate.open("r", encoding="utf-8"))
+            except OSError:
+                return candidate
+            if line_count < self.max_raw_lines:
+                return candidate
+            suffix += 1
 
 
 # ---------------------------------------------------------------------------
@@ -123,6 +274,22 @@ class BufferDrainError(DataIngestionError):
 
 def _utcnow_iso() -> str:
     return datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
+
+
+def _percentile(values: Iterable[float], percentile: float) -> float | None:
+    """Compute a percentile with linear interpolation; return None if empty."""
+
+    data = sorted(float(v) for v in values)
+    if not data:
+        return None
+    if len(data) == 1:
+        return data[0]
+    k = (len(data) - 1) * (percentile / 100.0)
+    f = int(k)
+    c = min(f + 1, len(data) - 1)
+    if f == c:
+        return data[f]
+    return data[f] * (c - k) + data[c] * (k - f)
 
 
 def _log_sla_entry(
@@ -242,6 +409,7 @@ def fetch_latest(
     warn_ms: float = 1_000.0,
     breach_ms: float = 1_500.0,
     provider_sla_thresholds: Mapping[str, tuple[float, float]] | None = None,
+    metrics_collector: "IngestionMetricsCollector | None" = None,
 ) -> list[MarketFrame]:
     """Fetch the most recent bars for the requested symbols and log SLA metrics."""
 
@@ -258,27 +426,57 @@ def fetch_latest(
         breach = provider_sla_thresholds.get(provider, (warn_ms, breach_ms))[1]
         while retry_budget >= 0:
             try:
+                start = time.perf_counter()
                 result = _invoke_provider(
                     provider=provider,
                     symbols=symbols,
                     timeframe=timeframe,
                     handler=handler_map.get(provider),
                 )
+                elapsed_ms = (time.perf_counter() - start) * 1000
                 frames = result.frames
+                p95_ms = result.p95_ms
+                p99_ms = result.p99_ms
+                if metrics_collector:
+                    metrics_collector.observe(
+                        provider=provider,
+                        symbols=symbols,
+                        timeframe=timeframe,
+                        latency_ms=elapsed_ms,
+                        bars=len(frames),
+                        stage="fetch",
+                        rate_limit_ratio=result.rate_limit_ratio,
+                        success=True,
+                    )
+                    snapshot = metrics_collector.snapshot()
+                    p95_ms = snapshot.get("fetch_p95_ms") or p95_ms
+                    p99_ms = snapshot.get("fetch_p99_ms") or p99_ms
                 _log_sla_entry(
                     provider=provider,
                     timeframe=timeframe,
                     symbols=symbols,
                     stage="fetch",
-                    p95_ms=result.p95_ms,
-                    p99_ms=result.p99_ms,
+                    p95_ms=p95_ms,
+                    p99_ms=p99_ms,
                     bars=len(frames),
-                    status=_compute_latency_status(result.p95_ms, warn_ms=warn, breach_ms=breach),
+                    status=_compute_latency_status(p95_ms, warn_ms=warn, breach_ms=breach),
                     rate_limit_ratio=result.rate_limit_ratio,
                     metrics_path=metrics_path,
                 )
                 break
             except ProviderError as exc:
+                elapsed_ms = (time.perf_counter() - start) * 1000 if "start" in locals() else 0.0
+                if metrics_collector:
+                    metrics_collector.observe(
+                        provider=provider,
+                        symbols=symbols,
+                        timeframe=timeframe,
+                        latency_ms=elapsed_ms,
+                        bars=0,
+                        stage="fetch",
+                        rate_limit_ratio=getattr(exc, "rate_limit_ratio", 0.0),
+                        success=False,
+                    )
                 logger.warning("data.fetch_latest.retry", extra={"provider": provider, "error": str(exc), "attempt": attempt})
                 _log_sla_entry(
                     provider=provider,

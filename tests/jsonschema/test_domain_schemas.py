@@ -186,6 +186,25 @@ def test_event_resync_completed_rejects_missing_hash() -> None:
         validator.validate(invalid)
 
 
+def test_guardrails_metrics_schema_accepts_valid_payload() -> None:
+    validator = _build_validator("docs/schemas/guardrails_metrics.schema.json")
+    payload = {
+        "timestamp": "2025-12-13T14:22:00Z",
+        "health_state": "degraded",
+        "board_mode": "guarded",
+        "kill_switch": "soft_stop",
+        "spread_status": "cooldown",
+        "reason": "data_latency",
+        "reasons": ["data_latency", "kill_switch:soft_stop"],
+        "suggested_action": "docs/runbooks/RUN-DATA-05.md",
+        "exit_code": 62,
+        "reduce_only": True,
+        "ack_user": "tester",
+        "manifest_hash": "sha256:" + ("a" * 64),
+        "data_hash": "sha256:" + ("b" * 64),
+    }
+    validator.validate(payload)
+
 def test_audit_ticket_action_accepts_valid_record() -> None:
     validator = _build_validator("docs/schemas/audit_ticket_action.schema.json")
     record = {

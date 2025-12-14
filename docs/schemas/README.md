@@ -40,7 +40,7 @@ materials stored here serve as the authoritative source for governance reviews a
   (§3.7/§4.4.4). Governs `config/scoring.yaml`.
 - `scoreboard.schema.json` – Strategy Scoreboard thresholds, weightings, and watchlist rules
   (付録G.1/§4.4.5). Governs `config/scoreboard.yaml`.
-- `guardrails_metrics.schema.json` – Guardrail telemetry (health/board_mode/kill_switch/spread_status/exit_code) logged to `metrics/guardrails.jsonl` per detailed design §90.1.1 / status CLI.
+- `guardrails_metrics.schema.json` – Guardrail telemetry (health/board_mode/kill_switch/spread_status/reasons/exit_code/reduce_only/ack_user/manifest_hash/data_hash) logged to `metrics/guardrails.jsonl` per detailed design §90.1.1 / status CLI.
 - `spread_cooldown.schema.json` – Spread/NTP/News guard metrics for `metrics/spread_cooldown.jsonl` per §90.3 and `tradectl spread inspect`.
 - `audit.health_action.schema.json` – Health action ack records (`logs/audit/health_action.jsonl`) for `tradectl status --ack` / Runbook RUN-DATA-05 evidence.
 - `audit.kill_switch.schema.json` – Kill switch state transitions (`logs/audit/kill_switch.jsonl`) per §90.1.1 and `tradectl kill-switch set`.
