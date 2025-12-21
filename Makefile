@@ -1,6 +1,6 @@
 ARGS ?=
 
-.PHONY: config-init schema-validate check-ops-readiness contract-performance-snapshot check-doc-sync config-evidence verify-config-evidence edge-watch-report check-profit-readiness check-alpha-profiles
+.PHONY: config-init schema-validate check-ops-readiness contract-performance-snapshot check-doc-sync config-evidence verify-config-evidence edge-watch-report check-profit-readiness check-alpha-profiles check-profit-readiness-hands-off check-profit-readiness-hands-off-all
 
 config-init:
 	@if command -v poetry >/dev/null 2>&1; then \
@@ -8,6 +8,9 @@ config-init:
 	else \
 		python3 tools/scripts/config_init.py $(ARGS); \
 	fi
+
+clean-metrics:
+	tools/cleanup_metrics.sh
 
 schema-validate:
 	@if command -v poetry >/dev/null 2>&1; then \
@@ -60,10 +63,24 @@ edge-watch-report:
 
 check-profit-readiness:
 	@if command -v poetry >/dev/null 2>&1; then \
-		poetry run tradectl ops readiness --profit --verify --json; \
+		poetry run tradectl ops readiness --profit --verify --json $(ARGS); \
 	else \
-		PYTHONPATH=src python3 -m src.interfaces.cli.main ops readiness --profit --verify --json; \
+		PYTHONPATH=src python3 -m src.interfaces.cli.main ops readiness --profit --verify --json $(ARGS); \
 	fi
+
+check-profit-readiness-hands-off:
+	@if command -v poetry >/dev/null 2>&1; then \
+		poetry run tradectl ops readiness --profit --verify --require-auto-execute --json $(ARGS); \
+	else \
+		PYTHONPATH=src python3 -m src.interfaces.cli.main ops readiness --profit --verify --require-auto-execute --json $(ARGS); \
+	fi
+
+# Note: Hands-off auto_execute remains default-off. Run `make check-profit-readiness-hands-off`
+# before enabling, and ensure CR-20251122 is resolved or explicitly deferred in release notes.
+
+check-profit-readiness-hands-off-all:
+	$(MAKE) check-profit-readiness-hands-off ARGS="$(ARGS)"
+	$(MAKE) check-alpha-profiles
 
 check-alpha-profiles:
 	@if command -v poetry >/dev/null 2>&1; then \

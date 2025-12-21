@@ -1,0 +1,14 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "performance_live_guard_v1",
+  "type": "object",
+  "required": ["timestamp", "pf_trailing", "sharpe_trailing", "latency_p75", "recommended_mode"],
+  "properties": {
+    "timestamp": {"type": "string", "format": "date-time"},
+    "pf_trailing": {"type": "number"},
+    "sharpe_trailing": {"type": "number"},
+    "latency_p75": {"type": "number"},
+    "recommended_mode": {"type": "string", "enum": ["normal", "guarded", "halted"]}
+  },
+  "additionalProperties": true
+}

@@ -1,0 +1,21 @@
+{
+  "board_mode": "normal",
+  "auto_execute": false,
+  "guardrails": {
+    "kill_switch_state": "none",
+    "spread_status": "normal",
+    "reduce_only": true,
+    "risk_disclosure": "signed",
+    "risk_disclosure_consent_id": null,
+    "auto_execute": false
+  },
+  "banner": {
+    "kind": "acceptable_degradation",
+    "severity": "warn",
+    "message": "Reduce-Only enforced",
+    "runbook": "docs/runbooks/RUN-DATA-05.md"
+  },
+  "render_summary": "mode=normal | banner=Reduce-Only enforced | ks=none, spread=normal, reduce_only=True | risk_disclosure=signed | badges: profit=ok, latency=ok, slippage=ok | tickets=0",
+  "tickets": [],
+  "rendered_table": "No tickets"
+}

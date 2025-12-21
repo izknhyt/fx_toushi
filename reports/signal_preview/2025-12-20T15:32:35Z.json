@@ -1,0 +1,26 @@
+{
+  "generated_at": "2025-12-20T15:32:35Z",
+  "symbols": [
+    "USDJPY",
+    "EURUSD",
+    "GBPUSD"
+  ],
+  "signals": [
+    {
+      "strategy_id": "m1_baseline_ma_rsi",
+      "symbol": "USDJPY",
+      "direction": "long",
+      "confidence": 0.21,
+      "rationale": "ma_rsi_alignment"
+    }
+  ],
+  "warnings": [
+    "no signals emitted: EURUSD",
+    "no signals emitted: GBPUSD"
+  ],
+  "diagnostics": {
+    "USDJPY": {},
+    "EURUSD": {},
+    "GBPUSD": {}
+  }
+}

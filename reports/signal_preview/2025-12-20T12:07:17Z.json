@@ -1,0 +1,40 @@
+{
+  "generated_at": "2025-12-20T12:07:17Z",
+  "symbols": [
+    "USDJPY"
+  ],
+  "signals": [],
+  "warnings": [
+    "no usable row with required features: USDJPY"
+  ],
+  "diagnostics": {
+    "USDJPY": {
+      "m1_baseline_ma_rsi": [
+        "atr_14_1h",
+        "ema_fast_5m",
+        "volume_5m",
+        "ema55_slope_1h",
+        "ema_slow_5m",
+        "session_tag_5m",
+        "high_5m",
+        "regime_trend_1h",
+        "open_5m",
+        "rsi_14_5m",
+        "close_5m",
+        "low_5m"
+      ],
+      "m1_baseline_donchian": [
+        "atr_14_1h",
+        "donchian_lower20_1h",
+        "session_tag_5m",
+        "regime_trend_1h",
+        "donchian_lower20_1d",
+        "donchian_upper20_1h",
+        "close_5m",
+        "donchian_mid20_1h",
+        "donchian_upper20_1d",
+        "donchian_mid20_1d"
+      ]
+    }
+  }
+}

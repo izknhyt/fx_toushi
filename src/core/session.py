@@ -24,6 +24,7 @@ from typing import Sequence, runtime_checkable
 from typing import Literal
 
 from yaml import safe_load
+from src.data.service import IngestionMetricsCollector
 
 if TYPE_CHECKING:  # pragma: no cover - import cycle guard for type checking only
     from .workflow import WorkflowContext, WorkflowOrchestrator, WorkflowResult
@@ -532,6 +533,10 @@ class DefaultSessionManager:
         failover_report: bool = False,
         dry_run: bool = False,
         attachments: Sequence[str] | None = None,
+        metrics_collector: IngestionMetricsCollector | None = None,
+        timeframe: str | None = None,
+        provider_priority: Sequence[str] | None = None,
+        provider_handlers: Mapping[str, Any] | None = None,
     ) -> Mapping[str, Any] | None:
         """Resynchronise historical data and return a deterministic summary.
 
@@ -561,6 +566,7 @@ class DefaultSessionManager:
         failover_env = os.getenv("TRADECTL_RESYNC_FAILOVER_USED", "")
         failover_used = [token for token in failover_env.split(",") if token.strip()] if failover_env else []
         measured = self._load_latest_resync_stats()
+        collector_snapshot = metrics_collector.snapshot() if metrics_collector else {}
 
         def _coalesce_int(*values: Any, default: int = 0) -> int:
             for val in values:
@@ -595,6 +601,7 @@ class DefaultSessionManager:
         )
         catch_up_lag_minutes = _coalesce_int(
             measured.get("catch_up_lag_minutes"),
+            collector_snapshot.get("catch_up_lag_minutes"),
             os.getenv("TRADECTL_RESYNC_LAG_MINUTES"),
             default=0,
         )
@@ -603,31 +610,64 @@ class DefaultSessionManager:
         recovered_symbols = list(measured.get("recovered_symbols") or (symbols or ()))
         ingestion_metrics = self._load_latest_ingestion_metrics()
         fetch_p95_ms = _coalesce_float(
+            collector_snapshot.get("fetch_p95_ms"),
             measured.get("fetch_p95_ms"),
             ingestion_metrics.get("fetch_p95_ms"),
             os.getenv("TRADECTL_RESYNC_FETCH_P95_MS"),
             default=500.0,
         )
         fetch_p99_ms = _coalesce_float(
+            collector_snapshot.get("fetch_p99_ms"),
             measured.get("fetch_p99_ms"),
             ingestion_metrics.get("fetch_p99_ms"),
             os.getenv("TRADECTL_RESYNC_FETCH_P99_MS"),
             default=800.0,
         )
         retry_count = _coalesce_int(
+            collector_snapshot.get("retry_count"),
             measured.get("retry_count"),
             ingestion_metrics.get("retry_count"),
             os.getenv("TRADECTL_RESYNC_RETRY_COUNT"),
             default=0,
         )
-        latency_status = (
-            measured.get("latency_status")
-            or ingestion_metrics.get("latency_status")
-            or os.getenv("TRADECTL_RESYNC_LATENCY_STATUS", "ok")
-        )
+        latency_status = collector_snapshot.get("latency_status") or measured.get("latency_status") or ingestion_metrics.get(
+            "latency_status"
+        ) or os.getenv("TRADECTL_RESYNC_LATENCY_STATUS", "ok")
         if not measured.get("catch_up_lag_minutes") and ingestion_metrics.get("catch_up_lag_minutes") is not None:
             catch_up_lag_minutes = int(ingestion_metrics["catch_up_lag_minutes"])
-        return {
+        if metrics_collector and not dry_run and provider_handlers is not None:
+            try:
+                from src.data.rate_limit_guard import RateLimitGuard
+                from src.data.service import fetch_latest
+
+                worker_plan_enabled = os.getenv("TRADECTL_WORKER_PLAN_ENABLED", "1") != "0"
+                guard_enabled = os.getenv("TRADECTL_RATE_LIMIT_GUARD_ENABLED", "1") != "0"
+                stages_env = os.getenv("TRADECTL_RATE_LIMIT_STAGES", "stage0,stage1,stage2")
+                stages = [stage.strip() for stage in stages_env.split(",") if stage.strip()] or ["stage0"]
+                rate_limit_guard = None
+                if guard_enabled:
+                    rate_limit_guard = RateLimitGuard(
+                        tokens_per_minute=_coalesce_float(os.getenv("TRADECTL_RATE_LIMIT_TPM"), default=60.0),
+                        burst_tokens=_coalesce_float(os.getenv("TRADECTL_RATE_LIMIT_BURST"), default=90.0),
+                        poll_interval_sec=_coalesce_float(os.getenv("TRADECTL_RATE_LIMIT_POLL_SEC"), default=15.0),
+                        stages=stages,
+                    )
+                rate_limit_log_path = Path(os.getenv("TRADECTL_RATE_LIMIT_LOG", "metrics/rate_limit_window.jsonl"))
+
+                _ = fetch_latest(
+                    symbols=list(symbols or ()),
+                    timeframe=timeframe or "M5",
+                    provider_priority=provider_priority or ("primary",),
+                    provider_handlers=dict(provider_handlers),
+                    metrics_collector=metrics_collector,
+                    rate_limit_guard=rate_limit_guard,
+                    rate_limit_state={},
+                    rate_limit_log_path=rate_limit_log_path,
+                    apply_worker_plan=worker_plan_enabled,
+                )
+            except Exception:
+                pass
+        result = {
             "catch_up_elapsed_sec": max(0, catch_up_elapsed_sec),
             "catch_up_lag_minutes": catch_up_lag_minutes,
             "recovered_symbols": recovered_symbols,
@@ -648,6 +688,13 @@ class DefaultSessionManager:
             "retry_count": retry_count,
             "latency_status": latency_status,
         }
+        if metrics_collector:
+            metrics_path = Path(os.getenv("TRADECTL_INGESTION_METRICS_PATH", "metrics/data_ingestion_sla.jsonl"))
+            try:
+                metrics_collector.write_snapshot(metrics_path=metrics_path)
+            except Exception:  # pragma: no cover - defensive
+                pass
+        return result
 
     def _load_gate_state(self) -> Mapping[str, Any]:
         """Best-effort load of the latest gate state for hashes/board mode."""

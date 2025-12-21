@@ -28,6 +28,8 @@ SNAPSHOT_DIR = Path(__file__).parent / "board"
         "spread_block_soft_warning",
         "normal_double_entry_pending",
         "latency_reduce_only",
+        "auto_execute_enabled",
+        "auto_execute_disabled_reduce_only",
     ],
 )
 def test_board_render_matches_snapshots(name: str, tmp_path: Path) -> None:
@@ -68,5 +70,9 @@ def test_board_render_matches_snapshots(name: str, tmp_path: Path) -> None:
     assert payload["guardrails"]["spread_status"] == guardrails["spread_status"]
     assert payload["guardrails"]["reduce_only"] == guardrails["reduce_only"]
     assert payload["guardrails"]["risk_disclosure"] == guardrails["risk_disclosure"]
+    expected_auto = guardrails.get("auto_execute", snapshot.get("auto_execute"))
+    if expected_auto is not None:
+        assert payload["guardrails"]["auto_execute"] is expected_auto
+        assert payload["auto_execute"] is expected_auto
     assert payload["render_summary"] == snapshot["render_summary"]
     assert payload["rendered_table"].strip() == str(snapshot["rendered_table"]).strip()

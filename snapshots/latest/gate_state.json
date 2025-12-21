@@ -1,7 +1,7 @@
 {
-  "auto_execute": false,
+  "auto_execute": true,
   "cfg_hash": "sha256:58814e9f643aac19e8d99c0f4ecc8023c32dd4f45c9c6a1c87ce4ada2c2bac43",
-  "data_hash": "sha256:75fdf7c353e0ac7997b5a8472f7419ed3eee18b01fae4b43423b38a78ff2e294",
+  "data_hash": "75fdf7c353e0ac7997b5a8472f7419ed3eee18b01fae4b43423b38a78ff2e294",
   "human": {
     "ack_deadline": null,
     "acknowledged_roles": [],

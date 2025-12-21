@@ -16,6 +16,7 @@ from rich.progress import Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
 
 from src.core.session import SessionManager
 from src.core.gate import GateState
+from src.data.service import IngestionMetricsCollector
 
 logger = logging.getLogger(__name__)
 
@@ -117,6 +118,13 @@ def resync(
         console=progress_console,
     )
     task_id = progress.add_task("Catch-up in progress", start=False)
+    collector = IngestionMetricsCollector(
+        window_size=200,
+        warn_ms=1_000.0,
+        breach_ms=1_500.0,
+        raw_log_dir=Path("metrics") / "raw",
+        max_raw_lines=100_000,
+    )
 
     try:
         progress.start()
@@ -143,10 +151,23 @@ def resync(
     else:
         payload["status"] = "ok"
         if result is not None:
-            summary = _enrich_summary_with_metrics(dict(result), metrics_path)
+            base_summary = dict(result)
+            snap = collector.snapshot() if collector else {}
+            if snap.get("fetch_p95_ms") is not None:
+                base_summary["fetch_p95_ms"] = snap["fetch_p95_ms"]
+            if snap.get("fetch_p99_ms") is not None:
+                base_summary["fetch_p99_ms"] = snap["fetch_p99_ms"]
+            if snap.get("latency_status") is not None and snap.get("fetch_p95_ms") is not None:
+                base_summary["latency_status"] = snap["latency_status"]
+            if snap.get("retry_count"):
+                base_summary["retry_count"] = snap["retry_count"]
+            summary = _enrich_summary_with_metrics(base_summary, metrics_path)
             payload["summary"] = summary
             context = _build_resync_context(summary)
             payload["context"] = context
+            if collector:
+                resolved_metrics_path = metrics_path or Path("metrics/data_ingestion_sla.jsonl")
+                collector.write_snapshot(metrics_path=resolved_metrics_path)
             _maybe_write_ingestion_metrics(summary, metrics_path)
             if evidence_path:
                 _write_markdown_evidence(evidence_path, payload["summary"], context=context)
@@ -306,6 +327,13 @@ def _enrich_summary_with_metrics(summary: Mapping[str, Any], metrics_path: Path 
     """Populate SLA fields when the session manager did not include them."""
 
     merged: dict[str, Any] = dict(summary)
+    env_fetch_p95 = _coerce_float(os.getenv("TRADECTL_RESYNC_FETCH_P95_MS"))
+    env_fetch_p99 = _coerce_float(os.getenv("TRADECTL_RESYNC_FETCH_P99_MS"))
+    env_retry = _coerce_int(os.getenv("TRADECTL_RESYNC_RETRY_COUNT"))
+    env_latency = os.getenv("TRADECTL_RESYNC_LATENCY_STATUS")
+    if metrics_path is None and all(value is None for value in (env_fetch_p95, env_fetch_p99, env_retry, env_latency)):
+        return merged
+
     metrics = _load_latest_ingestion_metrics(metrics_path)
 
     def _set_default(key: str, value: Any) -> None:
@@ -314,14 +342,14 @@ def _enrich_summary_with_metrics(summary: Mapping[str, Any], metrics_path: Path 
 
     _set_default(
         "fetch_p95_ms",
-        metrics.get("fetch_p95_ms") or _coerce_float(os.getenv("TRADECTL_RESYNC_FETCH_P95_MS")),
+        metrics.get("fetch_p95_ms") or env_fetch_p95,
     )
     _set_default(
         "fetch_p99_ms",
-        metrics.get("fetch_p99_ms") or _coerce_float(os.getenv("TRADECTL_RESYNC_FETCH_P99_MS")),
+        metrics.get("fetch_p99_ms") or env_fetch_p99,
     )
-    _set_default("retry_count", metrics.get("retry_count") or _coerce_int(os.getenv("TRADECTL_RESYNC_RETRY_COUNT")) or 0)
-    _set_default("latency_status", metrics.get("latency_status") or os.getenv("TRADECTL_RESYNC_LATENCY_STATUS"))
+    _set_default("retry_count", metrics.get("retry_count") or env_retry)
+    _set_default("latency_status", metrics.get("latency_status") or env_latency)
     _set_default("catch_up_lag_minutes", metrics.get("catch_up_lag_minutes"))
     return merged
 

@@ -1,0 +1,2 @@
+ticket_id,signal_id,fill_ts,fill_price,quantity,pnl,comment
+TKT-9999,SIG-9999,2025-03-01T10:05:00+09:00,150.456,0.05,0.0,stub

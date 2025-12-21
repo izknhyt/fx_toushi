@@ -275,6 +275,26 @@ class GateState:
     data_hash: str | None = None
     schema_version: SchemaVersion | None = None
 
+    def enforce_auto_execute_guards(
+        self,
+        *,
+        board_mode: str,
+        kill_switch_state: str,
+        spread_status: str,
+    ) -> None:
+        """Force auto_execute off when guardrails are not satisfied."""
+
+        normalized_board = board_mode.lower()
+        normalized_spread = spread_status.lower()
+        normalized_kill_switch = (kill_switch_state or "none").lower()
+        if (
+            normalized_board != "normal"
+            or normalized_spread in {"cooldown", "block", "halt"}
+            or normalized_kill_switch not in {"none", "normal"}
+            or self.risk.reduce_only
+        ):
+            self.auto_execute = False
+
     def to_dict(self) -> Dict[str, Any]:
         data: Dict[str, Any] = {
             "market": self.market.to_dict(),

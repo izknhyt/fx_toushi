@@ -28,6 +28,8 @@ OPS_WORKLOG_PATH = Path("ops_worklog.jsonl")
 TICKET_STORE_PATH = Path("snapshots") / "tickets" / "ticket_records.jsonl"
 DEFAULT_CFG_HASH = "sha256:" + "0" * 64
 DEFAULT_DATA_HASH = "sha256:" + "0" * 64
+DEFAULT_DETERMINISM_HASH = "unknown"
+DEFAULT_DETERMINISM_VERSION = 1
 DEFAULT_GUARDRAILS = {
     "kill_switch": "none",
     "spread_status": "normal",
@@ -36,13 +38,12 @@ DEFAULT_GUARDRAILS = {
     "reason": None,
     "risk_disclosure": "pending",
     "profit_readiness_status": "ok",
+    "auto_execute": False,
     "determinism_hash": DEFAULT_DETERMINISM_HASH,
     "determinism_version": DEFAULT_DETERMINISM_VERSION,
 }
 DEFAULT_CHECKLIST_PROGRESS = {"completed": 0, "total": 0, "pending_ids": []}
 DEFAULT_WATCHLIST_REASONS: list[str] = []
-DEFAULT_DETERMINISM_HASH = "unknown"
-DEFAULT_DETERMINISM_VERSION = 1
 
 
 def approve(
@@ -346,7 +347,7 @@ def _build_audit_entry(
         "profit_readiness_status": guardrails.get("profit_readiness_status", "ok"),
         "reduce_only": guardrails.get("reduce_only", False),
         "risk_disclosure_state": guardrails.get("risk_disclosure", "pending"),
-        "auto_execute": board_mode == "normal" and not guardrails.get("reduce_only", False),
+        "auto_execute": _compute_auto_execute(board_mode, guardrails),
         "guardrails": dict(guardrails),
         "determinism_hash": determinism_hash,
         "determinism_version": determinism_version,
@@ -436,7 +437,23 @@ def _build_guardrails(guardrails: Mapping[str, object] | None, *, risk_status: s
     if guardrails:
         merged.update(guardrails)
     merged["risk_disclosure"] = risk_status or merged.get("risk_disclosure", "pending")
+    if "auto_execute" not in merged:
+        merged["auto_execute"] = False
     return merged
+
+
+def _compute_auto_execute(board_mode: str, guardrails: Mapping[str, object]) -> bool:
+    """Determine whether auto_execute is active under current guardrails."""
+
+    if board_mode.lower() != "normal":
+        return False
+    if guardrails.get("reduce_only"):
+        return False
+    if (guardrails.get("kill_switch") or "none") not in {"none", "normal"}:
+        return False
+    if (guardrails.get("spread_status") or "normal") not in {"normal"}:
+        return False
+    return bool(guardrails.get("auto_execute", True))
 
 
 def _extract_hashes(guardrails: Mapping[str, object], *, gate_state: GateState | None = None) -> tuple[str | None, str | None]:

@@ -22,7 +22,8 @@
     "reduce_only": { "type": "boolean" },
     "ack_user": { "type": ["string", "null"] },
     "manifest_hash": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
-    "data_hash": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" }
+    "data_hash": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+    "auto_execute_forced_off": { "type": "boolean" }
   },
   "additionalProperties": true
 }

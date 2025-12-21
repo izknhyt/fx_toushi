@@ -1,2 +1,15 @@
 {"ts":"2025-03-18T00:00:00Z","provider":"yfinance","phase":"fetch","symbol":"USDJPY","p95_latency_sec":14.6,"threshold_sec":18,"status":"ok","runbook_ref":"RUN-DATA-05","notes":"stage=hold"}
 {"ts":"2025-03-18T00:00:00Z","provider":"yfinance","phase":"processing","symbol":"USDJPY","p95_latency_sec":9.8,"threshold_sec":12,"status":"ok","runbook_ref":"RUN-DATA-06","notes":"manual_csv=false"}
+{"ts": "2025-12-14T13:22:02Z", "provider": "p1", "stage": "fetch", "timeframe": "M5", "symbols": ["USDJPY"], "fetch_p95_ms": 59.0, "fetch_p99_ms": 59.8, "bars": 1, "429_rate": 0.0, "latency_status": "watch"}
+{"ts": "2025-12-14T13:27:54Z", "provider": "p1", "stage": "fetch", "timeframe": "M5", "symbols": ["USDJPY"], "fetch_p95_ms": 59.0, "fetch_p99_ms": 59.8, "bars": 1, "429_rate": 0.0, "latency_status": "watch"}
+{"ts": "2025-12-14T13:52:29Z", "provider": "p1", "stage": "fetch", "timeframe": "M5", "symbols": ["USDJPY"], "fetch_p95_ms": 59.0, "fetch_p99_ms": 59.8, "bars": 1, "429_rate": 0.0, "latency_status": "watch"}
+{"ts": "2025-12-14T22:11:17Z", "provider": "p1", "stage": "fetch", "timeframe": "M5", "symbols": ["USDJPY"], "fetch_p95_ms": 59.0, "fetch_p99_ms": 59.8, "bars": 1, "429_rate": 0.0, "latency_status": "watch"}
+{"ts": "2025-12-16T12:42:12Z", "provider": "p1", "stage": "fetch", "timeframe": "M5", "symbols": ["USDJPY"], "fetch_p95_ms": 59.0, "fetch_p99_ms": 59.8, "bars": 1, "429_rate": 0.0, "latency_status": "watch"}
+{"ts": "2025-12-16T12:51:59.960451Z", "provider": "resync", "stage": "resync", "phase": "fetch", "symbols": [], "fetch_p95_ms": 14600.0, "latency_status": "unknown", "retry_count": 0}
+{"ts": "2025-12-16T12:53:05.846251Z", "provider": "resync", "stage": "resync", "phase": "fetch", "symbols": [], "latency_status": "unknown", "retry_count": 0}
+{"ts": "2025-12-16T12:54:00Z", "provider": "p1", "stage": "fetch", "timeframe": "M5", "symbols": ["USDJPY"], "fetch_p95_ms": 59.0, "fetch_p99_ms": 59.8, "bars": 1, "429_rate": 0.0, "latency_status": "watch"}
+{"ts": "2025-12-20T11:37:25Z", "provider": "yfinance", "phase": "fetch", "symbol": "USDJPY", "timeframe": "5m", "fetch_p95_ms": 2018, "fetch_p99_ms": 2018, "status": "ok", "last_bar_ts": null, "bar_gap_minutes": null}
+{"ts": "2025-12-20T11:51:50Z", "provider": "dukascopy", "phase": "fetch", "symbol": "USDJPY", "timeframe": "5m", "fetch_p95_ms": 14747, "fetch_p99_ms": 14747, "status": "ok", "last_bar_ts": null, "bar_gap_minutes": null}
+{"ts": "2025-12-20T11:51:50Z", "provider": "dukascopy", "phase": "fetch", "symbol": "EURUSD", "timeframe": "5m", "fetch_p95_ms": 14025, "fetch_p99_ms": 14025, "status": "ok", "last_bar_ts": null, "bar_gap_minutes": null}
+{"ts": "2025-12-20T11:51:50Z", "provider": "dukascopy", "phase": "fetch", "symbol": "GBPUSD", "timeframe": "5m", "fetch_p95_ms": 14434, "fetch_p99_ms": 14434, "status": "ok", "last_bar_ts": null, "bar_gap_minutes": null}
+{"ts": "2025-12-20T12:00:37Z", "provider": "dukascopy", "phase": "fetch", "symbol": "USDJPY", "timeframe": "5m", "fetch_p95_ms": 30556, "fetch_p99_ms": 30556, "status": "ok", "last_bar_ts": "2025-12-19T21:55:00Z", "bar_gap_minutes": 845}

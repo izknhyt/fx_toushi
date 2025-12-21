@@ -97,3 +97,22 @@ def test_status_tracks_ops_action_requests() -> None:
     assert actions["kill_switch"]["requested"] is True
     assert actions["kill_switch"]["requested_state"] == "soft_stop"
     assert actions["board"]["reference"] == "guarded"
+
+
+def test_status_marks_auto_execute_forced_off(tmp_path: Path) -> None:
+    monitor = HealthMonitor()
+    gate_state = GateState()
+    gate_state.auto_execute = True
+    gate_state.risk.reduce_only = True  # force auto_execute to false
+    metrics_path = tmp_path / "guardrails.jsonl"
+
+    payload = status(
+        monitor=monitor,
+        gate_state=gate_state,
+        metrics_path=metrics_path,
+        actor="tester",
+    )
+
+    assert payload["gate"]["auto_execute"] is False
+    content = metrics_path.read_text(encoding="utf-8")
+    assert "auto_execute_forced_off" in content

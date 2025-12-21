@@ -13,10 +13,15 @@ metadata:
     - docs/validation_playbook/index.md
 mode: live
 data_ingestion:
-  provider: broker_stream_stub
+  provider: dukascopy
   fallback_providers:
-    - manual_csv
-  poll_interval_sec: 10
+    - yfinance
+  symbols:
+    - USDJPY
+    - EURUSD
+    - GBPUSD
+  poll_interval_sec: 300
+  lookback_hours: 12
   catch_up_enabled: true
   manual_fallback_allowed: true
   sla_threshold_profile: active

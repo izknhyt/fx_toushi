@@ -84,8 +84,8 @@ def aggregate_to_5m(tick_df: pd.DataFrame) -> pd.DataFrame:
 
     if tick_df.empty:
         return pd.DataFrame()
-    ohlcv = tick_df["mid"].resample("5T").ohlc()
-    vol = tick_df["volume"].resample("5T").sum().rename("volume")
+    ohlcv = tick_df["mid"].resample("5min").ohlc()
+    vol = tick_df["volume"].resample("5min").sum().rename("volume")
     out = ohlcv.join(vol, how="outer").dropna()
     out = out.reset_index().rename(columns=str.lower)
     return out

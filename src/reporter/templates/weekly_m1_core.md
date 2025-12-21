@@ -6,6 +6,12 @@
 - Tickets (guarded/blocked/reduce_only/manual_csv): {tickets_overview}
 - Determinism hashes: {determinism_hashes}
 
+## KPI (M1 Core)
+- Sharpe: {kpi_sharpe}
+- Max Drawdown: {kpi_max_dd}
+- Win Rate: {kpi_win_rate}
+- Cumulative R: {kpi_cum_r}
+
 ## Stress Runs
 {stress_runs}
 

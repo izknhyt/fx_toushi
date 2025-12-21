@@ -202,6 +202,7 @@ def test_guardrails_metrics_schema_accepts_valid_payload() -> None:
         "ack_user": "tester",
         "manifest_hash": "sha256:" + ("a" * 64),
         "data_hash": "sha256:" + ("b" * 64),
+        "auto_execute_forced_off": True,
     }
     validator.validate(payload)
 

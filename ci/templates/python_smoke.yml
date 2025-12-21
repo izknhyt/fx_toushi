@@ -46,6 +46,10 @@ jobs:
         displayName: 'Verify CONFIG-SCAFF-01 evidence bundle'
 
       - script: |
+          make check-profit-readiness-hands-off-all ARGS="--staleness-days 3650 --profit-loop-hours 999999 --min-samples 0"
+        displayName: 'Hands-off readiness + alpha profile validation (smoke tolerances)'
+
+      - script: |
           CFG_HASH=$(python - <<'PY'
 import hashlib, pathlib
 path = pathlib.Path("config/ops.yaml")

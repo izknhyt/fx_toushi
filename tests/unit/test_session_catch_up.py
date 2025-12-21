@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 from src.core.session import DefaultSessionManager, SessionConfig
+from src.data.service import IngestionMetricsCollector
 
 
 class _WorkflowStub:
@@ -127,3 +128,18 @@ def test_catch_up_uses_ingestion_metrics(tmp_path: Path, monkeypatch):
     assert summary["latency_status"] == "watch"
     assert summary["retry_count"] == 3
     assert summary["catch_up_lag_minutes"] == 14
+
+
+def test_catch_up_prefers_collector_snapshot(monkeypatch):
+    collector = IngestionMetricsCollector(window_size=5, warn_ms=50.0, breach_ms=75.0)
+    collector.observe(provider="p1", symbols=["USDJPY"], timeframe="M5", latency_ms=40.0, bars=1)
+    collector.observe(provider="p1", symbols=["USDJPY"], timeframe="M5", latency_ms=60.0, bars=1)
+    collector.observe(provider="p1", symbols=["USDJPY"], timeframe="M5", latency_ms=80.0, bars=1, success=False)
+
+    monkeypatch.setenv("TRADECTL_RESYNC_LOG_PATH", str(Path("logs/resync/resync_events.jsonl")))
+    manager = DefaultSessionManager(config=SessionConfig(mode="paper"), workflow=_WorkflowStub())
+    summary = manager.catch_up(symbols=["USDJPY"], metrics_collector=collector)
+
+    assert summary["fetch_p95_ms"] is not None
+    assert summary["latency_status"] in {"breach", "watch"}
+    assert summary["retry_count"] == 1

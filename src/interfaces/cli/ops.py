@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import json
 import logging
 
 from pathlib import Path
 from typing import Iterable
-from datetime import datetime, date
+from datetime import datetime, date, timezone
 
 from src.ops import AutomationEffectTracker, OpsAgendaService, OpsDrillService, OpsWorklogService
 from src.ops.automation import AutomationEffectDelta
@@ -23,7 +24,9 @@ from src.ops.profit_readiness import (
     load_recent_readiness,
     record_readiness,
     verify_profit_readiness,
+    profit_status_from_exit,
 )
+from src.core.gate import GateAggregator, GateState
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +40,85 @@ __all__ = [
     "OpsAgendaService",
     "OpsDrillService",
 ]
+
+DEFAULT_GATE_STATE_PATH = Path("snapshots/latest/gate_state.json")
+DEFAULT_OPS_WORKLOG_PATH = Path("ops_worklog.jsonl")
+
+
+def _utcnow() -> str:
+    return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def _append_jsonl(path: Path, payload: dict[str, object]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(payload, ensure_ascii=False))
+        handle.write("\n")
+
+
+def _load_gate_state(path: Path) -> GateState:
+    if path.exists():
+        try:
+            return GateState.load(path)
+        except Exception:  # pragma: no cover - defensive against malformed snapshots
+            return GateState()
+    return GateState()
+
+
+def _apply_auto_execute_lifecycle(
+    *,
+    enable: bool,
+    profit_status: str,
+    reason: str,
+    evidence: Iterable[str],
+    gate_state_path: Path,
+    profit_path: Path,
+    ops_worklog_path: Path,
+    actor: str | None,
+) -> dict[str, object]:
+    """Toggle auto_execute based on readiness result and emit evidence/worklog."""
+
+    previous = _load_gate_state(gate_state_path)
+    aggregator = GateAggregator(initial_state=previous)
+    aggregator.set_profit_readiness_status(
+        profit_status,
+        board_mode="normal",
+        allow_auto_execute=enable,
+    )
+    aggregator.persist_latest(path=gate_state_path)
+    updated = aggregator.snapshot()
+
+    changed = updated.auto_execute != previous.auto_execute
+    readiness_entry: dict[str, object] | None = None
+    worklog_entry: dict[str, object] | None = None
+    evidence_list = list(evidence)
+    if changed:
+        status = "upgraded" if updated.auto_execute else "downgraded"
+        readiness_entry = record_readiness(
+            lever="Hands-off Auto Execute",
+            status=status,
+            evidence=evidence_list,
+            notes=reason,
+            actor=actor,
+            path=profit_path,
+        ).to_mapping()
+        worklog_entry = {
+            "timestamp": _utcnow(),
+            "task": "auto_execute_on" if updated.auto_execute else "auto_execute_off",
+            "actor": actor,
+            "board_mode": "normal",
+            "reason": reason,
+            "evidence": evidence_list,
+        }
+        _append_jsonl(ops_worklog_path, worklog_entry)
+
+    return {
+        "auto_execute": updated.auto_execute,
+        "changed": changed,
+        "gate_state_path": str(gate_state_path),
+        "worklog": worklog_entry,
+        "readiness_entry": readiness_entry,
+    }
 
 
 def readiness(
@@ -58,6 +140,8 @@ def readiness(
     staleness_days: int = 7,
     profit_loop_hours: int = 48,
     require_auto_execute: bool = False,
+    gate_state_path: Path = DEFAULT_GATE_STATE_PATH,
+    ops_worklog_path: Path = DEFAULT_OPS_WORKLOG_PATH,
 ) -> dict[str, object]:
     """Render an Ops readiness snapshot and optionally log profit readiness signals."""
 
@@ -68,6 +152,7 @@ def readiness(
         "profit_readiness_summary": None,
         "recorded": None,
         "verified": None,
+        "auto_execute": None,
     }
 
     if include_profit:
@@ -97,16 +182,30 @@ def readiness(
             for lever, entry in latest_entries.items()
         }
         if verify:
-            result = verify_profit_readiness(
-                window_days=window_days,
-                min_samples=min_samples,
-                profit_loop_path=Path("metrics") / "profit_loop.jsonl",
-                profit_loop_daily=Path("reports") / "performance" / "profit_loop_daily.md",
-                execution_bridge_path=Path("metrics") / "execution_bridge.jsonl",
-                staleness_days=staleness_days,
-                profit_loop_hours=profit_loop_hours,
-                require_auto_execute=require_auto_execute,
-            )
+            try:
+                result = verify_profit_readiness(
+                    window_days=window_days,
+                    min_samples=min_samples,
+                    profit_loop_path=Path("metrics") / "profit_loop.jsonl",
+                    profit_loop_daily=Path("reports") / "performance" / "profit_loop_daily.md",
+                    execution_bridge_path=Path("metrics") / "execution_bridge.jsonl",
+                    staleness_days=staleness_days,
+                    profit_loop_hours=profit_loop_hours,
+                    require_auto_execute=require_auto_execute,
+                )
+            except ProfitReadinessError as exc:
+                if require_auto_execute:
+                    payload["auto_execute"] = _apply_auto_execute_lifecycle(
+                        enable=False,
+                        profit_status=profit_status_from_exit(exc.exit_code),
+                        reason=str(exc),
+                        evidence=list(record_evidence or ()),
+                        gate_state_path=gate_state_path,
+                        profit_path=profit_path,
+                        ops_worklog_path=ops_worklog_path,
+                        actor=record_actor,
+                    )
+                raise
             payload["verified"] = {
                 "status": result.status,
                 "exit_code": result.exit_code,
@@ -124,6 +223,17 @@ def readiness(
                     notes=f"KPI check ({result.sample_count} samples)",
                     actor=record_actor,
                     path=profit_path,
+                )
+            if require_auto_execute:
+                payload["auto_execute"] = _apply_auto_execute_lifecycle(
+                    enable=True,
+                    profit_status=profit_status_from_exit(result.exit_code),
+                    reason="Hands-off auto_execute criteria satisfied",
+                    evidence=result.evidence,
+                    gate_state_path=gate_state_path,
+                    profit_path=profit_path,
+                    ops_worklog_path=ops_worklog_path,
+                    actor=record_actor,
                 )
             if result.exit_code in {EXIT_WARN, EXIT_GUARDED, EXIT_HALT, EXIT_STALE}:
                 raise ProfitReadinessError(

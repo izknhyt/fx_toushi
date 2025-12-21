@@ -19,6 +19,9 @@ from src.backtest.paper_poc import (
     StrategyManifest,
 )
 
+DEFAULT_BACKTEST_RETURNS_EXPORT = Path("reports") / "performance" / "backtest" / "returns.parquet"
+DEFAULT_BACKTEST_EQUITY_EXPORT = Path("reports") / "performance" / "backtest" / "equity.parquet"
+
 
 @dataclass
 class BacktestResult:
@@ -58,6 +61,48 @@ def _deterministic_stats(series: pd.Series) -> tuple[float, float, float, float]
     max_drawdown = min(0.12, abs(negative) / max(abs(positive) + 1e-6, 1.0))
     win_rate = (returns > 0).mean()
     return pf_all, sharpe, max_drawdown, win_rate
+
+
+def _compute_performance_series(df: pd.DataFrame, *, base_equity: float = 100.0) -> tuple[pd.Series, pd.Series]:
+    close_col = None
+    for candidate in ("close", "price", "mid"):
+        if candidate in df.columns:
+            close_col = candidate
+            break
+    if close_col is None:
+        raise ValueError("Dataset missing price column for performance export")
+    prices = df[close_col].astype(float)
+    returns = prices.pct_change().dropna()
+    returns.name = "r"
+    equity = (1 + returns).cumprod() * base_equity
+    if equity.empty:
+        equity = pd.Series([base_equity], name="equity")
+    else:
+        equity = pd.concat([pd.Series([base_equity], name="equity"), equity.rename("equity")], ignore_index=True)
+    return returns, equity
+
+
+def _export_series(path: Path | None, name: str, series: pd.Series) -> None:
+    if path is None:
+        return
+    target = path if path.suffix else path.with_suffix(".parquet")
+    target.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        series.to_frame(name=name).to_parquet(target)
+    except Exception:
+        csv_path = target.with_suffix(".csv")
+        series.to_frame(name=name).to_csv(csv_path, index=False)
+
+
+def _performance_paths(
+    out_dir: Path | None,
+    returns_path: Path | None = None,
+    equity_path: Path | None = None,
+) -> tuple[Path, Path]:
+    base_dir = (out_dir / "performance" / "backtest") if out_dir else (Path("reports") / "performance" / "backtest")
+    resolved_returns = returns_path or (base_dir / DEFAULT_BACKTEST_RETURNS_EXPORT.name)
+    resolved_equity = equity_path or (base_dir / DEFAULT_BACKTEST_EQUITY_EXPORT.name)
+    return resolved_returns, resolved_equity
 
 
 def _build_metrics(strategy: str, profile: str, dataset_path: Path, dataset_hash: str) -> BacktestResult:
@@ -119,6 +164,9 @@ def run_backtest(
     output: Path | None,
     out_dir: Path | None,
     manifest_path: Path,
+    returns_path: Path | None = None,
+    equity_path: Path | None = None,
+    base_equity: float = 100.0,
 ) -> dict[str, Any]:
     manifest_entry = _load_manifest_entry(manifest_path, strategy)
     dataset_path = manifest_entry["dataset_path"]
@@ -127,6 +175,20 @@ def run_backtest(
     result = _build_metrics(strategy, profile, Path(dataset_path), dataset_hash)
     payload = result.as_dict()
     payload["window"] = {"from": window_from, "to": window_to}
+    performance_exports: dict[str, Any] = {}
+
+    try:
+        df = pd.read_parquet(dataset_path)
+        returns_series, equity_series = _compute_performance_series(df, base_equity=base_equity)
+        resolved_returns, resolved_equity = _performance_paths(out_dir, returns_path, equity_path)
+        _export_series(resolved_returns, "r", returns_series)
+        _export_series(resolved_equity, "equity", equity_series)
+        performance_exports = {"returns": str(resolved_returns), "equity": str(resolved_equity)}
+    except Exception as exc:  # pragma: no cover - defensive path
+        performance_exports = {"error": str(exc)}
+
+    if performance_exports:
+        payload["performance_exports"] = performance_exports
 
     if export == "metrics" and output:
         output.parent.mkdir(parents=True, exist_ok=True)

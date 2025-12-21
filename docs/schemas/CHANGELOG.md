@@ -1,6 +1,10 @@
 # Schema Registry Change Log
 
+## 2025-12-20
+- `guardrails_metrics.schema.json` adds `auto_execute_forced_off` to capture Hands-off降格理由 in metrics/guardrails.jsonl.
+
 ## 2025-11-23
+- Ingestion SLA logging: resync/data ingestion now uses `IngestionMetricsCollector` to emit `fetch_p95_ms/p99_ms`, `latency_status`, `retry_count`, `catch_up_lag_minutes` snapshots to `metrics/data_ingestion_sla.jsonl`; raw observations rotate daily under `metrics/raw/data_ingestion_raw_<date>.jsonl` (10万行で分割、60日gzip/90日削除の運用推奨) for EP01-P1 DataLag.
 - Added guardrail-related schemas: `guardrails_metrics.schema.json`, `spread_cooldown.schema.json`, `audit.health_action.schema.json`, `audit.kill_switch.schema.json`, and `audit.spread_guard.schema.json` to codify metrics/audit outputs for EP03 Guardrails (§90.1.1/§90.3). These back `metrics/guardrails.jsonl`, `metrics/spread_cooldown.jsonl`, `logs/audit/health_action.jsonl`, `logs/audit/kill_switch.jsonl`, and `logs/audit/spread_guard.jsonl`, aligning Runbook RUN-DATA-05 / RUN-RISK-02 / RUN-SPREAD-03 evidence. **`guardrails_metrics.schema.json` updated: `reason`必須、`spread_status`/`suggested_action`/`reasons`/`exit_code`/`reduce_only`/`ack_user`/`manifest_hash`/`data_hash`フィールドを追加（§90.1.1最新仕様）。**
 
 ## 2025-03-22

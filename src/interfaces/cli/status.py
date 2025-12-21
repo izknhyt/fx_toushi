@@ -6,6 +6,7 @@ import json
 import logging
 import os
 import hashlib
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping, MutableMapping
@@ -236,6 +237,16 @@ def _sha256_path(path: Path) -> str:
     return f"sha256:{h.hexdigest()}"
 
 
+def _normalise_hash(value: str | None) -> str | None:
+    if not value:
+        return None
+    if value.startswith("sha256:"):
+        return value
+    if re.fullmatch(r"[0-9a-fA-F]{64}", value):
+        return f"sha256:{value.lower()}"
+    return value
+
+
 def status(
     *,
     verbose: bool = False,
@@ -298,12 +309,21 @@ def status(
 
     raw_kill_switch_state, kill_switch_reason = _load_kill_switch_state(kill_switch_state_path) if kill_switch_state_path else ("none", None)
     kill_switch_override = None if raw_kill_switch_state in {None, "none"} else raw_kill_switch_state
+    previous_auto_execute = gate_state.auto_execute
     monitor.enforce_auto_execute_policy(gate_state)
     health_state = monitor.snapshot()
     risk_state = gate_state.risk
     guardrail = monitor.guardrail_snapshot(gate_state, kill_switch_state=kill_switch_override)
     kill_switch_state_value = kill_switch_override or guardrail.kill_switch_state
     kill_switch_reason = kill_switch_reason or guardrail.kill_switch_reason or risk_state.kill_switch_reason
+    gate_state.enforce_auto_execute_guards(
+        board_mode=guardrail.board_mode,
+        kill_switch_state=kill_switch_state_value or "none",
+        spread_status=guardrail.spread_status,
+    )
+    auto_execute_forced_off = previous_auto_execute and not gate_state.auto_execute
+    gate_state.cfg_hash = _normalise_hash(gate_state.cfg_hash)
+    gate_state.data_hash = _normalise_hash(gate_state.data_hash)
 
     ack_result: Mapping[str, Any] | None = None
     if ack:
@@ -353,6 +373,9 @@ def status(
     }
 
     guardrail_payload = guardrail.to_dict()
+    if auto_execute_forced_off:
+        guardrail_payload["reasons"].append("auto_execute_forced_off")
+        guardrail_payload["auto_execute_forced_off"] = True
     guardrail_payload["pending_actions"] = ops_actions["pending"]
     result: MutableMapping[str, object] = {
         "health": health_state.to_dict(),
@@ -413,6 +436,9 @@ def status(
         "manifest_hash": gate_state.cfg_hash,
         "data_hash": gate_state.data_hash,
     }
+    if auto_execute_forced_off:
+        metrics_payload["reasons"].append("auto_execute_forced_off")
+        metrics_payload["auto_execute_forced_off"] = True
     if metrics_payload["manifest_hash"] is None:
         metrics_payload.pop("manifest_hash")
     if metrics_payload["data_hash"] is None:

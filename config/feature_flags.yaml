@@ -15,6 +15,9 @@ defaults:
     reporter.enable_extended_blocks: false
     reports.performance.enable: false
     data.paid_feed: false
+    alpha.profit_loop_enabled: true
+    alpha.dynamic_sizing: false
+    alpha.auto_execute: false
   paper:
     sprt_guard: false
     reduce_only_advisor: false
@@ -22,6 +25,9 @@ defaults:
     reporter.enable_extended_blocks: false
     reports.performance.enable: false
     data.paid_feed: false
+    alpha.profit_loop_enabled: true
+    alpha.dynamic_sizing: false
+    alpha.auto_execute: false
   live:
     sprt_guard: false
     reduce_only_advisor: false
@@ -29,6 +35,9 @@ defaults:
     reporter.enable_extended_blocks: false
     reports.performance.enable: false
     data.paid_feed: false
+    alpha.profit_loop_enabled: false
+    alpha.dynamic_sizing: false
+    alpha.auto_execute: false
 definitions:
   sprt_guard:
     description: "Live SPRT 健全性ガード。SPRT の警告域が連続した際に提案頻度を減衰させる。"
@@ -125,3 +134,54 @@ definitions:
     telemetry_checks:
       - "metrics/data_ingestion_sla.jsonl"
       - "reports/governance/licensing/"
+  alpha.profit_loop_enabled:
+    description: "Hands-off向け Profit Loop 評価/フィードバックを有効化する（Paper soak前提）。"
+    milestone: "M1.1"
+    owner: ops_manager
+    category: guarded
+    runbook_ref: "RUN-FEATURE-FLAG-01 (see RUN-ALPHA-FEEDBACK-01 for evidence)"
+    enable_conditions:
+      - "scoreboard/alpha & scoreboard/bridge がPF/Sharpe/MaxDD基準を4週連続で達成"
+      - "reports/performance/profit_loop_daily.md が48時間以内の更新であること"
+    rollback:
+      - "tradectl config flags --set alpha.profit_loop_enabled=false --profile <mode>"
+    telemetry_checks:
+      - "metrics/profit_loop.jsonl"
+      - "scoreboard/alpha/"
+    notes: "Hands-off auto_executeの前提。LiveではCR-20251122クローズまでデフォルト無効。"
+  alpha.dynamic_sizing:
+    description: "FeedbackVector に基づくConviction/size補正をmax_dynamic_adjust_pct内で適用する。"
+    milestone: "M1.1"
+    owner: ops_manager
+    category: guarded
+    runbook_ref: "RUN-FEATURE-FLAG-01 (see RUN-ALPHA-FEEDBACK-01 for evidence)"
+    enable_conditions:
+      - "alpha.profit_loop_enabled=true のプロファイルでpaper soak完了"
+      - "config/alpha_profiles.yaml の max_dynamic_adjust_pct がバリデート済み"
+    rollback:
+      - "tradectl config flags --set alpha.dynamic_sizing=false --profile <mode>"
+    telemetry_checks:
+      - "metrics/profit_loop.jsonl"
+      - "logs/audit/alpha_feedback.jsonl"
+    dependencies:
+      - "alpha.profit_loop_enabled"
+    notes: "Hands-offサイジングでapply_dynamic_adjustmentを有効化するときのフラグ。"
+  alpha.auto_execute:
+    description: "Hands-off auto_execute を有効化（Board normalのみ、自動降格あり）。"
+    milestone: "M1.2"
+    owner: ops_manager
+    category: dangerous
+    runbook_ref: "RUN-FEATURE-FLAG-01 (see RUN-GOV-BOARD-01 for governance)"
+    enable_conditions:
+      - "`make check-profit-readiness-hands-off` がExit 0かつ auto_execute_ready=true"
+      - "ops_worklog に task=auto_execute_on で証跡が残っている"
+    rollback:
+      - "tradectl config flags --set alpha.auto_execute=false --profile <mode>"
+      - "tradectl ops readiness --profit --verify --require-auto-execute で降格を確認"
+    telemetry_checks:
+      - "metrics/profit_readiness.jsonl"
+      - "metrics/guardrails.jsonl"
+    dependencies:
+      - "alpha.profit_loop_enabled"
+      - "alpha.dynamic_sizing"
+    notes: "Guarded/Halt/Reduce-Only/Spread cooldown・block で即時OFF。デフォルト無効。"

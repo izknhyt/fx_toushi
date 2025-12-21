@@ -82,8 +82,9 @@ class ReportGenerator:
         stress_runs: Sequence[Mapping[str, object]] = (),
         journal_entries: Sequence[Mapping[str, object]] = (),
         template_path: Path | None = None,
+        kpi: Mapping[str, object] | None = None,
     ) -> str:
-        """Compose weekly report content with ticket summary, stress runs, and journal."""
+        """Compose weekly report content with ticket summary, stress runs, journal, and KPI."""
 
         stress_block = self.render_stress_runs(stress_runs, with_header=False)
         journal_block = self.render_journal_summary(journal_entries, with_header=False)
@@ -95,6 +96,9 @@ class ReportGenerator:
                 "trade_journal": journal_block,
             }
         )
+        if kpi:
+            for key, value in kpi.items():
+                context[f"kpi_{key}"] = value
         tpl = (template_path or TICKET_SUMMARY_TEMPLATE).read_text(encoding="utf-8")
         return tpl.format(**context)
 

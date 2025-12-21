@@ -17,6 +17,15 @@ from collections import deque
 from pathlib import Path
 from typing import Callable, Sequence, Mapping, Iterable, Any
 
+from src.data.rate_limit_guard import RateLimitGuard, StageDecision
+
+
+@dataclass(slots=True)
+class WorkerPlan:
+    provider: str
+    stage: str
+    poll_interval_sec: float
+    max_workers: int
 __all__ = [
     "MarketRequest",
     "MarketFrame",
@@ -36,6 +45,9 @@ __all__ = [
     "drain_buffers",
     "load_provider_sla_thresholds",
     "IngestionMetricsCollector",
+    "WorkerPlan",
+    "run_worker_plan",
+    "run_fetch_workers",
 ]
 
 logger = logging.getLogger(__name__)
@@ -329,6 +341,37 @@ def _log_sla_entry(
         pass
 
 
+def _log_stage_eval(decision: StageDecision, *, log_path: Path | None) -> None:
+    if not log_path:
+        return
+    payload = {
+        "ts": _utcnow_iso(),
+        "provider": decision.provider,
+        "stage_eval": decision.to_mapping(),
+    }
+    try:
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        with log_path.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(payload, ensure_ascii=False))
+            handle.write("\n")
+    except OSError:
+        pass
+
+
+def _evaluate_rate_limit(
+    *,
+    provider: str,
+    rate_limit_ratio: float,
+    guard: RateLimitGuard,
+    state: Mapping[str, str],
+    log_path: Path | None,
+) -> StageDecision:
+    current_stage = state.get(provider)
+    decision = guard.evaluate(provider=provider, rate_429=rate_limit_ratio, current_stage=current_stage)
+    _log_stage_eval(decision, log_path=log_path)
+    return decision
+
+
 def _compute_latency_status(p95_ms: float, *, warn_ms: float = 1_000.0, breach_ms: float = 1_500.0) -> str:
     """Coarse latency health classification."""
 
@@ -410,6 +453,11 @@ def fetch_latest(
     breach_ms: float = 1_500.0,
     provider_sla_thresholds: Mapping[str, tuple[float, float]] | None = None,
     metrics_collector: "IngestionMetricsCollector | None" = None,
+    rate_limit_guard: RateLimitGuard | None = None,
+    rate_limit_state: dict[str, str] | None = None,
+    rate_limit_log_path: Path | None = None,
+    worker_plan: WorkerPlan | None = None,
+    apply_worker_plan: bool = False,
 ) -> list[MarketFrame]:
     """Fetch the most recent bars for the requested symbols and log SLA metrics."""
 
@@ -418,6 +466,136 @@ def fetch_latest(
     frames: list[MarketFrame] = []
     handler_map = provider_handlers or {}
     provider_sla_thresholds = provider_sla_thresholds or {}
+    rate_limit_state = rate_limit_state if rate_limit_state is not None else {}
+    provider_plans: Mapping[str, WorkerPlan] = {}
+    if rate_limit_guard:
+        for provider in providers:
+            plan = rate_limit_guard.worker_plan(provider=provider, stage=rate_limit_state.get(provider))
+            provider_plans[provider] = WorkerPlan(
+                provider=provider,
+                stage=plan["stage"],
+                poll_interval_sec=float(plan["poll_interval_sec"]),
+                max_workers=int(plan["max_workers"]),
+            )
+
+    def _fetch_provider_once(provider: str, current_plan: WorkerPlan | None = None) -> tuple[list[MarketFrame], float]:
+        local_frames: list[MarketFrame] = []
+        retry_budget = retries
+        attempt = 0
+        warn = provider_sla_thresholds.get(provider, (warn_ms, breach_ms))[0]
+        breach = provider_sla_thresholds.get(provider, (warn_ms, breach_ms))[1]
+        rate_limit_ratio = 0.0
+        while retry_budget >= 0:
+            try:
+                start = time.perf_counter()
+                result = _invoke_provider(
+                    provider=provider,
+                    symbols=symbols,
+                    timeframe=timeframe,
+                    handler=handler_map.get(provider),
+                )
+                elapsed_ms = (time.perf_counter() - start) * 1000
+                local_frames = result.frames
+                rate_limit_ratio = result.rate_limit_ratio
+                p95_ms = result.p95_ms
+                p99_ms = result.p99_ms
+                if metrics_collector:
+                    metrics_collector.observe(
+                        provider=provider,
+                        symbols=symbols,
+                        timeframe=timeframe,
+                        latency_ms=elapsed_ms,
+                        bars=len(local_frames),
+                        stage="fetch",
+                        rate_limit_ratio=rate_limit_ratio,
+                        success=True,
+                    )
+                    snapshot = metrics_collector.snapshot()
+                    p95_ms = snapshot.get("fetch_p95_ms") or p95_ms
+                    p99_ms = snapshot.get("fetch_p99_ms") or p99_ms
+                _log_sla_entry(
+                    provider=provider,
+                    timeframe=timeframe,
+                    symbols=symbols,
+                    stage="fetch",
+                    p95_ms=p95_ms,
+                    p99_ms=p99_ms,
+                    bars=len(local_frames),
+                    status=_compute_latency_status(p95_ms, warn_ms=warn, breach_ms=breach),
+                    rate_limit_ratio=rate_limit_ratio,
+                    metrics_path=metrics_path,
+                )
+                break
+            except ProviderError as exc:
+                elapsed_ms = (time.perf_counter() - start) * 1000 if "start" in locals() else 0.0
+                if metrics_collector:
+                    metrics_collector.observe(
+                        provider=provider,
+                        symbols=symbols,
+                        timeframe=timeframe,
+                        latency_ms=elapsed_ms,
+                        bars=0,
+                        stage="fetch",
+                        rate_limit_ratio=getattr(exc, "rate_limit_ratio", 0.0),
+                        success=False,
+                    )
+                logger.warning("data.fetch_latest.retry", extra={"provider": provider, "error": str(exc), "attempt": attempt})
+                _log_sla_entry(
+                    provider=provider,
+                    timeframe=timeframe,
+                    symbols=symbols,
+                    stage="fetch",
+                    p95_ms=0.0,
+                    p99_ms=0.0,
+                    bars=0,
+                    status="error",
+                    rate_limit_ratio=getattr(exc, "rate_limit_ratio", 0.0),
+                    metrics_path=metrics_path,
+                )
+                retry_budget -= 1
+                attempt += 1
+                if retry_budget < 0:
+                    break
+                current_plan_for_backoff = current_plan or provider_plans.get(provider)
+                backoff_base = current_plan_for_backoff.poll_interval_sec * 1000 if current_plan_for_backoff else backoff_ms
+                delay_ms = backoff_base if attempt == 1 else backoff_base * 2
+                logger.info("data.fetch_latest.backoff", extra={"delay_ms": delay_ms, "provider": provider})
+            except Exception as exc:  # pragma: no cover - defensive
+                logger.error("data.fetch_latest.unexpected", extra={"error": str(exc)})
+                break
+        return local_frames, rate_limit_ratio
+
+    if apply_worker_plan:
+        plans: list[WorkerPlan] = list(provider_plans.values())
+        if worker_plan and not plans:
+            plans = [WorkerPlan(provider=p, stage=worker_plan.stage, poll_interval_sec=worker_plan.poll_interval_sec, max_workers=worker_plan.max_workers) for p in providers]
+        if not plans:
+            plans = spawn_provider_workers(providers=providers, rate_limit_guard=rate_limit_guard, rate_limit_state=rate_limit_state)
+        plan_lookup = {plan.provider: plan for plan in plans}
+        result_frames: dict[str, list[MarketFrame]] = {}
+
+        def _make_job(target_provider: str) -> Callable[[], None]:
+            def _job() -> None:
+                frames_for_provider, rl_ratio = _fetch_provider_once(target_provider, plan_lookup.get(target_provider))
+                result_frames[target_provider] = frames_for_provider
+                if rate_limit_guard:
+                    decision = _evaluate_rate_limit(
+                        provider=target_provider,
+                        rate_limit_ratio=rl_ratio,
+                        guard=rate_limit_guard,
+                        state=rate_limit_state,
+                        log_path=rate_limit_log_path,
+                    )
+                    rate_limit_state[target_provider] = decision.stage
+            return _job
+
+        job_queue = [(provider, _make_job(provider)) for provider in providers]
+        run_fetch_workers(plans=plans, queue=job_queue, iterations=1, stop_when_empty=False)
+        for provider in providers:
+            frames = result_frames.get(provider)
+            if frames:
+                return frames
+        return []
 
     for provider in providers:
         retry_budget = retries
@@ -494,12 +672,28 @@ def fetch_latest(
                 attempt += 1
                 if retry_budget < 0:
                     break
-                delay_ms = backoff_ms if attempt == 1 else backoff_ms * 2
+                current_plan = provider_plans.get(provider) if provider_plans else worker_plan
+                backoff_base = current_plan.poll_interval_sec * 1000 if current_plan else backoff_ms
+                delay_ms = backoff_base if attempt == 1 else backoff_base * 2
                 logger.info("data.fetch_latest.backoff", extra={"delay_ms": delay_ms, "provider": provider})
                 # placeholder: in async/real mode use asyncio.sleep(delay_ms/1000)
             except Exception as exc:  # pragma: no cover - defensive
                 logger.error("data.fetch_latest.unexpected", extra={"error": str(exc)})
                 break
+        # evaluate rate limit guard for this provider
+        if frames and rate_limit_guard:
+            decision = _evaluate_rate_limit(
+                provider=provider,
+                rate_limit_ratio=result.rate_limit_ratio if 'result' in locals() else 0.0,
+                guard=rate_limit_guard,
+                state=rate_limit_state,
+                log_path=rate_limit_log_path,
+            )
+            rate_limit_state[provider] = decision.stage
+            if decision.decision == "rollback" and provider != providers[-1]:
+                frames = []
+                logger.info("data.fetch_latest.failover_rate_limit", extra={"from": provider, "reason": "rate_limit_high"})
+                continue
         if frames:
             break
     if not frames:
@@ -574,11 +768,125 @@ def warm_cache(*, context: object | None = None) -> None:
     _ = context
 
 
-def spawn_provider_workers(*, context: object | None = None) -> list[object]:
-    """Spawn provider fetch/parse workers and return opaque handles."""
+def spawn_provider_workers(
+    *,
+    providers: Sequence[str] | None = None,
+    rate_limit_guard: RateLimitGuard | None = None,
+    rate_limit_state: Mapping[str, str] | None = None,
+    default_poll_interval: float = 15.0,
+    default_max_workers: int = 4,
+) -> list[WorkerPlan]:
+    """Return worker plans (poll interval/max workers) per provider."""
 
-    _ = context
-    return []
+    plans: list[WorkerPlan] = []
+    rate_limit_state = rate_limit_state or {}
+    for provider in providers or ("primary",):
+        if rate_limit_guard:
+            stage = rate_limit_state.get(provider)
+            plan = rate_limit_guard.worker_plan(provider=provider, stage=stage)
+            plans.append(
+                WorkerPlan(
+                    provider=provider,
+                    stage=plan["stage"],
+                    poll_interval_sec=float(plan["poll_interval_sec"]),
+                    max_workers=int(plan["max_workers"]),
+                )
+            )
+        else:
+            plans.append(
+                WorkerPlan(
+                    provider=provider,
+                    stage="stage0",
+                    poll_interval_sec=default_poll_interval,
+                    max_workers=default_max_workers,
+                )
+            )
+    return plans
+
+
+def run_worker_plan(
+    *,
+    plan: WorkerPlan,
+    task: Callable[[], None] | None = None,
+    queue: Iterable[Callable[[], None]] | None = None,
+    iterations: int = 1,
+    sleep_fn: Callable[[float], None] | None = None,
+    stop_when_empty: bool = True,
+) -> Mapping[str, Any]:
+    """Execute a simple polling loop honoring poll interval and max_workers.
+
+    The loop drains up to ``max_workers`` callables per poll cycle from the
+    provided queue. If no queue is provided, the ``task`` is executed
+    ``max_workers`` times per iteration to mirror the previous behaviour.
+    """
+
+    sleep_fn = sleep_fn or time.sleep
+    calls = 0
+    polls = 0
+    sleeps = 0
+    work_queue: deque[Callable[[], None]] = deque(queue or [])
+    for _ in range(iterations):
+        polls += 1
+        executed = 0
+        # fire up to max_workers per iteration (synchronously)
+        while executed < plan.max_workers:
+            if work_queue:
+                job = work_queue.popleft()
+                job()
+                calls += 1
+                executed += 1
+                continue
+            if task is None:
+                break
+            task()
+            calls += 1
+            executed += 1
+        if stop_when_empty and not work_queue and task is None:
+            break
+        sleep_fn(plan.poll_interval_sec)
+        sleeps += 1
+    return {
+        "provider": plan.provider,
+        "stage": plan.stage,
+        "calls": calls,
+        "polls": polls,
+        "sleep_calls": sleeps,
+        "poll_interval_sec": plan.poll_interval_sec,
+    }
+
+
+def run_fetch_workers(
+    *,
+    plans: Sequence[WorkerPlan],
+    queue: Iterable[tuple[str, Callable[[], None]]] | None = None,
+    iterations: int = 1,
+    sleep_fn: Callable[[float], None] | None = None,
+    stop_when_empty: bool = True,
+) -> list[Mapping[str, Any]]:
+    """Apply worker plans to a provider-keyed queue.
+
+    Each plan drains only jobs matching its provider while honouring
+    ``max_workers`` and ``poll_interval_sec``. Queue entries are left
+    untouched for other plans so multi-provider scenarios can be tested.
+    """
+
+    provider_queues: dict[str, deque[Callable[[], None]]] = {}
+    for provider, job in queue or ():
+        provider_queues.setdefault(provider, deque()).append(job)
+
+    results: list[Mapping[str, Any]] = []
+    for plan in plans:
+        provider_queue = provider_queues.get(plan.provider, deque())
+        result = run_worker_plan(
+            plan=plan,
+            task=None,
+            queue=provider_queue,
+            iterations=iterations,
+            sleep_fn=sleep_fn,
+            stop_when_empty=stop_when_empty,
+        )
+        results.append(result)
+    return results
 
 
 def drain_buffers(*, force: bool = False) -> dict[str, int]:

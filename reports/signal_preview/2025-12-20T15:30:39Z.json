@@ -1,0 +1,44 @@
+{
+  "generated_at": "2025-12-20T15:30:39Z",
+  "symbols": [
+    "USDJPY",
+    "EURUSD",
+    "GBPUSD"
+  ],
+  "signals": [],
+  "warnings": [
+    "no usable row with required features: USDJPY",
+    "missing curated data: data/research/curated/eurusd/eurusd_m5_latest.parquet",
+    "missing curated data: data/research/curated/gbpusd/gbpusd_m5_latest.parquet"
+  ],
+  "diagnostics": {
+    "USDJPY": {
+      "m1_baseline_ma_rsi": [
+        "regime_trend_1h",
+        "atr_14_1h",
+        "close_5m",
+        "ema_slow_5m",
+        "ema55_slope_1h",
+        "low_5m",
+        "volume_5m",
+        "rsi_14_5m",
+        "ema_fast_5m",
+        "session_tag_5m",
+        "high_5m",
+        "open_5m"
+      ],
+      "m1_baseline_donchian": [
+        "regime_trend_1h",
+        "donchian_mid20_1h",
+        "atr_14_1h",
+        "donchian_mid20_1d",
+        "donchian_lower20_1h",
+        "donchian_upper20_1d",
+        "close_5m",
+        "session_tag_5m",
+        "donchian_lower20_1d",
+        "donchian_upper20_1h"
+      ]
+    }
+  }
+}

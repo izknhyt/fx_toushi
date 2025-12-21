@@ -30,6 +30,8 @@ DEFAULT_DATA_MANIFEST = Path("reports") / "data_manifest.json"
 DEFAULT_STRATEGY_MANIFEST = Path("config") / "strategy_manifest.yaml"
 DEFAULT_FEATURE_CONFIG = Path("config") / "feature_pipeline.yaml"
 DEFAULT_RISK_POLICY = Path("config") / "risk_policy.yaml"
+DEFAULT_RETURNS_EXPORT = Path("reports") / "performance" / "paper" / "returns.parquet"
+DEFAULT_EQUITY_EXPORT = Path("reports") / "performance" / "paper" / "equity.parquet"
 
 
 @dataclass(slots=True)
@@ -100,6 +102,8 @@ class PocResult:
     dataset_path: str | list[str]
     dataset_hash: str | list[str]
     window: Mapping[str, str | None]
+    returns: list[float] | None = None
+    equity_curve: list[float] | None = None
 
     def as_dict(self) -> Mapping[str, Any]:
         return {
@@ -108,6 +112,8 @@ class PocResult:
             "dataset_path": self.dataset_path,
             "dataset_hash": self.dataset_hash,
             "window": self.window,
+            "returns": list(self.returns) if self.returns is not None else None,
+            "equity_curve": list(self.equity_curve) if self.equity_curve is not None else None,
         }
 
 
@@ -324,6 +330,8 @@ def simulate_paper_poc(
     feature_config_path: Path = DEFAULT_FEATURE_CONFIG,
     target_r_multiple: float = 2.0,
     ttl_bars: int = 12,
+    export_returns: Path | None = DEFAULT_RETURNS_EXPORT,
+    export_equity: Path | None = DEFAULT_EQUITY_EXPORT,
 ) -> PocResult:
     """Run a minimal paper-trading simulation and return aggregated metrics."""
 
@@ -682,11 +690,29 @@ def simulate_paper_poc(
         "start_equity": round(float(risk_settings.base_equity), 2),
         "end_equity": round(float(end_equity), 2),
     }
+    returns_series = equity_series.pct_change().dropna()
     window = {"from": window_from, "to": window_to}
-    return PocResult(
+    result = PocResult(
         metrics=metrics,
         trades=all_trades,
         dataset_path=dataset_paths if len(dataset_paths) > 1 else dataset_paths[0],
         dataset_hash=dataset_hashes if len(dataset_hashes) > 1 else dataset_hashes[0],
         window=window,
+        returns=list(returns_series),
+        equity_curve=list(equity_series),
     )
+    _export_series(export_returns, "r", returns_series)
+    _export_series(export_equity, "equity", equity_series)
+    return result
+
+
+def _export_series(path: Path | None, name: str, series: pd.Series) -> None:
+    if not path:
+        return
+    target = path if path.suffix else path.with_suffix(".parquet")
+    target.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        series.to_frame(name=name).to_parquet(target)
+    except Exception:
+        csv_path = target.with_suffix(".csv")
+        series.to_frame(name=name).to_csv(csv_path, index=False)

@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 import logging
 import os
+import subprocess
+import sys
 from dataclasses import asdict
 from datetime import date, datetime
 from pathlib import Path
@@ -20,10 +22,25 @@ from .alpha import AlphaReviewError, AlphaWatchlistAlert, review as alpha_review
 from .backtest import run_backtest, walk_forward_backtest, run_paper_poc_all
 from .board import board as board_view
 from .backtest import run_paper_poc
-from .data import acknowledge_degradation, health_snapshot, status as data_status
+from .data import (
+    acknowledge_degradation,
+    failover as data_failover,
+    hash_path as data_hash_path,
+    health_snapshot,
+    jobs as data_jobs,
+    manual_report as data_manual_report,
+    manual_template,
+    rate_limit_snapshot,
+    export_rate_limit_env,
+    status as data_status,
+    update_latest as data_update_latest,
+    validate_csv,
+)
 from .diagnostics import DeterminismDiagnosticsError, load_determinism_events
+from .execution_dashboard import execution_dashboard
 from .determinism import determinism_replay, _should_exit
 from .execution import ExecutionBridgeLogError, ExecutionEvidenceError, bridge_log, recalibrate
+from .preflight import preflight
 from .funding import FundingSyncError, funding_status, funding_sync
 from .kill_switch import (
     DEFAULT_KILL_SWITCH_AUDIT,
@@ -35,11 +52,18 @@ from .kill_switch import (
     set_state as kill_switch_set_state,
 )
 from .ops import action_item_sync, readiness
+from .benchmark import (
+    compare as benchmark_compare,
+    ingest as benchmark_ingest,
+    validate_manual as benchmark_validate_manual,
+)
+from .report import weekly as generate_weekly_report, daily as generate_daily_report
 from .spread import (
     DEFAULT_SPREAD_AUDIT,
     DEFAULT_SPREAD_METRICS,
     inspect as spread_inspect,
 )
+from .compliance import ack as compliance_ack, refresh as compliance_refresh, status as compliance_status
 from .resync import resync
 from .session import start_session, stop_session
 from .scoring import (
@@ -58,7 +82,6 @@ from .status import (
 )
 from src.audit.trace import DEFAULT_AUDIT_LOG, trace_order
 from src.metrics.reports import generate_latency_report
-from src.reporter.generator import ReportGenerator
 from src.interfaces.cli import tickets as tickets_actions
 from src.stress import ScenarioDatasetRegistry, StressTestEngine
 from src.journal import TradeJournalService
@@ -68,6 +91,8 @@ from src.ticket.monitor import (
     DEFAULT_EXPORT_PATH as DEFAULT_TICKET_EXPORT_PATH,
     monitor_ticket,
 )
+from tools.ingestion_loop import run_loop as ingestion_loop_run
+from tools.ingestion_loop import run_once as ingestion_loop_run_once
 
 logger = logging.getLogger(__name__)
 
@@ -103,26 +128,6 @@ def _merge_with_context(option: bool | None, ctx_value: bool) -> bool:
 
 def _normalise_multi(value: Iterable[str] | None) -> list[str]:
     return list(value or ())
-
-
-def _load_stress_runs_from_reports(stress_dir: Path) -> list[Mapping[str, object]]:
-    """Collect stress run artifacts from reports/stress directory."""
-
-    if not stress_dir.exists():
-        return []
-    runs: list[Mapping[str, object]] = []
-    for path in sorted(stress_dir.glob("*_report.md")):
-        summary = ""
-        try:
-            for line in path.read_text(encoding="utf-8").splitlines():
-                if line.strip():
-                    summary = line.strip("# ").strip()
-                    break
-        except OSError:
-            summary = ""
-        scenario = path.stem.replace("_report", "")
-        runs.append({"scenario": scenario, "status": "ok", "summary": summary, "artifacts": [str(path)]})
-    return runs
 
 
 def _determine_board_exit_code(
@@ -349,6 +354,37 @@ def create_cli_app() -> typer.Typer:
         except DeterminismDiagnosticsError as exc:
             typer.echo(f"determinism diagnostics failed: {exc}", err=True)
             raise typer.Exit(code=1)
+        _render_payload(console, payload, json_output=effective_json)
+
+    @diagnostics_app.command("execution-dashboard")
+    def diagnostics_execution_dashboard_command(
+        ctx: typer.Context,
+        log_path: Path = typer.Option(
+            Path("metrics") / "execution_determinism.jsonl",
+            "--log",
+            help="Path to execution determinism metrics log",
+        ),
+        since: str | None = typer.Option(None, "--since", help="ISO8601 filter for event start time"),
+        window_hours: int | None = typer.Option(None, "--window-hours", help="Lookback window in hours"),
+        limit: int | None = typer.Option(None, "--limit", help="Use only the latest N events"),
+        output: Path | None = typer.Option(None, "--output", help="Output JSON dashboard path"),
+        markdown: Path | None = typer.Option(None, "--markdown", help="Output markdown dashboard path"),
+        metrics_path: Path | None = typer.Option(None, "--metrics", help="Append metrics summary JSONL here"),
+        dry_run: bool = typer.Option(False, "--dry-run", help="Skip writing dashboard files"),
+        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
+    ) -> None:
+        ctx_obj = ctx.obj or {"json": False}
+        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        payload = execution_dashboard(
+            log_path=log_path,
+            since=since,
+            window_hours=window_hours,
+            limit=limit,
+            output_path=output,
+            markdown_path=markdown,
+            metrics_path=metrics_path,
+            dry_run=dry_run,
+        )
         _render_payload(console, payload, json_output=effective_json)
 
     @diagnostics_app.command("stress-test")
@@ -857,43 +893,126 @@ def create_cli_app() -> typer.Typer:
         ),
         stress_dir: Path = typer.Option(Path("reports") / "stress", "--stress-dir", help="Stress run artifacts directory"),
         journal_path: Path = typer.Option(Path("logs") / "journal" / "entries.jsonl", "--journal-path", help="Journal JSONL path"),
+        dry_run: bool = typer.Option(False, "--dry-run", help="Render without writing output"),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
         ctx_obj = ctx.obj or {"json": False}
         effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
-        tickets = tickets_actions.list_tickets(include_history=False, json_output=effective_json)
-        iso_week = week or date.today().strftime("%G-W%V")
-        stress_runs = _load_stress_runs_from_reports(stress_dir)
-        journal_service = TradeJournalService(path=journal_path)
-        journal_entries = journal_service.list(week=iso_week)
-        journal_export = journal_service.export_weekly(week=iso_week, output_dir=Path("reports") / "journal")
-        template_path = template
-        if template_path is None:
-            candidate = Path("src") / "reporter" / "templates" / f"weekly_{profile}.md"
-            docs_candidate = Path("docs") / "templates" / "reports" / f"weekly_{profile}.md"
-            template_path = candidate if candidate.exists() else docs_candidate if docs_candidate.exists() else Path("src") / "reporter" / "templates" / "weekly_m1_core.md"
-        summary = ReportGenerator().render_weekly_report(
-            week=iso_week,
-            tickets=tickets,
-            stress_runs=stress_runs,
-            journal_entries=journal_entries,
-            template_path=template_path,
+        payload = generate_weekly_report(
+            profile=profile,
+            week=week,
+            template_path=template,
+            stress_dir=stress_dir,
+            journal_path=journal_path,
+            output_path=out,
+            dry_run=dry_run,
         )
-        output_path = out or Path("reports/auto/weekly_ticket_summary.md")
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        output_path.write_text(summary, encoding="utf-8")
-        payload = {
-            "profile": profile,
-            "ticket_summary": summary,
-            "path": str(output_path),
-            "week": iso_week,
-            "stress_runs": stress_runs,
-            "journal_entries": journal_entries,
-            "journal_export": str(journal_export),
-        }
+        _render_payload(console, payload, json_output=effective_json)
+
+    @report_app.command("daily")
+    def report_daily_command(
+        ctx: typer.Context,
+        date_value: str = typer.Option(date.today().isoformat(), "--date", help="Target date (YYYY-MM-DD)"),
+        profile: str | None = typer.Option(None, "--profile", help="Optional profile hint"),
+        out: Path | None = typer.Option(None, "--out", help="Output markdown path"),
+        dry_run: bool = typer.Option(False, "--dry-run", help="Render without writing output"),
+        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
+    ) -> None:
+        ctx_obj = ctx.obj or {"json": False}
+        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        payload = generate_daily_report(
+            date=date_value,
+            profile=profile,
+            out=out,
+            dry_run=dry_run,
+        )
         _render_payload(console, payload, json_output=effective_json)
 
     app.add_typer(report_app, name="report")
+
+    benchmark_app = typer.Typer(help="Benchmark ingestion and validation utilities")
+
+    @benchmark_app.command("ingest")
+    def benchmark_ingest_command(
+        ctx: typer.Context,
+        provider: str = typer.Option(..., "--provider", help="Benchmark provider name"),
+        file: Path = typer.Option(..., "--file", help="Benchmark CSV/Parquet path"),
+        mode: str = typer.Option("paper", "--mode", help="Target mode (backtest|paper|live)"),
+        symbol: str | None = typer.Option(None, "--symbol", help="Symbol filter"),
+        email: str | None = typer.Option(None, "--email", help="Notification email (optional)"),
+        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
+    ) -> None:
+        ctx_obj = ctx.obj or {"json": False}
+        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        try:
+            benchmark_ingest(
+                provider=provider,
+                file=str(file),
+                mode=mode,
+                symbol=symbol,
+                email=email,
+            )
+        except NotImplementedError as exc:
+            typer.echo(str(exc), err=True)
+            raise typer.Exit(code=1) from exc
+        _render_payload(
+            console,
+            {"status": "ok", "provider": provider, "file": str(file), "mode": mode, "symbol": symbol, "email": email},
+            json_output=effective_json,
+        )
+
+    @benchmark_app.command("compare")
+    def benchmark_compare_command(
+        ctx: typer.Context,
+        window: str = typer.Option("7d", "--window", help="Lookback window"),
+        mode: str = typer.Option("paper", "--mode", help="Target mode (backtest|paper|live)"),
+        provider: list[str] = typer.Option([], "--provider", help="Providers to compare", show_default=False),
+        export: Path | None = typer.Option(None, "--export", help="Optional export path"),
+        fail_on_gap: bool = typer.Option(False, "--fail-on-gap", help="Fail if gaps are detected"),
+        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
+    ) -> None:
+        ctx_obj = ctx.obj or {"json": False}
+        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        try:
+            result_path = benchmark_compare(
+                window=window,
+                mode=mode,
+                providers=list(provider) or None,
+                export=str(export) if export else None,
+                fail_on_gap=fail_on_gap,
+            )
+        except NotImplementedError as exc:
+            typer.echo(str(exc), err=True)
+            raise typer.Exit(code=1) from exc
+        _render_payload(
+            console,
+            {
+                "status": "ok",
+                "window": window,
+                "mode": mode,
+                "providers": list(provider),
+                "export": str(export) if export else None,
+                "result": result_path,
+            },
+            json_output=effective_json,
+        )
+
+    @benchmark_app.command("validate-manual")
+    def benchmark_validate_manual_command(
+        ctx: typer.Context,
+        path: Path = typer.Option(..., "--path", help="Manual benchmark CSV path"),
+        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
+    ) -> None:
+        ctx_obj = ctx.obj or {"json": False}
+        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        try:
+            benchmark_validate_manual(str(path))
+        except NotImplementedError as exc:
+            typer.echo(str(exc), err=True)
+            raise typer.Exit(code=1) from exc
+        _render_payload(console, {"status": "ok", "path": str(path)}, json_output=effective_json)
+
+    app.add_typer(benchmark_app, name="benchmark")
 
     audit_app = typer.Typer(help="Audit tooling")
 
@@ -1104,6 +1223,33 @@ def create_cli_app() -> typer.Typer:
             console=console if not effective_json else None,
         )
         _render_payload(console, payload, json_output=effective_json)
+
+    preflight_app = typer.Typer(help="Environment preflight checks")
+
+    @preflight_app.command("run")
+    def preflight_run_command(
+        ctx: typer.Context,
+        profile: str = typer.Option(..., "--profile", help="Profile name for the checklist"),
+        ntp_check: bool = typer.Option(True, "--ntp-check/--no-ntp-check", help="Enable NTP drift check"),
+        smtp_check: bool = typer.Option(False, "--smtp-check", help="Enable SMTP connectivity check"),
+        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
+    ) -> None:
+        ctx_obj = ctx.obj or {"json": False}
+        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        try:
+            payload = preflight(
+                profile=profile,
+                json_output=effective_json,
+                ntp_check=ntp_check,
+                smtp_check=smtp_check,
+            )
+        except NotImplementedError as exc:
+            typer.echo(str(exc), err=True)
+            raise typer.Exit(code=1) from exc
+        _render_payload(console, payload, json_output=effective_json)
+        raise typer.Exit(code=int(payload.get("exit_code", 0)))
+
+    app.add_typer(preflight_app, name="preflight")
 
     def _validate_profile(value: str) -> str:
         lowered = value.lower()
@@ -1368,6 +1514,80 @@ def create_cli_app() -> typer.Typer:
         )
         _render_payload(console, payload, json_output=effective_json)
 
+    @data_app.command("loop")
+    def data_loop_command(
+        ctx: typer.Context,
+        provider: str = typer.Option("dukascopy", "--provider", help="Provider name (dukascopy)"),
+        symbols: str = typer.Option("USDJPY", "--symbols", help="Comma-separated symbols"),
+        timeframe: str = typer.Option("5m", "--timeframe", help="Timeframe label"),
+        lookback_hours: int = typer.Option(6, "--lookback-hours", help="Lookback window in hours"),
+        raw_dir: Path = typer.Option(Path("data/raw"), "--raw-dir", help="Raw output root"),
+        curated_dir: Path = typer.Option(
+            Path("data/research/curated"),
+            "--curated-dir",
+            help="Curated output root",
+        ),
+        metrics_path: Path = typer.Option(
+            Path("metrics/data_ingestion_sla.jsonl"),
+            "--metrics-path",
+            help="Metrics JSONL output",
+        ),
+        interval_sec: int = typer.Option(300, "--interval-sec", help="Polling interval seconds"),
+        jitter_sec: int = typer.Option(3, "--jitter-sec", help="Sleep jitter seconds"),
+        once: bool = typer.Option(False, "--once", help="Run once and exit"),
+        max_iterations: int | None = typer.Option(None, "--max-iterations", help="Loop iterations cap"),
+        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
+    ) -> None:
+        ctx_obj = ctx.obj or {"json": False}
+        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        symbol_list = [s.strip().upper() for s in symbols.split(",") if s.strip()]
+
+        if once:
+            results = ingestion_loop_run_once(
+                symbols=symbol_list,
+                provider=provider,
+                timeframe=timeframe,
+                lookback_hours=lookback_hours,
+                raw_dir=raw_dir,
+                curated_dir=curated_dir,
+                metrics_path=metrics_path,
+            )
+            payload = {"results": [result.as_dict() for result in results]}
+            _render_payload(console, payload, json_output=effective_json)
+            return
+
+        ingestion_loop_run(
+            symbols=symbol_list,
+            provider=provider,
+            timeframe=timeframe,
+            lookback_hours=lookback_hours,
+            raw_dir=raw_dir,
+            curated_dir=curated_dir,
+            metrics_path=metrics_path,
+            interval_sec=interval_sec,
+            jitter_sec=jitter_sec,
+            max_iterations=max_iterations,
+        )
+
+    @data_app.command("rate-limit")
+    def data_rate_limit_command(
+        ctx: typer.Context,
+        providers: list[str] = typer.Option(
+            [],
+            "--provider",
+            help="Provider(s) to include in the worker plan snapshot",
+            show_default=False,
+        ),
+        export: Path | None = typer.Option(None, "--export", help="Optional env file to write"),
+        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
+    ) -> None:
+        ctx_obj = ctx.obj or {"json": False}
+        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        payload = rate_limit_snapshot(providers=providers)
+        if export is not None:
+            payload["export_path"] = export_rate_limit_env(export, payload=payload)
+        _render_payload(console, payload, json_output=effective_json)
+
     @data_app.command("health")
     def data_health_command(
         ctx: typer.Context,
@@ -1410,6 +1630,209 @@ def create_cli_app() -> typer.Typer:
         ctx_obj = ctx.obj or {"json": False}
         effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
         payload = acknowledge_degradation(provider=provider, dry_run=dry_run)
+        _render_payload(console, payload, json_output=effective_json)
+
+    @data_app.command("failover")
+    def data_failover_command(
+        ctx: typer.Context,
+        target: str = typer.Option(..., "--target", help="Failover target identifier"),
+        mode: str | None = typer.Option(None, "--mode", help="Optional mode label (backtest|paper|live)"),
+        log_stage_change: bool = typer.Option(
+            False,
+            "--log-stage-change",
+            help="Append a stage change entry to metrics/rate_limit_window.jsonl",
+        ),
+        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
+    ) -> None:
+        ctx_obj = ctx.obj or {"json": False}
+        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        try:
+            data_failover(target=target, mode=mode, log_stage_change=log_stage_change)
+        except Exception as exc:  # noqa: BLE001
+            typer.echo(f"[data.failover] {exc}", err=True)
+            raise typer.Exit(code=1) from exc
+        _render_payload(
+            console,
+            {"status": "ok", "target": target, "mode": mode, "log_stage_change": log_stage_change},
+            json_output=effective_json,
+        )
+
+    @data_app.command("manual-template")
+    def data_manual_template_command(
+        ctx: typer.Context,
+        provider: str = typer.Option(..., "--provider", help="Provider name"),
+        symbol: str = typer.Option(..., "--symbol", help="Symbol (e.g. USDJPY)"),
+        date_str: str = typer.Option(..., "--date", help="Date (YYYY-MM-DD)"),
+        timeframe: str = typer.Option("m5", "--timeframe", help="Timeframe (m5|h1)"),
+        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
+    ) -> None:
+        ctx_obj = ctx.obj or {"json": False}
+        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        try:
+            path = manual_template(provider=provider, symbol=symbol, date=date_str, timeframe=timeframe)
+        except Exception as exc:  # noqa: BLE001
+            typer.echo(f"[data.manual-template] {exc}", err=True)
+            raise typer.Exit(code=1) from exc
+        _render_payload(console, {"status": "ok", "path": path}, json_output=effective_json)
+
+    @data_app.command("validate-csv")
+    def data_validate_csv_command(
+        ctx: typer.Context,
+        path: Path = typer.Option(..., "--path", help="CSV file or directory to validate"),
+        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
+    ) -> None:
+        ctx_obj = ctx.obj or {"json": False}
+        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        try:
+            validate_csv(str(path))
+        except SystemExit as exc:
+            raise typer.Exit(code=int(exc.code or 120)) from exc
+        except Exception as exc:  # noqa: BLE001
+            typer.echo(f"[data.validate-csv] {exc}", err=True)
+            raise typer.Exit(code=1) from exc
+        _render_payload(console, {"status": "ok", "path": str(path)}, json_output=effective_json)
+
+    @data_app.command("jobs")
+    def data_jobs_command(
+        ctx: typer.Context,
+        pending: bool = typer.Option(False, "--pending", help="Show pending jobs only"),
+        export_json: Path | None = typer.Option(
+            None,
+            "--export-json",
+            help="Optional path to export jobs as JSON",
+            show_default=False,
+        ),
+        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
+    ) -> None:
+        ctx_obj = ctx.obj or {"json": False}
+        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        entries = data_jobs(pending=pending, export_json=export_json is not None)
+        if export_json:
+            export_json.parent.mkdir(parents=True, exist_ok=True)
+            export_json.write_text(json.dumps(entries, ensure_ascii=False, indent=2), encoding="utf-8")
+        _render_payload(
+            console,
+            {"pending": pending, "jobs": entries, "export": str(export_json) if export_json else None},
+            json_output=effective_json,
+        )
+
+    @data_app.command("manual-report")
+    def data_manual_report_command(
+        ctx: typer.Context,
+        date: str = typer.Option(..., "--date", help="Date (YYYY-MM-DD)"),
+        provider: str | None = typer.Option(None, "--provider", help="Provider name"),
+        symbol: str | None = typer.Option(None, "--symbol", help="Symbol (e.g. USDJPY)"),
+        attach: bool = typer.Option(False, "--attach", help="Mark that evidence attachments were added"),
+        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
+    ) -> None:
+        ctx_obj = ctx.obj or {"json": False}
+        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        try:
+            path = data_manual_report(date=date, provider=provider, symbol=symbol, attach=attach)
+        except Exception as exc:  # noqa: BLE001
+            typer.echo(f"[data.manual-report] {exc}", err=True)
+            raise typer.Exit(code=1) from exc
+        _render_payload(
+            console,
+            {"status": "ok", "path": path, "provider": provider, "symbol": symbol, "attach": attach},
+            json_output=effective_json,
+        )
+
+    @data_app.command("hash")
+    def data_hash_command(
+        ctx: typer.Context,
+        path: Path = typer.Option(..., "--path", help="File or directory to hash"),
+        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
+    ) -> None:
+        ctx_obj = ctx.obj or {"json": False}
+        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        try:
+            value = data_hash_path(str(path))
+        except Exception as exc:  # noqa: BLE001
+            typer.echo(f"[data.hash] {exc}", err=True)
+            raise typer.Exit(code=1) from exc
+        _render_payload(console, {"path": str(path), "hash": value}, json_output=effective_json)
+
+    @data_app.command("latest")
+    def data_latest_command(
+        ctx: typer.Context,
+        symbols: str = typer.Option("USDJPY", "--symbols", help="Comma-separated symbols"),
+        latest_days: int = typer.Option(30, "--latest-days", help="Rolling window in days"),
+        manifest_path: Path = typer.Option(
+            Path("reports") / "data_manifest.json",
+            "--manifest",
+            help="Override manifest path",
+        ),
+        strategy: str = typer.Option(
+            "m1_baseline_ma_rsi",
+            "--strategy",
+            help="Manifest strategy to resolve dataset paths",
+        ),
+        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
+    ) -> None:
+        ctx_obj = ctx.obj or {"json": False}
+        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        symbol_list = [s.strip().upper() for s in symbols.split(",") if s.strip()]
+        payload = data_update_latest(
+            symbols=symbol_list,
+            latest_days=latest_days,
+            manifest_path=manifest_path,
+            strategy=strategy,
+            merged_override=None,
+        )
+        _render_payload(console, {"results": payload}, json_output=effective_json)
+
+    @data_app.command("update")
+    def data_update_command(
+        ctx: typer.Context,
+        symbol: str = typer.Option("USDJPY", "--symbol", help="Symbol to update"),
+        source_dir: Path | None = typer.Option(None, "--source-dir", help="Source directory override"),
+        merged: Path | None = typer.Option(None, "--merged", help="Use existing merged parquet"),
+        extra_csv: list[Path] = typer.Option([], "--extra-csv", help="Extra CSV inputs", show_default=False),
+        latest_days: int = typer.Option(30, "--latest-days", help="Rolling window in days"),
+        write_latest: bool = typer.Option(False, "--write-latest", help="Write *_m5_latest.parquet"),
+        update_manifest: bool = typer.Option(False, "--update-manifest", help="Update data_manifest.json"),
+        manifest: Path = typer.Option(
+            Path("reports") / "data_manifest.json",
+            "--manifest",
+            help="Manifest path",
+        ),
+        gap_report: Path | None = typer.Option(None, "--gap-report", help="Gap report JSON path"),
+        gap_minutes: int = typer.Option(5, "--gap-minutes", help="Gap threshold in minutes"),
+        gap_exclude_weekend: bool = typer.Option(False, "--gap-exclude-weekend", help="Exclude weekend gaps"),
+        emit_fetch_plan: Path | None = typer.Option(None, "--emit-fetch-plan", help="Backfill shell output"),
+        chunk_hours: int = typer.Option(6, "--chunk-hours", help="Backfill chunk size in hours"),
+        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
+    ) -> None:
+        ctx_obj = ctx.obj or {"json": False}
+        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        cmd = [sys.executable, "tools/update_market_data.py", "--symbol", symbol]
+        if source_dir is not None:
+            cmd.extend(["--source-dir", str(source_dir)])
+        if merged is not None:
+            cmd.extend(["--merged", str(merged)])
+        for path in extra_csv:
+            cmd.extend(["--extra-csv", str(path)])
+        cmd.extend(["--latest-days", str(latest_days)])
+        if write_latest:
+            cmd.append("--write-latest")
+        if update_manifest:
+            cmd.append("--update-manifest")
+            cmd.extend(["--manifest", str(manifest)])
+        if gap_report is not None:
+            cmd.extend(["--gap-report", str(gap_report)])
+        cmd.extend(["--gap-minutes", str(gap_minutes)])
+        if gap_exclude_weekend:
+            cmd.append("--gap-exclude-weekend")
+        if emit_fetch_plan is not None:
+            cmd.extend(["--emit-fetch-plan", str(emit_fetch_plan)])
+        cmd.extend(["--chunk-hours", str(chunk_hours)])
+        try:
+            proc = subprocess.run(cmd, check=True, capture_output=True, text=True)
+        except subprocess.CalledProcessError as exc:
+            typer.echo(f"[data.update] {exc.stderr or exc.stdout}", err=True)
+            raise typer.Exit(code=exc.returncode) from exc
+        payload = {"command": " ".join(cmd), "stdout": proc.stdout.strip()}
         _render_payload(console, payload, json_output=effective_json)
 
     app.add_typer(data_app, name="data")
@@ -1592,6 +2015,43 @@ def create_cli_app() -> typer.Typer:
         _render_payload(console, payload, json_output=effective_json)
 
     app.add_typer(alpha_app, name="alpha")
+
+    compliance_app = typer.Typer(help="Compliance and risk disclosure utilities")
+
+    @compliance_app.command("status")
+    def compliance_status_command(
+        ctx: typer.Context,
+        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
+    ) -> None:
+        ctx_obj = ctx.obj or {"json": False}
+        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        payload = compliance_status(json_output=effective_json)
+        _render_payload(console, payload, json_output=effective_json)
+
+    @compliance_app.command("ack")
+    def compliance_ack_command(
+        ctx: typer.Context,
+        note: str = typer.Option(..., "--note", help="Acknowledgement note"),
+        user: str | None = typer.Option(None, "--user", help="User acknowledging"),
+        force: bool = typer.Option(False, "--force", help="Force override warning"),
+        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
+    ) -> None:
+        ctx_obj = ctx.obj or {"json": False}
+        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        payload = compliance_ack(note=note, user=user, force=force)
+        _render_payload(console, payload, json_output=effective_json)
+
+    @compliance_app.command("refresh")
+    def compliance_refresh_command(
+        ctx: typer.Context,
+        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
+    ) -> None:
+        ctx_obj = ctx.obj or {"json": False}
+        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        payload = compliance_refresh()
+        _render_payload(console, payload, json_output=effective_json)
+
+    app.add_typer(compliance_app, name="compliance")
 
     kill_switch_app = typer.Typer(help="Kill switch review utilities")
 

@@ -21,6 +21,7 @@
 - 補填対象期間のリファレンスとして`data/raw/<provider>/<symbol>/<tf>.parquet`または前回の`reports/audit/data_diff_<date>.md`を参照する。
 - Resync前に`tradectl status --detail`で`manual_source=true`が立っていること、`HealthState`が`degraded|data_gapped|soft_stop(processing)`であることを確認する。
 - `FallbackRetryTask`が完了済みでキューが空であることを`tradectl data jobs --pending`で確認する。
+- **推奨設定確認（M1暫定）**: `config/profiles/<mode>.yaml`の`data_ingestion`が`provider=dukascopy`、`fallback_providers=[yfinance]`、`poll_interval_sec=300`、`lookback_hours=12`、`symbols=[USDJPY, EURUSD, GBPUSD]`であることを確認する。`yfinance`補填時は`EURUSD=X`等の表記と内部正規化が一致しているか、`src/data/providers/yahoo.py`を参照して照合する。
 - **実装参照**: Manual CSV補填のAPIは`src/data/providers/csv_loader.py`/`src/data/service.py`（`backfill`, `drain_buffers`等）に集約され、ハッシュ検証ログは`src/data/quality.py::DataQualityGuard.record_manual_csv_hash_verification`で追記する。検証タスクでコード参照が必要な場合はこれらのモジュールを指示する。
 
 ## 手順

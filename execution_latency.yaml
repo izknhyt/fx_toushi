@@ -1,0 +1,9 @@
+# execution_latency.yaml -- stub
+version: 1
+latency_profiles:
+  default:
+    p50_ms: 120
+    p75_ms: 220
+    p90_ms: 350
+    p95_ms: 500
+notes: "stub distribution; replace with calibrated stats"

@@ -15,8 +15,7 @@ class MetricsSink:
     def emit(self, payload: Mapping[str, object]) -> None:
         with self._path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(payload, ensure_ascii=False))
-            handle.write("
-")
+            handle.write("\n")
 
 
 __all__ = ["MetricsSink"]

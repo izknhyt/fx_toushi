@@ -11,7 +11,7 @@ import glob
 from typing import Any, Iterable, Mapping
 
 DEFAULT_PROFIT_READINESS_PATH = Path("metrics/profit_readiness.jsonl")
-ALLOWED_STATUSES = {"ok", "warning", "alert"}
+ALLOWED_STATUSES = {"ok", "warning", "alert", "upgraded", "downgraded"}
 EXIT_OK = 0
 EXIT_WARN = 80
 EXIT_GUARDED = 62
@@ -235,6 +235,18 @@ class ProfitReadinessResult:
     stale: list[str]
 
 
+def profit_status_from_exit(exit_code: int) -> str:
+    """Map verify exit code to profit readiness status used by GateState."""
+
+    if exit_code == EXIT_OK:
+        return "ok"
+    if exit_code == EXIT_HALT:
+        return "halted"
+    if exit_code == EXIT_STALE:
+        return "stale"
+    return "guarded"
+
+
 def verify_profit_readiness(
     *,
     window_days: int = 30,
@@ -365,6 +377,7 @@ def verify_profit_readiness(
             and spread_penalty <= 0.05
             and watchlist == 0
         )
+        metrics["auto_execute_ready"] = auto_ok
         if not auto_ok:
             raise ProfitReadinessError(
                 "Hands-off auto_execute criteria not satisfied",

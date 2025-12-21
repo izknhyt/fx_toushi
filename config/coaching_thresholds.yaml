@@ -1,0 +1,7 @@
+# coaching_thresholds.yaml -- stub
+version: 1
+thresholds:
+  attention_rate: 0.2
+  intervention_rate: 0.1
+  max_queue_days: 7
+notes: "stub values; update before use"

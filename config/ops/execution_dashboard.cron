@@ -1,0 +1,2 @@
+# Execution dashboard refresh (every 6 hours)
+0 */6 * * * cd /opt/tradectl && /usr/bin/python3 tools/scripts/generate_execution_dashboard.py --log metrics/execution_determinism.jsonl

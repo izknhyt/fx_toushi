@@ -5,7 +5,8 @@
     "spread_status": "watch",
     "reduce_only": false,
     "risk_disclosure": "warning",
-    "risk_disclosure_consent_id": null
+    "risk_disclosure_consent_id": null,
+    "auto_execute": false
   },
   "tickets": [
     {
@@ -82,7 +83,7 @@
       }
     }
   ],
-  "auto_execute": true,
+  "auto_execute": false,
   "banner": {
     "kind": "risk_disclosure",
     "message": "RiskDisclosure warning",

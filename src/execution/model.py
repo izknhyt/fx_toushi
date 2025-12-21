@@ -166,11 +166,30 @@ class DeterministicExecutionModel(ExecutionModelProtocol):
         symbol = getattr(signal, "symbol", None)
         latency_status = self._extract_value(mode_context, "latency_data_status", default="ok")
         slippage_status = self._extract_value(mode_context, "slippage_data_status", default="ok")
+        observed_slippage = self._resolve_observed_slippage(market_snapshot, mode_context)
+        rollover_pips = self._resolve_rollover_cost(market_snapshot, mode_context)
+        observed_candidates = [
+            observed_slippage,
+            market_snapshot.get("observed_slippage_pips"),
+            market_snapshot.get("slippage_pips"),
+            self._extract_value(mode_context, "observed_slippage_pips", default=None),
+        ]
+        observed_values: list[float] = []
+        for val in observed_candidates:
+            try:
+                if val is not None:
+                    observed_values.append(abs(float(val)))
+            except (TypeError, ValueError):
+                continue
+        observed_max = max(observed_values) if observed_values else 0.0
+        spread_pips = self._extract_spread_pips(signal, market_snapshot)
 
         entry_mode = self._resolve_entry_mode(signal, state)
         mode_label = self._MODE_LABELS.get(entry_mode, entry_mode)
         entry_config = self._lookup_entry_mode(entry_mode)
+        self._enforce_spread(entry_config, spread_pips)
         fill_style, fill_policy = self._resolve_fill_style(entry_config)
+        direction = getattr(signal, "direction", "long")
 
         delay_stats = self._resolve_delay_stats(mode=mode, symbol=symbol)
         seed_offset = int(delay_stats.get("seed_offset", 0))
@@ -187,6 +206,21 @@ class DeterministicExecutionModel(ExecutionModelProtocol):
 
         expected_entry = self._resolve_expected_entry(signal, market_snapshot)
         expected_slippage = self._resolve_expected_slippage(state)
+        expected_slippage = self._apply_spread_to_slippage(
+            expected_slippage,
+            spread_pips,
+            entry_config,
+            allow_exceed=observed_max > 0,
+        )
+        expected_slippage = self._apply_observed_slippage(expected_slippage, observed_slippage)
+        max_candidates = [expected_slippage or 0.0, observed_max]
+        if rollover_pips is not None:
+            try:
+                max_candidates.append(abs(float(rollover_pips)))
+            except (TypeError, ValueError):
+                pass
+        expected_slippage = max(max_candidates)
+        expected_slippage = self._apply_rollover_cost(expected_slippage, rollover_pips, direction=direction)
 
         ttl_seconds = self._apply_ttl_fallback(ttl_seconds, latency_status)
         expected_slippage = self._apply_slippage_fallback(expected_slippage, slippage_status)
@@ -206,6 +240,8 @@ class DeterministicExecutionModel(ExecutionModelProtocol):
             ttl_seconds=ttl_seconds,
             human_delay=human_delay,
             expected_slippage=expected_slippage,
+            observed_slippage=observed_slippage,
+            rollover_pips=rollover_pips,
             latency_status=latency_status,
             slippage_status=slippage_status,
             mode=mode,
@@ -288,6 +324,12 @@ class DeterministicExecutionModel(ExecutionModelProtocol):
         if isinstance(source, Mapping):
             return source.get(key, default)
         return getattr(source, key, default)
+
+    def _safe_float(self, value: Any) -> float | None:
+        try:
+            return float(value) if value is not None else None
+        except (TypeError, ValueError):
+            return None
 
     def _resolve_spread_state(self, spread_state: Any) -> str | None:
         if spread_state is None:
@@ -435,6 +477,127 @@ class DeterministicExecutionModel(ExecutionModelProtocol):
             value = fallback
         return float(value)
 
+    def _apply_spread_to_slippage(self, expected_slippage: float | None, spread_pips: float | None, entry_config: Mapping[str, Any], *, allow_exceed: bool = False) -> float | None:
+        if spread_pips is None:
+            return expected_slippage
+        value = expected_slippage or 0.0
+        value = max(value, spread_pips)
+        max_slippage = entry_config.get("max_slippage_pips")
+        if max_slippage is not None:
+            try:
+                cap = float(max_slippage)
+            except (TypeError, ValueError):
+                return value
+            if not allow_exceed:
+                value = min(value, cap)
+        return value
+
+    def _apply_observed_slippage(self, expected_slippage: float | None, observed_slippage: float | None) -> float | None:
+        if observed_slippage is None:
+            return expected_slippage
+        value = expected_slippage or 0.0
+        return max(value, observed_slippage)
+
+    def _apply_rollover_cost(self, expected_slippage: float | None, rollover_pips: float | None, *, direction: str = "long") -> float | None:
+        if rollover_pips is None:
+            return expected_slippage
+        value = expected_slippage or 0.0
+        try:
+            adj = abs(float(rollover_pips))
+        except (TypeError, ValueError):
+            return value
+        return max(value, adj)
+
+    def _enforce_spread(self, entry_config: Mapping[str, Any], spread_pips: float | None) -> None:
+        if spread_pips is None:
+            return
+        max_spread = entry_config.get("max_spread_pips")
+        if max_spread is None:
+            return
+        try:
+            max_spread_val = float(max_spread)
+        except (TypeError, ValueError):
+            return
+        if spread_pips > max_spread_val:
+            raise ExecutionRuleViolation(f"Spread {spread_pips} exceeds max_spread_pips {max_spread_val}")
+
+    def _extract_spread_pips(self, signal: Any, market_snapshot: Mapping[str, Any]) -> float | None:
+        value = getattr(signal, "spread_pips", None)
+        if value is None:
+            value = market_snapshot.get("spread_pips")
+        try:
+            return float(value) if value is not None else None
+        except (TypeError, ValueError):
+            return None
+
+    def _resolve_observed_slippage(self, market_snapshot: Mapping[str, Any], mode_context: Mapping[str, Any] | Any | None) -> float | None:
+        for key in ("observed_slippage_pips", "slippage_pips"):
+            value = market_snapshot.get(key)
+            if value is not None:
+                try:
+                    return float(value)
+                except (TypeError, ValueError):
+                    continue
+        ctx_value = self._extract_value(mode_context, "observed_slippage_pips", default=None)
+        if ctx_value is not None:
+            try:
+                return float(ctx_value)
+            except (TypeError, ValueError):
+                pass
+        log_entry = market_snapshot.get("slippage_log")
+        if isinstance(log_entry, Mapping):
+            for key in ("avg_pips", "mean_pips", "p95", "avg"):
+                value = log_entry.get(key)
+                if value is None:
+                    continue
+                try:
+                    return float(value)
+                except (TypeError, ValueError):
+                    continue
+        spread_obs = market_snapshot.get("spread_observations") or market_snapshot.get("spread_history")
+        if spread_obs:
+            try:
+                values = [abs(float(v)) for v in spread_obs if v is not None]
+                if values:
+                    return max(values)
+            except (TypeError, ValueError):
+                pass
+        samples = getattr(mode_context, "slippage_samples", None) if mode_context else None
+        if samples and hasattr(samples, "__iter__"):
+            try:
+                values = [float(v) for v in samples]
+                if values:
+                    return sum(values) / len(values)
+            except (TypeError, ValueError):
+                return None
+        return None
+
+    def _resolve_rollover_cost(self, market_snapshot: Mapping[str, Any], mode_context: Mapping[str, Any] | Any | None) -> float | None:
+        for key in ("rollover_pips", "swap_pips"):
+            value = market_snapshot.get(key)
+            if value is not None:
+                try:
+                    return float(value)
+                except (TypeError, ValueError):
+                    continue
+        ctx_value = self._extract_value(mode_context, "rollover_pips", default=None)
+        if ctx_value is not None:
+            try:
+                return float(ctx_value)
+            except (TypeError, ValueError):
+                pass
+        log_entry = market_snapshot.get("rollover_log")
+        if isinstance(log_entry, Mapping):
+            for key in ("last_pips", "avg_pips", "p95", "max_pips"):
+                value = log_entry.get(key)
+                if value is None:
+                    continue
+                try:
+                    return float(value)
+                except (TypeError, ValueError):
+                    continue
+        return None
+
     def _record_metrics(
         self,
         *,
@@ -444,6 +607,8 @@ class DeterministicExecutionModel(ExecutionModelProtocol):
         ttl_seconds: int,
         human_delay: float,
         expected_slippage: float | None,
+        observed_slippage: float | None,
+        rollover_pips: float | None,
         latency_status: str,
         slippage_status: str,
         mode: str,
@@ -466,6 +631,8 @@ class DeterministicExecutionModel(ExecutionModelProtocol):
                 "ttl_seconds": ttl_seconds,
                 "human_delay_ms": int(round(human_delay * 1000)),
                 "expected_slippage_pips": expected_slippage,
+                "observed_slippage_pips": observed_slippage,
+                "rollover_pips": rollover_pips,
                 "latency_status": latency_status,
                 "slippage_status": slippage_status,
                 "feature_version": feature_version,

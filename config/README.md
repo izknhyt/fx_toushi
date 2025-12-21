@@ -8,7 +8,7 @@
 | --- | --- | --- | --- | --- |
 | `strategy_manifest.yaml` | `docs/schemas/strategy_manifest.schema.json` | 詳細設計 §3.5, §4.4.1 | STRAT-PROMOTE-01, `reports/validation_log/AC-46_*.md` | 戦略の有効化/優先度/データ要件。`schema_version`更新時はManifest検証テストを追加。 |
 | `feature_pipeline.yaml` | `docs/schemas/feature_pipeline.schema.json` | 詳細設計 §3.4〜§3.5 | STRAT-M1-VALIDATION, `reports/validation_log/AC-01_*.md`, `AC-07_*.md` | 指標ON/OFFと窓長。Guarded運用時のFlagもここで切替。 |
-| `feature_flags.yaml` | `docs/schemas/feature_flags.schema.json` | 詳細設計 §0.6.13, §8.6 | RUN-FEATURE-FLAG-01, RUN-RISK-01, RUN-SPREAD-03 | Backtest/Paper/Live のFlag既定値とガバナンス情報を単一管理。Runbook証跡とテレメトリ前提を明記する。 |
+| `feature_flags.yaml` | `docs/schemas/feature_flags.schema.json` | 詳細設計 §0.6.13, §8.6 | RUN-FEATURE-FLAG-01, RUN-RISK-01, RUN-SPREAD-03 | Backtest/Paper/Live のFlag既定値とガバナンス情報を単一管理。Hands-off用`alpha.profit_loop_enabled`/`alpha.dynamic_sizing`/`alpha.auto_execute`の既定値と昇格条件をここで管理し、Runbook証跡とテレメトリ前提を明記する。 |
 | `board_modes.yaml` | `docs/schemas/board_modes.schema.json` | 詳細設計 §2.5, §3.5 | RUN-DATA-05, RUN-SPREAD-03, RUN-RISK-01 | BoardMode遷移時のエスカレーションリンクを集約。`schema/gate_state.sample.json`と整合させる。 |
 | `execution_model.yaml` | `docs/schemas/execution_model.schema.json` | 詳細設計 §3.6, §4.4 | [RUN-HITL-01](../docs/runbooks/RUN-HITL-01.md), [RUN-RISK-01](../docs/runbooks/RUN-RISK-01.md), [`reports/validation_log/templates/weekly.md`](../reports/validation_log/templates/weekly.md) | ヒューマン遅延・スリッページ分布とエントリーモード閾値のベースライン。シンボル/レジーム別上書きを記録し、Runbook承認ログと紐付ける。 |
 | `scoring.yaml` | `docs/schemas/scoring_config.schema.json` | 詳細設計 §3.7, §4.4.4 | RUN-SCORE-01, `reports/diagnostics/scoring_<date>.md` | スコア係数・PF乖離ガード・診断閾値。`tradectl scoring diagnostics`と共有。 |

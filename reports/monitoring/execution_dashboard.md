@@ -1,0 +1,18 @@
+# Execution Determinism Dashboard
+
+- Window: 2025-12-02T12:43:35+00:00 → 2025-12-20T05:06:02+00:00
+- Unique strategies: 0
+- Unique symbols: 2
+- Degraded ratio: 0.1503
+
+## Status Counts
+- Modes: {'unknown': 60, 'backtest': 108, 'paper': 98, 'live': 100}
+- Latency: {'ok': 311, 'degraded': 55}
+- Slippage: {'ok': 311, 'halt_recommended': 55}
+
+## KPI Metrics
+- Expected slippage: {'avg': 0.9938, 'p95': 2.4, 'max': 2.8, 'min': 0.4}
+- Observed slippage: {'avg': 1.95, 'p95': 2.4, 'max': 2.4, 'min': 1.5}
+- Rollover pips: {'avg': 1.55, 'p95': 2.8, 'max': 2.8, 'min': 0.3}
+- TTL seconds: {'avg': 99.377, 'p95': 180.0, 'max': 180.0, 'min': 45.0}
+- Human delay ms: {'avg': 5243.4118, 'p95': 7885.0, 'max': 14498.0, 'min': 420.0}

@@ -16,7 +16,9 @@
 
 ## 手順
 1. `tradectl data health`で対象シンボルとプロバイダ、発生時刻、直近メトリクスを確認する。`metrics/data_ingestion_sla.jsonl`から前後30分のログを抽出し、`phase=fetch`/`phase=processing`それぞれの遅延を確認する。合わせて`config/sla_thresholds/active.yaml`（`schema_version`とRunbookリンクが`config/README.md`に記載されている雛形）を開き、`docs/schemas/sla_threshold_profile.schema.json`および`pytest -k config_schema_smoke`の検証結果が最新であることを確認した上で、現行プロファイルと閾値が一致しているかチェックする。
+   - **推奨設定確認（M1暫定）**: `config/profiles/<mode>.yaml`の`data_ingestion`が`provider=dukascopy`、`fallback_providers=[yfinance]`、`poll_interval_sec=300`、`lookback_hours=12`、`symbols=[USDJPY, EURUSD, GBPUSD]`であることを確認する。`yfinance`切替時はシンボル形式（例: `EURUSD=X`）がプロバイダ側で正規化される前提になっているか、`src/data/providers/yahoo.py`のマッピングを確認する。
    - **Stage Eval記録**: `tradectl data status --provider <name> --log-stage-eval --json`を実行し、`metrics/rate_limit_window.jsonl`へ`stage_eval.stage|decision|sample_window_min|429_rate|tokens_remaining|approver_stub|runbook_ref`を含む手動記録を必ず追加する。出力JSONは`reports/validation_log/AC-45_sla_<date>.md`へ貼付し、`reports/implementation/20250315_pkg-data-status-01/cli/*.json`などのEvidenceディレクトリにも保存する。`--watch`はM1では未使用だが、同コマンドのJSON出力をOps Agendaへ共有することでTraderが判断をトレースできる。
+   - **RateLimitGuard調整**: `tradectl data rate-limit --json`で現行設定とWorkerPlanを確認する。必要に応じて`TRADECTL_RATE_LIMIT_TPM`/`TRADECTL_RATE_LIMIT_BURST`/`TRADECTL_RATE_LIMIT_POLL_SEC`を環境変数で更新し、`tradectl data rate-limit --export config/ops/rate_limit.env`でenvファイルに書き出してOps共有に回す。
    - **実装参照**: DataIngestionServiceの公開APIは`src/data/service.py`、各プロバイダスタブは`src/data/providers/`配下に集約。Manual CSV監査ログは`src/data/quality.py::DataQualityGuard.record_manual_csv_hash_verification`で`metrics/data_ingestion_manual.jsonl`（仮）へ出力するため、開発へのエスカレーション時は該当モジュールを参照する。
 2. **Signal Boardガード制御**: `tradectl status --detail`の`board_guard`セクション（またはボードヘッダの警告バナー）で`board_mode=guarded`かつ`reduce_only=true`になっていることを確認し、以下のシーケンスをチェックリストに沿って記録する。
    - データ鮮度検証: `metrics/data_ingestion_sla.jsonl`/`metrics/pipeline_latency.jsonl`の逸脱区間を突き合わせ、復旧まで新規提案停止の根拠を`reports/validation_log/AC-45_sla_<date>.md`に追記する。
@@ -48,6 +50,8 @@
 4. フォールバック後も欠損が続く場合は`tradectl data jobs enqueue --task manual_csv --symbol <symbol>`を準備し、必要な双子CSVを`data/manual_fallback/<provider>/<symbol>/<YYYYMMDD>/fallback_<provider>_<symbol>_<tf>_<YYYYMMDD>_{op,review}.csv`として配置する。手動モード移行時はRunbook `docs/runbooks/RUN-DATA-06.md`のチェックリストも参照する。
 5. 原因分析としてネットワーク状態・APIレスポンス・利用規約制約を確認し、`reports/audit/license/`および`reports/quality/<date>.md`に記録する。処理遅延が原因の場合は`ProviderParseWorker`/`DataQualityGuard`のログを添付する。
 6. 復旧を確認したらチェックリストの完了と新規提案再開条件をダブルサインし、`tradectl data ack --provider <name>`で承認した上で`HealthMonitor.ack`を実行する。`degraded_ack`監査イベントのIDと再開時刻を`reports/validation_log/AC-45_sla_<date>.md`へ追記し、事後分析と改善策は24時間以内に`reports/performance/<mode>/<date>.md`へ反映する。
+7. **補完の自動実行（M1追加）**: 欠損区間の算定後は`tradectl data update --symbol <symbol> --merged <path> --gap-report <path> --gap-exclude-weekend --emit-fetch-plan <path> --run-fetch-plan`でギャップ取得を順次実行し、生成された`*_dukascopy.parquet`を`merge`に反映する。完了後に`tradectl data latest --symbols <symbol>`で`latest`を更新し、`reports/validation_log/AC-45_sla_<date>.md`へ実行ログを追記する。
+8. **品質レポート（日次）**: `poetry run python tools/data_quality_report.py --symbol <symbol> --output reports/data_quality/<symbol>_latest_<YYYYMMDD>.json` を実行し、欠損/ギャップが閾値超過の場合は`HealthMonitor.raise('degraded','data_quality_gap')`を推奨する。
 
 ## プロファイル別チューニング手順（§11.1 リスク#4対応）
 - **目的**: macOSローカル運用でネットワーク品質が不安定な場合でもCatch-up時間を抑えるため、`provider.timeout`/`retry`とバックフィル分割手順を明文化する。

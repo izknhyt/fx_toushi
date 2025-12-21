@@ -65,13 +65,20 @@ def board(
     effective_kill_switch = kill_switch_state or ("guarded" if guarded else "none")
     rd_status, rd_consent_id = _resolve_risk_disclosure_status(risk_disclosure_status)
     ticket_rows = [dict(ticket) for ticket in (tickets or ())]
+    auto_execute = bool(
+        (normal or not guarded)
+        and not guarded
+        and not reduce_only
+        and (kill_switch_state or "none") in {"none", None}
+        and (spread_status or "normal") == "normal"
+    )
     payload = {
         "timestamp": datetime.utcnow().isoformat(timespec="seconds") + "Z",
         "view": view,
         "mode": "guarded" if guarded else "normal" if normal else "auto",
         "filters": list(filters or ()),
         "include": list(include or ()),
-        "auto_execute": bool(normal and not guarded and not reduce_only),
+        "auto_execute": auto_execute,
         "compat_mode": compat_mode,
         "banner": _build_banner(
             kill_switch_state=effective_kill_switch,
@@ -105,6 +112,7 @@ def board(
             "spread_status": spread_status or "normal",
             "reduce_only": reduce_only,
             "risk_disclosure": rd_status,
+            "auto_execute": auto_execute,
             "risk_disclosure_consent_id": rd_consent_id,
         },
         "tickets": ticket_rows,

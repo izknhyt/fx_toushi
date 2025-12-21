@@ -7,9 +7,14 @@ from pathlib import Path
 import pytest
 
 from src.ops.profit_readiness import (
+    EXIT_HALT,
+    EXIT_OK,
+    EXIT_STALE,
+    EXIT_WARN,
     ProfitReadinessError,
     latest_by_lever,
     load_recent_readiness,
+    profit_status_from_exit,
     record_readiness,
 )
 
@@ -57,3 +62,16 @@ def test_invalid_status_raises(tmp_path: Path) -> None:
     target = tmp_path / "profit_readiness.jsonl"
     with pytest.raises(ProfitReadinessError):
         record_readiness(lever="Live Execution Bridge", status="invalid", path=target)
+
+
+def test_upgraded_status_allowed(tmp_path: Path) -> None:
+    target = tmp_path / "profit_readiness.jsonl"
+    entry = record_readiness(lever="Hands-off Auto Execute", status="upgraded", path=target)
+    assert entry.status == "upgraded"
+
+
+def test_profit_status_from_exit_mapping() -> None:
+    assert profit_status_from_exit(EXIT_OK) == "ok"
+    assert profit_status_from_exit(EXIT_HALT) == "halted"
+    assert profit_status_from_exit(EXIT_STALE) == "stale"
+    assert profit_status_from_exit(EXIT_WARN) == "guarded"

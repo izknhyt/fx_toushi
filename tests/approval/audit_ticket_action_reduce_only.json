@@ -1,0 +1,36 @@
+{
+  "ts": "2025-11-22T00:00:00Z",
+  "schema_version": "ticket.action.v2",
+  "record_type": "ticket.action",
+  "ticket_id": "T-sample",
+  "action": "approve",
+  "actor": "tester",
+  "consent_reference_id": null,
+  "board_mode": "normal",
+  "auto_execute": false,
+  "guardrails": {
+    "kill_switch": "none",
+    "spread_status": "normal",
+    "health_state": "ok",
+    "reduce_only": true
+  },
+  "cfg_hash": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+  "data_hash": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+  "determinism_hash": null,
+  "determinism_version": 1,
+  "profit_readiness_status": "ok",
+  "latency_data_status": "ok",
+  "slippage_data_status": "ok",
+  "delta": {
+    "before": {},
+    "after": {},
+    "diff": {},
+    "decision": "approve",
+    "document_hash": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    "consent_version": "v1",
+    "expires_at": null,
+    "ack_user": null,
+    "ack_evidence": null
+  },
+  "notes": "sample snapshot with auto_execute false (reduce_only)"
+}

@@ -6,7 +6,8 @@
     "spread_status": "normal",
     "reduce_only": false,
     "risk_disclosure": "signed",
-    "risk_disclosure_consent_id": null
+    "risk_disclosure_consent_id": null,
+    "auto_execute": true
   },
   "banner": {
     "kind": "normal",
