@@ -216,6 +216,39 @@
                 }
               }
             },
+            "lot_ladder": {
+              "type": "array",
+              "description": "Sizing ladder tied to PF/Sharpe/MaxDD/Watchlist for hands-off auto_execute mode.",
+              "items": {
+                "type": "object",
+                "required": [
+                  "size_factor"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                  "pf_min": {
+                    "type": "number"
+                  },
+                  "sharpe_min": {
+                    "type": "number"
+                  },
+                  "maxdd_max": {
+                    "type": "number"
+                  },
+                  "watchlist_max": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "size_factor": {
+                    "type": "number",
+                    "description": "Relative multiplier (e.g., 1.15 for +15%)."
+                  },
+                  "notes": {
+                    "type": "string"
+                  }
+                }
+              }
+            },
             "reporting": {
               "type": "object",
               "required": [

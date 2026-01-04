@@ -1,0 +1,14 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "HedgeRoutes",
+  "type": "object",
+  "required": ["schema_version", "routes"],
+  "properties": {
+    "schema_version": {"type": "string"},
+    "routes": {
+      "type": "array",
+      "items": {"type": "object"}
+    }
+  },
+  "additionalProperties": false
+}

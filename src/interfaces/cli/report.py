@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import json
 import logging
+import yaml
 from datetime import date
 from pathlib import Path
 from typing import Mapping, Sequence
@@ -36,6 +38,20 @@ def _resolve_template(profile: str, template: Path | None) -> Path:
     if docs_candidate.exists():
         return docs_candidate
     return Path("src") / "reporter" / "templates" / "weekly_m1_core.md"
+
+
+def _read_feature_flag(flag: str, *, profile: str, path: Path = Path("config/feature_flags.yaml")) -> bool:
+    if not path.exists():
+        return False
+    try:
+        payload = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    except Exception:
+        return False
+    defaults = payload.get("defaults") or {}
+    profile_defaults = defaults.get(profile)
+    if not isinstance(profile_defaults, dict):
+        return False
+    return bool(profile_defaults.get(flag, False))
 
 
 def _load_stress_runs(stress_dir: Path) -> list[Mapping[str, object]]:
@@ -106,6 +122,13 @@ def weekly(
 
     iso_week = week or date.today().strftime("%G-W%V")
     effective_template = _resolve_template(profile, template_path)
+    if template_path is None and _read_feature_flag("reporter.enable_extended_blocks", profile=profile):
+        extended_candidate = Path("src") / "reporter" / "templates" / "weekly_m1_core_extended.md"
+        docs_extended = Path("docs") / "templates" / "reports" / "weekly_m1_core_extended.md"
+        if extended_candidate.exists():
+            effective_template = extended_candidate
+        elif docs_extended.exists():
+            effective_template = docs_extended
     tickets_payload = list(tickets or tickets_actions.list_tickets(include_history=False, json_output=False))
     stress_payload = list(stress_runs) if stress_runs is not None else _load_stress_runs(stress_dir)
     journal_service = TradeJournalService(path=journal_path)

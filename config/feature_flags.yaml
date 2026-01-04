@@ -15,6 +15,7 @@ defaults:
     reporter.enable_extended_blocks: false
     reports.performance.enable: false
     data.paid_feed: false
+    data.rate_limit_auto_stage: false
     alpha.profit_loop_enabled: true
     alpha.dynamic_sizing: false
     alpha.auto_execute: false
@@ -25,6 +26,7 @@ defaults:
     reporter.enable_extended_blocks: false
     reports.performance.enable: false
     data.paid_feed: false
+    data.rate_limit_auto_stage: false
     alpha.profit_loop_enabled: true
     alpha.dynamic_sizing: false
     alpha.auto_execute: false
@@ -35,6 +37,7 @@ defaults:
     reporter.enable_extended_blocks: false
     reports.performance.enable: false
     data.paid_feed: false
+    data.rate_limit_auto_stage: false
     alpha.profit_loop_enabled: false
     alpha.dynamic_sizing: false
     alpha.auto_execute: false
@@ -88,6 +91,21 @@ definitions:
     telemetry_checks:
       - "logs/audit/risk_disclosure_*.jsonl"
       - "metrics/risk_disclosure.jsonl"
+  data.rate_limit_auto_stage:
+    description: "RateLimitGuard のステージ自動適用。Stage候補を自動適用し、監査ログへ記録する。"
+    milestone: "M1.1"
+    owner: ops_manager
+    category: guarded
+    runbook_ref: "RUN-FEATURE-FLAG-01 §5.7"
+    enable_conditions:
+      - "RUN-DATA-05.step3 の Stage Eval 証跡が7日分蓄積済み"
+      - "rate_limit_window.jsonl の stage_eval が欠落していないこと"
+    rollback:
+      - "tradectl config flags --set data.rate_limit_auto_stage=false --profile <mode>"
+      - "metrics/rate_limit_window.jsonl の stage_eval に manual だけが残ることを確認"
+    telemetry_checks:
+      - "metrics/rate_limit_window.jsonl"
+      - "logs/ops/stage_change.log"
   reporter.enable_extended_blocks:
     description: "週次レポートに拡張ブロック（Spread/Kill Switch/Resync 等）を追加する。"
     milestone: "M1.1"

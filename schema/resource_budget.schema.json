@@ -1,0 +1,12 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ResourceBudget",
+  "type": "object",
+  "required": ["schema_version", "cpu_cores", "memory_gb"],
+  "properties": {
+    "schema_version": {"type": "string"},
+    "cpu_cores": {"type": "integer", "minimum": 1},
+    "memory_gb": {"type": "number", "minimum": 1}
+  },
+  "additionalProperties": false
+}

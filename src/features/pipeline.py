@@ -26,6 +26,9 @@ tests and other modules.
 from __future__ import annotations
 
 import hashlib
+import json
+import os
+import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -33,6 +36,7 @@ from typing import Any, Iterable, Mapping, MutableMapping
 
 import yaml
 import pandas as pd
+import numpy as np
 
 _TIMEFRAME_RULES: Mapping[str, str] = {
     "5m": "5t",
@@ -162,6 +166,7 @@ class FeaturePipeline:
         feature_version: str | None = None,
         data_manifest_hash: str | None = None,
         seed: int = 0,
+        pipeline_steps: Sequence[Mapping[str, Any]] | None = None,
     ):
         self._config = config
         self._feature_version = feature_version or self._load_feature_set_version(Path("config") / "features" / "feature_versions.yaml")
@@ -171,9 +176,11 @@ class FeaturePipeline:
             data_manifest_hash=self._data_manifest_hash,
             seed=seed,
         )
+        self._pipeline_steps = tuple(pipeline_steps or ())
         self._indicators: MutableMapping[str, IndicatorDefinition] = {}
         self._available_keys: set[str] = set()
         self._store: MutableMapping[str, MutableMapping[str, MutableMapping[str, Any]]] = {}
+        self._metrics_path = Path(os.getenv("PIPELINE_METRICS_PATH", "metrics/pipeline.jsonl"))
 
         pipeline_cfg = config.get("pipeline", {})
         resample_cfg = pipeline_cfg.get("resample", {})
@@ -274,7 +281,8 @@ class FeaturePipeline:
             delta = close.diff()
             gain = delta.clip(lower=0).rolling(window=window, min_periods=window).mean()
             loss = -delta.clip(upper=0).rolling(window=window, min_periods=window).mean()
-            rs = gain / loss.replace(0, pd.NA)
+            safe_loss = loss.replace(0, 1e-9)
+            rs = gain / safe_loss
             rsi = 100 - (100 / (1 + rs))
             outputs[indicator.output_keys["default"]] = rsi
         elif indicator.identifier.startswith("atr"):
@@ -292,13 +300,34 @@ class FeaturePipeline:
         elif indicator.identifier.startswith("ema55_slope"):
             slope = _ema_slope(close, span=window)
             outputs[indicator.output_keys["default"]] = slope
+        elif indicator.identifier.startswith("bollinger"):
+            stddev = float(params.get("stddev", 2.0))
+            mid = close.rolling(window=window, min_periods=window).mean()
+            std = close.rolling(window=window, min_periods=window).std()
+            outputs[indicator.output_keys["upper"]] = mid + stddev * std
+            outputs[indicator.output_keys["middle"]] = mid
+            outputs[indicator.output_keys["lower"]] = mid - stddev * std
+        elif indicator.identifier.startswith("macd"):
+            fast = close.ewm(span=int(params.get("fast_period", 12)), adjust=False).mean()
+            slow = close.ewm(span=int(params.get("slow_period", 26)), adjust=False).mean()
+            macd_line = fast - slow
+            signal = macd_line.ewm(span=int(params.get("signal_period", 9)), adjust=False).mean()
+            hist = macd_line - signal
+            outputs[indicator.output_keys["line"]] = macd_line
+            outputs[indicator.output_keys["signal"]] = signal
+            outputs[indicator.output_keys["histogram"]] = hist
         elif indicator.identifier.startswith("donchian"):
-            upper = close.rolling(window=window, min_periods=window).max()
-            lower = close.rolling(window=window, min_periods=window).min()
+            upper = high.rolling(window=window, min_periods=window).max()
+            lower = low.rolling(window=window, min_periods=window).min()
             mid = (upper + lower) / 2
             outputs[indicator.output_keys.get("upper", "upper")] = upper
             outputs[indicator.output_keys.get("lower", "lower")] = lower
             outputs[indicator.output_keys.get("mid", "mid")] = mid
+        elif indicator.identifier.startswith("zscore"):
+            mean = close.rolling(window=window, min_periods=window).mean()
+            std = close.rolling(window=window, min_periods=window).std().replace(0, np.nan)
+            zscore = (close - mean) / std
+            outputs[indicator.output_keys["default"]] = zscore
         elif indicator.identifier.startswith("session_tag"):
             def _session_label(ts: pd.Timestamp) -> str:
                 hour = ts.hour
@@ -376,18 +405,56 @@ class FeaturePipeline:
         feature_version: str | None = None,
         data_manifest_hash: str | None = None,
         seed: int = 0,
+        pipeline_steps_path: str | Path | None = None,
     ) -> "FeaturePipeline":
         """Instantiate the pipeline from a YAML configuration file."""
 
         cfg_path = Path(path)
         with cfg_path.open("r", encoding="utf-8") as fh:
             config = yaml.safe_load(fh.read())
+        pipeline_steps = cls._load_pipeline_steps(pipeline_steps_path) if pipeline_steps_path else None
         return cls(
             config=config,
             feature_version=feature_version,
             data_manifest_hash=data_manifest_hash,
             seed=seed,
+            pipeline_steps=pipeline_steps,
         )
+
+    @classmethod
+    def from_default_files(
+        cls,
+        *,
+        feature_config_path: str | Path = Path("config") / "feature_pipeline.yaml",
+        pipeline_steps_path: str | Path = Path("config") / "pipeline" / "m1_core.yaml",
+        feature_version: str | None = None,
+        data_manifest_hash: str | None = None,
+        seed: int = 0,
+    ) -> "FeaturePipeline":
+        """Instantiate the pipeline from standard config paths."""
+
+        return cls.from_config_file(
+            feature_config_path,
+            feature_version=feature_version,
+            data_manifest_hash=data_manifest_hash,
+            seed=seed,
+            pipeline_steps_path=pipeline_steps_path,
+        )
+
+    @staticmethod
+    def _load_pipeline_steps(path: str | Path | None) -> Sequence[Mapping[str, Any]] | None:
+        if path is None:
+            return None
+        cfg_path = Path(path)
+        if not cfg_path.exists():
+            return None
+        payload = yaml.safe_load(cfg_path.read_text(encoding="utf-8")) or {}
+        if not isinstance(payload, dict):
+            return None
+        steps = payload.get("steps")
+        if not isinstance(steps, list):
+            return None
+        return steps
 
     # ------------------------------------------------------------------
     # Indicator registration
@@ -460,19 +527,160 @@ class FeaturePipeline:
         future packets.
         """
 
-        if symbols is None:
-            symbol_set: frozenset[str] = self._context.symbols
-        else:
-            symbol_set = frozenset(symbols)
+        updated_symbols = set(self._context.symbols)
+        latency_start = time.perf_counter()
+        cpu_start = time.process_time()
+        bars_processed = 0
+        symbol_hint = None
+        timeframe_hint = None
+        if symbols:
+            updated_symbols.update([str(symbol).upper() for symbol in symbols])
+        if market_frame:
+            bars = market_frame.get("bars") if isinstance(market_frame, Mapping) else None
+            if isinstance(bars, list):
+                bars_processed = len(bars)
+            self._update_from_market_frame(market_frame)
+            if isinstance(market_frame, Mapping):
+                symbol = str(market_frame.get("symbol") or "").upper()
+                symbol_hint = symbol or None
+                timeframe_hint = str(market_frame.get("timeframe") or self._default_timeframe)
+                if symbol:
+                    updated_symbols.add(symbol)
 
         self._context = FeatureContext(
-            symbols=symbol_set,
+            symbols=frozenset(updated_symbols),
             timeframes=self._timeframes,
             available_keys=frozenset(self._available_keys),
             determinism=self._determinism,
-            _store=self._context._store,
+            _store=self._store,
         )
+        if market_frame and symbol_hint:
+            self._emit_metrics(
+                symbol=symbol_hint,
+                timeframe=timeframe_hint or self._default_timeframe,
+                bars=bars_processed,
+                latency_ms=(time.perf_counter() - latency_start) * 1000,
+                cpu_ms=(time.process_time() - cpu_start) * 1000,
+            )
         return self._context
+
+    def _emit_metrics(
+        self,
+        *,
+        symbol: str,
+        timeframe: str,
+        bars: int,
+        latency_ms: float,
+        cpu_ms: float,
+    ) -> None:
+        payload = {
+            "ts": datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+            "symbol": symbol,
+            "timeframe": timeframe,
+            "bars": bars,
+            "latency_ms": round(float(latency_ms), 3),
+            "cpu_ms": round(float(cpu_ms), 3),
+            "indicators": len(self._indicators),
+        }
+        try:
+            self._metrics_path.parent.mkdir(parents=True, exist_ok=True)
+            with self._metrics_path.open("a", encoding="utf-8") as handle:
+                handle.write(json.dumps(payload, ensure_ascii=False))
+                handle.write("\n")
+        except OSError:
+            return
+
+    def _update_from_market_frame(self, market_frame: Mapping[str, Any]) -> None:
+        symbol = str(market_frame.get("symbol") or "").upper()
+        timeframe = str(market_frame.get("timeframe") or self._default_timeframe)
+        bars = market_frame.get("bars") or []
+        if not symbol or not bars:
+            return
+        df = self._bars_to_frame(bars)
+        if df.empty:
+            return
+
+        frames: dict[str, pd.DataFrame] = {}
+        frames[timeframe] = df
+        if timeframe == self._default_timeframe:
+            frames.update(self._resample_frames(df))
+
+        for tf, frame_df in frames.items():
+            self._store.setdefault(symbol, {}).setdefault(tf, {})
+            if tf == self._default_timeframe:
+                latest = frame_df.iloc[-1]
+                self._store[symbol][tf].update(
+                    {
+                        f"open_{tf}": float(latest["open"]),
+                        f"high_{tf}": float(latest["high"]),
+                        f"low_{tf}": float(latest["low"]),
+                        f"close_{tf}": float(latest["close"]),
+                        f"volume_{tf}": float(latest.get("volume", 0.0)),
+                    }
+                )
+            for indicator in self._indicators.values():
+                if tf not in indicator.timeframes:
+                    continue
+                outputs = self._compute_indicator(indicator, frame_df)
+                for output_key, series in outputs.items():
+                    value = self._last_valid(series)
+                    if value is None:
+                        continue
+                    self._store[symbol][tf][f"{output_key}_{tf}"] = value
+
+    def _bars_to_frame(self, bars: Iterable[Mapping[str, Any]]) -> pd.DataFrame:
+        frame = pd.DataFrame(list(bars))
+        if frame.empty:
+            return frame
+        ts_col = "timestamp" if "timestamp" in frame.columns else "ts" if "ts" in frame.columns else None
+        if ts_col is None:
+            return pd.DataFrame()
+        frame = frame.rename(columns={ts_col: "timestamp"})
+        frame["timestamp"] = pd.to_datetime(frame["timestamp"], utc=True, errors="coerce")
+        frame = frame.dropna(subset=["timestamp"])
+        frame = frame.sort_values("timestamp")
+        needed = {"open", "high", "low", "close"}
+        if not needed.issubset(set(frame.columns)):
+            return pd.DataFrame()
+        if "volume" not in frame.columns:
+            frame["volume"] = 0.0
+        frame = frame.set_index("timestamp")
+        return frame
+
+    def _resample_frames(self, df: pd.DataFrame) -> dict[str, pd.DataFrame]:
+        frames: dict[str, pd.DataFrame] = {}
+        for tf in self._timeframes:
+            if tf == self._default_timeframe:
+                continue
+            rule = _TIMEFRAME_RULES.get(tf)
+            if not rule:
+                continue
+            resampled = df.resample(rule).agg(
+                {
+                    "open": "first",
+                    "high": "max",
+                    "low": "min",
+                    "close": "last",
+                    "volume": "sum",
+                }
+            )
+            resampled = resampled.dropna(subset=["open", "high", "low", "close"])
+            if not resampled.empty:
+                frames[tf] = resampled
+        return frames
+
+    @staticmethod
+    def _last_valid(series: pd.Series) -> object | None:
+        if series.empty:
+            return None
+        clean = series.dropna()
+        if clean.empty:
+            return None
+        value = clean.iloc[-1]
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return value
 
     def rebuild_range(
         self,
@@ -541,6 +749,12 @@ class FeaturePipeline:
         """Expose determinism metadata for downstream components."""
 
         return self._determinism
+
+    @property
+    def pipeline_steps(self) -> tuple[Mapping[str, Any], ...]:
+        """Expose pipeline step definitions loaded from config."""
+
+        return tuple(self._pipeline_steps)
 
     @property
     def context(self) -> FeatureContext:

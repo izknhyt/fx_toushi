@@ -1,0 +1,13 @@
+# M1 scaffold for pipeline steps
+# Schema: schema/pipeline_steps.schema.json
+
+schema_version: pipeline_steps.v1
+steps:
+  - id: resample
+    module: src.features.pipeline
+    params:
+      enabled: true
+  - id: indicators
+    module: src.features.pipeline
+    params:
+      enabled: true

@@ -1,0 +1,12 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "BrokerSLO",
+  "type": "object",
+  "required": ["schema_version"],
+  "properties": {
+    "schema_version": {"type": "string"},
+    "latency_ms_p95": {"type": "number", "minimum": 0},
+    "fill_rate_min": {"type": "number", "minimum": 0, "maximum": 1}
+  },
+  "additionalProperties": false
+}

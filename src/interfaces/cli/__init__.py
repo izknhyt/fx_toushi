@@ -28,6 +28,8 @@ from .data import (
     hash_path as data_hash_path,
     health_snapshot,
     jobs as data_jobs,
+    enqueue_manual_csv_job,
+    run_manual_csv_jobs,
     manual_report as data_manual_report,
     manual_template,
     rate_limit_snapshot,
@@ -93,6 +95,7 @@ from src.ticket.monitor import (
 )
 from tools.ingestion_loop import run_loop as ingestion_loop_run
 from tools.ingestion_loop import run_once as ingestion_loop_run_once
+from tools.ingestion_loop import parse_as_of as ingestion_parse_as_of
 
 logger = logging.getLogger(__name__)
 
@@ -761,6 +764,9 @@ def create_cli_app() -> typer.Typer:
                 guardrails={"cfg_hash": cfg_hash, "data_hash": data_hash} if cfg_hash or data_hash else None,
                 gate_state=gate_state,
             )
+        except tickets_actions.ConsentRequiredError as exc:
+            typer.echo(f"[ticket.reject] {exc}", err=True)
+            raise typer.Exit(code=120) from exc
         except Exception as exc:  # noqa: BLE001
             logger.error("cli.ticket.reject.failed", extra={"ticket_id": ticket_id, "error": str(exc)})
             raise typer.Exit(code=1) from exc
@@ -798,6 +804,9 @@ def create_cli_app() -> typer.Typer:
                 guardrails={"cfg_hash": cfg_hash, "data_hash": data_hash} if cfg_hash or data_hash else None,
                 gate_state=gate_state,
             )
+        except tickets_actions.ConsentRequiredError as exc:
+            typer.echo(f"[ticket.approve] {exc}", err=True)
+            raise typer.Exit(code=120) from exc
         except Exception as exc:  # noqa: BLE001
             logger.error("cli.ticket.approve.failed", extra={"ticket_id": ticket_id, "error": str(exc)})
             raise typer.Exit(code=1) from exc
@@ -829,6 +838,9 @@ def create_cli_app() -> typer.Typer:
                 guardrails={"cfg_hash": cfg_hash, "data_hash": data_hash} if cfg_hash or data_hash else None,
                 gate_state=gate_state,
             )
+        except tickets_actions.ConsentRequiredError as exc:
+            typer.echo(f"[ticket.edit] {exc}", err=True)
+            raise typer.Exit(code=120) from exc
         except Exception as exc:  # noqa: BLE001
             logger.error("cli.ticket.edit.failed", extra={"ticket_id": ticket_id, "error": str(exc)})
             raise typer.Exit(code=1) from exc
@@ -1496,6 +1508,16 @@ def create_cli_app() -> typer.Typer:
             "--log-stage-eval",
             help="Append a manual stage_eval entry to metrics/rate_limit_window.jsonl",
         ),
+        auto_apply: bool = typer.Option(
+            False,
+            "--auto-apply",
+            help="Auto-apply rate limit stage decisions and log stage changes",
+        ),
+        suggest_guarded: bool = typer.Option(
+            False,
+            "--suggest-guarded",
+            help="Suggest guarded mode based on ingestion metrics",
+        ),
         metrics_root: Path = typer.Option(
             Path("metrics"),
             "--metrics-root",
@@ -1510,6 +1532,8 @@ def create_cli_app() -> typer.Typer:
             providers=providers,
             watch=watch,
             log_stage_eval=log_stage_eval,
+            auto_apply=auto_apply,
+            suggest_guarded=suggest_guarded,
             metrics_root=metrics_root,
         )
         _render_payload(console, payload, json_output=effective_json)
@@ -1517,10 +1541,11 @@ def create_cli_app() -> typer.Typer:
     @data_app.command("loop")
     def data_loop_command(
         ctx: typer.Context,
-        provider: str = typer.Option("dukascopy", "--provider", help="Provider name (dukascopy)"),
+        provider: str = typer.Option("auto", "--provider", help="Provider name (dukascopy/yfinance/auto)"),
         symbols: str = typer.Option("USDJPY", "--symbols", help="Comma-separated symbols"),
         timeframe: str = typer.Option("5m", "--timeframe", help="Timeframe label"),
         lookback_hours: int = typer.Option(6, "--lookback-hours", help="Lookback window in hours"),
+        as_of: str | None = typer.Option(None, "--as-of", help="ISO timestamp to anchor the fetch window (UTC)"),
         raw_dir: Path = typer.Option(Path("data/raw"), "--raw-dir", help="Raw output root"),
         curated_dir: Path = typer.Option(
             Path("data/research/curated"),
@@ -1541,6 +1566,7 @@ def create_cli_app() -> typer.Typer:
         ctx_obj = ctx.obj or {"json": False}
         effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
         symbol_list = [s.strip().upper() for s in symbols.split(",") if s.strip()]
+        anchor = ingestion_parse_as_of(as_of)
 
         if once:
             results = ingestion_loop_run_once(
@@ -1548,6 +1574,7 @@ def create_cli_app() -> typer.Typer:
                 provider=provider,
                 timeframe=timeframe,
                 lookback_hours=lookback_hours,
+                as_of=anchor,
                 raw_dir=raw_dir,
                 curated_dir=curated_dir,
                 metrics_path=metrics_path,
@@ -1561,6 +1588,7 @@ def create_cli_app() -> typer.Typer:
             provider=provider,
             timeframe=timeframe,
             lookback_hours=lookback_hours,
+            as_of=anchor,
             raw_dir=raw_dir,
             curated_dir=curated_dir,
             metrics_path=metrics_path,
@@ -1692,7 +1720,9 @@ def create_cli_app() -> typer.Typer:
             raise typer.Exit(code=1) from exc
         _render_payload(console, {"status": "ok", "path": str(path)}, json_output=effective_json)
 
-    @data_app.command("jobs")
+    jobs_app = typer.Typer(help="Manage manual ingestion jobs.")
+
+    @jobs_app.callback(invoke_without_command=True)
     def data_jobs_command(
         ctx: typer.Context,
         pending: bool = typer.Option(False, "--pending", help="Show pending jobs only"),
@@ -1704,6 +1734,8 @@ def create_cli_app() -> typer.Typer:
         ),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
+        if ctx.invoked_subcommand:
+            return
         ctx_obj = ctx.obj or {"json": False}
         effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
         entries = data_jobs(pending=pending, export_json=export_json is not None)
@@ -1715,6 +1747,43 @@ def create_cli_app() -> typer.Typer:
             {"pending": pending, "jobs": entries, "export": str(export_json) if export_json else None},
             json_output=effective_json,
         )
+
+    @jobs_app.command("enqueue")
+    def data_jobs_enqueue_command(
+        ctx: typer.Context,
+        provider: str = typer.Option(..., "--provider", help="Provider name"),
+        symbol: str = typer.Option(..., "--symbol", help="Symbol (e.g. USDJPY)"),
+        date_str: str = typer.Option(..., "--date", help="Date (YYYY-MM-DD)"),
+        timeframe: str = typer.Option("m5", "--timeframe", help="Timeframe (m5|h1)"),
+        start: str | None = typer.Option(None, "--from", help="Optional window start (ISO)"),
+        end: str | None = typer.Option(None, "--to", help="Optional window end (ISO)"),
+        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
+    ) -> None:
+        ctx_obj = ctx.obj or {"json": False}
+        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        payload = enqueue_manual_csv_job(
+            provider=provider,
+            symbol=symbol,
+            timeframe=timeframe,
+            date=date_str,
+            start=start,
+            end=end,
+        )
+        _render_payload(console, {"status": "ok", "job": payload}, json_output=effective_json)
+
+    @jobs_app.command("run")
+    def data_jobs_run_command(
+        ctx: typer.Context,
+        job_ids: list[str] = typer.Option([], "--job-id", help="Optional job IDs to run"),
+        dry_run: bool = typer.Option(False, "--dry-run", help="Log only, do not write parquet"),
+        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
+    ) -> None:
+        ctx_obj = ctx.obj or {"json": False}
+        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        results = run_manual_csv_jobs(job_ids=job_ids or None, dry_run=dry_run)
+        _render_payload(console, {"results": results}, json_output=effective_json)
+
+    data_app.add_typer(jobs_app, name="jobs")
 
     @data_app.command("manual-report")
     def data_manual_report_command(

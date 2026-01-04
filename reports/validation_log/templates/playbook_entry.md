@@ -35,6 +35,9 @@ signal_cycle_snapshot: reports/validation_log/evidence/<date>/board_snapshot.jso
 - [ ] 欠損率 ≤ <閾値>
 - [ ] 二重入力ハッシュ一致
 - [ ] `signal_cycle_snapshot`をEvidenceに保存し、Runbookと整合
+- [ ] `tradectl data status --auto-apply --log-stage-eval` の証跡を保存（`RUN-FEATURE-FLAG-01 §5.7`）
+- [ ] `tradectl data status --suggest-guarded` の証跡を保存（`RUN-DATA-05 §2`）
+- [ ] `tradectl compliance status --json` の証跡を保存（`RUN-RISK-01 §0`）
 
 ## 2. 検証ログ
 | チェック | 実施者 | 実施日時 | 結果 | 証跡 |
@@ -43,6 +46,9 @@ signal_cycle_snapshot: reports/validation_log/evidence/<date>/board_snapshot.jso
 | スキーマ検証 (`tools/validate_schema.py`) |  |  |  |  |
 | ハッシュ再計算 (`tradectl data hash`) |  |  |  |  |
 | Signal cycle snapshot 整合 |  |  |  | `signal_cycle_snapshot` |
+| RateLimit自動適用ログ |  |  |  | `logs/ops/stage_change.log` |
+| Guarded提案ログ |  |  |  | `logs/events/health_suggested.jsonl` |
+| Risk disclosure 強制 |  |  |  | `logs/audit/risk_consent_*.jsonl` |
 
 ## 3. コメント
 -

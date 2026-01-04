@@ -143,6 +143,30 @@ class DefaultTicketBuilder:
                 )
             )
 
+        advisor_recommendation = _evaluate_reduce_only_advisor(
+            draft=draft,
+            gate_state=gate_state,
+        )
+        if advisor_recommendation and advisor_recommendation.get("should_reduce_only"):
+            badges.append(
+                TicketBadge(
+                    field="reduce_only_advisor",
+                    label="Reduce-Only advisor",
+                    severity="info",
+                    metadata=dict(advisor_recommendation),
+                )
+            )
+            checklist = checklist + (
+                ChecklistItem(
+                    field="reduce_only_advisor",
+                    label="Reduce-Only advisor review",
+                    mandatory=False,
+                    status="pending",
+                    runbook="RUN-SPREAD-03 / RUN-FEATURE-FLAG-01 §5.2",
+                    metadata=dict(advisor_recommendation),
+                ),
+            )
+
         ticket_id = self._derive_ticket_id(draft)
         created_at = datetime.now(timezone.utc)
         adjusted_qty, ladder_factor, dynamic_applied = _apply_hands_off_sizing(
@@ -162,6 +186,8 @@ class DefaultTicketBuilder:
         )
         payload["metadata"]["auto_execute_factor"] = ladder_factor
         payload["metadata"]["auto_execute_dynamic_applied"] = dynamic_applied
+        if advisor_recommendation:
+            payload["metadata"]["advisor_recommendation"] = dict(advisor_recommendation)
         record = self._build_ticket_record(
             ticket_id=ticket_id,
             created_at=created_at,
@@ -297,7 +323,10 @@ class DefaultTicketBuilder:
                 for item in checklist
             ),
             badges=tuple(badge.field for badge in badges),
-            notes={"manual_comment": draft.metadata.get("manual_comment")},
+            notes={
+                "manual_comment": draft.metadata.get("manual_comment"),
+                "advisor_recommendation": payload.get("metadata", {}).get("advisor_recommendation"),
+            },
             audit_refs=AuditRefs(
                 manifest_hash=draft.metadata.get("manifest_hash"),
                 feature_version=draft.metadata.get("feature_version"),
@@ -345,6 +374,40 @@ __all__ = [
     "TicketDraft",
     "TicketBlockedError",
 ]
+
+
+def _read_feature_flag(flag: str, *, path: Path = Path("config/feature_flags.yaml")) -> bool:
+    profile = os.getenv("TRADECTL_PROFILE")
+    if not profile or not path.exists():
+        return False
+    try:
+        payload = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    except Exception:
+        return False
+    defaults = payload.get("defaults") or {}
+    profile_defaults = defaults.get(profile)
+    if not isinstance(profile_defaults, dict):
+        return False
+    return bool(profile_defaults.get(flag, False))
+
+
+def _evaluate_reduce_only_advisor(
+    *,
+    draft: TicketDraft,
+    gate_state: GateState,
+) -> dict[str, object] | None:
+    if not _read_feature_flag("reduce_only_advisor"):
+        return None
+    spread_state = gate_state.market.spread.state
+    should_reduce_only = spread_state in {"cooldown", "halt"}
+    reason = f"spread_{spread_state}"
+    return {
+        "advisor": "reduce_only_stub",
+        "symbol": draft.symbol,
+        "should_reduce_only": should_reduce_only,
+        "reason": reason,
+        "spread_state": spread_state,
+    }
 
 
 def _load_lot_ladder(path: Path) -> list[LotLadderRule]:

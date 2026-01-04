@@ -1,0 +1,23 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "PipelineStepsConfig",
+  "type": "object",
+  "required": ["schema_version", "steps"],
+  "properties": {
+    "schema_version": {"type": "string"},
+    "steps": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "module", "params"],
+        "properties": {
+          "id": {"type": "string"},
+          "module": {"type": "string"},
+          "params": {"type": "object"}
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}

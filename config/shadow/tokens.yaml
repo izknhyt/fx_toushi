@@ -1,0 +1,5 @@
+# Shadow token config scaffold
+# Schema: schema/shadow_tokens.schema.json
+
+schema_version: shadow_tokens.v1
+tokens: []

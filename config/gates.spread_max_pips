@@ -1,0 +1,6 @@
+# Spread gate maximum pips (scaffold)
+# Schema: schema/spread_max_pips.schema.json
+
+schema_version: spread_max_pips.v1
+max_pips:
+  default: 2.5

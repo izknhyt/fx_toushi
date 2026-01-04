@@ -4,7 +4,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from src.data.service import fetch_latest, MarketFrame, ProviderResult
+from src.data.service import (
+    fetch_latest,
+    MarketFrame,
+    ProviderResult,
+    order_symbols_by_priority,
+)
 from src.data.rate_limit_guard import RateLimitGuard
 from src.data.service import spawn_provider_workers, WorkerPlan
 
@@ -81,3 +86,43 @@ def test_fetch_latest_applies_worker_plan(monkeypatch, tmp_path: Path) -> None:
     assert frames
     assert frames[0].bars[0]["open"] == 1
     assert "primary" in invoked
+
+
+def test_fetch_latest_uses_provider_priority_config(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.chdir(tmp_path)
+    config_dir = tmp_path / "config"
+    (config_dir / "ingestion").mkdir(parents=True)
+    (config_dir / "provider_priority.yaml").write_text(
+        "schema_version: provider_priority.v1\n"
+        "default_order:\n"
+        "  - secondary\n"
+        "  - primary\n",
+        encoding="utf-8",
+    )
+    (config_dir / "ingestion" / "priorities.yaml").write_text(
+        "schema_version: ingestion_priorities.v1\n"
+        "symbol_weight:\n"
+        "  USDJPY: 1.0\n"
+        "timeframe_weight:\n"
+        "  5m: 1.0\n",
+        encoding="utf-8",
+    )
+
+    frames = fetch_latest(
+        symbols=["USDJPY"],
+        timeframe="5m",
+        provider_handlers={"primary": _primary_handler, "secondary": _secondary_handler},
+        metrics_path=tmp_path / "metrics" / "data_ingestion_sla.jsonl",
+    )
+
+    assert frames
+    assert frames[0].bars[0]["open"] == 2  # secondary picked via config
+
+
+def test_order_symbols_by_priority() -> None:
+    priorities = {
+        "symbol_weight": {"EURUSD": 2.0, "USDJPY": 1.0},
+        "timeframe_weight": {"5m": 1.0},
+    }
+    ordered = order_symbols_by_priority(["USDJPY", "EURUSD"], timeframe="5m", priorities=priorities)
+    assert ordered == ["EURUSD", "USDJPY"]

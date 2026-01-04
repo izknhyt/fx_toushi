@@ -1,0 +1,7 @@
+# Emergency orchestration scaffold
+# Schema: schema/emergency.schema.json
+
+schema_version: emergency.v1
+actions:
+  - id: close_all
+    enabled: false

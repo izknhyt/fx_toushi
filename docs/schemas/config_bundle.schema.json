@@ -24,7 +24,39 @@
     "profiles/paper.yaml",
     "profiles/live.yaml",
     "sla_thresholds/default.yaml",
-    "sla_thresholds/active.yaml"
+    "sla_thresholds/active.yaml",
+    "brokers/sandbox.yaml",
+    "brokers/error_map.yaml",
+    "brokers/slo.yaml",
+    "calendar/business_days.yaml",
+    "compliance/pretrade_rules_TEMPLATE.yaml",
+    "compliance/risk_disclosure_TEMPLATE.yaml",
+    "concurrency_profiles.yaml",
+    "drift_monitor.yaml",
+    "emergency.yaml",
+    "hedge_routes.yaml",
+    "idea_pipeline.yaml",
+    "ideas.yaml",
+    "model_risk.yaml",
+    "ops/workload_defaults.yaml",
+    "providers/real_time_candidates.yaml",
+    "reconciliation.yaml",
+    "regression.yaml",
+    "reports/kpi.yaml",
+    "resource_budget.yaml",
+    "risk/margin_stress_presets.yaml",
+    "shadow/channels.yaml",
+    "shadow/tokens.yaml",
+    "share_profiles/TEMPLATE.yaml",
+    "signatures/index.json",
+    "sla_thresholds/candidate_template.yaml",
+    "provider_priority.yaml",
+    "ingestion/priorities.yaml",
+    "event_bus.yaml",
+    "pipeline/m1_core.yaml",
+    "data_sources/dukascopy.yaml",
+    "data_sources/yfinance.yaml",
+    "data_sources/TEMPLATE.yaml"
   ],
   "additionalProperties": true,
   "properties": {
@@ -87,6 +119,102 @@
     },
     "sla_thresholds/active.yaml": {
       "$ref": "sla_threshold_profile.schema.json"
+    },
+    "brokers/sandbox.yaml": {
+      "$ref": "broker_sandbox.schema.json"
+    },
+    "brokers/error_map.yaml": {
+      "$ref": "broker_error_map.schema.json"
+    },
+    "brokers/slo.yaml": {
+      "$ref": "broker_slo.schema.json"
+    },
+    "calendar/business_days.yaml": {
+      "$ref": "business_days.schema.json"
+    },
+    "compliance/pretrade_rules_TEMPLATE.yaml": {
+      "$ref": "compliance_pretrade_rules.schema.json"
+    },
+    "compliance/risk_disclosure_TEMPLATE.yaml": {
+      "$ref": "compliance_risk_disclosure.schema.json"
+    },
+    "concurrency_profiles.yaml": {
+      "$ref": "concurrency_profiles.schema.json"
+    },
+    "drift_monitor.yaml": {
+      "$ref": "drift_monitor.schema.json"
+    },
+    "emergency.yaml": {
+      "$ref": "emergency.schema.json"
+    },
+    "hedge_routes.yaml": {
+      "$ref": "hedge_routes.schema.json"
+    },
+    "idea_pipeline.yaml": {
+      "$ref": "idea_pipeline.schema.json"
+    },
+    "ideas.yaml": {
+      "$ref": "ideas.schema.json"
+    },
+    "model_risk.yaml": {
+      "$ref": "model_risk.schema.json"
+    },
+    "ops/workload_defaults.yaml": {
+      "$ref": "ops_workload_defaults.schema.json"
+    },
+    "providers/real_time_candidates.yaml": {
+      "$ref": "real_time_candidates.schema.json"
+    },
+    "reconciliation.yaml": {
+      "$ref": "reconciliation.schema.json"
+    },
+    "regression.yaml": {
+      "$ref": "regression.schema.json"
+    },
+    "reports/kpi.yaml": {
+      "$ref": "reports_kpi.schema.json"
+    },
+    "resource_budget.yaml": {
+      "$ref": "resource_budget.schema.json"
+    },
+    "risk/margin_stress_presets.yaml": {
+      "$ref": "margin_stress_presets.schema.json"
+    },
+    "shadow/channels.yaml": {
+      "$ref": "shadow_channels.schema.json"
+    },
+    "shadow/tokens.yaml": {
+      "$ref": "shadow_tokens.schema.json"
+    },
+    "share_profiles/TEMPLATE.yaml": {
+      "$ref": "share_profiles.schema.json"
+    },
+    "signatures/index.json": {
+      "$ref": "signatures_index.schema.json"
+    },
+    "sla_thresholds/candidate_template.yaml": {
+      "$ref": "sla_threshold_candidate.schema.json"
+    },
+    "provider_priority.yaml": {
+      "$ref": "provider_priority.schema.json"
+    },
+    "ingestion/priorities.yaml": {
+      "$ref": "ingestion_priorities.schema.json"
+    },
+    "event_bus.yaml": {
+      "$ref": "event_bus.schema.json"
+    },
+    "pipeline/m1_core.yaml": {
+      "$ref": "pipeline_steps.schema.json"
+    },
+    "data_sources/dukascopy.yaml": {
+      "$ref": "data_source.schema.json"
+    },
+    "data_sources/yfinance.yaml": {
+      "$ref": "data_source.schema.json"
+    },
+    "data_sources/TEMPLATE.yaml": {
+      "$ref": "data_source.schema.json"
     }
   }
 }

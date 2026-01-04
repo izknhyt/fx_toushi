@@ -1,0 +1,7 @@
+# SLA threshold candidate template
+# Schema: schema/sla_threshold_candidate.schema.json
+
+schema_version: sla_threshold_candidate.v1
+profile_id: candidate
+thresholds:
+  fetch_p95_ms: 12000

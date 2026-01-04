@@ -102,6 +102,9 @@ def _parse_time(raw: str | None) -> datetime | None:
     if raw is None:
         return None
     try:
-        return datetime.fromisoformat(raw)
+        text = raw
+        if text.endswith("Z"):
+            text = text[:-1] + "+00:00"
+        return datetime.fromisoformat(text)
     except ValueError:
         return None

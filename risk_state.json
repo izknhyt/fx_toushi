@@ -3,7 +3,7 @@
   "status": "accepted",
   "version": "v1",
   "consent_reference_id": "consent-ops-20251216",
-  "accepted_at": "2025-12-16T10:32:02+00:00",
-  "expires_at": "2026-12-16T10:32:02+00:00",
+  "accepted_at": "2025-12-24T11:11:16Z",
+  "expires_at": "2026-12-24T11:11:16.964036Z",
   "document_hash": null
 }

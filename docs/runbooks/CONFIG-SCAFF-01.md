@@ -33,6 +33,7 @@
    - `make config-init`を実行し、`config/*.yaml`や`config/sla_thresholds/*.yaml`が最新テンプレへ置き換わったことを確認する。
    - 生成ログを`reports/validation_log/config_init_<date>.md`の`Generation Log`節に保存し、`git diff config/`で差分を確認する。
 4. **スキーマ検証**
+   - `python tools/sync_schema_registry.py --check` を実行し、`docs/schemas/` と `schema/` の同期が取れていることを確認する。
    - `poetry run schema-validate config --schema docs/schemas/config_bundle.schema.json`を実行し、成功ログをRunbook証跡と同じMarkdownに添付する。
    - 個別検証が必要な場合は以下も実行する。
      - `poetry run schema-validate config/risk_live_guard.yaml --schema docs/schemas/risk_live_guard.schema.json`

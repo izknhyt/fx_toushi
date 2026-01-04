@@ -1,0 +1,14 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ShadowChannels",
+  "type": "object",
+  "required": ["schema_version", "channels"],
+  "properties": {
+    "schema_version": {"type": "string"},
+    "channels": {
+      "type": "array",
+      "items": {"type": "object"}
+    }
+  },
+  "additionalProperties": false
+}

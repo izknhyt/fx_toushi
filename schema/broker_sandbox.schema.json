@@ -1,0 +1,13 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "BrokerSandboxConfig",
+  "type": "object",
+  "required": ["schema_version", "adapter", "endpoint"],
+  "properties": {
+    "schema_version": {"type": "string"},
+    "adapter": {"type": "string"},
+    "endpoint": {"type": "string"},
+    "simulated_latency_ms": {"type": "number", "minimum": 0}
+  },
+  "additionalProperties": false
+}

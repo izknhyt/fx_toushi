@@ -1,0 +1,101 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ticket_record_v2",
+  "type": "object",
+  "required": [
+    "ticket_id",
+    "issued_at",
+    "pair",
+    "timeframe",
+    "strategy_id",
+    "regime_context",
+    "position",
+    "protect",
+    "entry",
+    "risk_summary",
+    "checklist",
+    "badges",
+    "audit_refs",
+    "board_mode",
+    "guardrails"
+  ],
+  "properties": {
+    "ticket_id": { "type": "string" },
+    "issued_at": { "type": "string", "format": "date-time" },
+    "pair": { "type": "string" },
+    "timeframe": { "type": "string" },
+    "strategy_id": { "type": "string" },
+    "regime_context": { "type": "object", "additionalProperties": true },
+    "position": {
+      "type": "object",
+      "required": ["direction", "size_lot", "reduce_only"],
+      "properties": {
+        "direction": { "type": "string" },
+        "size_lot": { "type": "number" },
+        "size_hint": { "type": "object", "additionalProperties": true },
+        "reduce_only": { "type": "boolean" }
+      },
+      "additionalProperties": true
+    },
+    "protect": { "type": "object", "additionalProperties": true },
+    "entry": { "type": "object", "additionalProperties": true },
+    "risk_summary": {
+      "type": "object",
+      "required": ["risk_disclosure"],
+      "properties": {
+        "r_multiple": { "type": ["number", "null"] },
+        "account_risk_pct": { "type": ["number", "null"] },
+        "exposure_bucket": { "type": ["string", "null"] },
+        "risk_disclosure": { "type": "string" }
+      },
+      "additionalProperties": true
+    },
+    "checklist": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "label", "status", "mandatory"],
+        "properties": {
+          "id": { "type": "string" },
+          "label": { "type": "string" },
+          "status": { "type": "string" },
+          "mandatory": { "type": "boolean" },
+          "ack_by": { "type": ["string", "null"] },
+          "metadata": { "type": "object", "additionalProperties": true }
+        },
+        "additionalProperties": true
+      }
+    },
+    "badges": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "notes": { "type": "object", "additionalProperties": true },
+    "audit_refs": {
+      "type": "object",
+      "required": ["determinism_version"],
+      "properties": {
+        "manifest_hash": { "type": ["string", "null"] },
+        "feature_version": { "type": ["string", "null"] },
+        "determinism_hash": { "type": ["string", "null"] },
+        "determinism_version": { "type": "integer" }
+      },
+      "additionalProperties": true
+    },
+    "board_mode": { "type": "string" },
+    "guardrails": {
+      "type": "object",
+      "required": ["kill_switch", "spread_status", "reduce_only"],
+      "properties": {
+        "kill_switch": { "type": "string" },
+        "spread_status": { "type": "string" },
+        "health_state": { "type": ["string", "null"] },
+        "reduce_only": { "type": "boolean" },
+        "auto_execute": { "type": ["boolean", "null"] },
+        "reason": { "type": ["string", "null"] }
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": true
+}

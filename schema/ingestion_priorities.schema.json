@@ -1,0 +1,18 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "IngestionPriorities",
+  "type": "object",
+  "required": ["schema_version", "symbol_weight", "timeframe_weight"],
+  "properties": {
+    "schema_version": {"type": "string"},
+    "symbol_weight": {
+      "type": "object",
+      "additionalProperties": {"type": "number", "minimum": 0}
+    },
+    "timeframe_weight": {
+      "type": "object",
+      "additionalProperties": {"type": "number", "minimum": 0}
+    }
+  },
+  "additionalProperties": false
+}

@@ -32,6 +32,7 @@
 | safe | `reporter.enable_extended_blocks` | Ops Manager 単独 | CLIキャプチャをEvidenceへ保存 |
 | guarded | `reduce_only_advisor`, `reports.performance.enable` | Ops Manager + Risk Manager | Paper soak (≥5取引日) レポート添付 |
 | dangerous | `sprt_guard`, `risk_disclosure_enforce`, `data.paid_feed` | Ops Manager + Risk Manager + PO | ① Backtest再現ログ ② Paper 手動検証ログ ③ Rollbackリハーサル記録 |
+| guarded | `data.rate_limit_auto_stage` | Ops Manager + Risk Manager | ① `tradectl data status --log-stage-eval` 証跡 ② `logs/ops/stage_change.log` |
 
 ## 標準フロー
 1. `poetry run pytest -k config_schema_smoke` と `poetry run pytest -k feature_flags` を実行し、結果ログを `reports/validation_log/<date>_feature_flags.txt` に保存。
@@ -69,8 +70,14 @@
 4. Live 適用は PO 承認後、`tradectl kill-switch review --recommendation guarded` が WARN 以上でないことを確認してから `defaults.live.risk_disclosure_enforce=true` に更新。
 5. **Rollback**: `defaults.live.risk_disclosure_enforce=false`、CLI でも `tradectl config flags --set ...` を実施。`risk_consent` 監査ファイルへの追記が継続できるか確認。
 
+### 5.7 `data.rate_limit_auto_stage`（M1.1, guarded）
+1. `tradectl data status --log-stage-eval --json` を7日分保存し、`metrics/rate_limit_window.jsonl` に `decision_source=manual` が記録されていることを確認。
+2. `defaults.paper.data.rate_limit_auto_stage=true` に変更し、`tradectl data status --auto-apply --log-stage-eval` で `logs/ops/stage_change.log` へ追記されることを確認。
+3. Live 適用は Risk Manager の承認が必要。`defaults.live.data.rate_limit_auto_stage=true` へ更新し、週次レビューで自動ステージ適用が想定通りであることを確認。
+4. **Rollback**: `defaults.<mode>.data.rate_limit_auto_stage=false`。`metrics/rate_limit_window.jsonl` に `decision_source=manual` のみが残ることを確認。
+
 ### 5.4 `reporter.enable_extended_blocks`（M1.1, safe）
-1. `reports/weekly/templates/m1_core.md` に extended ブロックが空であることを確認。
+1. `src/reporter/templates/weekly_m1_core_extended.md` の extended ブロックが空/placeholder であることを確認。
 2. `defaults.backtest.reporter.enable_extended_blocks=true` で雛形を生成し、`make reports-weekly --dry-run`（予定）で差分が出るか検証。
 3. 問題が無ければ Paper/Live も `true` に設定。Slack 共有テンプレートでレイアウト崩れが無いことをスクリーンショットで証跡化。
 4. **Rollback**: `defaults.<mode>.reporter.enable_extended_blocks=false` に戻すだけで良い。監査ログとテンプレートの差分を削除。

@@ -1,0 +1,9 @@
+# Idea pipeline scaffold
+# Schema: schema/idea_pipeline.schema.json
+
+schema_version: idea_pipeline.v1
+stages:
+  - draft
+  - screening
+  - paper
+  - ready

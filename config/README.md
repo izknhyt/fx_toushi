@@ -27,6 +27,36 @@
 | `sla_thresholds/default.yaml`<br>`sla_thresholds/active.yaml` | `docs/schemas/sla_threshold_profile.schema.json` | 詳細設計 §3.1, §4.4, §9.4.4 | RUN-DATA-05, RUN-DATA-06, `reports/validation_log/AC-45_*.md` | データSLAターゲットの基準値と適用中値。Runbook承認ログと同期。 |
 | `schema/gate_state.sample.json` | `docs/schemas/gate_state.schema.json` | 詳細設計 §4.2, §5.4 | RUN-RISK-01, RUN-SPREAD-03 | GateStateスナップショットの雛形。Reduce-OnlyやSpreadクールダウンの表示テキストと同期。 |
 
+## 追加スキャフォールド（M1+/参照整備）
+
+以下は設計参照の整合を取るために追加した雛形群です。`config_bundle.schema.json` で必須化されています。
+
+- `config/provider_priority.yaml` (`docs/schemas/provider_priority.schema.json`)
+- `config/ingestion/priorities.yaml` (`docs/schemas/ingestion_priorities.schema.json`)
+- `config/event_bus.yaml` (`docs/schemas/event_bus.schema.json`)
+- `config/pipeline/m1_core.yaml` (`docs/schemas/pipeline_steps.schema.json`)
+- `config/data_sources/*.yaml` (`docs/schemas/data_source.schema.json`)
+- `config/brokers/*.yaml` (`docs/schemas/broker_*`)
+- `config/compliance/*_TEMPLATE.yaml` (`docs/schemas/compliance_*`)
+- `config/calendar/business_days.yaml` (`docs/schemas/business_days.schema.json`)
+- `config/drift_monitor.yaml` (`docs/schemas/drift_monitor.schema.json`)
+- `config/emergency.yaml` (`docs/schemas/emergency.schema.json`)
+- `config/hedge_routes.yaml` (`docs/schemas/hedge_routes.schema.json`)
+- `config/idea_pipeline.yaml` (`docs/schemas/idea_pipeline.schema.json`)
+- `config/ideas.yaml` (`docs/schemas/ideas.schema.json`)
+- `config/model_risk.yaml` (`docs/schemas/model_risk.schema.json`)
+- `config/ops/workload_defaults.yaml` (`docs/schemas/ops_workload_defaults.schema.json`)
+- `config/providers/real_time_candidates.yaml` (`docs/schemas/real_time_candidates.schema.json`)
+- `config/reconciliation.yaml` (`docs/schemas/reconciliation.schema.json`)
+- `config/regression.yaml` (`docs/schemas/regression.schema.json`)
+- `config/reports/kpi.yaml` (`docs/schemas/reports_kpi.schema.json`)
+- `config/resource_budget.yaml` (`docs/schemas/resource_budget.schema.json`)
+- `config/risk/margin_stress_presets.yaml` (`docs/schemas/margin_stress_presets.schema.json`)
+- `config/shadow/*.yaml` (`docs/schemas/shadow_*`)
+- `config/share_profiles/TEMPLATE.yaml` (`docs/schemas/share_profiles.schema.json`)
+- `config/signatures/index.json` (`docs/schemas/signatures_index.schema.json`)
+- `config/sla_thresholds/candidate_template.yaml` (`docs/schemas/sla_threshold_candidate.schema.json`)
+
 ## スモークテスト
 
 - `pytest -k config_schema_smoke` — JSON Schema による雛形検証。`strategy_manifest`/`feature_pipeline`/`board_modes`/`execution_model`/`ops`/`roles`/`broker_rules`/`profiles/*`/`sla_thresholds/*`に加え、本稿で追加した`scoring`/`scoreboard`/`risk_live_guard`/`ops_readiness`/`feature_flags`を対象とする。

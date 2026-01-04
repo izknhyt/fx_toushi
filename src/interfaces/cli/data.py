@@ -7,13 +7,15 @@ import json
 import logging
 import os
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Iterable, Mapping, Sequence
 
 import pandas as pd
 
 from .board import _load_manifest_entry
+from src.core.health import HealthMonitor
+from src.data.quality import DataQualityGuard
 from src.data.rate_limit_guard import RateLimitGuard
 from src.data.service import spawn_provider_workers
 
@@ -29,6 +31,8 @@ __all__ = [
     "manual_template",
     "validate_csv",
     "jobs",
+    "enqueue_manual_csv_job",
+    "run_manual_csv_jobs",
     "manual_report",
     "hash_path",
     "update_latest",
@@ -37,8 +41,14 @@ __all__ = [
 DEFAULT_METRICS_ROOT = Path("metrics")
 DEFAULT_RATE_LIMIT_FILE = DEFAULT_METRICS_ROOT / "rate_limit_window.jsonl"
 DEFAULT_INGESTION_FILE = DEFAULT_METRICS_ROOT / "data_ingestion_sla.jsonl"
+DEFAULT_MANUAL_CSV_METRICS = DEFAULT_METRICS_ROOT / "data_ingestion_manual.jsonl"
 OPS_WORKLOG_PATH = Path("ops_worklog.jsonl")
 DEFAULT_STAGE_CHANGE_LOG = Path("logs/ops/stage_change.log")
+DEFAULT_MANUAL_CSV_LOG = Path("logs/ops/manual_csv.log")
+DEFAULT_HEALTH_SUGGEST_LOG = Path("logs/events/health_suggested.jsonl")
+DEFAULT_HEALTH_STATE_PATH = Path("snapshots/latest/health_state.json")
+MANUAL_CSV_JOBS_DIR = Path("data") / "manual_fallback" / "jobs"
+MANUAL_CSV_JOBS_LOG = MANUAL_CSV_JOBS_DIR / "jobs.jsonl"
 
 
 def _utcnow_iso() -> str:
@@ -93,6 +103,8 @@ def status(
     providers: Sequence[str] | None = None,
     watch: bool = False,
     log_stage_eval: bool = False,
+    auto_apply: bool = False,
+    suggest_guarded: bool = False,
     metrics_root: Path | None = None,
 ) -> dict[str, object]:
     """Report ingestion status and optionally log stage evaluation."""
@@ -117,6 +129,7 @@ def status(
                 "provider": provider,
                 "stage_eval": {
                     **decision.to_mapping(),
+                    "decision_source": "auto" if auto_apply else "manual",
                     "approver_stub": "ops_manager",
                     "runbook_ref": "RUN-DATA-05.step3",
                 },
@@ -124,6 +137,27 @@ def status(
             _append_jsonl(rate_limit_path, entry)
             logged_providers.append(provider)
             stage_evaluations.append(entry["stage_eval"])
+            if auto_apply:
+                _append_jsonl(
+                    DEFAULT_STAGE_CHANGE_LOG,
+                    {
+                        "ts": now,
+                        "event": "rate_limit_stage_apply",
+                        "provider": provider,
+                        "decision": decision.decision,
+                        "stage": decision.stage,
+                        "runbook_ref": "RUN-DATA-05.step3",
+                    },
+                )
+                _append_ops_worklog(
+                    "rate_limit_stage_apply",
+                    {
+                        "provider": provider,
+                        "decision": decision.decision,
+                        "stage": decision.stage,
+                        "runbook_ref": "RUN-DATA-05.step3",
+                    },
+                )
         logger.info(
             "cli.data.status.stage_logged",
             extra={"providers": logged_providers, "rate_limit_path": str(rate_limit_path)},
@@ -140,17 +174,22 @@ def status(
         ]
 
     sla_tail = _read_jsonl_tail(ingestion_path)
+    health_payload: dict[str, object] | None = None
+    if suggest_guarded:
+        health_payload = _suggest_guarded_from_metrics(ingestion_path)
 
     payload: dict[str, object] = {
         "timestamp": now,
         "providers": provider_list,
         "watch": watch,
         "log_stage_eval": log_stage_eval,
+        "suggest_guarded": suggest_guarded,
         "rate_limit_path": str(rate_limit_path),
         "ingestion_samples": sla_tail,
         "logged_providers": logged_providers,
         "stage_evaluations": stage_evaluations,
         "worker_plans": worker_plans,
+        "health_suggestion": health_payload,
     }
     logger.info("cli.data.status.completed", extra=payload)
     return payload
@@ -254,13 +293,33 @@ def manual_template(provider: str, symbol: str, date: str, *, timeframe: str) ->
         base_dir / f"fallback_{provider}_{symbol}_{timeframe}_{date}_op.csv",
         base_dir / f"fallback_{provider}_{symbol}_{timeframe}_{date}_review.csv",
     ]
-    headers = ["ts", "open", "high", "low", "close", "volume", "spread", "session_tag"]
+    headers = ["ts", "timestamp_jst", "open", "high", "low", "close", "volume", "spread", "session_tag"]
+    rows = _build_template_rows(date, timeframe=timeframe)
     for path in filenames:
         if not path.exists():
-            path.write_text(",".join(headers) + "\n", encoding="utf-8")
+            if not rows.empty:
+                rows.to_csv(path, index=False, columns=headers)
+            else:
+                path.write_text(",".join(headers) + "\n", encoding="utf-8")
     logger.info(
         "cli.data.manual_template.generated",
         extra={"provider": provider, "symbol": symbol, "date": date, "timeframe": timeframe, "files": [str(p) for p in filenames]},
+    )
+    _append_ops_worklog(
+        "manual_csv_template",
+        {"provider": provider, "symbol": symbol, "date": date, "timeframe": timeframe, "path": str(base_dir)},
+    )
+    _append_jsonl(
+        DEFAULT_RATE_LIMIT_FILE,
+        {
+            "ts": _utcnow_iso(),
+            "event": "manual_template",
+            "provider": provider,
+            "symbol": symbol,
+            "timeframe": timeframe,
+            "date": date,
+            "runbook_ref": "RUN-DATA-05.step2",
+        },
     )
     return str(base_dir)
 
@@ -276,8 +335,10 @@ def validate_csv(path: str) -> None:
                 raise FileNotFoundError(f"No op CSV files found in {target}")
             for op_file in op_files:
                 _validate_csv_pair(op_file)
+                _log_manual_csv_verification(op_file)
         else:
             _validate_csv_pair(target)
+            _log_manual_csv_verification(target)
     except Exception as exc:
         logger.error("cli.data.validate_csv.failed", extra={"path": path, "error": str(exc)})
         raise SystemExit(120) from exc
@@ -359,6 +420,47 @@ def _validate_csv_pair(path: Path) -> None:
         raise ValueError(f"op/review hash mismatch: {path} vs {review_path}")
 
 
+def _log_manual_csv_verification(path: Path) -> None:
+    if path.name.endswith("_op.csv"):
+        review_path = path.with_name(path.name.replace("_op.csv", "_review.csv"))
+    elif path.name.endswith("_review.csv"):
+        review_path = path.with_name(path.name.replace("_review.csv", "_op.csv"))
+    else:
+        review_path = path
+
+    op_hash = _hash_file(path)
+    review_hash = _hash_file(review_path) if review_path.exists() else None
+    entry = {
+        "ts": _utcnow_iso(),
+        "event": "manual_csv.validate",
+        "op_path": str(path),
+        "review_path": str(review_path) if review_path.exists() else None,
+        "op_hash": op_hash,
+        "review_hash": review_hash,
+        "status": "ok" if review_hash == op_hash else "mismatch",
+        "runbook_ref": "RUN-DATA-06.step2",
+    }
+    _append_jsonl(DEFAULT_MANUAL_CSV_LOG, entry)
+    _append_jsonl(DEFAULT_RATE_LIMIT_FILE, {"provider": "manual_csv", "stage_eval": entry})
+    guard = DataQualityGuard()
+    reviewer = os.getenv("MANUAL_CSV_REVIEWER", "ops_manager")
+    guard.record_manual_csv_hash_verification(
+        hash_value=op_hash,
+        symbol=_infer_symbol_from_path(path),
+        timeframe=_infer_timeframe_from_path(path),
+        reviewer=reviewer,
+        metrics_path=DEFAULT_MANUAL_CSV_METRICS,
+    )
+    _append_ops_worklog(
+        "manual_csv_validate",
+        {
+            "op_path": str(path),
+            "review_path": str(review_path) if review_path.exists() else None,
+            "status": entry["status"],
+        },
+    )
+
+
 def _validate_required(frame: pd.DataFrame, label: str) -> None:
     required_cols = {"open", "high", "low", "close", "volume", "spread"}
     ts_cols = {"ts", "timestamp"}
@@ -386,6 +488,181 @@ def _infer_step_seconds(stem: str) -> int | None:
         if unit == "h":
             return magnitude * 3600
     return None
+
+
+def _build_template_rows(date: str, *, timeframe: str) -> pd.DataFrame:
+    normalized = _normalize_date(date)
+    if normalized is None:
+        return pd.DataFrame()
+    step_seconds = _normalize_timeframe(timeframe)
+    if step_seconds is None:
+        return pd.DataFrame()
+    start = datetime.fromisoformat(normalized).replace(tzinfo=timezone.utc)
+    end = start + timedelta(days=1) - timedelta(seconds=step_seconds)
+    rows: list[dict[str, object]] = []
+    current = start
+    while current <= end:
+        ts = current.replace(microsecond=0)
+        ts_jst = ts.astimezone(timezone(timedelta(hours=9)))
+        rows.append(
+            {
+                "ts": ts.isoformat().replace("+00:00", "Z"),
+                "timestamp_jst": ts_jst.strftime("%Y-%m-%dT%H:%M:%S"),
+                "open": "",
+                "high": "",
+                "low": "",
+                "close": "",
+                "volume": "",
+                "spread": "",
+                "session_tag": "",
+            }
+        )
+        current += timedelta(seconds=step_seconds)
+    return pd.DataFrame(rows)
+
+
+def _normalize_date(raw: str) -> str | None:
+    text = raw.strip()
+    for fmt in ("%Y-%m-%d", "%Y%m%d"):
+        try:
+            return datetime.strptime(text, fmt).date().isoformat()
+        except ValueError:
+            continue
+    return None
+
+
+def _normalize_timeframe(timeframe: str) -> int | None:
+    tf = timeframe.strip().lower()
+    if tf in {"m5", "5m", "5min"}:
+        return 300
+    if tf in {"h1", "1h", "60m"}:
+        return 3600
+    return None
+
+
+def _infer_symbol_from_path(path: Path) -> str:
+    parts = path.name.split("_")
+    if len(parts) >= 3:
+        return parts[2].upper()
+    return "UNKNOWN"
+
+
+def _infer_timeframe_from_path(path: Path) -> str:
+    parts = path.name.split("_")
+    if len(parts) >= 4:
+        return parts[3]
+    return "unknown"
+
+
+def _manual_csv_range(date: str, *, timeframe: str) -> tuple[str, str]:
+    normalized = _normalize_date(date)
+    if normalized is None:
+        raise ValueError(f"Invalid date format: {date}")
+    step_seconds = _normalize_timeframe(timeframe)
+    if step_seconds is None:
+        raise ValueError(f"Unsupported timeframe: {timeframe}")
+    start = datetime.fromisoformat(normalized).replace(tzinfo=timezone.utc)
+    end = start + timedelta(days=1) - timedelta(seconds=step_seconds)
+    return (
+        start.isoformat().replace("+00:00", "Z"),
+        end.isoformat().replace("+00:00", "Z"),
+    )
+
+
+def _load_manual_csv_jobs() -> dict[str, dict[str, object]]:
+    if not MANUAL_CSV_JOBS_LOG.exists():
+        return {}
+    entries = _read_jsonl_tail(MANUAL_CSV_JOBS_LOG, limit=5000)
+    snapshots: dict[str, dict[str, object]] = {}
+    for entry in entries:
+        job_id = entry.get("job_id")
+        if not job_id:
+            continue
+        snapshots[str(job_id)] = dict(entry)
+    return snapshots
+
+
+def _run_manual_csv_job(job: dict[str, object], *, dry_run: bool) -> dict[str, object]:
+    provider = str(job.get("provider") or "manual")
+    symbol = str(job.get("symbol") or "UNKNOWN")
+    timeframe = str(job.get("timeframe") or "m5")
+    date = str(job.get("date") or "")
+    start = str(job.get("start") or "")
+    end = str(job.get("end") or "")
+    job_id = str(job.get("job_id") or "")
+    payload = {
+        "ts": _utcnow_iso(),
+        "job_id": job_id,
+        "task": "manual_csv",
+        "provider": provider,
+        "symbol": symbol,
+        "timeframe": timeframe,
+        "date": date,
+        "start": start,
+        "end": end,
+    }
+    if dry_run:
+        payload["status"] = "dry_run"
+        _append_jsonl(MANUAL_CSV_JOBS_LOG, payload)
+        _append_ops_worklog("manual_csv_run", payload)
+        return payload
+
+    from src.data.providers.csv_loader import CsvLoaderProvider
+    from src.data.service import MarketRequest
+
+    request = MarketRequest(symbols=[symbol], timeframe=timeframe, start=start, end=end)
+    provider_impl = CsvLoaderProvider()
+    frames = list(provider_impl.fetch_bars(request))
+    bars = frames[0].bars if frames else []
+    bars_df = pd.DataFrame(bars)
+    if bars_df.empty:
+        payload["status"] = "empty"
+        _append_jsonl(MANUAL_CSV_JOBS_LOG, payload)
+        _append_ops_worklog("manual_csv_run", payload)
+        return payload
+
+    ts_col = "timestamp" if "timestamp" in bars_df.columns else "ts"
+    bars_df[ts_col] = pd.to_datetime(bars_df[ts_col], utc=True, errors="coerce")
+    bars_df = bars_df.dropna(subset=[ts_col])
+    raw_dir = Path("data/raw") / "manual_csv" / symbol.lower()
+    curated_dir = Path("data/research/curated") / symbol.lower()
+    raw_dir.mkdir(parents=True, exist_ok=True)
+    curated_dir.mkdir(parents=True, exist_ok=True)
+    suffix = _normalize_timeframe_label(timeframe)
+    raw_path = raw_dir / f"{date}_{suffix}.parquet"
+    curated_path = curated_dir / f"{symbol.lower()}_{suffix}_latest.parquet"
+    merged_raw = _merge_parquet_frame(raw_path, bars_df, ts_col=ts_col)
+    merged_raw.to_parquet(raw_path, index=False)
+    merged_curated = _merge_parquet_frame(curated_path, bars_df, ts_col=ts_col)
+    merged_curated.to_parquet(curated_path, index=False)
+
+    payload["status"] = "completed"
+    payload["bars"] = len(bars_df)
+    payload["raw_path"] = str(raw_path)
+    payload["curated_path"] = str(curated_path)
+    _append_jsonl(MANUAL_CSV_JOBS_LOG, payload)
+    _append_ops_worklog("manual_csv_run", payload)
+    return payload
+
+
+def _merge_parquet_frame(path: Path, new_df: pd.DataFrame, *, ts_col: str) -> pd.DataFrame:
+    if path.exists():
+        existing = pd.read_parquet(path)
+        merged = pd.concat([existing, new_df], ignore_index=True)
+    else:
+        merged = new_df.copy()
+    merged[ts_col] = pd.to_datetime(merged[ts_col], utc=True, errors="coerce")
+    merged = merged.dropna(subset=[ts_col]).drop_duplicates(subset=[ts_col]).sort_values(ts_col)
+    return merged
+
+
+def _normalize_timeframe_label(timeframe: str) -> str:
+    tf = timeframe.strip().lower()
+    if tf in {"m5", "5m", "5min"}:
+        return "m5"
+    if tf in {"h1", "1h", "60m"}:
+        return "h1"
+    return tf.replace(" ", "")
 
 
 def _latest_429_rate(rate_limit_path: Path, provider: str, *, ingestion_path: Path | None = None) -> float:
@@ -432,6 +709,62 @@ def _latest_429_rate(rate_limit_path: Path, provider: str, *, ingestion_path: Pa
     return 0.0
 
 
+def _suggest_guarded_from_metrics(ingestion_path: Path) -> dict[str, object]:
+    entries = _read_jsonl_tail(ingestion_path, limit=20)
+    degraded = False
+    details: list[str] = []
+    for entry in entries:
+        status = str(entry.get("status") or entry.get("latency_status") or "")
+        bars = entry.get("bars")
+        if status in {"error", "breach", "watch"}:
+            degraded = True
+            details.append(f"status:{status}")
+        if bars is not None:
+            try:
+                if int(bars) == 0:
+                    degraded = True
+                    details.append("bars:0")
+            except (TypeError, ValueError):
+                pass
+        if degraded:
+            break
+
+    if not degraded:
+        return {"status": "ok", "reason": None, "runbook": None, "health_state_path": None}
+
+    monitor = HealthMonitor()
+    reason = "data_latency"
+    runbook = "docs/runbooks/RUN-DATA-05.md"
+    monitor.raise_condition(
+        "degraded",
+        reason,
+        detail=";".join(details) if details else None,
+        recommended_action="runbook:RUN-DATA-05#enter_guarded",
+    )
+    monitor.suggest_guarded(reason=reason, runbook=runbook, evidence=[str(ingestion_path)])
+    snapshot = monitor.snapshot().to_dict()
+    DEFAULT_HEALTH_STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
+    DEFAULT_HEALTH_STATE_PATH.write_text(json.dumps(snapshot, ensure_ascii=False, indent=2), encoding="utf-8")
+    event = {
+        "ts": _utcnow_iso(),
+        "event": "health.suggest_guarded",
+        "reason": reason,
+        "runbook_ref": "RUN-DATA-05",
+        "details": details,
+        "evidence": [str(ingestion_path)],
+        "health_state_path": str(DEFAULT_HEALTH_STATE_PATH),
+    }
+    _append_jsonl(DEFAULT_HEALTH_SUGGEST_LOG, event)
+    _append_ops_worklog("health_suggest_guarded", event)
+    return {
+        "status": "suggested",
+        "reason": reason,
+        "runbook": runbook,
+        "health_state_path": str(DEFAULT_HEALTH_STATE_PATH),
+        "details": details,
+    }
+
+
 def jobs(*, pending: bool = False, export_json: bool = False) -> list[dict[str, object]]:
     """List manual ingestion jobs under data/manual_fallback."""
 
@@ -450,12 +783,76 @@ def jobs(*, pending: bool = False, export_json: bool = False) -> list[dict[str, 
             "status": status_value,
         }
         entries.append(entry)
+    job_snapshots = _load_manual_csv_jobs()
+    for job_id, job in job_snapshots.items():
+        status_value = str(job.get("status") or "queued")
+        if pending and status_value not in {"pending", "queued"}:
+            continue
+        entry = {
+            "job_id": job_id,
+            "task": job.get("task"),
+            "provider": job.get("provider"),
+            "symbol": job.get("symbol"),
+            "timeframe": job.get("timeframe"),
+            "status": status_value,
+            "date": job.get("date"),
+            "start": job.get("start"),
+            "end": job.get("end"),
+        }
+        entries.append(entry)
     if export_json:
         snapshot_path = base / "jobs_snapshot.json"
         snapshot_path.write_text(json.dumps(entries, ensure_ascii=False, indent=2), encoding="utf-8")
         logger.info("cli.data.jobs.exported", extra={"path": str(snapshot_path), "count": len(entries)})
     logger.info("cli.data.jobs.completed", extra={"pending": pending, "count": len(entries)})
     return entries
+
+
+def enqueue_manual_csv_job(
+    *,
+    provider: str,
+    symbol: str,
+    timeframe: str,
+    date: str,
+    start: str | None = None,
+    end: str | None = None,
+) -> dict[str, object]:
+    """Register a manual CSV ingestion job."""
+
+    if not start or not end:
+        start, end = _manual_csv_range(date, timeframe=timeframe)
+    job_id = f"{provider}_{symbol}_{timeframe}_{date}"
+    payload = {
+        "ts": _utcnow_iso(),
+        "job_id": job_id,
+        "task": "manual_csv",
+        "provider": provider,
+        "symbol": symbol,
+        "timeframe": timeframe,
+        "date": date,
+        "start": start,
+        "end": end,
+        "status": "queued",
+    }
+    _append_jsonl(MANUAL_CSV_JOBS_LOG, payload)
+    _append_ops_worklog("manual_csv_enqueue", payload)
+    logger.info("cli.data.manual_csv.enqueue", extra=payload)
+    return payload
+
+
+def run_manual_csv_jobs(*, job_ids: Sequence[str] | None = None, dry_run: bool = False) -> list[dict[str, object]]:
+    """Process queued manual CSV jobs into curated parquet files."""
+
+    snapshots = _load_manual_csv_jobs()
+    results: list[dict[str, object]] = []
+    for job_id, job in snapshots.items():
+        if job.get("status") != "queued":
+            continue
+        if job_ids and job_id not in job_ids:
+            continue
+        result = _run_manual_csv_job(job, dry_run=dry_run)
+        results.append(result)
+    return results
 
 
 def manual_report(

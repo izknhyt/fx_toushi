@@ -1,0 +1,15 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "BusinessDaysCalendar",
+  "type": "object",
+  "required": ["schema_version", "timezone", "holidays"],
+  "properties": {
+    "schema_version": {"type": "string"},
+    "timezone": {"type": "string"},
+    "holidays": {
+      "type": "array",
+      "items": {"type": "string"}
+    }
+  },
+  "additionalProperties": false
+}

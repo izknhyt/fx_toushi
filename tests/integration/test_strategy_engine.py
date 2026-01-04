@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Iterable
 from types import SimpleNamespace
@@ -207,6 +207,49 @@ def test_strategy_determinism_engine(project_root: Path, feature_pipeline: Featu
 
     with pytest.raises(ManifestValidationError):
         manifest.validate_feature_contract({"nonexistent_feature"})
+
+
+def test_strategy_engine_runs_with_pipeline_update(project_root: Path, feature_pipeline: FeaturePipeline) -> None:
+    engine = StrategyEngine()
+    plugin = DeterministicStrategy()
+    engine.register_plugin(plugin)
+    manifest_path = project_root / "config" / "strategy_manifest.yaml"
+    manifest = engine.load_manifest(manifest_path)
+    if plugin.id in manifest.strategies:
+        manifest.strategies = {plugin.id: manifest.strategies[plugin.id]}
+    engine._manifest = manifest  # type: ignore[attr-defined]
+
+    now = datetime(2025, 1, 1, tzinfo=timezone.utc)
+    market_frame = {
+        "symbol": "USDJPY",
+        "timeframe": "5m",
+        "bars": [
+            {"timestamp": now.isoformat().replace("+00:00", "Z"), "open": 1, "high": 1.1, "low": 0.9, "close": 1.0, "volume": 100},
+            {"timestamp": (now + timedelta(minutes=5)).isoformat().replace("+00:00", "Z"), "open": 1.0, "high": 1.2, "low": 0.95, "close": 1.1, "volume": 120},
+        ],
+    }
+
+    gate_state = GateState()
+    dummy = SimpleNamespace()
+
+    manifest_symbols: set[str] = set()
+    for strategy in manifest.strategies.values():
+        if strategy.watchlist:
+            manifest_symbols.update(strategy.watchlist)
+
+    signals = engine.run_with_pipeline(
+        pipeline=feature_pipeline,
+        market_frame=market_frame,
+        regime=dummy,
+        gate=gate_state,
+        account=dummy,
+        config=dummy,
+        clock=SimpleNamespace(now=now),
+        watchlist=sorted(manifest_symbols),
+        seed=0,
+    )
+
+    assert signals
 
 
 def test_execution_model_spread_transition_badges(project_root: Path) -> None:

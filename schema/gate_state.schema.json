@@ -11,6 +11,16 @@
   ],
   "additionalProperties": false,
   "properties": {
+    "cfg_hash": {
+      "type": "string",
+      "description": "sha256 hash of current config bundle",
+      "pattern": "^sha256:[a-fA-F0-9]{64}$"
+    },
+    "data_hash": {
+      "type": "string",
+      "description": "sha256 hash of dataset/manifest",
+      "pattern": "^sha256:[a-fA-F0-9]{64}$"
+    },
     "schema_version": {
       "anyOf": [
         {
@@ -28,10 +38,7 @@
       "required": [
         "news",
         "calendar",
-        "spread",
-        "latency_data_status",
-        "slippage_data_status",
-        "profit_readiness_status"
+        "spread"
       ],
       "additionalProperties": false,
       "properties": {
@@ -112,18 +119,6 @@
               "format": "date-time"
             }
           }
-        },
-        "latency_data_status": {
-          "type": "string",
-          "enum": ["ok", "degraded", "halt_recommended"]
-        },
-        "slippage_data_status": {
-          "type": "string",
-          "enum": ["ok", "degraded", "halt_recommended"]
-        },
-        "profit_readiness_status": {
-          "type": "string",
-          "enum": ["ok", "guarded", "halted", "stale"]
         },
         "per_symbol": {
           "type": "object",
@@ -215,6 +210,10 @@
           }
         }
       }
+    },
+    "auto_execute": {
+      "type": "boolean",
+      "description": "Hands-off flag. Only true when board_mode=normal and profit readiness KPIs are satisfied; guarded/halt must set false."
     },
     "risk": {
       "type": "object",

@@ -7,7 +7,8 @@
   "required": [
     "schema_version",
     "profile_id",
-    "provider_thresholds"
+    "provider_thresholds",
+    "hitl"
   ],
   "additionalProperties": false,
   "properties": {
@@ -46,6 +47,9 @@
       },
       "additionalProperties": false
     },
+    "hitl": {
+      "$ref": "#/definitions/hitl_thresholds"
+    },
     "notes": {
       "type": "string"
     }
@@ -73,6 +77,30 @@
         }
       },
       "additionalProperties": false
+    },
+    "hitl_thresholds": {
+      "type": "object",
+      "description": "Human-in-the-loop SLA thresholds aligned with RUN-HITL-01.",
+      "required": [
+        "double_ack_minutes"
+      ],
+      "properties": {
+        "double_ack_minutes": {
+          "$ref": "#/definitions/minute_duration"
+        }
+      },
+      "patternProperties": {
+        "^[a-z0-9_][a-z0-9_\\-]*$": {
+          "$ref": "#/definitions/minute_duration"
+        }
+      },
+      "minProperties": 1,
+      "additionalProperties": false
+    },
+    "minute_duration": {
+      "type": "number",
+      "minimum": 0,
+      "description": "Duration measured in minutes."
     }
   }
 }

@@ -703,6 +703,33 @@ class StrategyEngine:
 
         return results
 
+    def run_with_pipeline(
+        self,
+        *,
+        pipeline: FeaturePipeline,
+        market_frame: Mapping[str, Any] | None,
+        regime: Any,
+        gate: Any,
+        account: Any,
+        config: Any,
+        clock: Any,
+        watchlist: Iterable[str] | None = None,
+        seed: int = 0,
+    ) -> list[Any]:
+        """Update the pipeline with a market frame and execute strategies."""
+
+        features = pipeline.update(market_frame=market_frame, symbols=watchlist)
+        return self.run_all(
+            features=features,
+            regime=regime,
+            gate=gate,
+            account=account,
+            config=config,
+            clock=clock,
+            watchlist=watchlist,
+            seed=seed,
+        )
+
     def _record_determinism_event(self, payload: Mapping[str, Any]) -> None:
         self._last_determinism_events.append(payload)
         try:

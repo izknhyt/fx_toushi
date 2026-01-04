@@ -5,6 +5,7 @@ from __future__ import annotations
 import builtins
 import logging
 import json
+import yaml
 from datetime import datetime, timezone
 import os
 from pathlib import Path
@@ -19,7 +20,7 @@ from src.ticket.lock import TicketLockError, TicketLockManager
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["approve", "reject", "edit", "list_tickets", "list"]
+__all__ = ["approve", "reject", "edit", "list_tickets", "list", "ConsentRequiredError"]
 
 _LOCK_MANAGER = TicketLockManager()
 METRICS_PATH = Path("metrics") / "tickets.jsonl"
@@ -44,6 +45,10 @@ DEFAULT_GUARDRAILS = {
 }
 DEFAULT_CHECKLIST_PROGRESS = {"completed": 0, "total": 0, "pending_ids": []}
 DEFAULT_WATCHLIST_REASONS: list[str] = []
+
+
+class ConsentRequiredError(RuntimeError):
+    """Raised when risk disclosure consent is required but missing."""
 
 
 def approve(
@@ -71,6 +76,8 @@ def approve(
     risk_status, consent_from_state = _resolve_risk_disclosure(
         actor=actor, force=force_consent and consent_reference_id is None
     )
+    if _enforce_risk_disclosure() and risk_status in {"pending", "warning", "expired"} and not force_consent:
+        raise ConsentRequiredError("risk disclosure consent required; use --force-consent or provide --consent-ref")
     consent_id = consent_reference_id or consent_from_state
     guardrails_payload = _build_guardrails(guardrails, risk_status=risk_status)
     _acquire_lock(ticket_id, owner=actor, take_over=take_over, reason="approve")
@@ -139,6 +146,8 @@ def reject(
 
     actor = user or "unknown"
     risk_status, _ = _resolve_risk_disclosure(actor=actor, force=False)
+    if _enforce_risk_disclosure() and risk_status in {"pending", "warning", "expired"}:
+        raise ConsentRequiredError("risk disclosure consent required before reject action")
     guardrails_payload = _build_guardrails(guardrails, risk_status=risk_status)
     _acquire_lock(ticket_id, owner=actor, take_over=take_over, reason="reject")
     diff = [{"op": "replace", "path": "/status", "value": "rejected"}]
@@ -207,6 +216,8 @@ def edit(
 
     actor = user or "unknown"
     risk_status, _ = _resolve_risk_disclosure(actor=actor, force=False)
+    if _enforce_risk_disclosure() and risk_status in {"pending", "warning", "expired"}:
+        raise ConsentRequiredError("risk disclosure consent required before edit action")
     guardrails_payload = _build_guardrails(guardrails, risk_status=risk_status)
     _acquire_lock(ticket_id, owner=actor, take_over=take_over, reason="edit")
     diff = [{"op": "replace", "path": f"/{field}", "value": value}]
@@ -430,6 +441,31 @@ def _resolve_risk_disclosure(*, actor: str | None, force: bool) -> tuple[str, st
         updated, consent_id = service.record_consent("ack_warn", user=actor)
         status = "signed" if updated.status == "accepted" else updated.status
     return status, consent_id
+
+
+def _enforce_risk_disclosure() -> bool:
+    value = os.getenv("TRADECTL_RISK_DISCLOSURE_ENFORCE")
+    if value is None:
+        return _read_risk_disclosure_flag_from_config()
+    return str(value).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _read_risk_disclosure_flag_from_config() -> bool:
+    profile = os.getenv("TRADECTL_PROFILE")
+    if not profile:
+        return False
+    path = Path("config/feature_flags.yaml")
+    if not path.exists():
+        return False
+    try:
+        payload = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    except Exception:
+        return False
+    defaults = payload.get("defaults") or {}
+    profile_defaults = defaults.get(profile)
+    if not isinstance(profile_defaults, dict):
+        return False
+    return bool(profile_defaults.get("risk_disclosure_enforce", False))
 
 
 def _build_guardrails(guardrails: Mapping[str, object] | None, *, risk_status: str) -> Mapping[str, object]:

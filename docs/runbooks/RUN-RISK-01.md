@@ -1,10 +1,10 @@
 # RUN-RISK-01: Kill Switch・リスク監視運用手順
 
 > **ACカバレッジ**: AC-03, AC-09
-> **Runbook版数**: v1.2
-> **最終更新日**: 2025-03-18
+> **Runbook版数**: v1.3
+> **最終更新日**: 2025-12-21
 > **最終更新者**: Risk Manager (Doc Maintainer)
-> **関連CLI**: `tradectl status`, `tradectl kill-switch engage`, `tradectl kill-switch release`
+> **関連CLI**: `tradectl status`, `tradectl kill-switch engage`, `tradectl kill-switch release`, `tradectl ticket approve/reject/edit`, `tradectl compliance status`
 > **イベントログ**: `logs/events/risk.assessment.jsonl`, `logs/risk/kill_switch_events.jsonl`
 
 ## 目的
@@ -27,6 +27,13 @@
 - Kill Switch解除権限を持つプロダクトオーナーがSlack/電話で即応できる体制。
 
 ## 手順
+
+### 0. リスク開示強制の確認（M1.1）
+1. `tradectl compliance status --json` を実行し、`risk_disclosure` が `accepted` または `signed` であることを確認する。
+2. `risk_disclosure_enforce` を有効化している場合、以下のいずれかが有効化されていることを確認する。  
+   - `TRADECTL_RISK_DISCLOSURE_ENFORCE=1`  
+   - `TRADECTL_PROFILE=<mode>` が設定され、`config/feature_flags.yaml` の `defaults.<mode>.risk_disclosure_enforce=true`
+3. 未承諾の場合、`tradectl ticket approve/reject/edit` が `ConsentRequiredError` で停止することを確認し、`RUN-FEATURE-FLAG-01 §5.3` のEvidenceに記録する。
 
 ### 1. 日次リスクサマリ確認（平常時）
 1. `tradectl status --history kill-switch --limit 7` を実行し、直近7日間のKill Switchイベントを確認。`state=armed`のままになっていないかチェックする。
@@ -99,6 +106,7 @@
 - **Evidence**: `reports/risk/20250318_prelaunch/reduce_only_queue.md`に日次レビュー結果・Ops/Risk/POのイニシャルを追記し、`docs/risk_review/20250318_prelaunch.md` §11.1-2へ「Closed (RUN-RISK-01 v1.2)」と記録する。
 
 ## チェックリスト
+- [ ] `risk_disclosure_enforce` の有効/無効と承諾状態を確認（M1.1）
 - [ ] 日次`tradectl diagnostics risk`でR分布/同時保有数の基準確認（Signal Boardバナーと突合）
 - [ ] Kill Switch発火時に`reports/audit/drawdown_guard/<date>.md`を作成
 - [ ] 解除前に是正タスクと`tradectl diagnostics risk --from -30d`の結果を確認

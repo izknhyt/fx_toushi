@@ -1,7 +1,12 @@
 # Schema Registry Change Log
 
+## 2025-12-21
+- Added scaffold schemas for M1+ config references: broker sandbox/error map/SLO, data sources, provider priority, ingestion priorities, event bus config, pipeline steps, compliance pretrade/risk disclosure, drift/emergency, idea/model risk registries, reconciliation/regression, KPI reports, resource budgets, margin stress presets, shadow/share/signature configs, and SLA threshold candidates. These align the design references to concrete schema files under `docs/schemas/` and mirror the runtime `schema/` directory.
+- Updated `config_bundle.schema.json` to include new config scaffolds (broker, data source, pipeline, compliance, shadow/share, and priority configs) as required entries.
+
 ## 2025-12-20
 - `guardrails_metrics.schema.json` adds `auto_execute_forced_off` to capture Hands-off降格理由 in metrics/guardrails.jsonl.
+- `guardrails_metrics.schema.json` adds `risk_disclosure` to align guardrails metrics with risk consent enforcement.
 
 ## 2025-11-23
 - Ingestion SLA logging: resync/data ingestion now uses `IngestionMetricsCollector` to emit `fetch_p95_ms/p99_ms`, `latency_status`, `retry_count`, `catch_up_lag_minutes` snapshots to `metrics/data_ingestion_sla.jsonl`; raw observations rotate daily under `metrics/raw/data_ingestion_raw_<date>.jsonl` (10万行で分割、60日gzip/90日削除の運用推奨) for EP01-P1 DataLag.

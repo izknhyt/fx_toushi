@@ -1,0 +1,14 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "IdeaPipeline",
+  "type": "object",
+  "required": ["schema_version", "stages"],
+  "properties": {
+    "schema_version": {"type": "string"},
+    "stages": {
+      "type": "array",
+      "items": {"type": "string"}
+    }
+  },
+  "additionalProperties": false
+}

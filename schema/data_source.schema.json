@@ -1,0 +1,31 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "DataSourceConfig",
+  "type": "object",
+  "required": ["schema_version", "provider", "endpoint", "rate_limit", "backfill"],
+  "properties": {
+    "schema_version": {"type": "string"},
+    "provider": {"type": "string"},
+    "endpoint": {"type": "string"},
+    "rate_limit": {
+      "type": "object",
+      "required": ["requests_per_minute", "burst"],
+      "properties": {
+        "requests_per_minute": {"type": "number", "minimum": 1},
+        "burst": {"type": "number", "minimum": 1}
+      },
+      "additionalProperties": false
+    },
+    "backfill": {
+      "type": "object",
+      "required": ["max_days", "max_symbols"],
+      "properties": {
+        "max_days": {"type": "integer", "minimum": 1},
+        "max_symbols": {"type": "integer", "minimum": 1}
+      },
+      "additionalProperties": false
+    },
+    "notes": {"type": "string"}
+  },
+  "additionalProperties": false
+}

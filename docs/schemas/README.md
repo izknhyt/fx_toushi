@@ -40,7 +40,7 @@ materials stored here serve as the authoritative source for governance reviews a
   (§3.7/§4.4.4). Governs `config/scoring.yaml`.
 - `scoreboard.schema.json` – Strategy Scoreboard thresholds, weightings, and watchlist rules
   (付録G.1/§4.4.5). Governs `config/scoreboard.yaml`.
-- `guardrails_metrics.schema.json` – Guardrail telemetry (health/board_mode/kill_switch/spread_status/reasons/exit_code/reduce_only/ack_user/manifest_hash/data_hash) logged to `metrics/guardrails.jsonl` per detailed design §90.1.1 / status CLI.
+- `guardrails_metrics.schema.json` – Guardrail telemetry (health/board_mode/kill_switch/spread_status/reasons/exit_code/reduce_only/ack_user/manifest_hash/data_hash/risk_disclosure/auto_execute_forced_off) logged to `metrics/guardrails.jsonl` per detailed design §90.1.1 / status CLI.
 - `data_ingestion_sla.jsonl`（スキーマ未固定だが運用契約） – `IngestionMetricsCollector` が resync/data fetch 過程で集計した `fetch_p95_ms`, `fetch_p99_ms`, `latency_status`, `retry_count`, `catch_up_lag_minutes` などを記録。raw観測は `metrics/raw/data_ingestion_raw_<date>.jsonl` に日次ローテーション（10万行で分割、60日後gzip/90日後削除の運用推奨）。清掃手順は `docs/runbooks/RUN-METRICS-CLEANUP.md` を参照。
 - `spread_cooldown.schema.json` – Spread/NTP/News guard metrics for `metrics/spread_cooldown.jsonl` per §90.3 and `tradectl spread inspect`.
 - `audit.health_action.schema.json` – Health action ack records (`logs/audit/health_action.jsonl`) for `tradectl status --ack` / Runbook RUN-DATA-05 evidence.
@@ -59,6 +59,11 @@ materials stored here serve as the authoritative source for governance reviews a
 - `CHANGELOG.md` – Required update log whenever schema contracts evolve. Each PR touching the
   registry must append an entry summarising the change, linked to the relevant design/runbook
   context.
+- Additional scaffolds (M1+ references): broker sandbox/error map/SLO, data sources and provider
+  priority, ingestion priorities, event bus config, pipeline steps, compliance pretrade/risk
+  disclosure, drift/emergency, idea/model risk registries, reconciliation/regression, KPI report
+  config, resource budget, margin stress presets, shadow/share/signature configs, and SLA threshold
+  candidates.
 
 ## Update workflow
 
@@ -66,8 +71,11 @@ materials stored here serve as the authoritative source for governance reviews a
 the design references.
 2. Append a new section to `CHANGELOG.md` describing the change, the impacted systems, and any
    migration notes.
-3. Mirror the update through the `schema/` symlinks and extend the validation suite in
-   `tests/schema/` so `pytest -k json_schema_validation` covers the new contract.
-4. Adjust design docs, runbooks, and READMEs so path references stay consistent.
+3. Mirror the update through the `schema/` directory using `python tools/sync_schema_registry.py`.
+   Use `python tools/sync_schema_registry.py --check` in CI to detect drift.
+4. Extend the validation suite in `tests/jsonschema/` so `pytest -k json_schema_validation` covers
+   the new contract, and update `tests/config/test_config_schema_smoke.py` if a new config scaffold
+   was added.
+5. Adjust design docs, runbooks, and READMEs so path references stay consistent.
 
 See §16.6 for the full Codex review checklist that applies to schema-level changes.

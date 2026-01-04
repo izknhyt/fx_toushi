@@ -1,0 +1,18 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ReconciliationConfig",
+  "type": "object",
+  "required": ["schema_version", "tolerances"],
+  "properties": {
+    "schema_version": {"type": "string"},
+    "tolerances": {
+      "type": "object",
+      "properties": {
+        "amount_abs": {"type": "number", "minimum": 0},
+        "amount_pct": {"type": "number", "minimum": 0}
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

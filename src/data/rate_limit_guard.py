@@ -16,6 +16,8 @@ class StageDecision:
     rate_429: float
     max_concurrent: int
     poll_interval_sec: float
+    decision_source: str | None = None
+    runbook_ref: str | None = None
 
     def to_mapping(self) -> Mapping[str, object]:
         return {
@@ -27,6 +29,8 @@ class StageDecision:
             "429_rate": self.rate_429,
             "max_concurrent": self.max_concurrent,
             "poll_interval_sec": self.poll_interval_sec,
+            "decision_source": self.decision_source,
+            "runbook_ref": self.runbook_ref,
         }
 
 
@@ -39,7 +43,15 @@ class RateLimitGuard:
         self.poll_interval_sec = poll_interval_sec
         self.stages = stages or ["stage0"]
 
-    def evaluate(self, *, provider: str, rate_429: float, current_stage: str | None = None) -> StageDecision:
+    def evaluate(
+        self,
+        *,
+        provider: str,
+        rate_429: float,
+        current_stage: str | None = None,
+        decision_source: str | None = None,
+        runbook_ref: str | None = None,
+    ) -> StageDecision:
         stage = current_stage or (self.stages[0])
         decision = "hold"
         idx = self.stages.index(stage) if stage in self.stages else 0
@@ -65,6 +77,8 @@ class RateLimitGuard:
             rate_429=rate_429,
             max_concurrent=max_concurrent,
             poll_interval_sec=poll_interval,
+            decision_source=decision_source,
+            runbook_ref=runbook_ref,
         )
 
     def _max_concurrent(self, tokens_remaining: float, poll_interval: float) -> int:

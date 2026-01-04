@@ -5880,9 +5880,25 @@ FR-58は複数ブローカー/口座の残高・ポジションを統合し、�
 
 ---
 
-## 30. 監査パッケージ生成設計（FR-59, M2準備）
+## 30. 監査パッケージ生成設計（FR-59, M1.1 Hardening最小スコープ）
 
 FR-59は月次/四半期で監査パックを生成し、外部レビューに提供する。本節では`src/audit/bundle.py`とCLI `tradectl audit bundle`の詳細を定義し、`DataManifest`・`RiskDisclosure`・`Reconciliation`など他モジュールと連携する方法を明確にする。
+
+### 30.0 M1.1 Minimal Audit Bundle Scope
+
+- **目的**: Runbook `GOV-AUD-01`をM1.1で運用可能にするため、最小の監査パック生成・検証経路を確定する。
+- **必須生成物**:
+  - `audit_pack/<period>/audit_manifest.json`（メタ情報 + ファイル一覧）
+  - `audit_pack/<period>/audit_manifest.sig`（署名）
+  - `audit_pack/<period>/signals/`（シグナル履歴）
+  - `audit_pack/<period>/tickets/`（`ticket.action.v2`）
+  - `audit_pack/<period>/fills/`（約定ログ or 手動約定記録）
+  - `audit_pack/<period>/config/`（`config/*.yaml`の差分 or スナップショット）
+  - `audit_pack/<period>/risk_disclosure/`（同意ログ + `consent_reference_id`一覧）
+- **Manifest最小フィールド**: `schema_version`, `period`, `generated_at`, `generator_version`, `files[]:{path, sha256, kind, source}`, `summary:{ticket_count, fill_count, consent_count}`。
+- **署名方式**: `tools/sign_manifest.py`と同等のSHA256 + 署名形式を採用し、`audit_manifest.sig`へ`signature`と`signer`を格納する（鍵管理はM1.1ではローカル手動）。
+- **Runbook連携**: `reports/audit/audit_pack/<period>.md`に生成結果と不足ファイルを記載し、`GOV-AUD-01`のチェックリストに添付する。
+- **スコープ外（M2+）**: WORM保管、外部共有フロー、PDF/税務連携、Ledger統合。
 
 ### 30.1 AuditBundleService (`src/audit/bundle.py`)
 
@@ -5907,14 +5923,24 @@ FR-59は月次/四半期で監査パックを生成し、外部レビューに�
 - **UX**: 生成時に進捗バー、完了後にファイル一覧とハッシュを表示。`--signer`指定で署名者メタデータを付与。
 - **Runbook**: `docs/runbooks/GOV-AUD-01.md`を更新し、生成/配布/保管手順を明記。
 - **テスト**: `tests/unit/test_audit_bundle_service.py`, `tests/integration/test_audit_bundle_cli.py`。
-- **Codex Packet**: `EP05-P7`（M2）でサービス/CLI/署名統合を実装。テスト: `pytest -k audit_bundle`, `tradectl audit bundle generate --period 2025Q1 --dry-run`。
+- **Codex Packet**: `EP05-P7`（M1.1 Minimal）でサービス/CLI/署名統合を実装し、M2で外部共有/WORM連携を拡張。テスト: `pytest -k audit_bundle`, `tradectl audit bundle generate --period 2025Q1 --dry-run`。
 - **テレメトリ**: `metrics/audit_bundle.jsonl`に`bundle_size_mb`, `files_count`, `generation_time_sec`, `verification_failures`を記録。
 
 ---
 
-## 31. リリースゲート & チェックリスト自動化設計（FR-60, M2準備）
+## 31. リリースゲート & チェックリスト自動化設計（FR-60, M1.1 Hardening最小スコープ）
 
 FR-60はリリース前の必須チェック（Backtest回帰、データソース切替、リスク承諾文言差分）を自動生成し、未完了時のタグ付けを防ぐ。本節は`src/release/gate.py`とCLI `tradectl release *`を詳細化する。
+
+### 31.0 M1.1 Minimal Release Gate Scope
+
+- **目的**: M1.1で「最低限のリリース承認ログ」を確実に残す。
+- **必須タスク**:
+  - `release_checklist.md`生成（Runbook更新・Risk Disclosure差分確認・Smokeテスト実行）
+  - `tradectl release verify`で未完タスクを検出し、`release.blocked`を監査ログへ記録
+  - `reports/audit/release/<version>.md`へ結果を保存
+- **Fail-safe**: 未完タスク検出時は`auto_execute_forced_off=true`を`metrics/guardrails.jsonl`に追記し、Board側は`guarded`バナーを表示する。
+- **スコープ外（M2+）**: Gitタグ自動化、CIブロッカー連携の完全自動化。
 
 ### 31.1 ReleaseGateService (`src/release/gate.py`)
 
@@ -5938,7 +5964,7 @@ FR-60はリリース前の必須チェック（Backtest回帰、データソー�
 - **CIフック**: `make release-verify`で`tradectl release verify`を実行し、未完了タスクをCI失敗にする。`docs/release_checklist.md`を参照。
 - **Runbook**: `docs/runbooks/OPS-RELEASE-01.md`に承認フローとトラブルシュートを記載。
 - **テスト**: `tests/unit/test_release_gate_service.py`, `tests/integration/test_release_cli.py`。
-- **Codex Packet**: `EP07-P1`（M2）でGateService/CLI/CIターゲットを実装。テスト: `pytest -k release_gate`, `tradectl release prepare --version v1.1.0 --dry-run`。
+- **Codex Packet**: `EP07-P1`（M1.1 Minimal）でGateService/CLI/CIターゲットを実装し、M2でタグ運用の自動化へ拡張。テスト: `pytest -k release_gate`, `tradectl release prepare --version v1.1.0 --dry-run`。
 - **テレメトリ**: `metrics/release_gate.jsonl`に`tasks_total`, `tasks_completed`, `blocked_reason`, `time_to_release_minutes`を記録。
 
 ---
@@ -9719,8 +9745,8 @@ EP-03では、データ/リスク/オペレーションの状態を単一ソー�
 
 **例: `metrics/guardrails.jsonl`（PoCフォーマット）**
 ```json
-{"timestamp":"2025-11-20T11:45:00Z","health_state":"warn","board_mode":"guarded","kill_switch":"soft_stop","reason":"spread_cooldown","ack_user":null}
-{"timestamp":"2025-11-20T12:05:00Z","health_state":"ok","board_mode":"normal","kill_switch":"none","reason":"resume","ack_user":"codex_ops"}
+{"timestamp":"2025-11-20T11:45:00Z","health_state":"warn","board_mode":"guarded","kill_switch":"soft_stop","reason":"spread_cooldown","risk_disclosure":"pending","ack_user":null}
+{"timestamp":"2025-11-20T12:05:00Z","health_state":"ok","board_mode":"normal","kill_switch":"none","reason":"resume","risk_disclosure":"accepted","ack_user":"codex_ops"}
 ```
 
 **例: `audit.kill_switch`**
@@ -9756,11 +9782,14 @@ EP-03では、データ/リスク/オペレーションの状態を単一ソー�
     "reduce_only": {"type": "boolean"},
     "ack_user": {"type": ["string", "null"]},
     "manifest_hash": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
-    "data_hash": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}
+    "data_hash": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "risk_disclosure": {"type": ["string", "null"], "enum": ["pending", "warning", "expired", "accepted", null]},
+    "auto_execute_forced_off": {"type": "boolean"}
   },
   "additionalProperties": true
 }
 ```
+- **整合方針**: `schema/guardrails_metrics.schema.json`は上記スキーマを正本とし、`risk_disclosure`/`auto_execute_forced_off`を追加する。`board`/`status`/`ticket.action.v2`は同一ラベルで出力し、監査・レポートが同じキーを参照する。
 - **Exit code対応**: CLIは`health_state`/`kill_switch`/`spread_status`に応じて`exit_code`を設定する（`risk_disclosure ∈ {pending,warning,expired}`→61、`kill_switch=hard_stop`→63、`kill_switch ∈ {soft_stop,guarded}`または`spread_status=block`→62、`spread_status=cooldown`または`reduce_only=true`→21、それ以外→0）。`exit_code`はスキーマ上は任意フィールドだが、CLI出力時は常に付与する。
 - **Runbook/AC連携**: Exit code 61/62/63は`RUN-RISK-01`（Kill Switch）、Exit 21は`RUN-DATA-05`（Acceptable Degradation）で扱う。AC-03/AC-34の証跡として`metrics/guardrails.jsonl`と`logs/audit/health_action.jsonl`の該当行を貼り付ける。
 - `audit.kill_switch.schema.json`（付録用）

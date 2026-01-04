@@ -1,0 +1,13 @@
+# M1 scaffold for yfinance data source
+# Schema: schema/data_source.schema.json
+
+schema_version: data_source.v1
+provider: yfinance
+endpoint: https://query1.finance.yahoo.com
+rate_limit:
+  requests_per_minute: 60
+  burst: 90
+backfill:
+  max_days: 30
+  max_symbols: 8
+notes: "public feed; no credentials in repo"

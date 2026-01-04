@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any, Mapping, MutableMapping
 
 from src.core.gate import GateState
+from src.compliance import RiskDisclosureService
 from src.core.health import (
     GuardrailSnapshot,
     HealthAction,
@@ -269,6 +270,7 @@ def status(
     """Return the current status snapshot for operators."""
 
     monitor = monitor or HealthMonitor()
+    risk_disclosure_state = RiskDisclosureService().fetch_state().status
     guardrails: dict[str, object] = {}
     if metrics_path and metrics_path.exists():
         try:
@@ -373,6 +375,7 @@ def status(
     }
 
     guardrail_payload = guardrail.to_dict()
+    guardrail_payload["risk_disclosure"] = risk_disclosure_state
     if auto_execute_forced_off:
         guardrail_payload["reasons"].append("auto_execute_forced_off")
         guardrail_payload["auto_execute_forced_off"] = True
@@ -435,6 +438,7 @@ def status(
         "ack_user": actor if ack else None,
         "manifest_hash": gate_state.cfg_hash,
         "data_hash": gate_state.data_hash,
+        "risk_disclosure": risk_disclosure_state,
     }
     if auto_execute_forced_off:
         metrics_payload["reasons"].append("auto_execute_forced_off")

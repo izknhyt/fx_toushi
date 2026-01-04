@@ -6,6 +6,7 @@ import argparse
 import json
 import sys
 import time
+from collections import deque
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -17,6 +18,8 @@ ROOT_DIR = Path(__file__).resolve().parents[1]
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
+from src.data.quality import DataQualityGuard
+from src.data.service import fetch_latest, load_provider_sla_thresholds, build_provider_handlers
 from tools.dukascopy_fetch import aggregate_to_5m, fetch_hour, parse_bi5
 
 
@@ -54,6 +57,23 @@ def _iso(ts: datetime | None) -> str | None:
     if ts is None:
         return None
     return ts.replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def parse_as_of(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    text = value.strip()
+    if not text:
+        return None
+    if text.endswith("Z"):
+        text = text[:-1] + "+00:00"
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed
 
 
 def _daterange(start: datetime, end: datetime) -> Iterable[datetime]:
@@ -135,7 +155,8 @@ def _merge_parquet(path: Path, new_df: pd.DataFrame, *, ts_col: str = "timestamp
     else:
         merged = new_df.copy()
     if ts_col in merged.columns:
-        merged = merged.drop_duplicates(subset=[ts_col]).sort_values(ts_col)
+        merged[ts_col] = pd.to_datetime(merged[ts_col], utc=True, errors="coerce")
+        merged = merged.dropna(subset=[ts_col]).drop_duplicates(subset=[ts_col]).sort_values(ts_col)
     return merged
 
 
@@ -152,50 +173,71 @@ def run_once(
     provider: str,
     timeframe: str,
     lookback_hours: int,
+    as_of: datetime | None,
     raw_dir: Path,
     curated_dir: Path,
     metrics_path: Path,
 ) -> list[IngestionResult]:
-    now = _utcnow()
-    start = now - timedelta(hours=lookback_hours)
+    anchor = as_of or _utcnow()
     results: list[IngestionResult] = []
+    guard = DataQualityGuard(expected_timeframe_minutes=5, max_gap_minutes=10)
+    provider_sla = load_provider_sla_thresholds(Path("config") / "provider_sla.yaml")
+    start = anchor - timedelta(hours=lookback_hours)
+    handlers = build_provider_handlers(timeframe=timeframe, start=_iso(start), end=_iso(anchor))
+    fetch_start = time.perf_counter()
 
+    frames = fetch_latest(
+        symbols=symbols,
+        timeframe=timeframe,
+        start=_iso(start),
+        end=_iso(anchor),
+        provider_priority=[provider] if provider != "auto" else None,
+        provider_handlers=handlers,
+        metrics_path=metrics_path,
+        provider_sla_thresholds=provider_sla,
+        data_quality_guard=guard,
+    )
+    elapsed_ms = int((time.perf_counter() - fetch_start) * 1000)
+
+    # Stage: buffer frames before processing to mirror fetch->processing separation.
+    frame_queue = deque(frames)
+    frame_by_symbol: dict[str, object] = {}
+    while frame_queue:
+        frame = frame_queue.popleft()
+        frame_by_symbol[frame.symbol.upper()] = frame
     for symbol in symbols:
-        fetch_start = time.perf_counter()
-        if provider == "dukascopy":
-            bars = _fetch_dukascopy_bars(symbol, start, now)
-        elif provider == "yfinance":
-            bars = _fetch_yfinance_bars(symbol, start, now, interval="5m")
-        else:
-            raise ValueError(f"Unsupported provider: {provider}")
-        elapsed_ms = int((time.perf_counter() - fetch_start) * 1000)
-        if bars.empty:
+        process_start = time.perf_counter()
+        frame = frame_by_symbol.get(symbol.upper())
+        bars_df = pd.DataFrame(frame.bars) if frame else pd.DataFrame()
+        if bars_df.empty:
             last_ts = None
             bar_gap = None
         else:
-            last_ts = pd.to_datetime(bars["timestamp"]).max().to_pydatetime()
-            bar_gap = int((now - last_ts).total_seconds() // 60)
+            ts_col = "timestamp" if "timestamp" in bars_df.columns else "ts" if "ts" in bars_df.columns else None
+            last_ts = pd.to_datetime(bars_df[ts_col]).max().to_pydatetime() if ts_col else None
+            bar_gap = int((anchor - last_ts).total_seconds() // 60) if last_ts else None
+            if bar_gap is not None and bar_gap < 0:
+                bar_gap = 0
 
         symbol_lower = symbol.lower()
-        raw_path = raw_dir / provider / symbol_lower / f"{now.strftime('%Y%m%d')}_m5.parquet"
+        raw_path = raw_dir / (provider if provider != "auto" else "auto") / symbol_lower / f"{anchor.strftime('%Y%m%d')}_m5.parquet"
         curated_path = curated_dir / symbol_lower / f"{symbol_lower}_m5_latest.parquet"
         raw_path.parent.mkdir(parents=True, exist_ok=True)
         curated_path.parent.mkdir(parents=True, exist_ok=True)
 
-        if not bars.empty:
-            merged_raw = _merge_parquet(raw_path, bars)
+        if not bars_df.empty:
+            merge_col = "timestamp" if "timestamp" in bars_df.columns else "ts"
+            merged_raw = _merge_parquet(raw_path, bars_df, ts_col=merge_col)
             merged_raw.to_parquet(raw_path, index=False)
-            merged_curated = _merge_parquet(curated_path, bars)
+            merged_curated = _merge_parquet(curated_path, bars_df, ts_col=merge_col)
             merged_curated.to_parquet(curated_path, index=False)
-        else:
-            merged_raw = pd.DataFrame()
-            merged_curated = pd.DataFrame()
+        processing_ms = int((time.perf_counter() - process_start) * 1000)
 
         result = IngestionResult(
             symbol=symbol.upper(),
             provider=provider,
             timeframe=timeframe,
-            bars=len(bars),
+            bars=len(bars_df),
             last_bar_ts=_iso(last_ts),
             bar_gap_minutes=bar_gap,
             raw_path=str(raw_path),
@@ -205,18 +247,30 @@ def run_once(
         results.append(result)
 
         metrics_payload = {
-            "ts": _iso(now),
+            "ts": _iso(anchor),
             "provider": provider,
             "phase": "fetch",
             "symbol": symbol.upper(),
             "timeframe": timeframe,
             "fetch_p95_ms": elapsed_ms,
             "fetch_p99_ms": elapsed_ms,
-            "status": "ok" if bars is not None else "unknown",
+            "status": "ok" if not bars_df.empty else "unknown",
             "last_bar_ts": result.last_bar_ts,
             "bar_gap_minutes": result.bar_gap_minutes,
         }
         _write_metrics(metrics_path, metrics_payload)
+        processing_payload = {
+            "ts": _iso(anchor),
+            "provider": provider,
+            "phase": "processing",
+            "symbol": symbol.upper(),
+            "timeframe": timeframe,
+            "fetch_p95_ms": processing_ms,
+            "fetch_p99_ms": processing_ms,
+            "status": "ok" if not bars_df.empty else "unknown",
+            "bars": len(bars_df),
+        }
+        _write_metrics(metrics_path, processing_payload)
 
     return results
 
@@ -227,6 +281,7 @@ def run_loop(
     provider: str,
     timeframe: str,
     lookback_hours: int,
+    as_of: datetime | None,
     raw_dir: Path,
     curated_dir: Path,
     metrics_path: Path,
@@ -241,6 +296,7 @@ def run_loop(
             provider=provider,
             timeframe=timeframe,
             lookback_hours=lookback_hours,
+            as_of=as_of,
             raw_dir=raw_dir,
             curated_dir=curated_dir,
             metrics_path=metrics_path,
@@ -255,10 +311,11 @@ def run_loop(
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run minimal Dukascopy ingestion loop.")
-    parser.add_argument("--provider", default="dukascopy", help="Provider name (dukascopy)")
+    parser.add_argument("--provider", default="auto", help="Provider name (dukascopy/yfinance/auto)")
     parser.add_argument("--symbols", default="USDJPY", help="Comma-separated symbols")
     parser.add_argument("--timeframe", default="5m", help="Timeframe label")
     parser.add_argument("--lookback-hours", type=int, default=6, help="Lookback window in hours")
+    parser.add_argument("--as-of", default=None, help="ISO timestamp to anchor the fetch window (UTC)")
     parser.add_argument("--raw-dir", default="data/raw", help="Raw output root")
     parser.add_argument("--curated-dir", default="data/research/curated", help="Curated output root")
     parser.add_argument("--metrics-path", default="metrics/data_ingestion_sla.jsonl", help="Metrics path")
@@ -272,6 +329,7 @@ def main() -> int:
     raw_dir = Path(args.raw_dir)
     curated_dir = Path(args.curated_dir)
     metrics_path = Path(args.metrics_path)
+    as_of = parse_as_of(args.as_of)
 
     if args.once:
         results = run_once(
@@ -279,6 +337,7 @@ def main() -> int:
             provider=args.provider,
             timeframe=args.timeframe,
             lookback_hours=args.lookback_hours,
+            as_of=as_of,
             raw_dir=raw_dir,
             curated_dir=curated_dir,
             metrics_path=metrics_path,
@@ -291,6 +350,7 @@ def main() -> int:
         provider=args.provider,
         timeframe=args.timeframe,
         lookback_hours=args.lookback_hours,
+        as_of=as_of,
         raw_dir=raw_dir,
         curated_dir=curated_dir,
         metrics_path=metrics_path,

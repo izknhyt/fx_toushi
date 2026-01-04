@@ -1,0 +1,12 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ComplianceRiskDisclosure",
+  "type": "object",
+  "required": ["schema_version", "required", "banner_text"],
+  "properties": {
+    "schema_version": {"type": "string"},
+    "required": {"type": "boolean"},
+    "banner_text": {"type": "string"}
+  },
+  "additionalProperties": false
+}

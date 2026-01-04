@@ -1,0 +1,15 @@
+{
+  "status": "degraded",
+  "reasons": [
+    {
+      "code": "data_latency",
+      "level": "degraded",
+      "detail": "status:error;bars:0",
+      "recommended_action": "runbook:RUN-DATA-05#enter_guarded",
+      "raised_at": "2025-12-24T11:11:11.221897+00:00"
+    }
+  ],
+  "board_mode_suggestion": "data_latency",
+  "board_mode_runbook": "docs/runbooks/RUN-DATA-05.md",
+  "kill_switch": null
+}

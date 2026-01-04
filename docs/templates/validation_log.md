@@ -46,6 +46,9 @@ signal_cycle_snapshot: reports/validation_log/evidence/<date>/board_snapshot.jso
 - [ ] `tradectl data hash`結果と記録中の`hash`フィールドが一致した
 - [ ] `fallback_applied=true`の場合、代替ソース導入と復旧条件をコメント欄に記載した
 - [ ] Validation Data Playbook台帳（`docs/validation_playbook/index.md`）の該当行にRunbook版数と証跡URLを転記した
+- [ ] `tradectl data status --auto-apply --log-stage-eval` を実行し、`logs/ops/stage_change.log`と`metrics/rate_limit_window.jsonl`に記録がある
+- [ ] `tradectl data status --suggest-guarded` を実行し、`logs/events/health_suggested.jsonl`と`snapshots/latest/health_state.json`を確認した
+- [ ] `TRADECTL_PROFILE=<mode>` または `TRADECTL_RISK_DISCLOSURE_ENFORCE=1` で `risk_disclosure_enforce` が有効になっている
 
 ## 3. 検証ログ
 | チェック | コマンド／Runbook参照 | 実施者 | 実施日時 | 結果 | 証跡パス／SHA256 |
@@ -55,6 +58,9 @@ signal_cycle_snapshot: reports/validation_log/evidence/<date>/board_snapshot.jso
 | ハッシュ再計算 | `tradectl data hash --path <dataset>` |  |  |  |  |
 | signal_cycle_snapshot チェック | `tradectl board --view strategy --save-snapshot ...`<br>`RUN-DATA-05 §2` |  |  |  |  |
 | Fallback完了ログ | `tradectl data jobs --pending` / `tradectl data ack`<br>`RUN-DATA-05 §3-6` |  |  |  |  |
+| RateLimit自動適用ログ | `tradectl data status --auto-apply --log-stage-eval`<br>`RUN-FEATURE-FLAG-01 §5.7` |  |  |  |  |
+| Guarded提案ログ | `tradectl data status --suggest-guarded`<br>`RUN-DATA-05 §2` |  |  |  |  |
+| Risk disclosure 強制 | `tradectl compliance status --json`<br>`RUN-RISK-01 §0` |  |  |  |  |
 
 ## 4. コメント
 - Ops所見:

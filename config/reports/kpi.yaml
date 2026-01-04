@@ -1,0 +1,7 @@
+# KPI report configuration scaffold
+# Schema: schema/reports_kpi.schema.json
+
+schema_version: reports_kpi.v1
+metrics:
+  - id: sharpe
+    enabled: true

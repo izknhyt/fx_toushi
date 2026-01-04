@@ -1,0 +1,8 @@
+# Concurrency profiles scaffold
+# Schema: schema/concurrency_profiles.schema.json
+
+schema_version: concurrency_profiles.v1
+profiles:
+  default:
+    max_workers: 4
+    io_workers: 2

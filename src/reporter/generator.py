@@ -131,6 +131,19 @@ def _build_ticket_context(tickets: Sequence[Mapping[str, object]]) -> dict[str, 
         "tickets_overview": tickets_overview,
         "determinism_hashes": determinism_hashes,
     }
+    advisor_count = sum(
+        1 for t in tickets if "reduce_only_advisor" in (t.get("badges") or [])
+    )
+    context.update(
+        {
+            "reduce_only_advisor_summary": f"{advisor_count} tickets flagged" if advisor_count else "0",
+            "kill_switch_history": "n/a",
+            "spread_cooldown_summary": "n/a",
+            "data_quality_summary": "n/a",
+            "resync_summary": "n/a",
+            "manual_csv_summary": "n/a",
+        }
+    )
     guardrails_obj = SimpleNamespace(
         kill_switch=guardrails.get("kill_switch"),
         spread_status=guardrails.get("spread_status"),

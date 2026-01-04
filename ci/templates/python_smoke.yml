@@ -42,6 +42,10 @@ jobs:
         displayName: 'Verify doc/runbook coverage'
 
       - script: |
+          python tools/sync_schema_registry.py --check
+        displayName: 'Verify schema registry sync'
+
+      - script: |
           make verify-config-evidence ARGS="--grace-days 2"
         displayName: 'Verify CONFIG-SCAFF-01 evidence bundle'
 

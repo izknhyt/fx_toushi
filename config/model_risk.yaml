@@ -1,0 +1,5 @@
+# Model risk registry scaffold
+# Schema: schema/model_risk.schema.json
+
+schema_version: model_risk.v1
+entries: []

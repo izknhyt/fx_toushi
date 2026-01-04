@@ -51,3 +51,14 @@ def test_feature_cache_store_records_hit_miss(tmp_path: Path) -> None:
     lines = metrics_path.read_text(encoding="utf-8").splitlines()
     statuses = [json.loads(line)["status"] for line in lines]
     assert statuses == ["miss", "store", "hit"]
+
+
+def test_feature_pipeline_loads_pipeline_steps(project_root: Path) -> None:
+    pipeline = FeaturePipeline.from_default_files(
+        feature_config_path=project_root / "config" / "feature_pipeline.yaml",
+        pipeline_steps_path=project_root / "config" / "pipeline" / "m1_core.yaml",
+    )
+
+    steps = pipeline.pipeline_steps
+    assert steps
+    assert steps[0]["id"] == "resample"

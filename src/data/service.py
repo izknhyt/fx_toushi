@@ -11,13 +11,18 @@ from __future__ import annotations
 import json
 import logging
 import time
-from dataclasses import dataclass
-from datetime import datetime
 from collections import deque
+from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Callable, Sequence, Mapping, Iterable, Any
+from typing import Any, Callable, Iterable, Mapping, Sequence, TYPE_CHECKING
+
+import yaml
 
 from src.data.rate_limit_guard import RateLimitGuard, StageDecision
+
+if TYPE_CHECKING:
+    from src.data.quality import DataQualityGuard
 
 
 @dataclass(slots=True)
@@ -26,6 +31,7 @@ class WorkerPlan:
     stage: str
     poll_interval_sec: float
     max_workers: int
+
 __all__ = [
     "MarketRequest",
     "MarketFrame",
@@ -44,6 +50,11 @@ __all__ = [
     "spawn_provider_workers",
     "drain_buffers",
     "load_provider_sla_thresholds",
+    "load_provider_priority",
+    "load_ingestion_priorities",
+    "resolve_provider_priority",
+    "order_symbols_by_priority",
+    "build_provider_handlers",
     "IngestionMetricsCollector",
     "WorkerPlan",
     "run_worker_plan",
@@ -52,6 +63,135 @@ __all__ = [
 
 logger = logging.getLogger(__name__)
 DEFAULT_METRICS_PATH = Path("metrics") / "data_ingestion_sla.jsonl"
+DEFAULT_PROVIDER_PRIORITY_PATH = Path("config") / "provider_priority.yaml"
+DEFAULT_INGESTION_PRIORITY_PATH = Path("config") / "ingestion" / "priorities.yaml"
+
+
+def load_provider_priority(
+    path: Path = DEFAULT_PROVIDER_PRIORITY_PATH,
+) -> Mapping[str, Any]:
+    """Load provider priority configuration from YAML."""
+
+    if not path.exists():
+        return {}
+    payload = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    if not isinstance(payload, dict):
+        return {}
+    return payload
+
+
+def resolve_provider_priority(
+    symbols: Sequence[str],
+    *,
+    provider_priority: Sequence[str] | None = None,
+    config_path: Path = DEFAULT_PROVIDER_PRIORITY_PATH,
+) -> list[str]:
+    """Resolve provider priority list using config defaults and per-symbol overrides."""
+
+    if provider_priority:
+        return list(provider_priority)
+    config = load_provider_priority(config_path)
+    per_symbol = config.get("per_symbol") or {}
+    default_order = config.get("default_order") or []
+    if symbols and len(set(symbols)) == 1:
+        override = per_symbol.get(symbols[0])
+        if override:
+            return list(override)
+    if default_order:
+        return list(default_order)
+    return ["primary"]
+
+
+def load_ingestion_priorities(
+    path: Path = DEFAULT_INGESTION_PRIORITY_PATH,
+) -> Mapping[str, Mapping[str, float]]:
+    """Load ingestion priority weights for symbols/timeframes."""
+
+    if not path.exists():
+        return {}
+    payload = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    if not isinstance(payload, dict):
+        return {}
+    symbol_weight = payload.get("symbol_weight") or {}
+    timeframe_weight = payload.get("timeframe_weight") or {}
+    return {"symbol_weight": symbol_weight, "timeframe_weight": timeframe_weight}
+
+
+def order_symbols_by_priority(
+    symbols: Sequence[str],
+    *,
+    timeframe: str,
+    priorities: Mapping[str, Mapping[str, float]] | None = None,
+) -> list[str]:
+    """Sort symbols by configured weights to stabilize ingestion ordering."""
+
+    if not priorities:
+        return list(symbols)
+    symbol_weight = priorities.get("symbol_weight", {})
+    timeframe_weight = priorities.get("timeframe_weight", {})
+    tf_weight = float(timeframe_weight.get(timeframe, 1.0))
+
+    def _score(symbol: str) -> float:
+        return float(symbol_weight.get(symbol, 1.0)) * tf_weight
+
+    return sorted(symbols, key=_score, reverse=True)
+
+
+def build_provider_handlers(
+    *,
+    timeframe: str,
+    start: str | None = None,
+    end: str | None = None,
+) -> dict[str, Callable[[Sequence[str], str], ProviderResult | list[MarketFrame]]]:
+    """Build default provider handlers for known adapters."""
+
+    handlers: dict[str, Callable[[Sequence[str], str], ProviderResult | list[MarketFrame]]] = {}
+    try:
+        from src.data.providers.yahoo import YahooProvider
+
+        yahoo = YahooProvider()
+
+        def _yahoo_handler(symbols: Sequence[str], timeframe: str) -> list[MarketFrame]:
+            request = MarketRequest(symbols=symbols, timeframe=timeframe, start=start, end=end)
+            return list(yahoo.fetch_bars(request))
+
+        handlers["yfinance"] = _yahoo_handler
+    except Exception:
+        pass
+    try:
+        from src.data.providers.dukascopy import DukascopyProvider
+
+        duka = DukascopyProvider()
+
+        def _duka_handler(symbols: Sequence[str], timeframe: str) -> list[MarketFrame]:
+            request = MarketRequest(symbols=symbols, timeframe=timeframe, start=start, end=end)
+            return list(duka.fetch_bars(request))
+
+        handlers["dukascopy"] = _duka_handler
+    except Exception:
+        pass
+    try:
+        from src.data.providers.local_parquet import parquet_provider
+
+        def _local_handler(symbols: Sequence[str], timeframe: str) -> ProviderResult:
+            return parquet_provider(symbols=symbols, timeframe=timeframe)
+
+        handlers["local_parquet"] = _local_handler
+    except Exception:
+        pass
+    try:
+        from src.data.providers.csv_loader import CsvLoaderProvider
+
+        manual = CsvLoaderProvider()
+
+        def _manual_handler(symbols: Sequence[str], timeframe: str) -> list[MarketFrame]:
+            request = MarketRequest(symbols=symbols, timeframe=timeframe, start=start, end=end)
+            return list(manual.fetch_bars(request))
+
+        handlers["manual_csv"] = _manual_handler
+    except Exception:
+        pass
+    return handlers
 
 
 # ---------------------------------------------------------------------------
@@ -258,6 +398,10 @@ class DataSourceDown(ProviderError):
 class DataQualityError(DataIngestionError):
     """Raised when ``DataQualityGuard`` rejects a frame."""
 
+    def __init__(self, message: str, *, details: Mapping[str, Any] | None = None) -> None:
+        super().__init__(message)
+        self.details = details or {}
+
 
 class BackfillRangeError(DataIngestionError):
     """Raised when a requested backfill window is invalid."""
@@ -285,7 +429,7 @@ class BufferDrainError(DataIngestionError):
 
 
 def _utcnow_iso() -> str:
-    return datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
+    return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
 def _percentile(values: Iterable[float], percentile: float) -> float | None:
@@ -365,11 +509,39 @@ def _evaluate_rate_limit(
     guard: RateLimitGuard,
     state: Mapping[str, str],
     log_path: Path | None,
+    decision_source: str | None = None,
+    runbook_ref: str | None = None,
 ) -> StageDecision:
     current_stage = state.get(provider)
-    decision = guard.evaluate(provider=provider, rate_429=rate_limit_ratio, current_stage=current_stage)
+    decision = guard.evaluate(
+        provider=provider,
+        rate_429=rate_limit_ratio,
+        current_stage=current_stage,
+        decision_source=decision_source,
+        runbook_ref=runbook_ref,
+    )
     _log_stage_eval(decision, log_path=log_path)
     return decision
+
+
+def _load_rate_limit_state(path: Path | None) -> dict[str, str]:
+    if path is None or not path.exists():
+        return {}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return {}
+    if not isinstance(payload, dict):
+        return {}
+    return {str(k): str(v) for k, v in payload.items()}
+
+
+def _persist_rate_limit_state(path: Path | None, state: Mapping[str, str]) -> None:
+    if path is None:
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8") as handle:
+        handle.write(json.dumps(state, ensure_ascii=False, indent=2))
 
 
 def _compute_latency_status(p95_ms: float, *, warn_ms: float = 1_000.0, breach_ms: float = 1_500.0) -> str:
@@ -383,17 +555,28 @@ def _compute_latency_status(p95_ms: float, *, warn_ms: float = 1_000.0, breach_m
 
 
 def load_provider_sla_thresholds(path: Path) -> Mapping[str, tuple[float, float]]:
-    """Load provider-specific SLA thresholds from JSON/YAML (JSON subset)."""
+    """Load provider-specific SLA thresholds from JSON/YAML."""
 
     if not path.exists():
         return {}
-    try:
-        raw = json.loads(path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError as exc:
-        logger.error("data.sla_thresholds.invalid_json", extra={"path": str(path), "error": str(exc)})
-        return {}
+    text = path.read_text(encoding="utf-8")
+    raw = None
+    stripped = text.lstrip()
+    if stripped.startswith("{") or stripped.startswith("["):
+        try:
+            raw = json.loads(text)
+        except json.JSONDecodeError:
+            raw = None
+    if raw is None:
+        try:
+            raw = yaml.safe_load(text)
+        except Exception:
+            logger.error("data.sla_thresholds.invalid_json", extra={"path": str(path)})
+            return {}
     if not isinstance(raw, dict):
         return {}
+    if "providers" in raw and isinstance(raw["providers"], dict):
+        raw = raw["providers"]
     thresholds: dict[str, tuple[float, float]] = {}
     for provider, obj in raw.items():
         if not isinstance(obj, dict):
@@ -426,7 +609,10 @@ def _invoke_provider(
 ) -> ProviderResult:
     if handler is None:
         return _default_provider_fetch(symbols, timeframe)
-    result = handler(symbols, timeframe)
+    try:
+        result = handler(symbols, timeframe)
+    except Exception as exc:
+        raise ProviderError(f"provider {provider} failed: {exc}") from exc
     if isinstance(result, ProviderResult):
         return result
     if isinstance(result, list):
@@ -443,6 +629,8 @@ def fetch_latest(
     symbols: Sequence[str],
     timeframe: str,
     *,
+    start: str | None = None,
+    end: str | None = None,
     provider_priority: Sequence[str] | None = None,
     context: object | None = None,
     retries: int = 2,
@@ -453,20 +641,27 @@ def fetch_latest(
     breach_ms: float = 1_500.0,
     provider_sla_thresholds: Mapping[str, tuple[float, float]] | None = None,
     metrics_collector: "IngestionMetricsCollector | None" = None,
+    data_quality_guard: "DataQualityGuard | None" = None,
     rate_limit_guard: RateLimitGuard | None = None,
     rate_limit_state: dict[str, str] | None = None,
     rate_limit_log_path: Path | None = None,
+    rate_limit_state_path: Path | None = None,
+    auto_apply_rate_limit_stage: bool = False,
+    rate_limit_decision_source: str | None = None,
+    rate_limit_runbook_ref: str | None = None,
     worker_plan: WorkerPlan | None = None,
     apply_worker_plan: bool = False,
 ) -> list[MarketFrame]:
     """Fetch the most recent bars for the requested symbols and log SLA metrics."""
 
     _ = context  # reserved for future wiring
-    providers = list(provider_priority or ("primary",))
+    priorities = load_ingestion_priorities()
+    symbols = order_symbols_by_priority(symbols, timeframe=timeframe, priorities=priorities)
+    providers = resolve_provider_priority(symbols, provider_priority=provider_priority)
     frames: list[MarketFrame] = []
-    handler_map = provider_handlers or {}
+    handler_map = provider_handlers or build_provider_handlers(timeframe=timeframe, start=start, end=end)
     provider_sla_thresholds = provider_sla_thresholds or {}
-    rate_limit_state = rate_limit_state if rate_limit_state is not None else {}
+    rate_limit_state = rate_limit_state if rate_limit_state is not None else _load_rate_limit_state(rate_limit_state_path)
     provider_plans: Mapping[str, WorkerPlan] = {}
     if rate_limit_guard:
         for provider in providers:
@@ -496,6 +691,14 @@ def fetch_latest(
                 )
                 elapsed_ms = (time.perf_counter() - start) * 1000
                 local_frames = result.frames
+                if data_quality_guard:
+                    for frame in local_frames:
+                        quality = data_quality_guard.validate(frame)
+                        if quality.status in {"fail", "error"}:
+                            raise DataQualityError(
+                                f"data_quality_failed: {quality.issues}",
+                                details={"issues": quality.issues, "status": quality.status},
+                            )
                 rate_limit_ratio = result.rate_limit_ratio
                 p95_ms = result.p95_ms
                 p99_ms = result.p99_ms
@@ -526,8 +729,9 @@ def fetch_latest(
                     metrics_path=metrics_path,
                 )
                 break
-            except ProviderError as exc:
+            except (ProviderError, DataQualityError) as exc:
                 elapsed_ms = (time.perf_counter() - start) * 1000 if "start" in locals() else 0.0
+                local_frames = []
                 if metrics_collector:
                     metrics_collector.observe(
                         provider=provider,
@@ -539,7 +743,12 @@ def fetch_latest(
                         rate_limit_ratio=getattr(exc, "rate_limit_ratio", 0.0),
                         success=False,
                     )
-                logger.warning("data.fetch_latest.retry", extra={"provider": provider, "error": str(exc), "attempt": attempt})
+                logger.warning(
+                    "data.fetch_latest.retry provider=%s error=%s attempt=%s",
+                    provider,
+                    str(exc),
+                    attempt,
+                )
                 _log_sla_entry(
                     provider=provider,
                     timeframe=timeframe,
@@ -585,8 +794,11 @@ def fetch_latest(
                         guard=rate_limit_guard,
                         state=rate_limit_state,
                         log_path=rate_limit_log_path,
+                        decision_source=rate_limit_decision_source,
+                        runbook_ref=rate_limit_runbook_ref,
                     )
-                    rate_limit_state[target_provider] = decision.stage
+                    if auto_apply_rate_limit_stage:
+                        rate_limit_state[target_provider] = decision.stage
             return _job
 
         job_queue = [(provider, _make_job(provider)) for provider in providers]
@@ -613,6 +825,14 @@ def fetch_latest(
                 )
                 elapsed_ms = (time.perf_counter() - start) * 1000
                 frames = result.frames
+                if data_quality_guard:
+                    for frame in frames:
+                        quality = data_quality_guard.validate(frame)
+                        if quality.status in {"fail", "error"}:
+                            raise DataQualityError(
+                                f"data_quality_failed: {quality.issues}",
+                                details={"issues": quality.issues, "status": quality.status},
+                            )
                 p95_ms = result.p95_ms
                 p99_ms = result.p99_ms
                 if metrics_collector:
@@ -642,8 +862,9 @@ def fetch_latest(
                     metrics_path=metrics_path,
                 )
                 break
-            except ProviderError as exc:
+            except (ProviderError, DataQualityError) as exc:
                 elapsed_ms = (time.perf_counter() - start) * 1000 if "start" in locals() else 0.0
+                frames = []
                 if metrics_collector:
                     metrics_collector.observe(
                         provider=provider,
@@ -655,7 +876,12 @@ def fetch_latest(
                         rate_limit_ratio=getattr(exc, "rate_limit_ratio", 0.0),
                         success=False,
                     )
-                logger.warning("data.fetch_latest.retry", extra={"provider": provider, "error": str(exc), "attempt": attempt})
+                logger.warning(
+                    "data.fetch_latest.retry provider=%s error=%s attempt=%s",
+                    provider,
+                    str(exc),
+                    attempt,
+                )
                 _log_sla_entry(
                     provider=provider,
                     timeframe=timeframe,
@@ -688,8 +914,11 @@ def fetch_latest(
                 guard=rate_limit_guard,
                 state=rate_limit_state,
                 log_path=rate_limit_log_path,
+                decision_source=rate_limit_decision_source,
+                runbook_ref=rate_limit_runbook_ref,
             )
-            rate_limit_state[provider] = decision.stage
+            if auto_apply_rate_limit_stage:
+                rate_limit_state[provider] = decision.stage
             if decision.decision == "rollback" and provider != providers[-1]:
                 frames = []
                 logger.info("data.fetch_latest.failover_rate_limit", extra={"from": provider, "reason": "rate_limit_high"})
@@ -709,6 +938,8 @@ def fetch_latest(
             rate_limit_ratio=1.0,
             metrics_path=metrics_path,
         )
+    if auto_apply_rate_limit_stage:
+        _persist_rate_limit_state(rate_limit_state_path, rate_limit_state)
     return frames
 
 
