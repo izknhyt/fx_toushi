@@ -1,0 +1,114 @@
+{
+  "version": "m1-20260108",
+  "generated_at": "2026-01-08T11:37:10Z",
+  "tasks": [
+    {
+      "task_id": "risk_state_json_status_accepted_consent_reference_id_accepted_at_consent_reference_id_id",
+      "label": "`risk_state.json` が `status: accepted` で `consent_reference_id` / `accepted_at` がセットされている（consent_reference_id=`<id>`）",
+      "status": "pass",
+      "evidence_path": "reports/validation_log/risk_state_20260108.json"
+    },
+    {
+      "task_id": "docs_change_requests_cr_id",
+      "label": "`docs/change_requests/` の未クローズ項目なし（CR-<id>）",
+      "status": "pass",
+      "evidence_path": "reports/validation_log/change_requests_closed_20260108.md"
+    },
+    {
+      "task_id": "kill_switch_spread_reduce_only_tradectl_status_json_exit_code_0_21_reports_validation_log_release_status_date_json",
+      "label": "Kill Switch/Spread/Reduce-Only 状態が `tradectl status --json` で正常（Exit Code 0 または 21）である証跡: `reports/validation_log/release_status_<date>.json`",
+      "status": "pass",
+      "evidence_path": "reports/validation_log/release_status_20260108.json"
+    },
+    {
+      "task_id": "pytest_k_smoke_reports_implementation_date_smoke_log",
+      "label": "`pytest -k smoke` 実行結果を添付（ログまたはサマリ）: `reports/implementation/<date>_smoke.log`",
+      "status": "pass",
+      "evidence_path": "reports/implementation/20260108_smoke.log"
+    },
+    {
+      "task_id": "packet_config_schema_smoke_strategy_determinism_strategy_manifest_ticket_builder_json_schema_validation",
+      "label": "Packet対応テストが緑（config_schema_smoke / strategy_determinism / strategy_manifest / ticket_builder / json_schema_validation）",
+      "status": "pass",
+      "evidence_path": "reports/validation_log/m1_packet_tests_20260108.log"
+    },
+    {
+      "task_id": "lint_format_ruff_version_black_check_version",
+      "label": "Lint/format: `ruff <version>` と `black --check <version>` の結果を記録",
+      "status": "fail",
+      "evidence_path": "reports/validation_log/ruff_black_20260108.log"
+    },
+    {
+      "task_id": "config_schema_validate_reports_validation_log_config_schema_date_json",
+      "label": "`config/` の変更は `schema-validate` 済み（証跡: `reports/validation_log/config_schema_<date>.json`）",
+      "status": "pass",
+      "evidence_path": "reports/validation_log/config_schema_20260108.log"
+    },
+    {
+      "task_id": "snapshots_latest_gate_state_json",
+      "label": "スナップショット/バックアップ最新: `snapshots/latest/gate_state.json`（更新時刻を記載）",
+      "status": "pass",
+      "evidence_path": "reports/validation_log/gate_state_guardrails_20260108.md"
+    },
+    {
+      "task_id": "metrics_guardrails_jsonl_exit_code_spread_status_reduce_only",
+      "label": "`metrics/guardrails.jsonl` 最新行に `exit_code` / `spread_status` / `reduce_only` が記録されている",
+      "status": "pass",
+      "evidence_path": "reports/validation_log/gate_state_guardrails_20260108.md"
+    },
+    {
+      "task_id": "tradectl_status_json_runbook_run_data_05_run_risk_02_reports_validation_log_release_status_date_json",
+      "label": "`tradectl status --json` 出力をRunbookに添付（`RUN-DATA-05`/`RUN-RISK-02`）: `reports/validation_log/release_status_<date>.json`",
+      "status": "pass",
+      "evidence_path": "reports/validation_log/release_status_20260108.json"
+    },
+    {
+      "task_id": "tradectl_resync_failover_report_reports_ops_resync_date_md",
+      "label": "`tradectl resync --failover-report` の最新証跡: `reports/ops/resync/<date>.md`",
+      "status": "pass",
+      "evidence_path": "reports/ops/resync/20260108T113704.116272Z.md"
+    },
+    {
+      "task_id": "docs_runbooks_daily_agenda_md",
+      "label": "日次/週次アジェンダ連携: `docs/runbooks/daily_agenda/*.md` にオープン項目なし",
+      "status": "pass",
+      "evidence_path": "reports/validation_log/daily_agenda_no_open_items_20260108.md"
+    },
+    {
+      "task_id": "cron_03_00_logs_cleanup_metrics_date_log",
+      "label": "メトリクス清掃cron登録（毎日03:00）と手動初回実行: `logs/cleanup/metrics_<date>.log`",
+      "status": "pass",
+      "evidence_path": "reports/validation_log/personal_use_waivers_20260108.md"
+    },
+    {
+      "task_id": "ruff_version",
+      "label": "`ruff <version>` 実行（既存違反数と差分扱いを記録）",
+      "status": "fail",
+      "evidence_path": "reports/validation_log/ruff_black_20260108.log"
+    },
+    {
+      "task_id": "black_check_version",
+      "label": "`black --check <version>` 実行（要整形ファイル数を記録）",
+      "status": "fail",
+      "evidence_path": "reports/validation_log/ruff_black_20260108.log"
+    },
+    {
+      "task_id": "product_owner_date",
+      "label": "Product Owner: ____________________ Date: __________",
+      "status": "pass",
+      "evidence_path": "reports/validation_log/personal_use_waivers_20260108.md"
+    },
+    {
+      "task_id": "ops_manager_date",
+      "label": "Ops Manager: ____________________ Date: __________",
+      "status": "pass",
+      "evidence_path": "reports/validation_log/personal_use_waivers_20260108.md"
+    },
+    {
+      "task_id": "risk_officer_date",
+      "label": "Risk Officer (必要に応じて): ____________________ Date: __________",
+      "status": "pass",
+      "evidence_path": "reports/validation_log/personal_use_waivers_20260108.md"
+    }
+  ]
+}

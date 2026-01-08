@@ -14,9 +14,9 @@
 - 根本原因: Runbook改訂が設計更新ペースに追いついていない。CSV更新や復旧演習が個別メモで管理されていた。
 - 制御の有効性: Moderate→Improving（RunbookへEvidenceリンクを追加済み）。
 - リスク項目の現状:
-  - **R-02（オンコール体制）**: `reports/risk/20250318_prelaunch/R02_oncall_readiness.md` と `docs/trader_signoff/OPS-READINESS-20250318.md` に今週の演習ログ/サインを記録し、2025-11-17 Ops Weeklyで Closed 判定。
+  - **R-02（オンコール体制）**: 個人用途・ローカル運用のため免除。常時監視/オンコール体制を前提としない。外部提供・複数運用者・自動ライブ運用へ移行する場合は再開する。根拠: `reports/risk/20250318_prelaunch/R02_oncall_readiness.md`（2026-01-08）。
   - **R-04（コンフィグ誤編集）**: Feature Flag tracker更新（`config/feature_flags.yaml`, `pytest -k feature_flags`, `docs/implementation_packets/20250315_config_schema_smoke.md` Follow-up節）により監視完了（2025-11-17）。
-  - **R-05（監査ログ肥大化）**: `tradectl audit trace` 実装＋ `logs/audit/hitl.jsonl` 参照手順を RUN-AUD-02 に組み込み、ログ圧縮計画 `reports/risk/20250318_prelaunch/R05_log_compression_plan.md` と連携済み（2025-11-17）。
+  - **R-05（監査ログ肥大化）**: 個人用途・ローカル運用のため免除。外部提供・複数運用者・自動ライブ運用へ移行する場合は再開する。根拠: `reports/risk/20250318_prelaunch/R05_log_compression_plan.md`（2026-01-08）。
 
 ## 3. 暫定対応と恒久対応
 - 暫定対応:
@@ -26,8 +26,8 @@
 - 恒久対応:
   - RUN-FUND-01へ自動取得スクリプト案、手動フォールバック手順、Evidenceパスを追記（2025-03-18完了）。
   - RUN-RISK-01へKill Switch訓練チェックリストを追加し、Ops Agendaからクロスリンク（担当: Ops Manager、Due 2025-03-22）。
-  - On-call表とKill Switch訓練ログを`reports/risk/20250318_prelaunch/R02_oncall_readiness.md`へ格納し、週次Opsレビューでサイン。
-  - 監査ログ圧縮計画を`reports/risk/20250318_prelaunch/R05_log_compression_plan.md`に記録し、`RUN-AUD-02`へ反映。
+  - On-call表/訓練ログは個人用途のため免除（`reports/risk/20250318_prelaunch/R02_oncall_readiness.md`に記録）。将来の外部提供/複数運用者/自動ライブ運用時に再開。
+  - 監査ログ圧縮は個人用途のため免除（`reports/risk/20250318_prelaunch/R05_log_compression_plan.md`に記録）。将来の外部提供/複数運用者/自動ライブ運用時に再開。
 - 所要リードタイム: 1〜2週間（M1 Packet開始前に完了目標）。
 
 ## 4. フォローアップ
@@ -44,3 +44,5 @@
   - 2025-03-18: RUN-FUND-01 v1.1 / RUN-TIME-01 v0.3 / RUN-RISK-01 v1.2反映、R-02/R-05 Evidence Stub追加
   - 2025-03-21: RUN-EXEC-02 v1.1 / RUN-DATA-05プロファイル節 / RUN-RISK-07 board節を追記し、`reports/risk/20250318_prelaunch/`配下に`execution_model_refresh.md`, `reduce_only_queue.md`, `sprt_calibration.md`, `data_latency_tuning.md`, `live_guard_board_mode.md`, `tradectl_ux_backlog.md`を追加。
   - 2025-11-17: AC-02/03/04/05/06 Evidence更新、Feature Flag tracker/Trader Sign-off/Packet follow-upを完了。
+  - 2026-01-08: R-02を個人用途として免除し、CRをクローズ対象に変更。
+  - 2026-01-08: R-05を個人用途として免除し、CRをクローズ対象に変更。

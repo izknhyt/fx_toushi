@@ -1,0 +1,33 @@
+# config/board_modes.yaml -- CONFIG-SCAFF-01 scaffold
+# 詳細設計 §2.5 / §3.5 (BoardModeガード設計) と Runbook RUN-SPREAD-03・RUN-DATA-05 を参照。
+# Schema: docs/schemas/board_modes.schema.json （schema_version 更新時に要同期）。
+
+schema_version: 0  # TODO: BoardMode スキーマ確定時に更新
+modes:
+  normal:
+    description: "通常運用。新規提案/承認が許可される基本状態。"
+    allow_new_signals: true
+    allow_reduce_only: true
+    manual_ack_required: false
+  guarded:
+    description: "Acceptable Degradation または軽微なデータ遅延時に選択。Reduce-Only のみ許可。"
+    allow_new_signals: false
+    allow_reduce_only: true
+    manual_ack_required: true
+    escalation_links:
+      - docs/runbooks/RUN-DATA-05.md#手順
+      - docs/runbooks/RUN-SPREAD-03.md#手順
+      - reports/validation_log/AC-45_sla_20250220.md
+    guardrails:
+      degraded_reasons:
+        - data_latency_fetch
+        - spread_anomaly
+        - ops_readiness_low
+  halted:
+    description: "Kill Switch 発火や重大障害時の完全停止モード。"
+    allow_new_signals: false
+    allow_reduce_only: false
+    manual_ack_required: true
+    escalation_links:
+      - docs/runbooks/RUN-RISK-01.md#ドローダウン閾値到達時の対応ac-03
+      - docs/runbooks/OPS-READINESS-01.md

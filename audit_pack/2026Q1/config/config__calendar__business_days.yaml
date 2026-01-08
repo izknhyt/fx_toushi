@@ -1,0 +1,6 @@
+# Business days calendar scaffold
+# Schema: schema/business_days.schema.json
+
+schema_version: business_days.v1
+timezone: UTC
+holidays: []

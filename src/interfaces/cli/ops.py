@@ -27,6 +27,7 @@ from src.ops.profit_readiness import (
     profit_status_from_exit,
 )
 from src.core.gate import GateAggregator, GateState
+from src.ops_readiness import OpsReadinessEvaluatorStub
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +44,8 @@ __all__ = [
 
 DEFAULT_GATE_STATE_PATH = Path("snapshots/latest/gate_state.json")
 DEFAULT_OPS_WORKLOG_PATH = Path("ops_worklog.jsonl")
+DEFAULT_OPS_READINESS_CONFIG = Path("config/ops_readiness.yaml")
+DEFAULT_OPS_READINESS_METRICS = Path("metrics/ops_readiness.jsonl")
 
 
 def _utcnow() -> str:
@@ -125,6 +128,12 @@ def readiness(
     *,
     explain: bool = False,
     period: str = "weekly",
+    include_ops: bool = True,
+    ops_config_path: Path = DEFAULT_OPS_READINESS_CONFIG,
+    ops_metrics_path: Path = DEFAULT_OPS_READINESS_METRICS,
+    ops_max_age_days: int = 14,
+    output: str = "json",
+    save: Path | None = None,
     include_profit: bool = False,
     profit_path: Path = DEFAULT_PROFIT_READINESS_PATH,
     profit_limit: int = 5,
@@ -148,12 +157,33 @@ def readiness(
     payload: dict[str, object] = {
         "period": period,
         "explain": explain,
+        "ops_readiness": None,
         "profit_readiness": None,
         "profit_readiness_summary": None,
         "recorded": None,
         "verified": None,
         "auto_execute": None,
     }
+
+    if include_ops:
+        evaluator = OpsReadinessEvaluatorStub(
+            config_path=ops_config_path,
+            max_age_days=ops_max_age_days,
+        )
+        result = evaluator.evaluate()
+        ops_payload = {
+            "score": result.score,
+            "status": result.status,
+            "notes": result.notes,
+            "evidence": result.evidence,
+            "missing": result.missing,
+            "thresholds": dict(result.thresholds),
+            "runbook_ref": result.runbook_ref,
+            "generated_at": result.generated_at,
+            "exit_code": result.exit_code,
+        }
+        payload["ops_readiness"] = ops_payload
+        _append_jsonl(ops_metrics_path, ops_payload)
 
     if include_profit:
         recorded_entry = None
@@ -242,7 +272,40 @@ def readiness(
                 )
 
     logger.info("cli.ops.readiness.completed", extra={"include_profit": include_profit})
+    payload["output"] = output
+    payload["save_path"] = str(save) if save else None
+    if save:
+        _write_output(save, payload, output_format=output)
     return payload
+
+
+def _write_output(path: Path, payload: dict[str, object], *, output_format: str) -> None:
+    fmt = (output_format or "json").lower()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if fmt == "md":
+        path.write_text(_render_markdown(payload), encoding="utf-8")
+        return
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def _render_markdown(payload: dict[str, object]) -> str:
+    ops_payload = payload.get("ops_readiness") or {}
+    lines = [
+        "# Ops Readiness Summary",
+        "",
+        f"- Period: {payload.get('period')}",
+        f"- Generated At: {ops_payload.get('generated_at')}",
+        f"- Status: {ops_payload.get('status')}",
+        f"- Score: {ops_payload.get('score')}",
+        f"- Runbook: {ops_payload.get('runbook_ref')}",
+        "",
+        "## Missing Evidence",
+        "```json",
+        json.dumps(ops_payload.get("missing"), ensure_ascii=False, indent=2),
+        "```",
+        "",
+    ]
+    return "\n".join(lines)
 
 
 def agenda(date: str, *, out: str | None = None) -> str:

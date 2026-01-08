@@ -1,0 +1,6 @@
+# Broker SLO thresholds (scaffold)
+# Schema: schema/broker_slo.schema.json
+
+schema_version: broker_slo.v1
+latency_ms_p95: 800
+fill_rate_min: 0.95

@@ -7,7 +7,12 @@
     "health_state",
     "board_mode",
     "kill_switch",
-    "reason"
+    "spread_status",
+    "reason",
+    "risk_disclosure",
+    "profit_readiness_status",
+    "auto_execute",
+    "auto_execute_forced_off"
   ],
   "properties": {
     "timestamp": { "type": "string", "format": "date-time" },
@@ -24,6 +29,8 @@
     "manifest_hash": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
     "data_hash": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
     "risk_disclosure": { "type": ["string", "null"], "enum": ["pending", "warning", "expired", "accepted", null] },
+    "profit_readiness_status": { "type": "string", "enum": ["ok", "guarded", "halted", "stale"] },
+    "auto_execute": { "type": "boolean" },
     "auto_execute_forced_off": { "type": "boolean" }
   },
   "additionalProperties": true

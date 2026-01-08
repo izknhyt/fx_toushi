@@ -12,6 +12,7 @@
 | risk_disclosure_enforce | 2025-02-20 | EP04-P1 | TraderへRiskDisclosure必須化 | config/profile_live.yaml §5.15 | Live:true / Paper:false | `git checkout -- config/profile_live.yaml` | `metrics/risk_disclosure.jsonl` | 2025-02-21 Ops |
 | jsonschema_referencing_registry | 2025-03-22 | PKG-JSON-SCHEMA-01 | JSON Schemaバリデーションを`referencing`レジストリへ切替え、RefResolver廃止 | src/core/schema_registry.py / src/interfaces/cli/schema_validate.py / tests/jsonschema/*.py / tests/config/test_config_schema_smoke.py | 全環境: true | `git revert <commit>` または `restore src/core/schema_registry.py` + `tests/*`でRefResolver復旧後 `poetry run pytest tests/jsonschema -k json_schema_validation` 実行 | `poetry run pytest tests/jsonschema -k json_schema_validation`, `poetry run schema-validate …` | 2025-03-22 Ops (prep) |
 
+- PKG-STRAT-IFACE-01: Strategy Plugin ProtocolはFeature Flag追加なし（ロールバックは通常のコードリバートで対応）。
 - 新規Flagを追加する際はRunbook更新のPull Requestと紐づけ、承認コメントに`Feature Flag Register updated`を記載する。
 - 廃止済みFlagは別セクション「Retired Flags」に移動し、撤去日と削除コミットIDを必ず記録する。
 - Flagのレビューサイクルは四半期ごとに実施し、非アクティブFlagが3ヶ月継続した場合は廃止検討を行う。

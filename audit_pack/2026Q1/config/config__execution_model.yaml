@@ -1,0 +1,112 @@
+schema_version: execution.model.v1
+defaults:
+  human_delay_seconds:
+    backtest:
+      min: 0.0
+      p50: 0.5
+      p95: 1.0
+    paper:
+      min: 2.0
+      p50: 6.0
+      p95: 15.0
+    live:
+      min: 4.0
+      p50: 12.0
+      p95: 30.0
+  slippage_pips:
+    base:
+      p10: 0.1
+      p50: 0.4
+      p90: 1.1
+    volatile:
+      p10: 0.4
+      p50: 1.2
+      p90: 2.4
+  ttl_seconds:
+    base: 90
+    fast_path: 45
+    slow_path: 180
+  fallbacks:
+    slippage_fallback_pips: 0.8
+    ttl_fallback_sec: 30
+  entry_modes:
+    market:
+      max_spread_pips: 0.8
+      max_slippage_pips: 0.6
+      max_delay_seconds: 10
+      ttl_buffer_seconds: 30
+      allow_ioc: true
+      allow_fok: false
+    marketable_limit:
+      max_spread_pips: 1.8
+      max_slippage_pips: 1.6
+      max_delay_seconds: 45
+      ttl_buffer_seconds: 120
+      allow_ioc: false
+      allow_fok: false
+    limit_requote:
+      min_slippage_pips: 1.6
+      min_delay_seconds: 25
+      ttl_buffer_seconds: 180
+      allow_ioc: false
+      allow_fok: true
+      allow_day: true
+symbols:
+  EURUSD:
+    human_delay_seconds:
+      live:
+        min: 6.0
+        p50: 18.0
+        p95: 42.0
+    entry_modes:
+      market:
+        max_spread_pips: 0.7
+      marketable_limit:
+        max_spread_pips: 1.4
+        ttl_buffer_seconds: 90
+    regimes:
+      trending:
+        slippage_pips:
+          p10: 0.2
+          p50: 0.6
+          p90: 1.3
+        entry_modes:
+          market:
+            max_slippage_pips: 0.5
+            allow_ioc: true
+          marketable_limit:
+            max_slippage_pips: 1.2
+        ttl_seconds:
+          base: 80
+      high_volatility:
+        slippage_pips:
+          p10: 0.6
+          p50: 1.8
+          p90: 3.2
+        entry_modes:
+          market:
+            allow_ioc: false
+            max_spread_pips: 1.2
+          limit_requote:
+            min_slippage_pips: 2.5
+            ttl_buffer_seconds: 240
+        notes: "Escalate per RUN-HITL-01 before approving manual fills."
+  USDJPY:
+    slippage_pips:
+      base:
+        p10: 0.1
+        p50: 0.3
+        p90: 0.9
+    regimes:
+      ranging:
+        slippage_pips:
+          p10: 0.05
+          p50: 0.2
+          p90: 0.6
+        entry_modes:
+          market:
+            max_spread_pips: 0.6
+            allow_ioc: true
+          marketable_limit:
+            ttl_buffer_seconds: 75
+            max_delay_seconds: 35

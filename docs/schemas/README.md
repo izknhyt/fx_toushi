@@ -40,7 +40,7 @@ materials stored here serve as the authoritative source for governance reviews a
   (§3.7/§4.4.4). Governs `config/scoring.yaml`.
 - `scoreboard.schema.json` – Strategy Scoreboard thresholds, weightings, and watchlist rules
   (付録G.1/§4.4.5). Governs `config/scoreboard.yaml`.
-- `guardrails_metrics.schema.json` – Guardrail telemetry (health/board_mode/kill_switch/spread_status/reasons/exit_code/reduce_only/ack_user/manifest_hash/data_hash/risk_disclosure/auto_execute_forced_off) logged to `metrics/guardrails.jsonl` per detailed design §90.1.1 / status CLI.
+- `guardrails_metrics.schema.json` – Guardrail telemetry (health/board_mode/kill_switch/spread_status/reasons/exit_code/reduce_only/ack_user/manifest_hash/data_hash/risk_disclosure/profit_readiness_status/auto_execute/auto_execute_forced_off) logged to `metrics/guardrails.jsonl` per detailed design §90.1.1 / status CLI.
 - `data_ingestion_sla.jsonl`（スキーマ未固定だが運用契約） – `IngestionMetricsCollector` が resync/data fetch 過程で集計した `fetch_p95_ms`, `fetch_p99_ms`, `latency_status`, `retry_count`, `catch_up_lag_minutes` などを記録。raw観測は `metrics/raw/data_ingestion_raw_<date>.jsonl` に日次ローテーション（10万行で分割、60日後gzip/90日後削除の運用推奨）。清掃手順は `docs/runbooks/RUN-METRICS-CLEANUP.md` を参照。
 - `spread_cooldown.schema.json` – Spread/NTP/News guard metrics for `metrics/spread_cooldown.jsonl` per §90.3 and `tradectl spread inspect`.
 - `audit.health_action.schema.json` – Health action ack records (`logs/audit/health_action.jsonl`) for `tradectl status --ack` / Runbook RUN-DATA-05 evidence.

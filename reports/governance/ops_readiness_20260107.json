@@ -1,0 +1,74 @@
+{
+  "period": "weekly",
+  "explain": true,
+  "ops_readiness": {
+    "score": 100.0,
+    "status": "ok",
+    "notes": "Evidence paths evaluated",
+    "evidence": [
+      {
+        "key": "backups",
+        "path": "reports/drill/backup_integrity.md",
+        "exists": false,
+        "issue": "missing"
+      },
+      {
+        "key": "runbooks",
+        "path": "docs/runbooks",
+        "exists": true,
+        "last_modified": "2026-01-07T13:39:23.715368+00:00",
+        "age_days": 0.02
+      },
+      {
+        "key": "incidents",
+        "path": "docs/incident_reports",
+        "exists": false,
+        "issue": "missing"
+      },
+      {
+        "key": "agenda",
+        "path": "docs/runbooks/daily_agenda",
+        "exists": true,
+        "last_modified": "2025-11-12T14:22:20.436010+00:00",
+        "age_days": 55.99,
+        "issue": "stale(56.0d)"
+      }
+    ],
+    "missing": [
+      {
+        "key": "backups",
+        "path": "reports/drill/backup_integrity.md",
+        "exists": false,
+        "issue": "missing"
+      },
+      {
+        "key": "incidents",
+        "path": "docs/incident_reports",
+        "exists": false,
+        "issue": "missing"
+      },
+      {
+        "key": "agenda",
+        "path": "docs/runbooks/daily_agenda",
+        "exists": true,
+        "last_modified": "2025-11-12T14:22:20.436010+00:00",
+        "age_days": 55.99,
+        "issue": "stale(56.0d)"
+      }
+    ],
+    "thresholds": {
+      "min_score": 80,
+      "warn_score": 85
+    },
+    "runbook_ref": "OPS-READINESS-01",
+    "generated_at": "2026-01-07T14:12:31Z",
+    "exit_code": 0
+  },
+  "profit_readiness": null,
+  "profit_readiness_summary": null,
+  "recorded": null,
+  "verified": null,
+  "auto_execute": null,
+  "output": "json",
+  "save_path": "reports/governance/ops_readiness_20260107.json"
+}

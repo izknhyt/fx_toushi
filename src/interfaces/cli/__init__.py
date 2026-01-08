@@ -42,6 +42,9 @@ from .diagnostics import DeterminismDiagnosticsError, load_determinism_events
 from .execution_dashboard import execution_dashboard
 from .determinism import determinism_replay, _should_exit
 from .execution import ExecutionBridgeLogError, ExecutionEvidenceError, bridge_log, recalibrate
+from . import audit as audit_actions
+from . import events as events_actions
+from .metrics import report as metrics_report
 from .preflight import preflight
 from .funding import FundingSyncError, funding_status, funding_sync
 from .kill_switch import (
@@ -53,6 +56,7 @@ from .kill_switch import (
     review as kill_switch_review,
     set_state as kill_switch_set_state,
 )
+from .performance import live_guard as performance_live_guard
 from .ops import action_item_sync, readiness
 from .benchmark import (
     compare as benchmark_compare,
@@ -83,7 +87,8 @@ from .status import (
     status,
 )
 from src.audit.trace import DEFAULT_AUDIT_LOG, trace_order
-from src.metrics.reports import generate_latency_report
+from src.audit.bundle import AuditBundleService
+from src.release.gate import ReleaseGateService
 from src.interfaces.cli import tickets as tickets_actions
 from src.stress import ScenarioDatasetRegistry, StressTestEngine
 from src.journal import TradeJournalService
@@ -222,7 +227,7 @@ def create_cli_app() -> typer.Typer:
         risk_disclosure: str | None = typer.Option(
             None,
             "--risk-disclosure",
-            help="Risk disclosure status (signed|pending|auto)",
+            help="Risk disclosure status (accepted|pending|auto)",
             hidden=False,
             show_default=False,
         ),
@@ -261,7 +266,7 @@ def create_cli_app() -> typer.Typer:
             compat_mode=compat_mode,
         )
         _render_payload(console, payload, json_output=effective_json)
-        rd_status = payload.get("guardrails", {}).get("risk_disclosure", risk_disclosure or "signed")
+        rd_status = payload.get("guardrails", {}).get("risk_disclosure", risk_disclosure or "accepted")
         exit_code = _determine_board_exit_code(
             kill_switch=kill_switch,
             spread_status=spread_status,
@@ -867,10 +872,11 @@ def create_cli_app() -> typer.Typer:
         ctx: typer.Context,
         kind: str = typer.Option(..., "--kind", help="Report kind", case_sensitive=False),
         window: str = typer.Option("7d", "--window", help="Metrics window"),
-        export: Path | None = typer.Option(
+        out: Path | None = typer.Option(
             None,
+            "--out",
             "--export",
-            help="Optional markdown export path",
+            help="Optional report output path",
         ),
         source: Path = typer.Option(
             Path("metrics/data_ingestion_sla.jsonl"),
@@ -878,16 +884,83 @@ def create_cli_app() -> typer.Typer:
             help="Override metrics source path",
             hidden=True,
         ),
+        mode: str | None = typer.Option(None, "--mode", help="Optional mode hint (paper/live)"),
+        validate: bool = typer.Option(False, "--validate", help="Validate metrics payloads"),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        if kind.lower() != "latency":
-            raise typer.BadParameter("Only latency reports are supported in M1")
         ctx_obj = ctx.obj or {"json": False}
         effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
-        report = generate_latency_report(window=window, export_path=export, source_path=source)
-        _render_payload(console, report.to_mapping(), json_output=effective_json)
+        payload = metrics_report(
+            kind=kind,
+            window=window,
+            mode=mode,
+            out=str(out) if out else None,
+            validate=validate,
+            source=str(source),
+        )
+        _render_payload(console, payload, json_output=effective_json)
 
     app.add_typer(metrics_app, name="metrics")
+
+    performance_app = typer.Typer(help="Performance guard utilities")
+
+    @performance_app.command("live-guard")
+    def performance_live_guard_command(
+        ctx: typer.Context,
+        strategy: str = typer.Option(..., "--strategy", help="Strategy identifier"),
+        window: str = typer.Option("4w", "--window", help="Rolling window (e.g. 4w, 28d)"),
+        mode: str | None = typer.Option(None, "--mode", help="Mode hint (paper/live)"),
+        output: str = typer.Option("json", "--output", help="Output format (json/md)"),
+        save: Path | None = typer.Option(None, "--save", help="Output file path"),
+        strict: bool = typer.Option(False, "--strict", help="Exit non-zero on alerts"),
+        returns_path: Path = typer.Option(
+            Path("reports") / "performance" / "paper" / "returns.parquet",
+            "--returns",
+            help="Returns file path",
+        ),
+        equity_path: Path = typer.Option(
+            Path("reports") / "performance" / "paper" / "equity.parquet",
+            "--equity",
+            help="Equity curve path",
+        ),
+        latency_path: Path = typer.Option(
+            Path("metrics") / "execution_bridge.jsonl",
+            "--latency",
+            help="Latency metrics JSONL path",
+        ),
+        metrics_path: Path = typer.Option(
+            Path("metrics") / "performance_live_guard.jsonl",
+            "--metrics",
+            help="Live guard metrics output path",
+        ),
+        config_path: Path = typer.Option(
+            Path("config") / "risk_live_guard.yaml",
+            "--config",
+            help="Live guard config path",
+        ),
+        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
+    ) -> None:
+        ctx_obj = ctx.obj or {"json": False}
+        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        payload = performance_live_guard(
+            strategy_id=strategy,
+            window=window,
+            mode=mode,
+            output=output,
+            save=save,
+            strict=strict,
+            returns_path=returns_path,
+            equity_path=equity_path,
+            latency_path=latency_path,
+            metrics_path=metrics_path,
+            config_path=config_path,
+        )
+        _render_payload(console, payload, json_output=effective_json)
+        exit_code = int(payload.get("exit_code") or 0)
+        if strict and exit_code:
+            raise typer.Exit(code=exit_code)
+
+    app.add_typer(performance_app, name="performance")
 
     report_app = typer.Typer(help="Reporting utilities")
 
@@ -1027,6 +1100,85 @@ def create_cli_app() -> typer.Typer:
     app.add_typer(benchmark_app, name="benchmark")
 
     audit_app = typer.Typer(help="Audit tooling")
+    audit_bundle_app = typer.Typer(help="Audit bundle operations")
+
+    @audit_app.command("tail")
+    def audit_tail_command(
+        ctx: typer.Context,
+        since: str = typer.Option(..., "--since", help="ISO8601 start time"),
+        event: list[str] | None = typer.Option(None, "--event", help="Filter by audit event name"),
+        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
+    ) -> None:
+        ctx_obj = ctx.obj or {"json": False}
+        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        entries = audit_actions.tail(since=since, event=event, json_output=effective_json)
+        _render_payload(console, {"count": len(entries), "events": entries}, json_output=effective_json)
+
+    @audit_app.command("export")
+    def audit_export_command(
+        ctx: typer.Context,
+        export_type: str = typer.Option(..., "--type", help="Audit log type (health_action, ticket_action, all)"),
+        date_from: str = typer.Option(..., "--from", help="Start date (YYYY-MM-DD)"),
+        date_to: str = typer.Option(..., "--to", help="End date (YYYY-MM-DD)"),
+        out: Path = typer.Option(..., "--out", help="Output JSONL path"),
+        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
+    ) -> None:
+        ctx_obj = ctx.obj or {"json": False}
+        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        result_path = audit_actions.export(
+            export_type=export_type,
+            date_from=date_from,
+            date_to=date_to,
+            out=str(out),
+        )
+        _render_payload(console, {"status": "ok", "path": result_path}, json_output=effective_json)
+
+    @audit_bundle_app.command("generate")
+    def audit_bundle_generate_command(
+        ctx: typer.Context,
+        period: str = typer.Option(..., "--period", help="Period label (e.g. 2025Q1, 202512)"),
+        signer: str = typer.Option("local", "--signer", help="Signer identifier"),
+        dry_run: bool = typer.Option(False, "--dry-run", help="Preview bundle without writing files"),
+        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
+    ) -> None:
+        ctx_obj = ctx.obj or {"json": False}
+        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        service = AuditBundleService()
+        result = service.generate(period=period, signer=signer, dry_run=dry_run)
+        payload = {
+            "status": "ok",
+            "bundle_path": str(result.bundle_path),
+            "manifest_path": str(result.manifest_path),
+            "signature_path": str(result.signature_path),
+            "summary": result.manifest.summary,
+            "missing": list(result.manifest.missing),
+        }
+        _render_payload(console, payload, json_output=effective_json)
+
+    @audit_bundle_app.command("verify")
+    def audit_bundle_verify_command(
+        ctx: typer.Context,
+        path: Path = typer.Option(..., "--path", help="Audit pack path (audit_pack/<period>)"),
+        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
+    ) -> None:
+        ctx_obj = ctx.obj or {"json": False}
+        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        service = AuditBundleService()
+        payload = service.verify(bundle_path=path)
+        _render_payload(console, payload, json_output=effective_json)
+        if payload.get("status") != "ok":
+            raise typer.Exit(code=1)
+
+    @audit_bundle_app.command("list")
+    def audit_bundle_list_command(
+        ctx: typer.Context,
+        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
+    ) -> None:
+        ctx_obj = ctx.obj or {"json": False}
+        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        service = AuditBundleService()
+        bundles = service.list_bundles()
+        _render_payload(console, {"status": "ok", "bundles": bundles}, json_output=effective_json)
 
     @audit_app.command("trace")
     def audit_trace_command(
@@ -1050,9 +1202,84 @@ def create_cli_app() -> typer.Typer:
         trace = trace_order(order_id=order, log_path=log_path, export_path=export)
         _render_payload(console, trace.to_mapping(), json_output=effective_json)
 
+    audit_app.add_typer(audit_bundle_app, name="bundle")
     app.add_typer(audit_app, name="audit")
 
+    events_app = typer.Typer(help="Event stream utilities")
+
+    @events_app.command("tail")
+    def events_tail_command(
+        ctx: typer.Context,
+        since: str | None = typer.Option(None, "--since", help="ISO8601 start time"),
+        follow: bool = typer.Option(False, "--follow", help="Follow events (best-effort)"),
+        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
+    ) -> None:
+        ctx_obj = ctx.obj or {"json": False}
+        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        entries = events_actions.tail_events(since=since, follow=follow)
+        _render_payload(console, {"count": len(entries), "events": entries}, json_output=effective_json)
+
+    app.add_typer(events_app, name="events")
+
     spread_app = typer.Typer(help="Spread guard utilities")
+    journal_app = typer.Typer(help="Trade journal utilities")
+
+    release_app = typer.Typer(help="Release gate utilities")
+
+    @release_app.command("prepare")
+    def release_prepare_command(
+        ctx: typer.Context,
+        version: str = typer.Option(..., "--version", help="Release version identifier"),
+        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
+    ) -> None:
+        ctx_obj = ctx.obj or {"json": False}
+        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        service = ReleaseGateService()
+        checklist = service.prepare(version=version)
+        _render_payload(console, {"status": "ok", **checklist.to_dict()}, json_output=effective_json)
+
+    @release_app.command("record")
+    def release_record_command(
+        ctx: typer.Context,
+        version: str = typer.Option(..., "--version", help="Release version identifier"),
+        task: str = typer.Option(..., "--task", help="Checklist task id"),
+        status: str = typer.Option(..., "--status", help="Task status (pass|fail|pending)"),
+        evidence: str | None = typer.Option(None, "--evidence", help="Evidence path"),
+        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
+    ) -> None:
+        ctx_obj = ctx.obj or {"json": False}
+        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        service = ReleaseGateService()
+        checklist = service.record_result(version=version, task_id=task, status=status, evidence_path=evidence)
+        _render_payload(console, {"status": "ok", **checklist.to_dict()}, json_output=effective_json)
+
+    @release_app.command("verify")
+    def release_verify_command(
+        ctx: typer.Context,
+        version: str = typer.Option(..., "--version", help="Release version identifier"),
+        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
+    ) -> None:
+        ctx_obj = ctx.obj or {"json": False}
+        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        service = ReleaseGateService()
+        payload = service.verify_completion(version=version)
+        _render_payload(console, payload, json_output=effective_json)
+        if payload.get("status") != "ok":
+            raise typer.Exit(code=1)
+
+    @release_app.command("tag")
+    def release_tag_command(
+        ctx: typer.Context,
+        version: str = typer.Option(..., "--version", help="Release version identifier"),
+        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
+    ) -> None:
+        ctx_obj = ctx.obj or {"json": False}
+        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        service = ReleaseGateService()
+        payload = service.tag_release(version=version)
+        _render_payload(console, payload, json_output=effective_json)
+        if payload.get("status") != "ok":
+            raise typer.Exit(code=1)
 
     @spread_app.command("inspect")
     def spread_inspect_command(
@@ -1133,7 +1360,50 @@ def create_cli_app() -> typer.Typer:
         _render_payload(console, payload, json_output=effective_json)
         raise typer.Exit(code=int(payload.get("exit_code", 0)))
 
+    @journal_app.command("append")
+    def journal_append_command(
+        ctx: typer.Context,
+        ticket_id: str = typer.Option(..., "--ticket-id", help="Ticket identifier"),
+        user: str = typer.Option(..., "--user", help="User or role"),
+        note: str = typer.Option(..., "--note", help="Journal note"),
+        week: str | None = typer.Option(None, "--week", help="Week label (e.g. 2025-W12)"),
+        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
+    ) -> None:
+        ctx_obj = ctx.obj or {"json": False}
+        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        service = TradeJournalService()
+        entry = service.from_ticket_action(ticket_id=ticket_id, user=user, note=note, week=week)
+        saved = service.append(entry)
+        _render_payload(console, {"status": "ok", "entry": saved.to_dict()}, json_output=effective_json)
+
+    @journal_app.command("list")
+    def journal_list_command(
+        ctx: typer.Context,
+        week: str | None = typer.Option(None, "--week", help="Week label filter"),
+        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
+    ) -> None:
+        ctx_obj = ctx.obj or {"json": False}
+        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        service = TradeJournalService()
+        entries = service.list(week=week)
+        _render_payload(console, {"status": "ok", "entries": entries}, json_output=effective_json)
+
+    @journal_app.command("export-weekly")
+    def journal_export_weekly_command(
+        ctx: typer.Context,
+        week: str = typer.Option(..., "--week", help="Week label (e.g. 2025-W12)"),
+        output_dir: Path = typer.Option(Path("reports/journal"), "--output-dir", help="Output directory"),
+        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
+    ) -> None:
+        ctx_obj = ctx.obj or {"json": False}
+        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        service = TradeJournalService()
+        path = service.export_weekly(week=week, output_dir=output_dir)
+        _render_payload(console, {"status": "ok", "path": str(path)}, json_output=effective_json)
+
+    app.add_typer(release_app, name="release")
     app.add_typer(spread_app, name="spread")
+    app.add_typer(journal_app, name="journal")
 
     @app.command("status")
     def status_command(
@@ -2267,6 +2537,27 @@ def create_cli_app() -> typer.Typer:
         ctx: typer.Context,
         explain: bool = typer.Option(False, "--explain", help="Include descriptive text in the payload."),
         period: str = typer.Option("weekly", "--period", help="Reporting cadence label."),
+        include_ops: bool = typer.Option(True, "--ops/--no-ops", help="Include ops readiness evaluation."),
+        ops_config_path: Path = typer.Option(
+            Path("config") / "ops_readiness.yaml",
+            "--ops-config",
+            help="Ops readiness config path",
+            hidden=True,
+        ),
+        ops_metrics_path: Path = typer.Option(
+            Path("metrics") / "ops_readiness.jsonl",
+            "--ops-metrics-path",
+            help="Ops readiness metrics output path",
+            hidden=True,
+        ),
+        ops_max_age_days: int = typer.Option(
+            14,
+            "--ops-max-age-days",
+            help="Max evidence age in days for ops readiness checks",
+            hidden=True,
+        ),
+        output: str = typer.Option("json", "--output", help="Output format (json/md)"),
+        save: Path | None = typer.Option(None, "--save", help="Output file path"),
         profit: bool = typer.Option(False, "--profit", help="Include profit readiness levers."),
         limit: int = typer.Option(5, "--limit", help="Number of profit readiness entries to display."),
         lever: list[str] = typer.Option(
@@ -2317,6 +2608,12 @@ def create_cli_app() -> typer.Typer:
             payload = readiness(
                 explain=explain,
                 period=period,
+                include_ops=include_ops,
+                ops_config_path=ops_config_path,
+                ops_metrics_path=ops_metrics_path,
+                ops_max_age_days=ops_max_age_days,
+                output=output,
+                save=save,
                 include_profit=profit,
                 profit_path=profit_path,
                 profit_limit=limit,
@@ -2338,6 +2635,10 @@ def create_cli_app() -> typer.Typer:
             exit_code = getattr(exc, "exit_code", 1)
             raise typer.Exit(exit_code) from exc
         _render_payload(console, payload, json_output=effective_json)
+        ops_payload = payload.get("ops_readiness") or {}
+        exit_code = ops_payload.get("exit_code")
+        if isinstance(exit_code, int) and exit_code != 0:
+            raise typer.Exit(code=exit_code)
 
     app.add_typer(ops_app, name="ops")
 

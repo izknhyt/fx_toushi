@@ -1,0 +1,5 @@
+# Regression test scenarios scaffold
+# Schema: schema/regression.schema.json
+
+schema_version: regression.v1
+scenarios: []

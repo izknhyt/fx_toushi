@@ -16,7 +16,8 @@
 ## 2. 変更サマリ
 | コンポーネント | 変更内容 | テスト指示 | Feature Flag |
 | --- | --- | --- | --- |
-| tests/unit/test_ticket_builder_placeholder.py | `pytest.mark.ticket_builder`のxfailテストを追加し、GateStateスライス統合とChecklist検証TODOを明記。 | `pytest -k "ticket_builder"` | N/A |
+| tests/unit/test_ticket_builder.py | TicketBuilderのJSON整形とChecklist統合をテスト。 | `pytest -k "ticket_builder"` | N/A |
+| tests/unit/test_ticket_builder_gate_state.py | GateStateのリスク/人手ガードメタデータ反映をテスト。 | `pytest -k "ticket_builder"` | N/A |
 | docs/implementation_packets/20250315_ticket_builder.md | 本Packet作成。GateState伝播要件とRunbook参照を整理。 | N/A | N/A |
 
 ## 3. チェックリスト

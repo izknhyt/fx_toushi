@@ -26,6 +26,7 @@
 
 ## 4. スクリーンショット/ログ
 - CLIキャプチャ: assets/<filename>.png
+- Status JSON: assets/status_snapshot.json
 - メトリクス抜粋: assets/<filename>.md
 - Rollbackログ: assets/<filename>.txt
 

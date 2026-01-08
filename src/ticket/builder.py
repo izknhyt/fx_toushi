@@ -10,8 +10,10 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterable, Mapping, Protocol, runtime_checkable
+from types import SimpleNamespace
 
 from src.execution import ExecutionAdjustments
+from src.execution.model import DeterministicExecutionModel, ExecutionError
 from src.execution.alpha_overlay import LotLadderRule, apply_hands_off_sizing
 
 from src.core.gate import GateState
@@ -85,6 +87,7 @@ class DefaultTicketBuilder:
     def __init__(self) -> None:
         self._checklist_builder = ChecklistBuilder()
         self._lot_ladder = _load_lot_ladder(Path("config") / "risk_policy.yaml")
+        self._execution_model = _load_execution_model(Path("config") / "execution_model.yaml")
 
     def build(
         self,
@@ -95,6 +98,12 @@ class DefaultTicketBuilder:
         """Construct a :class:`TicketArtifact` while applying gate constraints."""
 
         validate_market_open(draft.symbol, gate_state)
+        if execution_adjustments is None and self._execution_model is not None:
+            execution_adjustments = _evaluate_execution_adjustments(
+                draft=draft,
+                gate_state=gate_state,
+                model=self._execution_model,
+            )
         if "determinism_hash" not in draft.metadata or not isinstance(draft.metadata.get("determinism_hash"), str):
             raise TicketBlockedError(
                 code="determinism_hash_missing",
@@ -345,6 +354,51 @@ def _normalize_spread_state(state: str) -> str:
     if normalized == "watch":
         return "cooldown"
     return normalized
+
+
+def _load_execution_model(path: Path) -> DeterministicExecutionModel | None:
+    if not path.exists():
+        return None
+    try:
+        config = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    except Exception:
+        return None
+    if not isinstance(config, Mapping):
+        return None
+    try:
+        return DeterministicExecutionModel(config)
+    except Exception:
+        return None
+
+
+def _evaluate_execution_adjustments(
+    *,
+    draft: TicketDraft,
+    gate_state: GateState,
+    model: DeterministicExecutionModel,
+) -> ExecutionAdjustments | None:
+    metadata = dict(draft.metadata)
+    direction = "long" if draft.action.lower() in {"buy", "long"} else "short"
+    signal = SimpleNamespace(
+        symbol=draft.symbol,
+        direction=direction,
+        entry_mode=metadata.get("entry_mode") or metadata.get("entry_type"),
+        expected_entry=metadata.get("entry_price"),
+    )
+    market_snapshot: dict[str, object] = {}
+    if metadata.get("entry_price") is not None:
+        market_snapshot["expected_entry"] = metadata.get("entry_price")
+    if metadata.get("spread_pips") is not None:
+        market_snapshot["spread_pips"] = metadata.get("spread_pips")
+    try:
+        return model.apply(
+            signal=signal,
+            market_snapshot=market_snapshot,
+            spread_state=gate_state.market.spread,
+            mode_context=metadata,
+        )
+    except ExecutionError:
+        return None
 
 
 def _resolve_ttl(

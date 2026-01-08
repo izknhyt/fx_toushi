@@ -1,0 +1,7 @@
+# Margin stress presets scaffold
+# Schema: schema/margin_stress_presets.schema.json
+
+schema_version: margin_stress_presets.v1
+presets:
+  conservative:
+    shock_pct: 10

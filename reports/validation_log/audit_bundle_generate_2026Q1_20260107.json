@@ -1,0 +1,1 @@
+{"status": "ok", "bundle_path": "audit_pack/2026Q1", "manifest_path": "audit_pack/2026Q1/audit_manifest.json", "signature_path": "audit_pack/2026Q1/audit_manifest.sig", "summary": {"signals": 0, "tickets": 3, "fills": 4, "config": 58, "risk_disclosure": 1, "manifest": 1}, "missing": ["signals"]}

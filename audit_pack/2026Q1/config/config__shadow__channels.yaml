@@ -1,0 +1,5 @@
+# Shadow channel config scaffold
+# Schema: schema/shadow_channels.schema.json
+
+schema_version: shadow_channels.v1
+channels: []

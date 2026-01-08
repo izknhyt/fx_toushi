@@ -22,11 +22,11 @@
 | metrics/data_ingestion_sla.jsonl | `last_bar_ts`/`bar_gap_minutes`追加 | `pytest -k ingestion_metrics` | N/A |
 
 ## 3. チェックリスト
-- [ ] 設計整合: §3.1.2のM1運用ループと実装が一致
-- [ ] テスト実行: `python tools/ingestion_loop.py --once`
-- [ ] 監査ログ検証: metrics/data_ingestion_sla.jsonlにbar_gap/last_bar_tsが出力される
-- [ ] Rollback手順記載: RUN-DATA-05/06の手動切替で復旧可能
-- [ ] Trader Sign-offテンプレ発行: docs/trader_signoff/EP01-ING-P1.md
+- [x] 設計整合: §3.1.2のM1運用ループと実装が一致
+- [x] テスト実行: `python3 tools/ingestion_loop.py --once --provider dukascopy --symbols USDJPY,EURUSD --timeframe 5m --lookback-hours 1`（`reports/implementation/20250330_m1_ingestion_loop/logs/ingestion_loop_once_20250331.log`）
+- [x] 監査ログ検証: metrics/data_ingestion_sla.jsonlにbar_gap/last_bar_tsが出力される
+- [x] Rollback手順記載: RUN-DATA-05/06の手動切替で復旧可能
+- [x] Trader Sign-offテンプレ発行: docs/trader_signoff/EP01-ING-P1.md
 
 ## 4. エビデンス
 - CLI/スクリーンショット: docs/trader_signoff/EP01-ING-P1.md 参照

@@ -16,7 +16,8 @@
 ## 2. 変更サマリ
 | コンポーネント | 変更内容 | テスト指示 | Feature Flag |
 | --- | --- | --- | --- |
-| tests/unit/test_strategy_manifest_placeholder.py | `pytest.mark.strategy_manifest`のxfailテストを追加し、Schema検証・watchlist制約テストのTODOを明記。 | `pytest -k "strategy_manifest"` | N/A |
+| tests/unit/test_strategy_manifest.py | StrategyManifestのSchema検証とwatchlist制約をテスト。 | `pytest -k "strategy_manifest"` | N/A |
+| tests/unit/test_strategy_manifest_lifecycle.py | Lifecycleの有効期限/廃止判定をテスト。 | `pytest -k "strategy_manifest"` | N/A |
 | docs/implementation_packets/20250315_strategy_manifest.md | 本Packet作成。Schema参照とRunbook同期を明記。 | N/A | N/A |
 
 ## 3. チェックリスト

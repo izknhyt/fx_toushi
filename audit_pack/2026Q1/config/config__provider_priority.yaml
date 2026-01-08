@@ -1,0 +1,13 @@
+# Provider priority table referenced by detailed design §3.1
+# Schema: schema/provider_priority.schema.json
+
+schema_version: provider_priority.v1
+fallback:
+  priority_override: []
+default_order:
+  - dukascopy
+  - yfinance
+  - manual_csv
+per_symbol:
+  USDJPY: [dukascopy, yfinance, manual_csv]
+  EURUSD: [dukascopy, yfinance, manual_csv]

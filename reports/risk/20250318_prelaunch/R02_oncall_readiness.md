@@ -4,22 +4,27 @@
 - Due: 2025-03-25 JST
 - Owners: Ops Manager (primary), Risk Officer (backup)
 
+## 0. 免除判断（個人用途）
+- Status: waived
+- Rationale: 個人用途・ローカル運用のため常時監視/オンコール体制を前提としない。外部提供・複数運用者・自動ライブ運用へ移行する場合は再開する。
+- Decision date: 2026-01-08
+
 ## 1. オンコール表（平日/祝日）
 | Week (YYYY-WW) | Primary Operator | Secondary Operator | Risk Officer | Coverage Notes |
 | --- | --- | --- | --- | --- |
-| 2025-12 | _pending_ | _pending_ | _pending_ |  |
+| N/A | waived (personal use) | waived | waived | No on-call roster required |
 
 > 更新手順: `docs/runbooks/OPS-READINESS-01.md`のテンプレートに従い、直近4週間分を埋めてください。完成した表はここにも貼り、Ops Agendaからリンクします。
 
 ## 2. RUN-EMER-UNWIND-01 訓練ログ
 | Date | Scenario | Participants | Evidence (log path) | Status |
 | --- | --- | --- | --- | --- |
-| 2025-03-24 (予定) | Kill Switch soft_stop 演習 | Ops + Risk | `reports/risk/20250318_prelaunch/ops_unwind_drill_20250324.md` | [ ] Scheduled |
+| N/A | waived (personal use) | N/A | N/A | Waived |
 
 ## 3. エスカレーション連絡網
 チェックリスト:
-- [ ] Slack `#ops-oncall` ピン留め更新済み（最終更新日を記載）。
-- [ ] Phone/SMSリストを暗号化ストレージに保存し、`reports/risk/20250318_prelaunch/README.md`から参照可能。
-- [ ] `tradectl ops agenda --date <date>` 出力にオンコール担当が表示されることを確認。
+- [x] Waived (personal use; no on-call chain required).
+- [x] Waived (personal use; no shared Phone/SMS roster required).
+- [x] Waived (personal use; ops agenda on-call display not required).
 
 完了後、`docs/risk_review/20250318_prelaunch.md` の該当セクションに結果要約を追記してください。

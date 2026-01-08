@@ -1,0 +1,13 @@
+# M1 scaffold for Dukascopy data source
+# Schema: schema/data_source.schema.json
+
+schema_version: data_source.v1
+provider: dukascopy
+endpoint: https://datafeed.dukascopy.com
+rate_limit:
+  requests_per_minute: 60
+  burst: 90
+backfill:
+  max_days: 30
+  max_symbols: 8
+notes: "public feed; adjust limits per provider policy"

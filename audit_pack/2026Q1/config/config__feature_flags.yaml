@@ -1,0 +1,205 @@
+# config/feature_flags.yaml -- Feature Flag ガバナンスマトリクス
+# Schema: docs/schemas/feature_flags.schema.json
+# 詳細設計 §0.6.13 と Runbook RUN-FEATURE-FLAG-01 を参照しながら更新すること。
+
+schema_version: "feature_flags.v1"
+metadata:
+  description: "M1 Core〜M2 に向けた段階的 Feature Flag 管理。Backtest/Paper/Live の既定値を単一情報源で保持する。"
+  owner: ops_manager
+  last_reviewed_at: "2025-03-20"
+defaults:
+  backtest:
+    sprt_guard: false
+    reduce_only_advisor: false
+    risk_disclosure_enforce: false
+    reporter.enable_extended_blocks: false
+    reports.performance.enable: false
+    data.paid_feed: false
+    data.rate_limit_auto_stage: false
+    alpha.profit_loop_enabled: true
+    alpha.dynamic_sizing: false
+    alpha.auto_execute: false
+  paper:
+    sprt_guard: false
+    reduce_only_advisor: false
+    risk_disclosure_enforce: false
+    reporter.enable_extended_blocks: false
+    reports.performance.enable: false
+    data.paid_feed: false
+    data.rate_limit_auto_stage: false
+    alpha.profit_loop_enabled: true
+    alpha.dynamic_sizing: false
+    alpha.auto_execute: false
+  live:
+    sprt_guard: false
+    reduce_only_advisor: false
+    risk_disclosure_enforce: false
+    reporter.enable_extended_blocks: false
+    reports.performance.enable: false
+    data.paid_feed: false
+    data.rate_limit_auto_stage: false
+    alpha.profit_loop_enabled: false
+    alpha.dynamic_sizing: false
+    alpha.auto_execute: false
+definitions:
+  sprt_guard:
+    description: "Live SPRT 健全性ガード。SPRT の警告域が連続した際に提案頻度を減衰させる。"
+    milestone: "M2"
+    owner: risk_manager
+    category: dangerous
+    runbook_ref: "RUN-FEATURE-FLAG-01 §5.1"
+    enable_conditions:
+      - "Paper soak ≥10取引日で metrics/sprt_health.jsonl.false_positive=0 を維持"
+      - "GateState.market.sprt_guard telemetry が WARN 未満"
+      - "NextBarChangeQueue の適用遷移が監査ログに記録済み"
+    rollback:
+      - "tradectl config flags --set sprt_guard=false --profile live"
+      - "poetry run pytest -k feature_flags"
+      - "NextBarChangeQueue 適用後に metrics/sprt_health.jsonl を再確認"
+    telemetry_checks:
+      - "metrics/sprt_health.jsonl"
+      - "logs/events/config_changes.jsonl"
+  reduce_only_advisor:
+    description: "Spread 異常時に Reduce-Only 提案カードを自動生成する。"
+    milestone: "M1.1"
+    owner: ops_manager
+    category: guarded
+    runbook_ref: "RUN-FEATURE-FLAG-01 §5.2"
+    enable_conditions:
+      - "RUN-SPREAD-03 完了（Spread 訓練）"
+      - "Paper soak ≥5取引日で提案ログが期待通りであること"
+      - "Board UI レイアウトが崩れないこと (reports/ops/degradation_log/*)"
+    rollback:
+      - "tradectl config flags --set reduce_only_advisor=false --profile <mode>"
+      - "Board 表示から Reduce-Only 提案カードが消えることを確認"
+    telemetry_checks:
+      - "metrics/spread_guard.jsonl"
+      - "reports/ops/degradation_log/"
+  risk_disclosure_enforce:
+    description: "リスク開示プロンプトの強制モード。承諾なしでは危険操作をブロックする。"
+    milestone: "M1.1"
+    owner: compliance
+    category: dangerous
+    runbook_ref: "RUN-FEATURE-FLAG-01 §5.3"
+    enable_conditions:
+      - "RUN-RISK-01 / GOV-AUD-01 の手順を最新版に更新"
+      - "Paper で tradectl risk disclosure prompt --profile paper を 3 回再現し、ConsentRequiredError を確認"
+      - "risk_consent 監査ファイルが追記可能であること"
+    rollback:
+      - "tradectl config flags --set risk_disclosure_enforce=false --profile <mode>"
+      - "risk_consent 監査ファイルへ追記し、エラーが発生しないことを確認"
+    telemetry_checks:
+      - "logs/audit/risk_disclosure_*.jsonl"
+      - "metrics/risk_disclosure.jsonl"
+  data.rate_limit_auto_stage:
+    description: "RateLimitGuard のステージ自動適用。Stage候補を自動適用し、監査ログへ記録する。"
+    milestone: "M1.1"
+    owner: ops_manager
+    category: guarded
+    runbook_ref: "RUN-FEATURE-FLAG-01 §5.7"
+    enable_conditions:
+      - "RUN-DATA-05.step3 の Stage Eval 証跡が7日分蓄積済み"
+      - "rate_limit_window.jsonl の stage_eval が欠落していないこと"
+    rollback:
+      - "tradectl config flags --set data.rate_limit_auto_stage=false --profile <mode>"
+      - "metrics/rate_limit_window.jsonl の stage_eval に manual だけが残ることを確認"
+    telemetry_checks:
+      - "metrics/rate_limit_window.jsonl"
+      - "logs/ops/stage_change.log"
+  reporter.enable_extended_blocks:
+    description: "週次レポートに拡張ブロック（Spread/Kill Switch/Resync 等）を追加する。"
+    milestone: "M1.1"
+    owner: ops_manager
+    category: safe
+    runbook_ref: "RUN-FEATURE-FLAG-01 §5.4"
+    enable_conditions:
+      - "reports/weekly/templates/m1_core.md のレイアウト検証完了"
+      - "make reports-weekly --dry-run（予定）で差分が期待通り"
+    rollback:
+      - "defaults.<mode>.reporter.enable_extended_blocks=false に戻す"
+      - "テンプレート差分と Evidence キャプチャを削除"
+    telemetry_checks:
+      - "reports/weekly/*"
+  reports.performance.enable:
+    description: "Performance Snapshot レポート出力を有効化し、週次/日次レポートへ統合する。"
+    milestone: "M1.2"
+    owner: ops_manager
+    category: guarded
+    runbook_ref: "RUN-FEATURE-FLAG-01 §5.5"
+    enable_conditions:
+      - "metrics/performance_snapshot.jsonl が 3 回連続で生成"
+      - "reports/performance/latest.md が Ops レビューを通過"
+      - "ストレージコスト評価 (AC-45) が完了"
+    rollback:
+      - "defaults.<mode>.reports.performance.enable=false に戻す"
+      - "レポート生成ジョブを停止し、不要な成果物をアーカイブ"
+    telemetry_checks:
+      - "metrics/performance_snapshot.jsonl"
+      - "reports/performance/"
+  data.paid_feed:
+    description: "有償マーケットデータフィード (Refinitiv / dxFeed 等) を使用する。"
+    milestone: "M1.2"
+    owner: product_owner
+    category: dangerous
+    runbook_ref: "RUN-FEATURE-FLAG-01 §5.6"
+    enable_conditions:
+      - "basic_design_fx_signal_tool_v1.md §1.4 の公式API移行計画を完了"
+      - "RUN-DATA-05 / RUN-DATA-06 を再実施し SLA をクリア"
+      - "ライセンス契約書とコスト承認を Evidence に添付"
+    rollback:
+      - "defaults.live.data.paid_feed=false に戻す"
+      - "代替ソースへフェイルバックし metrics/data_ingestion_sla.jsonl の回復を確認"
+    telemetry_checks:
+      - "metrics/data_ingestion_sla.jsonl"
+      - "reports/governance/licensing/"
+  alpha.profit_loop_enabled:
+    description: "Hands-off向け Profit Loop 評価/フィードバックを有効化する（Paper soak前提）。"
+    milestone: "M1.1"
+    owner: ops_manager
+    category: guarded
+    runbook_ref: "RUN-FEATURE-FLAG-01 (see RUN-ALPHA-FEEDBACK-01 for evidence)"
+    enable_conditions:
+      - "scoreboard/alpha & scoreboard/bridge がPF/Sharpe/MaxDD基準を4週連続で達成"
+      - "reports/performance/profit_loop_daily.md が48時間以内の更新であること"
+    rollback:
+      - "tradectl config flags --set alpha.profit_loop_enabled=false --profile <mode>"
+    telemetry_checks:
+      - "metrics/profit_loop.jsonl"
+      - "scoreboard/alpha/"
+    notes: "Hands-off auto_executeの前提。LiveではCR-20251122クローズまでデフォルト無効。"
+  alpha.dynamic_sizing:
+    description: "FeedbackVector に基づくConviction/size補正をmax_dynamic_adjust_pct内で適用する。"
+    milestone: "M1.1"
+    owner: ops_manager
+    category: guarded
+    runbook_ref: "RUN-FEATURE-FLAG-01 (see RUN-ALPHA-FEEDBACK-01 for evidence)"
+    enable_conditions:
+      - "alpha.profit_loop_enabled=true のプロファイルでpaper soak完了"
+      - "config/alpha_profiles.yaml の max_dynamic_adjust_pct がバリデート済み"
+    rollback:
+      - "tradectl config flags --set alpha.dynamic_sizing=false --profile <mode>"
+    telemetry_checks:
+      - "metrics/profit_loop.jsonl"
+      - "logs/audit/alpha_feedback.jsonl"
+    dependencies:
+      - "alpha.profit_loop_enabled"
+    notes: "Hands-offサイジングでapply_dynamic_adjustmentを有効化するときのフラグ。"
+  alpha.auto_execute:
+    description: "Hands-off auto_execute を有効化（Board normalのみ、自動降格あり）。"
+    milestone: "M1.2"
+    owner: ops_manager
+    category: dangerous
+    runbook_ref: "RUN-FEATURE-FLAG-01 (see RUN-GOV-BOARD-01 for governance)"
+    enable_conditions:
+      - "`make check-profit-readiness-hands-off` がExit 0かつ auto_execute_ready=true"
+      - "ops_worklog に task=auto_execute_on で証跡が残っている"
+    rollback:
+      - "tradectl config flags --set alpha.auto_execute=false --profile <mode>"
+      - "tradectl ops readiness --profit --verify --require-auto-execute で降格を確認"
+    telemetry_checks:
+      - "metrics/profit_readiness.jsonl"
+      - "metrics/guardrails.jsonl"
+    dependencies:
+      - "alpha.profit_loop_enabled"
+      - "alpha.dynamic_sizing"
+    notes: "Guarded/Halt/Reduce-Only/Spread cooldown・block で即時OFF。デフォルト無効。"

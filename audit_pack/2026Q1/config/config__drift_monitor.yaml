@@ -1,0 +1,6 @@
+# Parameter drift monitor scaffold
+# Schema: schema/drift_monitor.schema.json
+
+schema_version: drift_monitor.v1
+thresholds:
+  z_score: 3.0

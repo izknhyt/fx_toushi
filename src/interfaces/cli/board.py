@@ -212,12 +212,15 @@ def _resolve_risk_disclosure_status(status: str | None) -> tuple[str, str | None
     """Return normalized risk disclosure status and consent id (if any)."""
 
     if status and status.lower() not in {"auto", "none"}:
+        normalized_input = status.lower()
+        if normalized_input == "signed":
+            return "accepted", None
         return status, None
     service = RiskDisclosureService()
     state = service.fetch_state()
     normalized = state.status.lower()
     if normalized == "accepted":
-        return "signed", state.consent_reference_id
+        return "accepted", state.consent_reference_id
     if normalized == "warning":
         return "warning", state.consent_reference_id
     if normalized == "expired":
@@ -293,7 +296,7 @@ def _render_rich_table(headers: Sequence[str], rows: Sequence[Sequence[str]]) ->
         rd = row[10].lower() if len(row) > 10 else ""
         if rd in {"pending", "warning", "expired"}:
             styled[10] = f"[yellow]{row[10]}[/]"
-        elif rd in {"signed", "accepted"}:
+        elif rd in {"accepted"}:
             styled[10] = f"[green]{row[10]}[/]"
         spread = row[11].lower() if len(row) > 11 else ""
         if spread in {"block", "halt"}:

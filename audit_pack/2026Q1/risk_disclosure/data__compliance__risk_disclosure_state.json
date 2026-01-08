@@ -1,0 +1,9 @@
+{
+  "schema_version": "risk_disclosure_state.v2",
+  "status": "pending",
+  "version": "v1",
+  "consent_reference_id": null,
+  "accepted_at": null,
+  "expires_at": null,
+  "document_hash": null
+}

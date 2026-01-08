@@ -1,0 +1,6 @@
+# Ops workload defaults scaffold
+# Schema: schema/ops_workload_defaults.schema.json
+
+schema_version: ops_workload_defaults.v1
+defaults:
+  manual_csv_review_minutes: 15

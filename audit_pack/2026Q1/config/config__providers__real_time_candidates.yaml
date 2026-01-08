@@ -1,0 +1,5 @@
+# Real-time feed candidates scaffold
+# Schema: schema/real_time_candidates.schema.json
+
+schema_version: real_time_candidates.v1
+candidates: []

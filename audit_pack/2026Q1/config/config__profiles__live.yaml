@@ -1,0 +1,74 @@
+# config/profiles/live.yaml -- CONFIG-SCAFF-01 scaffold
+# 詳細設計 §3.1 / §4.4 および Runbook RUN-RISK-01・RUN-SPREAD-03 を参照。
+# Schema: docs/schemas/cfg.schema.json （schema_version 更新時に要同期）。
+
+schema_version: 0  # TODO: cfg.schema.json 整備後に更新
+profile_id: live
+metadata:
+  description: "Live モード用のダミー設定。ブローカー接続が未実装のため placeholder として扱う。"
+  runbook_refs:
+    - docs/runbooks/RUN-RISK-01.md
+    - docs/runbooks/RUN-SPREAD-03.md
+    - docs/runbooks/STRAT-PROMOTE-01.md
+    - docs/validation_playbook/index.md
+mode: live
+data_ingestion:
+  provider: dukascopy
+  fallback_providers:
+    - yfinance
+  symbols:
+    - USDJPY
+    - EURUSD
+    - GBPUSD
+  poll_interval_sec: 300
+  lookback_hours: 12
+  catch_up_enabled: true
+  manual_fallback_allowed: true
+  sla_threshold_profile: active
+timeframes:
+  trigger: 5m
+  regime_ref: 1h
+risk:
+  policy_id: m1_baseline
+  overrides:
+    board_mode_on_soft_stop: halted
+    kill_switch_auto_release: false
+gates:
+  board_mode_default: normal
+  enable_news_block: true
+  require_double_ack_on_resume: true
+  enforce_research_ticket: true
+  required_roles:
+    - primary_operator
+    - risk_officer
+    - secondary_operator
+    - governance_reviewer
+  manual_comment_required: true
+  comment_min_length: 64
+  comment_max_length: 500
+strategies:
+  - id: m1_baseline_ma_rsi
+    enabled: true
+    weight: 0.9
+  - id: placeholder_future_strategy
+    enabled: false
+    weight: 0.1
+execution:
+  slippage_bps: 15
+  latency_simulation_ms: 500
+  require_manual_fill_import: true
+spread:
+  source: broker
+  cooldown_minutes: 15
+  guard_threshold_pips: 1.0
+  halt_threshold_pips: 2.0
+funding:
+  apply_swap: true
+  accrual_calendar: TARGET
+  broker_fee_bps: 2
+correlation:
+  dataset: data/correlation/initial/bootstrap.parquet
+scheduler:
+  timezone: Asia/Tokyo
+  session_start: "06:00"
+  session_end: "05:00+1"

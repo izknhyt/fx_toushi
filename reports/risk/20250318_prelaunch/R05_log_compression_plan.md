@@ -4,12 +4,17 @@
 - Due: 2025-03-29 JST
 - Owner: Lead Engineer
 
+## 0. 免除判断（個人用途）
+- Status: waived
+- Rationale: 個人用途・ローカル運用のため監査ログ肥大化リスクは許容範囲。外部提供・複数運用者・自動ライブ運用へ移行する場合は再開する。
+- Decision date: 2026-01-08
+
 ## 1. 対象パス
 | Directory | Retention | Compression Tool | Notes |
 | --- | --- | --- | --- |
-| `logs/audit/` | 90 days WORM | `tar -czf` + SHA256 | 週次バッチ予定（日曜 20:00 JST） |
-| `reports/audit/` | 180 days | `zip -r` | Evidence添付物向け。 |
-| `metrics/*.jsonl` | 30 days sliding | `python tools/metrics_extract.py --prune` | S3移行時に暗号化。 |
+| `logs/audit/` | waived | n/a | 免除 |
+| `reports/audit/` | waived | n/a | 免除 |
+| `metrics/*.jsonl` | waived | n/a | 免除 |
 
 ## 2. ジョブ設計
 1. `poetry run python tools/metrics_extract.py --prune --retention-days 30 --output reports/risk/20250318_prelaunch/prune_preview.json` で影響を可視化。
@@ -21,8 +26,6 @@
 3. 成果物のSHA-256を`reports/risk/20250318_prelaunch/log_archive_hashes.md`に追記し、`RUN-AUD-02`のEvidence欄へリンク。
 
 ## 3. 未解決タスク
-- [ ] `make audit-log-archive` ターゲットを実装。
-- [ ] `RUN-AUD-02` へ自動アーカイブ手順を追記。
-- [ ] `docs/runbooks/daily_agenda/<date>.md` のFollow-up欄にR-05チェックを追加。
+- [x] 免除（個人用途のため実施対象外）。
 
 更新があれば`docs/risk_review/20250318_prelaunch.md`のR-05項へ結果を追記してください。

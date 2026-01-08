@@ -49,6 +49,7 @@ class RateLimitGuard:
         provider: str,
         rate_429: float,
         current_stage: str | None = None,
+        allow_promotion: bool = True,
         decision_source: str | None = None,
         runbook_ref: str | None = None,
     ) -> StageDecision:
@@ -58,12 +59,13 @@ class RateLimitGuard:
         next_stage = self.stages[min(idx + 1, len(self.stages) - 1)]
         prev_stage = self.stages[max(idx - 1, 0)]
 
-        if rate_429 <= 0.01 and idx < len(self.stages) - 1:
-            stage = next_stage
-            decision = "promote"
-        elif rate_429 > 0.015 and idx > 0:
-            stage = prev_stage
-            decision = "rollback"
+        if allow_promotion:
+            if rate_429 <= 0.01 and idx < len(self.stages) - 1:
+                stage = next_stage
+                decision = "promote"
+            elif rate_429 > 0.015 and idx > 0:
+                stage = prev_stage
+                decision = "rollback"
 
         tokens_remaining = min(self.burst_tokens, self.tokens_per_minute)
         poll_interval = self._poll_interval(stage)

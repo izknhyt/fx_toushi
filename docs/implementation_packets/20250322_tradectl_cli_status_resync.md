@@ -26,7 +26,7 @@
 - [x] テスト実行: `pytest tests/unit/test_cli_status.py tests/unit/test_cli_resync.py`
 - [x] 監査ログ検証: `reports/validation_log/PKG-TRADECTL-STATUS-RESYNC_20250319.md` に `tradectl status/resync` 証跡を保存
 - [x] Rollback手順記載: docs/runbooks/RUN-DATA-05.md / RUN-DATA-06.md のバージョン差分をDocOpsへ通知
-- [ ] Trader Sign-offテンプレ: docs/trader_signoff/TEMPLATE.md に`tradectl status --json`貼付欄を追加（別チケット）
+- [x] Trader Sign-offテンプレ: docs/trader_signoff/TEMPLATE.md に`tradectl status --json`貼付欄を追加
 
 ## 4. エビデンス
 - CLI/スクリーンショット: reports/implementation/20250322_pkg-tradectl-status-resync-01/cli/status_20250318.json

@@ -16,7 +16,7 @@
 ## 2. 変更サマリ
 | コンポーネント | 変更内容 | テスト指示 | Feature Flag |
 | --- | --- | --- | --- |
-| tests/config/test_config_schema_smoke_placeholder.py | JSON Schema突合せのスケルトンを追加し、`pytest.mark.config_schema_smoke`/xfailで未実装を明示。 | `pytest -k "config_schema_smoke"` | N/A |
+| tests/config/test_config_schema_smoke.py | Config雛形とJSON Schemaの突合テストを実装。 | `pytest -k "config_schema_smoke"` | N/A |
 | docs/implementation_packets/20250315_config_schema_smoke.md | 本Packet作成。設計参照とテスト要件を明文化。 | N/A | N/A |
 
 ## 3. チェックリスト

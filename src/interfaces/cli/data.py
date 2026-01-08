@@ -123,7 +123,11 @@ def status(
     if log_stage_eval:
         for provider in provider_list:
             rate_429 = _latest_429_rate(rate_limit_path, provider, ingestion_path=ingestion_path)
-            decision = guard.evaluate(provider=provider, rate_429=rate_429)
+            decision = guard.evaluate(
+                provider=provider,
+                rate_429=rate_429,
+                allow_promotion=auto_apply,
+            )
             entry = {
                 "ts": now,
                 "provider": provider,

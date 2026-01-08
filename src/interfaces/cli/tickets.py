@@ -436,10 +436,10 @@ def _resolve_risk_disclosure(*, actor: str | None, force: bool) -> tuple[str, st
     service = RiskDisclosureService()
     state = service.fetch_state()
     consent_id = state.consent_reference_id
-    status = "signed" if state.status == "accepted" else state.status
+    status = "accepted" if state.status == "accepted" else state.status
     if force and consent_id is None:
         updated, consent_id = service.record_consent("ack_warn", user=actor)
-        status = "signed" if updated.status == "accepted" else updated.status
+        status = "accepted" if updated.status == "accepted" else updated.status
     return status, consent_id
 
 

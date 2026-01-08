@@ -16,7 +16,7 @@
 ## 2. 変更サマリ
 | コンポーネント | 変更内容 | テスト指示 | Feature Flag |
 | --- | --- | --- | --- |
-| tests/integration/test_strategy_determinism.py | `pytest.mark.strategy_determinism`でxfailする決定論リグレッション雛形を追加。Seed/ハッシュ比較手順をコメントで指示。 | `pytest -k "strategy_determinism"` | N/A |
+| tests/integration/test_strategy_determinism.py | 決定論リグレッションを実装し、Seed/ハッシュの一致を検証。 | `pytest -k "strategy_determinism"` | N/A |
 | tests/integration/test_strategy_engine.py | `DeterministicExecutionModel`を用いたSpread状態別TTL/バッジ検証を追加。`ModeContext.deterministic_seed`を共有してBacktest/Paper/Live間で同一サンプルが再現されることを確認。 | `pytest -k "strategy_engine and execution_model"` | N/A |
 | docs/implementation_packets/20250315_strategy_determinism.md | 本Packet作成。決定論KPIとRunbook整合を整理。 | N/A | N/A |
 

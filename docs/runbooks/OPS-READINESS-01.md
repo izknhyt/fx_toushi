@@ -1,8 +1,8 @@
 # OPS-READINESS-01: オペレーションレディネス評価手順
 
 > **ACカバレッジ**: AC-51, AC-63  
-> **Runbook版数**: v1.1  
-> **最終更新日**: 2025-03-23  
+> **Runbook版数**: v1.2  
+> **最終更新日**: 2026-01-07  
 > **最終更新者**: Ops Manager (Doc Maintainer)
 
 ## 目的
@@ -10,7 +10,7 @@
 - スコア低下時の是正アクションとKill Switch解除条件を明文化し、リリース／戦略昇格のGo/No-Go判断を迅速化する。
 - CLI (`tradectl ops readiness`)・スキーマ検証・証跡パスの三点セットを`reports/validation_log/ops_readiness_<YYYYWW>.md`へ保存し、週次レビューと監査に備える。
 
-> **M1 Core注記**: CLIは`OpsReadinessEvaluatorStub`（`status="not_assessed"`）を返す。評価自体は手動で実施し、CLI出力をEvidenceとして添付する。M2以降は自動スコア算出を有効化予定。
+> **M1.1注記**: CLIは`OpsReadinessEvaluatorStub`でEvidenceを評価し、`status=ok/warn/low`とスコアを返す。出力はEvidenceとして保存する。
 
 ## トリガー
 - 週次Opsレビュー（金曜 19:00 JST）の前後、または`Scheduler(job=ops_readiness_weekly)`完了後。
@@ -19,15 +19,32 @@
 
 ## 手順
 1. **証跡取得 (`collect`)**
-   - `tradectl ops readiness --explain --output json`を実行し、出力を`reports/governance/ops_readiness_<YYYYWW>.json`として保存する。M1では次のようなスタブ応答を記録する。
+   - `tradectl ops readiness --explain --output json --save reports/governance/ops_readiness_<YYYYWW>.json`を実行し、出力を保存する。M1.1では次のような応答を記録する。
 
      ```console
-     $ tradectl ops readiness --explain --output json
+     $ tradectl ops readiness --explain --output json --save reports/governance/ops_readiness_<YYYYWW>.json
      {
-       "status": "not_assessed",
-       "score": null,
-       "components": [],
-       "notes": "M1 Core placeholder. Refer to docs/runbooks/OPS-READINESS-01.md#score-evaluation."
+       "period": "weekly",
+       "explain": true,
+       "ops_readiness": {
+         "score": 92.5,
+         "status": "ok",
+         "notes": "Evidence paths evaluated",
+         "evidence": [],
+         "missing": [],
+         "thresholds": {
+           "min_score": 80,
+           "warn_score": 85
+         },
+         "runbook_ref": "OPS-READINESS-01",
+         "generated_at": "2026-01-07T00:00:00Z",
+         "exit_code": 0
+       },
+       "profit_readiness": null,
+       "profit_readiness_summary": null,
+       "recorded": null,
+       "verified": null,
+       "auto_execute": null
      }
      ```
    - `config/ops_readiness.yaml`の`evidence_paths`に列挙された各ファイル（例: `reports/drill/backup_integrity.md`, `reports/ops/degradation_log/<date>.md`, `docs/runbooks/`更新ログ）が最新であるか確認する。
@@ -57,7 +74,7 @@
 ## 証跡と保存先
 - `reports/governance/ops_readiness_<YYYYWW>.{json,md}`
 - `reports/validation_log/ops_readiness_<YYYYWW>.md`
-- `metrics/ops_readiness.jsonl`（将来実装予定。現状は手動でエントリ追加）
+- `metrics/ops_readiness.jsonl`（CLIが追記。週次レビューで確認）
 - `logs/health/events.jsonl`（`ops_readiness_low`, `ops_readiness_recovered`）
 - `docs/review_log.md`（カテゴリ: `OPS-<YYYYWW>`）
 

@@ -22,11 +22,11 @@
 | docs/implementation_packets/20250312_strat_plugin_contract.md | 本ドキュメントをテンプレ準拠で発行し、受入条件を整理。 | N/A | N/A |
 
 ## 3. チェックリスト
-- [ ] 設計整合: detailed_design §3.5.5 のフィールド表を参照し、コードレビューで差分確認。
-- [ ] テスト実行: `poetry run pytest tests/unit/test_strategy_registry.py -k determinism`
-- [ ] 監査ログ検証: StrategyRegistry ログに `determinism_key_missing` エラー付与予定（次パケットで導入）。
-- [ ] Rollback手順記載: docs/governance/feature_flag_register.md に本 IF の影響無しを記録。
-- [ ] Trader Sign-offテンプレ発行: docs/trader_signoff/PKG-STRAT-IFACE-01.md を作成し、CLI スナップショットを添付。
+- [x] 設計整合: detailed_design §3.5.5 のフィールド表を参照し、コードレビューで差分確認。
+- [x] テスト実行: `poetry run pytest tests/unit/test_strategy_registry.py -k determinism`（`reports/implementation/20250312_pkg-strat-iface-01/logs/pytest_strategy_registry_determinism_20250331.log`）
+- [x] 監査ログ検証: StrategyRegistry ログに `determinism_key_missing` エラーを追加。
+- [x] Rollback手順記載: docs/governance/feature_flag_register.md に本 IF の影響無しを記録。
+- [x] Trader Sign-offテンプレ発行: docs/trader_signoff/PKG-STRAT-IFACE-01.md を作成し、CLI スナップショットを添付。
 
 ## 4. エビデンス
 - CLI/スクリーンショット: docs/trader_signoff/PKG-STRAT-IFACE-01.md に StrategyRegistry 登録ログを貼付予定。

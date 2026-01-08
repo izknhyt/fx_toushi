@@ -12,6 +12,11 @@ try:  # pragma: no cover - dependency guard mirrors test fixture fallback
 except ModuleNotFoundError:  # pragma: no cover - environments without PyYAML
     yaml = None  # type: ignore[assignment]
 
+try:  # pragma: no cover - optional schema validation
+    import jsonschema
+except ModuleNotFoundError:  # pragma: no cover - environments without jsonschema
+    jsonschema = None  # type: ignore[assignment]
+
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _DEFAULT_RULES_PATH = Path("config/broker_rules.yaml")
 
@@ -206,6 +211,8 @@ def _load_rules_cached(path: str) -> BrokerRules:
         msg = f"Broker rules file must deserialize to a mapping: {resolved_path}"
         raise BrokerRulesError(msg)
 
+    _validate_schema_if_available(data, schema_path=Path("docs/schemas/broker_rules.schema.json"))
+
     schema_version = str(data.get("schema_version", ""))
     if not schema_version:
         raise BrokerRulesError("Broker rules schema_version is required")
@@ -237,6 +244,19 @@ def _load_rules_cached(path: str) -> BrokerRules:
         notes=notes,
         symbols=symbols,
     )
+
+
+def _validate_schema_if_available(data: Mapping[str, Any], *, schema_path: Path) -> None:
+    if jsonschema is None or not schema_path.exists():
+        return
+    try:
+        schema = json.loads(schema_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise BrokerRulesError(f"Broker rules schema is invalid JSON: {schema_path}") from exc
+    try:
+        jsonschema.validate(instance=data, schema=schema)
+    except Exception as exc:  # pragma: no cover - schema errors are reported in tests
+        raise BrokerRulesError(f"Broker rules schema validation failed: {exc}") from exc
 
 
 def load_broker_rules(path: str | Path | None = None) -> BrokerRules:

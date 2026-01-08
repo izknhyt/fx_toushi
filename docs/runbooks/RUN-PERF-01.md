@@ -23,7 +23,7 @@
 
 ## 手順
 1. `pytest tests/perf/test_pipeline_latency.py -k test_pipeline_latency_thresholds --maxfail=1`を実行し、直近500サンプルのp95/p99が閾値内か確認。
-2. `python tools/render_perf_chart.py --input metrics/pipeline_latency.jsonl --output reports/performance/pipeline_latency_<date>.png`でスパークラインを生成し、Runbookチケットに添付。
+2. `python tools/render_perf_chart.py --input metrics/pipeline_latency.jsonl --output reports/performance/pipeline_latency_<date>.svg`でスパークラインを生成し、Runbookチケットに添付。
 3. `tradectl metrics report --kind latency --window 7d --out reports/performance/pipeline_latency_<date>.md`を実行し、指標の要約をMarkdown化。
 4. Ops Managerが`tickets/runbooks/RUN-PERF-01/<date>.md`を作成し、以下を記録:
    - 実行日時と担当者

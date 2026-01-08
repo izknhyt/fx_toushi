@@ -501,6 +501,10 @@ class StrategyEngine:
 
         determinism_key = getattr(plugin, "determinism_key", None)
         if not isinstance(determinism_key, str) or not determinism_key.strip():
+            logger.error(
+                "strategy.registry.determinism_key_missing",
+                extra={"strategy_id": strategy_id},
+            )
             msg = f"Strategy '{strategy_id}' must declare a non-empty 'determinism_key'"
             raise StrategyRegistrationError(msg)
 

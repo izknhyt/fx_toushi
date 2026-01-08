@@ -439,10 +439,12 @@ def status(
         "manifest_hash": gate_state.cfg_hash,
         "data_hash": gate_state.data_hash,
         "risk_disclosure": risk_disclosure_state,
+        "profit_readiness_status": gate_state.market.profit_readiness_status,
+        "auto_execute": gate_state.auto_execute,
+        "auto_execute_forced_off": auto_execute_forced_off,
     }
     if auto_execute_forced_off:
         metrics_payload["reasons"].append("auto_execute_forced_off")
-        metrics_payload["auto_execute_forced_off"] = True
     if metrics_payload["manifest_hash"] is None:
         metrics_payload.pop("manifest_hash")
     if metrics_payload["data_hash"] is None:

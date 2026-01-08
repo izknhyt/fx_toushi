@@ -1,0 +1,21 @@
+# config/ops_readiness.yaml -- CONFIG-SCAFF-01 scaffold
+# Ops Readiness レビュー用の重み・証跡パス・閾値。更新時は docs/runbooks/OPS-READINESS-01.md と
+# detailed_design_fx_signal_tool_v1.md §4.4.6 を参照し、証跡を ops_worklog に記録してください。
+
+version: 1
+weights:
+  backup_integrity: 0.30
+  runbook_updates: 0.20
+  drills_completed: 0.30
+  incident_followup: 0.20
+evidence_paths:
+  backups: reports/drill/backup_integrity.md    # TODO: 実際の証跡パスに合わせて更新。
+  runbooks: docs/runbooks/
+  incidents: docs/incident_reports/
+  agenda: docs/runbooks/daily_agenda/
+thresholds:
+  min_score: 80
+  warn_score: 85
+runbook_refs:
+  review: OPS-READINESS-01
+  escalation: RUN-RISK-07

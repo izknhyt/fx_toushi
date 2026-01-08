@@ -1,0 +1,81 @@
+# config/features/feature_versions.yaml -- FEATURE-VERSIONS-01
+# 詳細設計 §91.2 (Feature Versioning) のスカフォールド。Feature Pipeline が生成する
+# フィーチャ群のバージョン・入力依存関係・リリースノートを最小粒度で保持する。
+# 変更時は `feature_set_version` を更新し、Strategy Manifest や Validation Data
+# Playbook と整合させること。
+
+schema_version: 1
+feature_set_version: "m1-core-2025-11-21"
+features:
+  open_5m:
+    version: "1.0.0"
+    inputs: ["ohlcv:5m"]
+    release_notes: "Base OHLCV resample (5m) for M1 core pipeline."
+  high_5m:
+    version: "1.0.0"
+    inputs: ["ohlcv:5m"]
+    release_notes: "Base OHLCV resample (5m) for M1 core pipeline."
+  low_5m:
+    version: "1.0.0"
+    inputs: ["ohlcv:5m"]
+    release_notes: "Base OHLCV resample (5m) for M1 core pipeline."
+  close_5m:
+    version: "1.0.0"
+    inputs: ["ohlcv:5m"]
+    release_notes: "Base OHLCV resample (5m) for M1 core pipeline."
+  volume_5m:
+    version: "1.0.0"
+    inputs: ["ohlcv:5m"]
+    release_notes: "Base OHLCV resample (5m) for M1 core pipeline."
+  ema_fast_5m:
+    version: "1.0.0"
+    inputs: ["close_5m"]
+    release_notes: "EMA(21) baseline for MA/RSI strategy."
+  ema_slow_5m:
+    version: "1.0.0"
+    inputs: ["close_5m"]
+    release_notes: "EMA(55) baseline for MA/RSI strategy."
+  rsi_14_5m:
+    version: "1.0.0"
+    inputs: ["close_5m"]
+    release_notes: "RSI(14) baseline for MA/RSI strategy."
+  atr_14_1h:
+    version: "1.0.0"
+    inputs: ["ohlcv:1h"]
+    release_notes: "ATR(14) for volatility guardrails."
+  ema55_slope_1h:
+    version: "1.0.0"
+    inputs: ["close_1h"]
+    release_notes: "EMA55 slope for trend regime detection."
+  session_tag_5m:
+    version: "1.0.0"
+    inputs: ["timestamp"]
+    release_notes: "Session classification tag."
+  regime_trend_1h:
+    version: "1.0.0"
+    inputs: ["close_1h"]
+    release_notes: "Simple trend regime classifier."
+  donchian_upper20_1h:
+    version: "1.0.0"
+    inputs: ["high_1h"]
+    release_notes: "Donchian channel upper(20) 1h."
+  donchian_lower20_1h:
+    version: "1.0.0"
+    inputs: ["low_1h"]
+    release_notes: "Donchian channel lower(20) 1h."
+  donchian_mid20_1h:
+    version: "1.0.0"
+    inputs: ["high_1h", "low_1h"]
+    release_notes: "Donchian channel mid(20) 1h."
+  donchian_upper20_1d:
+    version: "1.0.0"
+    inputs: ["high_1d"]
+    release_notes: "Donchian channel upper(20) 1d."
+  donchian_lower20_1d:
+    version: "1.0.0"
+    inputs: ["low_1d"]
+    release_notes: "Donchian channel lower(20) 1d."
+  donchian_mid20_1d:
+    version: "1.0.0"
+    inputs: ["high_1d", "low_1d"]
+    release_notes: "Donchian channel mid(20) 1d."

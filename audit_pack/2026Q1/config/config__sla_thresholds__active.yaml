@@ -1,0 +1,31 @@
+# config/sla_thresholds/active.yaml -- CONFIG-SCAFF-01 scaffold
+# 詳細設計 §3.1 / §4.4 / §9.4.4 と Runbook RUN-DATA-05 手順6・RUN-HITL-01 を参照。
+# Schema: docs/schemas/sla_threshold_profile.schema.json （schema_version 更新時は同期）。
+
+schema_version: 0  # TODO: docs/schemas/sla_threshold_profile.schema.json 整備後に更新
+profile_id: active
+provider_thresholds:
+  yfinance:
+    fetch:
+      target_ms: 60000
+      warning_ms: 90000
+      critical_ms: 120000
+    processing:
+      target_ms: 18000
+      warning_ms: 24000
+      critical_ms: 30000
+  dukascopy:
+    fetch:
+      target_ms: 15000
+      warning_ms: 20000
+      critical_ms: 25000
+    processing:
+      target_ms: 10000
+      warning_ms: 15000
+      critical_ms: 20000
+hitl:
+  double_ack_minutes: 12  # Runbook RUN-HITL-01 手順3。OpsAgenda未設定時のフォールバックしきい値。
+notes: |
+  実際の運用で使用する閾値ファイル。Runbook `docs/runbooks/RUN-DATA-05.md` の承認後に
+  Validation Data Playbook AC-45 のサインを得て更新してください。更新時は schema_version の管理と
+  `reports/governance/runbook_changelog.md` への記録を忘れないでください。

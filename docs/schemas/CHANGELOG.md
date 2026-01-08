@@ -1,5 +1,8 @@
 # Schema Registry Change Log
 
+## 2026-01-04
+- `guardrails_metrics.schema.json` adds required `profit_readiness_status` and `auto_execute` fields, and marks `spread_status`, `risk_disclosure`, and `auto_execute_forced_off` as required to keep guardrails telemetry aligned with profit readiness and Hands-off state.
+
 ## 2025-12-21
 - Added scaffold schemas for M1+ config references: broker sandbox/error map/SLO, data sources, provider priority, ingestion priorities, event bus config, pipeline steps, compliance pretrade/risk disclosure, drift/emergency, idea/model risk registries, reconciliation/regression, KPI reports, resource budgets, margin stress presets, shadow/share/signature configs, and SLA threshold candidates. These align the design references to concrete schema files under `docs/schemas/` and mirror the runtime `schema/` directory.
 - Updated `config_bundle.schema.json` to include new config scaffolds (broker, data source, pipeline, compliance, shadow/share, and priority configs) as required entries.

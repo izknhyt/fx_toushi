@@ -54,10 +54,11 @@ def test_data_update_gap_plan(tmp_path: Path) -> None:
     plan = tmp_path / "fetch.sh"
 
     from subprocess import run
+    import sys
 
     result = run(
         [
-            "python",
+            sys.executable,
             "tools/update_market_data.py",
             "--symbol",
             "USDJPY",
