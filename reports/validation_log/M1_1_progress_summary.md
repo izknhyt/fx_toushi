@@ -1,6 +1,6 @@
 # M1.1 Progress Summary
 
-- generated_at: 2025-12-24T11:38:25Z
+- generated_at: 2026-01-09T10:38:30Z
 
 ## Completed
 
@@ -16,6 +16,8 @@
 - `logs/ops/stage_change.log` (auto-apply changes)
 - `logs/events/health_suggested.jsonl` (guarded suggestions)
 - `snapshots/latest/health_state.json` (HealthState snapshot)
+- `reports/validation_log/AC-45_sla_20260109.md` (M1.1 evidence bundle)
+- `reports/validation_log/evidence/20260109/` (CLI outputs + snapshots)
 - `src/ticket/builder.py` (advisor metadata + badge/checklist hook)
 - `src/reporter/templates/weekly_m1_core_extended.md` (extended weekly report template)
 

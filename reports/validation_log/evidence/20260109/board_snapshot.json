@@ -1,0 +1,45 @@
+{
+  "timestamp": "2026-01-09T10:35:15Z",
+  "view": "strategy",
+  "mode": "auto",
+  "filters": [],
+  "include": [],
+  "auto_execute": false,
+  "compat_mode": null,
+  "banner": {
+    "kind": "acceptable_degradation",
+    "message": "Reduce-Only enforced",
+    "severity": "warn",
+    "runbook": "docs/runbooks/RUN-DATA-05.md"
+  },
+  "strategy_snapshot": {
+    "strategy": "m1_baseline_ma_rsi",
+    "board_state": "normal",
+    "dataset_hash": "369c2425406b581f38bffaad38e63d6d0423de35256cae74aa0d3dd7fd2401d4",
+    "dataset_path": "data/research/curated/usdjpy/usdjpy_m5_20220101_20251219_merged.parquet",
+    "pf_all": 1.24,
+    "sharpe_oos": 0.92,
+    "acceptable_degradation": false
+  },
+  "badges": {
+    "profit_readiness": "ok",
+    "latency": "ok",
+    "slippage": "ok",
+    "execution_stats": {
+      "latency_data_status": "ok",
+      "slippage_data_status": "ok"
+    }
+  },
+  "guardrails": {
+    "kill_switch_state": "none",
+    "kill_switch_reason": null,
+    "spread_status": "normal",
+    "reduce_only": true,
+    "risk_disclosure": "accepted",
+    "auto_execute": false,
+    "risk_disclosure_consent_id": null
+  },
+  "tickets": [],
+  "render_summary": "mode=auto | banner=Reduce-Only enforced | ks=none, spread=normal, reduce_only=True | risk_disclosure=accepted | badges: profit=ok, latency=ok, slippage=ok | tickets=0",
+  "rendered_table": "No tickets"
+}
