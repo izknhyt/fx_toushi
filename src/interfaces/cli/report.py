@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import logging
 from collections.abc import Mapping, Sequence
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 
 import yaml
@@ -17,7 +17,7 @@ from src.reporter.kpi import compute_kpi_from_equity, compute_kpi_from_returns
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["weekly", "daily"]
+__all__ = ["weekly", "daily", "performance"]
 
 DEFAULT_WEEKLY_DIR = Path("reports/weekly")
 DEFAULT_DAILY_DIR = Path("reports/daily")
@@ -27,6 +27,19 @@ DEFAULT_RETURNS_PATH = Path("reports/performance/paper/returns.parquet")
 DEFAULT_EQUITY_PATH = Path("reports/performance/paper/equity.parquet")
 DEFAULT_BACKTEST_RETURNS_PATH = Path("reports/performance/backtest/returns.parquet")
 DEFAULT_BACKTEST_EQUITY_PATH = Path("reports/performance/backtest/equity.parquet")
+DEFAULT_PERFORMANCE_SNAPSHOT = Path("metrics") / "performance_snapshot.jsonl"
+DEFAULT_PERFORMANCE_REPORT = Path("reports") / "performance" / "latest.md"
+
+
+def _append_jsonl(path: Path, payload: Mapping[str, object]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(payload, ensure_ascii=False))
+        handle.write("\n")
+
+
+def _utcnow_iso() -> str:
+    return datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
 
 
 def _resolve_template(profile: str, template: Path | None) -> Path:
@@ -208,6 +221,74 @@ def weekly(
         extra={"week": iso_week, "output": str(output), "dry_run": dry_run},
     )
     return payload
+
+
+def performance(
+    profile: str,
+    *,
+    output_path: Path | None = None,
+    metrics_path: Path = DEFAULT_PERFORMANCE_SNAPSHOT,
+    returns_path: Path = DEFAULT_RETURNS_PATH,
+    equity_path: Path = DEFAULT_EQUITY_PATH,
+    kpi: Mapping[str, object] | None = None,
+    dry_run: bool = False,
+) -> dict[str, object]:
+    """Generate a performance snapshot and append metrics."""
+
+    now = _utcnow_iso()
+    kpi_payload = dict(kpi) if kpi is not None else None
+    kpi_source: Path | None = None
+
+    if kpi_payload is None:
+        if returns_path.exists():
+            kpi_payload = compute_kpi_from_returns(returns_path)
+            kpi_source = returns_path
+        elif equity_path.exists():
+            kpi_payload = compute_kpi_from_equity(equity_path)
+            kpi_source = equity_path
+        else:
+            kpi_payload = {"sharpe": "n/a", "max_dd": "n/a", "win_rate": "n/a", "cum_r": "n/a"}
+
+    payload = {
+        "timestamp": now,
+        "status": "ok",
+        "profile": profile,
+        "kpi": kpi_payload,
+        "kpi_source": str(kpi_source) if kpi_source else None,
+    }
+
+    if not dry_run:
+        _append_jsonl(metrics_path, payload)
+        report_path = output_path or DEFAULT_PERFORMANCE_REPORT
+        report_path.parent.mkdir(parents=True, exist_ok=True)
+        report_path.write_text(_render_performance_md(payload), encoding="utf-8")
+        payload["path"] = str(report_path)
+    else:
+        payload["path"] = None
+
+    payload["metrics_path"] = str(metrics_path)
+    return payload
+
+
+def _render_performance_md(payload: Mapping[str, object]) -> str:
+    kpi = payload.get("kpi") or {}
+    return "\n".join(
+        [
+            "# Performance Snapshot",
+            "",
+            f"- Timestamp: {payload.get('timestamp')}",
+            f"- Profile: {payload.get('profile')}",
+            f"- KPI Source: {payload.get('kpi_source') or 'n/a'}",
+            "",
+            "## KPI",
+            "",
+            f"- Sharpe: {kpi.get('sharpe')}",
+            f"- Max DD: {kpi.get('max_dd')}",
+            f"- Win Rate: {kpi.get('win_rate')}",
+            f"- Cumulative R: {kpi.get('cum_r')}",
+            "",
+        ]
+    )
 
 
 def daily(

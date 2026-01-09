@@ -85,7 +85,11 @@ from .metrics import report as metrics_report
 from .ops import action_item_sync, readiness
 from .performance import live_guard as performance_live_guard
 from .preflight import preflight
-from .report import daily as generate_daily_report, weekly as generate_weekly_report
+from .report import (
+    daily as generate_daily_report,
+    performance as generate_performance_report,
+    weekly as generate_weekly_report,
+)
 from .resync import resync
 from .scoring import (
     DiagnosticsEvidenceError,
@@ -1075,6 +1079,41 @@ def create_cli_app() -> typer.Typer:
         )
         _render_payload(console, payload, json_output=effective_json)
 
+    @report_app.command("performance")
+    def report_performance_command(
+        ctx: typer.Context,
+        profile: str = typer.Option("paper", "--profile", help="Profile hint (paper/backtest/live)"),
+        out: Path | None = typer.Option(None, "--out", help="Output markdown path"),
+        metrics: Path = typer.Option(
+            Path("metrics") / "performance_snapshot.jsonl",
+            "--metrics",
+            help="Metrics JSONL path",
+        ),
+        returns_path: Path = typer.Option(
+            Path("reports") / "performance" / "paper" / "returns.parquet",
+            "--returns",
+            help="Returns file path",
+        ),
+        equity_path: Path = typer.Option(
+            Path("reports") / "performance" / "paper" / "equity.parquet",
+            "--equity",
+            help="Equity curve path",
+        ),
+        dry_run: bool = typer.Option(False, "--dry-run", help="Render without writing output"),
+        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
+    ) -> None:
+        ctx_obj = ctx.obj or {"json": False}
+        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        payload = generate_performance_report(
+            profile=profile,
+            output_path=out,
+            metrics_path=metrics,
+            returns_path=returns_path,
+            equity_path=equity_path,
+            dry_run=dry_run,
+        )
+        _render_payload(console, payload, json_output=effective_json)
+
     @report_app.command("daily")
     def report_daily_command(
         ctx: typer.Context,
@@ -1097,6 +1136,7 @@ def create_cli_app() -> typer.Typer:
         _render_payload(console, payload, json_output=effective_json)
 
     app.add_typer(report_app, name="report")
+    app.add_typer(report_app, name="reports")
 
     benchmark_app = typer.Typer(help="Benchmark ingestion and validation utilities")
 

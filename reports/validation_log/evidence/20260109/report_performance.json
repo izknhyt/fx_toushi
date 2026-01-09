@@ -1,0 +1,1 @@
+{"timestamp": "2026-01-09T12:13:12Z", "status": "ok", "profile": "paper", "kpi": {"sharpe": "n/a", "max_dd": "n/a", "win_rate": "n/a", "cum_r": "n/a"}, "kpi_source": "reports/performance/paper/returns.parquet", "path": "reports/performance/latest.md", "metrics_path": "metrics/performance_snapshot.jsonl"}

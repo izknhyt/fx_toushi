@@ -12,3 +12,5 @@ Waived items:
 - product_owner_date
 - ops_manager_date
 - risk_officer_date
+- paid_feed_paper_verification
+- paid_feed_live_gating_and_rollback

@@ -193,6 +193,18 @@ def build_provider_handlers(
         handlers["manual_csv"] = _manual_handler
     except Exception:
         pass
+    try:
+        from src.data.providers.paid_feed_stub import PaidFeedStubProvider
+
+        paid_feed = PaidFeedStubProvider()
+
+        def _paid_feed_handler(symbols: Sequence[str], timeframe: str) -> list[MarketFrame]:
+            request = MarketRequest(symbols=symbols, timeframe=timeframe, start=start, end=end)
+            return list(paid_feed.fetch_bars(request))
+
+        handlers["paid_feed_stub"] = _paid_feed_handler
+    except Exception:
+        pass
     return handlers
 
 
