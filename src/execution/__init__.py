@@ -14,7 +14,7 @@ from .model import (
     ExecutionAdjustments,
     ExecutionModelInputError,
     ExecutionModelProtocol,
-    ExecutionRuleViolation,
+    ExecutionRuleViolationError,
     FillPolicy,
     FillStyle,
 )
@@ -33,7 +33,7 @@ __all__ = [
     "ExecutionAdjustments",
     "ExecutionModelProtocol",
     "ExecutionModelInputError",
-    "ExecutionRuleViolation",
+    "ExecutionRuleViolationError",
     "FillPolicy",
     "FillStyle",
     "OrderRouterProtocol",

@@ -19,8 +19,7 @@ def _write_latency(path: Path, values: list[float]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     now = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
     lines = [
-        json.dumps({"timestamp": now, "latency_ms": value}, ensure_ascii=False)
-        for value in values
+        json.dumps({"timestamp": now, "latency_ms": value}, ensure_ascii=False) for value in values
     ]
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 

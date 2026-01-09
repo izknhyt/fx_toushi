@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Mapping
 
 
 @dataclass(slots=True)
@@ -37,7 +37,14 @@ class StageDecision:
 class RateLimitGuard:
     """Stateless stage evaluator based on rolling 429 rate and token bucket."""
 
-    def __init__(self, *, tokens_per_minute: float, burst_tokens: float, poll_interval_sec: float, stages: list[str]) -> None:
+    def __init__(
+        self,
+        *,
+        tokens_per_minute: float,
+        burst_tokens: float,
+        poll_interval_sec: float,
+        stages: list[str],
+    ) -> None:
         self.tokens_per_minute = tokens_per_minute
         self.burst_tokens = burst_tokens
         self.poll_interval_sec = poll_interval_sec

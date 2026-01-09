@@ -11,15 +11,17 @@ import argparse
 import hashlib
 import json
 import re
+from collections.abc import Iterable
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Iterable
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Extract JSONL metrics into Markdown evidence.")
     parser.add_argument("--source", required=True, help="Metrics JSONL source path")
-    parser.add_argument("--window", required=True, help="Window range (YYYY-MM-DD:YYYY-MM-DD or Nd)")
+    parser.add_argument(
+        "--window", required=True, help="Window range (YYYY-MM-DD:YYYY-MM-DD or Nd)"
+    )
     parser.add_argument("--out", required=True, help="Output markdown path")
     args = parser.parse_args()
 
@@ -67,7 +69,11 @@ def _parse_window(value: str) -> tuple[datetime, datetime]:
     if ":" in text:
         start_raw, end_raw = text.split(":", 1)
         start = datetime.fromisoformat(start_raw).replace(tzinfo=timezone.utc)
-        end = datetime.fromisoformat(end_raw).replace(tzinfo=timezone.utc) + timedelta(days=1) - timedelta(seconds=1)
+        end = (
+            datetime.fromisoformat(end_raw).replace(tzinfo=timezone.utc)
+            + timedelta(days=1)
+            - timedelta(seconds=1)
+        )
         return start, end
     raise ValueError(f"Unsupported window format: {value}")
 

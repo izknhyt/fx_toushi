@@ -5,8 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pandas as pd
-
-from src.reporter.kpi import compute_kpi_from_returns, compute_kpi_from_equity
+from src.reporter.kpi import compute_kpi_from_equity, compute_kpi_from_returns
 
 
 def test_compute_kpi_from_returns(tmp_path: Path) -> None:

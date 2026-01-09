@@ -6,7 +6,6 @@ import inspect
 from collections.abc import Awaitable, Callable
 
 import pytest
-
 from src.core.scheduler import (
     AsyncIntervalJob,
     AsyncOneShotJob,

@@ -4,29 +4,45 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from src.data.rate_limit_guard import RateLimitGuard
 from src.data.service import (
-    fetch_latest,
     MarketFrame,
     ProviderResult,
+    WorkerPlan,
+    fetch_latest,
     order_symbols_by_priority,
+    spawn_provider_workers,
 )
-from src.data.rate_limit_guard import RateLimitGuard
-from src.data.service import spawn_provider_workers, WorkerPlan
 
 
 def _primary_handler(symbols, timeframe):
     bars = [{"timestamp": "2025-01-01T00:00:00Z", "open": 1, "high": 1, "low": 1, "close": 1}]
-    return ProviderResult(frames=[MarketFrame(symbol=symbols[0], timeframe=timeframe, bars=bars)], p95_ms=120.0, p99_ms=150.0, rate_limit_ratio=0.02)
+    return ProviderResult(
+        frames=[MarketFrame(symbol=symbols[0], timeframe=timeframe, bars=bars)],
+        p95_ms=120.0,
+        p99_ms=150.0,
+        rate_limit_ratio=0.02,
+    )
 
 
 def _secondary_handler(symbols, timeframe):
     bars = [{"timestamp": "2025-01-01T00:05:00Z", "open": 2, "high": 2, "low": 2, "close": 2}]
-    return ProviderResult(frames=[MarketFrame(symbol=symbols[0], timeframe=timeframe, bars=bars)], p95_ms=80.0, p99_ms=90.0, rate_limit_ratio=0.0)
+    return ProviderResult(
+        frames=[MarketFrame(symbol=symbols[0], timeframe=timeframe, bars=bars)],
+        p95_ms=80.0,
+        p99_ms=90.0,
+        rate_limit_ratio=0.0,
+    )
 
 
 def test_fetch_latest_fails_over_on_high_rate_limit(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.chdir(tmp_path)
-    guard = RateLimitGuard(tokens_per_minute=60, burst_tokens=90, poll_interval_sec=15, stages=["stage0", "stage1", "stage2"])
+    guard = RateLimitGuard(
+        tokens_per_minute=60,
+        burst_tokens=90,
+        poll_interval_sec=15,
+        stages=["stage0", "stage1", "stage2"],
+    )
     frames = fetch_latest(
         symbols=["USDJPY"],
         timeframe="5m",
@@ -47,7 +63,9 @@ def test_fetch_latest_fails_over_on_high_rate_limit(monkeypatch, tmp_path: Path)
 
 
 def test_spawn_provider_workers_uses_rate_limit_guard() -> None:
-    guard = RateLimitGuard(tokens_per_minute=60, burst_tokens=90, poll_interval_sec=15, stages=["stage0", "stage1"])
+    guard = RateLimitGuard(
+        tokens_per_minute=60, burst_tokens=90, poll_interval_sec=15, stages=["stage0", "stage1"]
+    )
     plans = spawn_provider_workers(
         providers=["yfinance"],
         rate_limit_guard=guard,
@@ -78,7 +96,9 @@ def test_fetch_latest_applies_worker_plan(monkeypatch, tmp_path: Path) -> None:
         timeframe="5m",
         provider_priority=["primary", "secondary"],
         provider_handlers={"primary": _primary_handler, "secondary": _secondary_handler},
-        worker_plan=WorkerPlan(provider="primary", stage="stage0", poll_interval_sec=0.1, max_workers=1),
+        worker_plan=WorkerPlan(
+            provider="primary", stage="stage0", poll_interval_sec=0.1, max_workers=1
+        ),
         apply_worker_plan=True,
         metrics_path=tmp_path / "metrics" / "data_ingestion_sla.jsonl",
     )

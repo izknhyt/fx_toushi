@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, asdict
+from collections.abc import Mapping
+from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Iterable, Mapping
 
 
 @dataclass(slots=True)
@@ -52,8 +52,12 @@ class TradeJournalService:
             entries.append(payload)
         return entries
 
-    def from_ticket_action(self, *, ticket_id: str, user: str, note: str, week: str | None = None) -> JournalEntry:
-        return JournalEntry(ts=datetime.now(timezone.utc), ticket_id=ticket_id, user=user, note=note, week=week)
+    def from_ticket_action(
+        self, *, ticket_id: str, user: str, note: str, week: str | None = None
+    ) -> JournalEntry:
+        return JournalEntry(
+            ts=datetime.now(timezone.utc), ticket_id=ticket_id, user=user, note=note, week=week
+        )
 
     def export_weekly(self, *, week: str, output_dir: Path | str = "reports/journal") -> Path:
         """Export a weekly journal summary to Markdown."""

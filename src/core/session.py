@@ -11,19 +11,26 @@ scaffolding required by smoke tests and runbook drills so that
 
 from __future__ import annotations
 
+import contextlib
+import hashlib
+import json
+import os
+import time
+from collections.abc import Mapping, MutableMapping, Sequence
 from dataclasses import dataclass, field
 from functools import lru_cache
-import hashlib
-import os
-import json
-import time
 from pathlib import Path
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Any, Mapping, MutableMapping, Optional, Protocol
-from typing import Sequence, runtime_checkable
-from typing import Literal
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Literal,
+    Protocol,
+    runtime_checkable,
+)
 
 from yaml import safe_load
+
 from src.data.service import IngestionMetricsCollector
 
 if TYPE_CHECKING:  # pragma: no cover - import cycle guard for type checking only
@@ -86,7 +93,7 @@ class ModeProfile:
     source: Path
 
     @classmethod
-    def from_mapping(cls, payload: Mapping[str, Any], *, source: Path) -> "ModeProfile":
+    def from_mapping(cls, payload: Mapping[str, Any], *, source: Path) -> ModeProfile:
         """Construct a profile from a YAML payload."""
 
         required_keys = {
@@ -229,7 +236,7 @@ class ModeContextFactory:
     def load_profile(self, profile_name: str) -> ModeProfile:
         """Return a cached :class:`ModeProfile` for ``profile_name``."""
 
-        return self._load_profile_cached(profile_name)
+        return _load_profile_cached(self._profiles_dir, profile_name)
 
     def build_clock(self, profile: ModeProfile) -> MarketClock:
         """Construct the :class:`MarketClock` from the profile payload."""
@@ -246,7 +253,7 @@ class ModeContextFactory:
         if isinstance(fallbacks, Sequence) and not isinstance(fallbacks, (str, bytes, bytearray)):
             fallback_tuple = tuple(str(item) for item in fallbacks)
         else:
-            fallback_tuple = tuple()
+            fallback_tuple = ()
 
         poll_interval = ingestion.get("poll_interval_sec")
         poll_interval_sec = int(poll_interval) if poll_interval is not None else None
@@ -287,17 +294,9 @@ class ModeContextFactory:
     def build_audit_channel(self, profile: ModeProfile) -> AuditChannel:
         """Construct the :class:`AuditChannel` placeholder for the profile."""
 
-        return AuditChannel(profile_id=profile.profile_id, streams=("session", "signals", "execution"))
-
-    @lru_cache(maxsize=16)
-    def _load_profile_cached(self, profile_name: str) -> ModeProfile:
-        path = self._profiles_dir / f"{profile_name}.yaml"
-        if not path.exists():
-            raise FileNotFoundError(f"Profile configuration not found: {path}")
-        payload = safe_load(path.read_text(encoding="utf-8"))
-        if not isinstance(payload, Mapping):
-            raise ValueError(f"Profile YAML at {path} must contain a mapping root")
-        return ModeProfile.from_mapping(payload, source=path)
+        return AuditChannel(
+            profile_id=profile.profile_id, streams=("session", "signals", "execution")
+        )
 
     @staticmethod
     def _derive_seed(*, profile: ModeProfile, session_id: str) -> int:
@@ -323,9 +322,9 @@ class SessionConfig:
 
     mode: str
     telemetry_enabled: bool = True
-    snapshot_path: Optional[str] = None
-    profile_name: Optional[str] = None
-    mode_factory: Optional[ModeContextFactory] = None
+    snapshot_path: str | None = None
+    profile_name: str | None = None
+    mode_factory: ModeContextFactory | None = None
 
 
 @dataclass(slots=True)
@@ -339,8 +338,8 @@ class SessionContext:
 
     session_id: str
     mode: str
-    feature_flags: Optional[dict[str, bool]] = None
-    mode_context: Optional[ModeContext] = None
+    feature_flags: dict[str, bool] | None = None
+    mode_context: ModeContext | None = None
 
 
 @runtime_checkable
@@ -353,7 +352,7 @@ class SessionManager(Protocol):
     """
 
     config: SessionConfig
-    mode_factory: Optional[ModeContextFactory]
+    mode_factory: ModeContextFactory | None
 
     def start(self, context: SessionContext) -> None:
         """Begin a session with the supplied context."""
@@ -361,7 +360,7 @@ class SessionManager(Protocol):
     def stop(self) -> None:
         """Stop the session and release any allocated resources."""
 
-    def request_snapshot(self) -> Optional[str]:
+    def request_snapshot(self) -> str | None:
         """Return a snapshot identifier if persistence should occur."""
 
     def catch_up(
@@ -383,7 +382,7 @@ def create_session_context(
     session_id: str,
     config: SessionConfig | None = None,
     factory: ModeContextFactory | None = None,
-    feature_flags: Optional[dict[str, bool]] = None,
+    feature_flags: dict[str, bool] | None = None,
 ) -> SessionContext:
     """Create a :class:`SessionContext` populated with a :class:`ModeContext`.
 
@@ -398,7 +397,8 @@ def create_session_context(
     if config is not None:
         if config.profile_name is not None and config.profile_name != profile_name:
             raise ValueError(
-                f"SessionConfig.profile_name={config.profile_name!r} does not match requested profile {profile_name!r}"
+                "SessionConfig.profile_name="
+                f"{config.profile_name!r} does not match requested profile {profile_name!r}"
             )
         if config.mode != mode_context.mode:
             raise ValueError(
@@ -414,21 +414,32 @@ def create_session_context(
     )
 
 
+@lru_cache(maxsize=16)
+def _load_profile_cached(profiles_dir: Path, profile_name: str) -> ModeProfile:
+    path = profiles_dir / f"{profile_name}.yaml"
+    if not path.exists():
+        raise FileNotFoundError(f"Profile configuration not found: {path}")
+    payload = safe_load(path.read_text(encoding="utf-8"))
+    if not isinstance(payload, Mapping):
+        raise ValueError(f"Profile YAML at {path} must contain a mapping root")
+    return ModeProfile.from_mapping(payload, source=path)
+
+
 @dataclass(slots=True)
 class DefaultSessionManager:
     """Concrete :class:`SessionManager` that bridges profiles and workflows."""
 
     config: SessionConfig
-    workflow: "WorkflowOrchestrator"
+    workflow: WorkflowOrchestrator
     mode_factory: ModeContextFactory | None = None
     session_log_dir: Path = field(default_factory=lambda: Path("logs") / "sessions")
     snapshot_root: Path = field(default_factory=lambda: Path("snapshots") / "sessions")
     _active_context: SessionContext | None = field(init=False, default=None)
-    _last_result: "WorkflowResult" | None = field(init=False, default=None)
+    _last_result: WorkflowResult | None = field(init=False, default=None)
     _session_log_path: Path | None = field(init=False, default=None)
     _snapshot_path: Path | None = field(init=False, default=None)
     _last_plan: tuple[str, ...] = field(init=False, default_factory=tuple)
-    _last_workflow_context: "WorkflowContext" | None = field(init=False, default=None)
+    _last_workflow_context: WorkflowContext | None = field(init=False, default=None)
 
     def __post_init__(self) -> None:
         self.session_log_dir = Path(self.session_log_dir)
@@ -448,7 +459,7 @@ class DefaultSessionManager:
         return self._snapshot_path
 
     @property
-    def last_result(self) -> "WorkflowResult" | None:
+    def last_result(self) -> WorkflowResult | None:
         """Return the most recent :class:`WorkflowResult`, if available."""
 
         return self._last_result
@@ -460,7 +471,7 @@ class DefaultSessionManager:
         return self._last_plan
 
     @property
-    def last_workflow_context(self) -> "WorkflowContext" | None:
+    def last_workflow_context(self) -> WorkflowContext | None:
         """Return the workflow context from the latest :meth:`start` invocation."""
 
         return self._last_workflow_context
@@ -517,7 +528,7 @@ class DefaultSessionManager:
         self._snapshot_path = None
         self._last_workflow_context = None
 
-    def request_snapshot(self) -> Optional[str]:
+    def request_snapshot(self) -> str | None:
         """Return the snapshot path allocated during :meth:`start`."""
 
         if self._active_context is None or self._snapshot_path is None:
@@ -557,14 +568,18 @@ class DefaultSessionManager:
         cfg_hash = os.getenv("TRADECTL_CFG_HASH") or _DEFAULT_HASH
         data_hash = os.getenv("TRADECTL_DATA_HASH") or _DEFAULT_HASH
         board_mode = os.getenv("TRADECTL_BOARD_MODE") or "normal"
-        determinism_hash = os.getenv("TRADECTL_DETERMINISM_HASH") or self._load_latest_determinism_hash()
+        determinism_hash = (
+            os.getenv("TRADECTL_DETERMINISM_HASH") or self._load_latest_determinism_hash()
+        )
         gate_state = self._load_gate_state()
         if gate_state:
             cfg_hash = gate_state.get("cfg_hash", cfg_hash) or cfg_hash
             data_hash = gate_state.get("data_hash", data_hash) or data_hash
             board_mode = gate_state.get("board_mode", board_mode) or board_mode
         failover_env = os.getenv("TRADECTL_RESYNC_FAILOVER_USED", "")
-        failover_used = [token for token in failover_env.split(",") if token.strip()] if failover_env else []
+        failover_used = (
+            [token for token in failover_env.split(",") if token.strip()] if failover_env else []
+        )
         measured = self._load_latest_resync_stats()
         collector_snapshot = metrics_collector.snapshot() if metrics_collector else {}
 
@@ -630,10 +645,16 @@ class DefaultSessionManager:
             os.getenv("TRADECTL_RESYNC_RETRY_COUNT"),
             default=0,
         )
-        latency_status = collector_snapshot.get("latency_status") or measured.get("latency_status") or ingestion_metrics.get(
-            "latency_status"
-        ) or os.getenv("TRADECTL_RESYNC_LATENCY_STATUS", "ok")
-        if not measured.get("catch_up_lag_minutes") and ingestion_metrics.get("catch_up_lag_minutes") is not None:
+        latency_status = (
+            collector_snapshot.get("latency_status")
+            or measured.get("latency_status")
+            or ingestion_metrics.get("latency_status")
+            or os.getenv("TRADECTL_RESYNC_LATENCY_STATUS", "ok")
+        )
+        if (
+            not measured.get("catch_up_lag_minutes")
+            and ingestion_metrics.get("catch_up_lag_minutes") is not None
+        ):
             catch_up_lag_minutes = int(ingestion_metrics["catch_up_lag_minutes"])
         if metrics_collector and not dry_run and provider_handlers is not None:
             try:
@@ -643,16 +664,26 @@ class DefaultSessionManager:
                 worker_plan_enabled = os.getenv("TRADECTL_WORKER_PLAN_ENABLED", "1") != "0"
                 guard_enabled = os.getenv("TRADECTL_RATE_LIMIT_GUARD_ENABLED", "1") != "0"
                 stages_env = os.getenv("TRADECTL_RATE_LIMIT_STAGES", "stage0,stage1,stage2")
-                stages = [stage.strip() for stage in stages_env.split(",") if stage.strip()] or ["stage0"]
+                stages = [stage.strip() for stage in stages_env.split(",") if stage.strip()] or [
+                    "stage0"
+                ]
                 rate_limit_guard = None
                 if guard_enabled:
                     rate_limit_guard = RateLimitGuard(
-                        tokens_per_minute=_coalesce_float(os.getenv("TRADECTL_RATE_LIMIT_TPM"), default=60.0),
-                        burst_tokens=_coalesce_float(os.getenv("TRADECTL_RATE_LIMIT_BURST"), default=90.0),
-                        poll_interval_sec=_coalesce_float(os.getenv("TRADECTL_RATE_LIMIT_POLL_SEC"), default=15.0),
+                        tokens_per_minute=_coalesce_float(
+                            os.getenv("TRADECTL_RATE_LIMIT_TPM"), default=60.0
+                        ),
+                        burst_tokens=_coalesce_float(
+                            os.getenv("TRADECTL_RATE_LIMIT_BURST"), default=90.0
+                        ),
+                        poll_interval_sec=_coalesce_float(
+                            os.getenv("TRADECTL_RATE_LIMIT_POLL_SEC"), default=15.0
+                        ),
                         stages=stages,
                     )
-                rate_limit_log_path = Path(os.getenv("TRADECTL_RATE_LIMIT_LOG", "metrics/rate_limit_window.jsonl"))
+                rate_limit_log_path = Path(
+                    os.getenv("TRADECTL_RATE_LIMIT_LOG", "metrics/rate_limit_window.jsonl")
+                )
 
                 _ = fetch_latest(
                     symbols=list(symbols or ()),
@@ -689,11 +720,11 @@ class DefaultSessionManager:
             "latency_status": latency_status,
         }
         if metrics_collector:
-            metrics_path = Path(os.getenv("TRADECTL_INGESTION_METRICS_PATH", "metrics/data_ingestion_sla.jsonl"))
-            try:
+            metrics_path = Path(
+                os.getenv("TRADECTL_INGESTION_METRICS_PATH", "metrics/data_ingestion_sla.jsonl")
+            )
+            with contextlib.suppress(Exception):  # pragma: no cover - defensive
                 metrics_collector.write_snapshot(metrics_path=metrics_path)
-            except Exception:  # pragma: no cover - defensive
-                pass
         return result
 
     def _load_gate_state(self) -> Mapping[str, Any]:
@@ -793,7 +824,9 @@ class DefaultSessionManager:
     def _load_latest_ingestion_metrics(self) -> Mapping[str, Any]:
         """Return latest ingestion SLA metrics for fetch latency."""
 
-        path = Path(os.getenv("TRADECTL_INGESTION_METRICS_PATH", "metrics/data_ingestion_sla.jsonl"))
+        path = Path(
+            os.getenv("TRADECTL_INGESTION_METRICS_PATH", "metrics/data_ingestion_sla.jsonl")
+        )
         if not path.exists():
             return {}
         try:
@@ -811,22 +844,16 @@ class DefaultSessionManager:
                 continue
             payload: dict[str, Any] = {}
             if "p95_latency_sec" in record:
-                try:
+                with contextlib.suppress(TypeError, ValueError):
                     payload["fetch_p95_ms"] = float(record["p95_latency_sec"]) * 1000
-                except (TypeError, ValueError):
-                    pass
             if "p99_latency_sec" in record:
-                try:
+                with contextlib.suppress(TypeError, ValueError):
                     payload["fetch_p99_ms"] = float(record["p99_latency_sec"]) * 1000
-                except (TypeError, ValueError):
-                    pass
             if "latency_status" in record or "status" in record:
                 payload["latency_status"] = record.get("latency_status") or record.get("status")
             if "retry_count" in record:
-                try:
+                with contextlib.suppress(TypeError, ValueError):
                     payload["retry_count"] = int(record["retry_count"])
-                except (TypeError, ValueError):
-                    pass
             if "catch_up_lag_minutes" in record:
                 payload["catch_up_lag_minutes"] = record.get("catch_up_lag_minutes")
             if payload:

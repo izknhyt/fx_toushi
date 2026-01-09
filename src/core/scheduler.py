@@ -2,13 +2,13 @@
 from __future__ import annotations
 
 import asyncio
+import json
+import random
 from collections.abc import Awaitable, Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-import json
-import random
 from pathlib import Path
-from typing import Any, Protocol, Union
+from typing import Any, Protocol
 
 
 class SupportsDeferRetry(Protocol):
@@ -72,17 +72,40 @@ class AsyncIntervalJob:
             except Exception:
                 attempts += 1
                 if self.max_attempts is not None and attempts >= self.max_attempts:
-                    self._record_metric(status="failed", scheduled_at=scheduled_at, started_at=started_at, lag_ms=lag_ms)
+                    self._record_metric(
+                        status="failed",
+                        scheduled_at=scheduled_at,
+                        started_at=started_at,
+                        lag_ms=lag_ms,
+                    )
                     raise
                 delay = self.retry_backoff if self.retry_backoff is not None else interval
-                self._record_metric(status="retry", scheduled_at=scheduled_at, started_at=started_at, lag_ms=lag_ms, retry_delay=delay)
+                self._record_metric(
+                    status="retry",
+                    scheduled_at=scheduled_at,
+                    started_at=started_at,
+                    lag_ms=lag_ms,
+                    retry_delay=delay,
+                )
                 await asyncio.sleep(delay)
             else:
-                self._record_metric(status="ok", scheduled_at=scheduled_at, started_at=started_at, lag_ms=lag_ms)
+                self._record_metric(
+                    status="ok", scheduled_at=scheduled_at, started_at=started_at, lag_ms=lag_ms
+                )
                 if lag_ms > warn_threshold:
-                    self._record_metric(status="lag_warn", scheduled_at=scheduled_at, started_at=started_at, lag_ms=lag_ms)
+                    self._record_metric(
+                        status="lag_warn",
+                        scheduled_at=scheduled_at,
+                        started_at=started_at,
+                        lag_ms=lag_ms,
+                    )
                 if skip_count > self.max_skips:
-                    self._record_metric(status="skipped_excess", scheduled_at=scheduled_at, started_at=started_at, lag_ms=lag_ms)
+                    self._record_metric(
+                        status="skipped_excess",
+                        scheduled_at=scheduled_at,
+                        started_at=started_at,
+                        lag_ms=lag_ms,
+                    )
 
             sleep_for = self._sleep_override if self._sleep_override is not None else interval
             self._sleep_override = None
@@ -165,11 +188,15 @@ class AsyncOneShotJob:
         lag_ms = max(0.0, (started_at - scheduled_at) * 1000.0)
         try:
             await self.coroutine()
-            self._record_metric(status="ok", scheduled_at=scheduled_at, started_at=started_at, lag_ms=lag_ms)
+            self._record_metric(
+                status="ok", scheduled_at=scheduled_at, started_at=started_at, lag_ms=lag_ms
+            )
         except asyncio.CancelledError:
             raise
         except Exception:
-            self._record_metric(status="failed", scheduled_at=scheduled_at, started_at=started_at, lag_ms=lag_ms)
+            self._record_metric(
+                status="failed", scheduled_at=scheduled_at, started_at=started_at, lag_ms=lag_ms
+            )
             raise
 
     def cancel(self) -> None:
@@ -206,7 +233,8 @@ class AsyncOneShotJob:
         except OSError:
             pass
 
-AsyncJob = Union[AsyncIntervalJob, AsyncOneShotJob]
+
+AsyncJob = AsyncIntervalJob | AsyncOneShotJob
 
 
 @dataclass(slots=True)
@@ -257,7 +285,9 @@ class Scheduler:
     async def run(self) -> None:
         """§2.3 Scheduler.run — drive the execution cycle for registered jobs."""
         await self.start()
-        tasks = [job._task for job in self.registry.list() if getattr(job, "_task", None) is not None]
+        tasks = [
+            job._task for job in self.registry.list() if getattr(job, "_task", None) is not None
+        ]
         if not tasks:
             return
         await asyncio.gather(*tasks)

@@ -11,13 +11,12 @@ from typing import Any
 
 import pandas as pd
 
-from .board import _load_manifest_entry  # reuse manifest helper
 from src.backtest.paper_poc import (
-    DEFAULT_DATA_MANIFEST,
-    DEFAULT_RISK_POLICY,
-    simulate_paper_poc,
     StrategyManifest,
+    simulate_paper_poc,
 )
+
+from .board import _load_manifest_entry  # reuse manifest helper
 
 DEFAULT_BACKTEST_RETURNS_EXPORT = Path("reports") / "performance" / "backtest" / "returns.parquet"
 DEFAULT_BACKTEST_EQUITY_EXPORT = Path("reports") / "performance" / "backtest" / "equity.parquet"
@@ -63,7 +62,9 @@ def _deterministic_stats(series: pd.Series) -> tuple[float, float, float, float]
     return pf_all, sharpe, max_drawdown, win_rate
 
 
-def _compute_performance_series(df: pd.DataFrame, *, base_equity: float = 100.0) -> tuple[pd.Series, pd.Series]:
+def _compute_performance_series(
+    df: pd.DataFrame, *, base_equity: float = 100.0
+) -> tuple[pd.Series, pd.Series]:
     close_col = None
     for candidate in ("close", "price", "mid"):
         if candidate in df.columns:
@@ -78,7 +79,9 @@ def _compute_performance_series(df: pd.DataFrame, *, base_equity: float = 100.0)
     if equity.empty:
         equity = pd.Series([base_equity], name="equity")
     else:
-        equity = pd.concat([pd.Series([base_equity], name="equity"), equity.rename("equity")], ignore_index=True)
+        equity = pd.concat(
+            [pd.Series([base_equity], name="equity"), equity.rename("equity")], ignore_index=True
+        )
     return returns, equity
 
 
@@ -99,13 +102,19 @@ def _performance_paths(
     returns_path: Path | None = None,
     equity_path: Path | None = None,
 ) -> tuple[Path, Path]:
-    base_dir = (out_dir / "performance" / "backtest") if out_dir else (Path("reports") / "performance" / "backtest")
+    base_dir = (
+        (out_dir / "performance" / "backtest")
+        if out_dir
+        else (Path("reports") / "performance" / "backtest")
+    )
     resolved_returns = returns_path or (base_dir / DEFAULT_BACKTEST_RETURNS_EXPORT.name)
     resolved_equity = equity_path or (base_dir / DEFAULT_BACKTEST_EQUITY_EXPORT.name)
     return resolved_returns, resolved_equity
 
 
-def _build_metrics(strategy: str, profile: str, dataset_path: Path, dataset_hash: str) -> BacktestResult:
+def _build_metrics(
+    strategy: str, profile: str, dataset_path: Path, dataset_hash: str
+) -> BacktestResult:
     df = pd.read_parquet(dataset_path)
     pf_all, sharpe_all, max_dd_all, win_rate = _deterministic_stats(df["close"])
 
@@ -217,7 +226,6 @@ def walk_forward_backtest(
     dataset_path = manifest_entry["dataset_path"]
     dataset_hash = manifest_entry["dataset_sha256"]
 
-    base_payload = _build_metrics(strategy, profile, Path(dataset_path), dataset_hash).as_dict()
     segments = []
     start_ts = pd.Timestamp(window_from)
     end_ts = pd.Timestamp(window_to)
@@ -333,7 +341,7 @@ def run_paper_poc_all(
 
     manifest = StrategyManifest.load(strategy_manifest_path)
     results: dict[str, Any] = {}
-    for strategy_id, entry in manifest.enabled_strategies():
+    for strategy_id, _entry in manifest.enabled_strategies():
         payload = run_paper_poc(
             strategy=strategy_id,
             profile=profile,

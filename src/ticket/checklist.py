@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import Iterable, Mapping, Sequence
 
 from .exceptions import ChecklistInvariantError
-
 
 CHECKLIST_ORDER: tuple[str, ...] = (
     "spread_window_clear",
@@ -94,13 +93,17 @@ class ChecklistBuilder:
         self._validate_contract()
 
     def _validate_contract(self) -> None:
-        for field in self._order:
-            if field not in self._labels:
-                raise ChecklistInvariantError(f"Missing label for checklist field '{field}'")
-            if field not in self._runbook_links:
-                raise ChecklistInvariantError(f"Missing runbook link for checklist field '{field}'")
-            if field not in self._default_status:
-                raise ChecklistInvariantError(f"Missing default status for checklist field '{field}'")
+        for field_name in self._order:
+            if field_name not in self._labels:
+                raise ChecklistInvariantError(f"Missing label for checklist field '{field_name}'")
+            if field_name not in self._runbook_links:
+                raise ChecklistInvariantError(
+                    f"Missing runbook link for checklist field '{field_name}'"
+                )
+            if field_name not in self._default_status:
+                raise ChecklistInvariantError(
+                    f"Missing default status for checklist field '{field_name}'"
+                )
 
     def build(
         self,
@@ -111,19 +114,19 @@ class ChecklistBuilder:
 
         overrides = overrides or {}
         items: list[ChecklistItem] = []
-        for field in self._order:
-            default_status = self._default_status[field]
+        for field_name in self._order:
+            default_status = self._default_status[field_name]
             status = default_status
             metadata: Mapping[str, object] = {}
-            override = overrides.get(field)
+            override = overrides.get(field_name)
             if override is not None:
                 status, metadata = override
             item = ChecklistItem(
-                field=field,
-                label=self._labels[field],
+                field=field_name,
+                label=self._labels[field_name],
                 mandatory=True,
                 status=status,
-                runbook=self._runbook_links.get(field),
+                runbook=self._runbook_links.get(field_name),
                 metadata=dict(metadata),
             )
             items.append(item)
@@ -134,8 +137,7 @@ class ChecklistBuilder:
         fields = [item.field for item in items]
         if tuple(fields) != self._order:
             raise ChecklistInvariantError(
-                "Checklist order mismatch: expected "
-                f"{self._order} but received {tuple(fields)}"
+                "Checklist order mismatch: expected " f"{self._order} but received {tuple(fields)}"
             )
 
 

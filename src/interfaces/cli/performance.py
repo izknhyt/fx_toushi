@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from pathlib import Path
-from typing import Mapping
 
-from src.risk.live_guard import evaluate_live_guard, LiveGuardResult
+from src.risk.live_guard import LiveGuardResult, evaluate_live_guard
 
 DEFAULT_RETURNS_PATH = Path("reports") / "performance" / "paper" / "returns.parquet"
 DEFAULT_EQUITY_PATH = Path("reports") / "performance" / "paper" / "equity.parquet"

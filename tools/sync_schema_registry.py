@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from pathlib import Path
 
 
@@ -57,7 +58,7 @@ def main() -> int:
         mismatches = _diff_schema_registry(docs_dir, runtime_dir)
         if mismatches:
             for line in mismatches:
-                print(line)
+                sys.stdout.write(f"{line}\n")
             return 1
         return 0
 

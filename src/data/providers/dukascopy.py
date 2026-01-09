@@ -2,18 +2,18 @@
 
 from __future__ import annotations
 
+import os
+from collections.abc import Iterable, Iterator, Sequence
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Iterable, Iterator, Sequence
-import os
-from concurrent.futures import ThreadPoolExecutor, as_completed
-
-from .base import ProviderAdapter
-from ..service import MarketFrame, MarketRequest
-from tools.dukascopy_fetch import aggregate_to_5m, fetch_hour, parse_bi5
 
 import pandas as pd
+from tools.dukascopy_fetch import aggregate_to_5m, fetch_hour, parse_bi5
+
+from ..service import MarketFrame, MarketRequest
+from .base import ProviderAdapter
 
 __all__ = ["DukascopyProvider", "FakeDukascopyProvider"]
 
@@ -26,7 +26,10 @@ class DukascopyProvider(ProviderAdapter):  # type: ignore[misc]
 
     def fetch_bars(self, request: MarketRequest) -> Iterable[MarketFrame]:
         if not _is_supported_timeframe(request.timeframe):
-            return [MarketFrame(symbol=symbol, timeframe=request.timeframe, bars=[]) for symbol in request.symbols]
+            return [
+                MarketFrame(symbol=symbol, timeframe=request.timeframe, bars=[])
+                for symbol in request.symbols
+            ]
 
         start = _parse_time(request.start) or datetime.now(timezone.utc) - timedelta(hours=6)
         end = _parse_time(request.end) or datetime.now(timezone.utc)
@@ -36,7 +39,10 @@ class DukascopyProvider(ProviderAdapter):  # type: ignore[misc]
         max_workers = _select_worker_count(start, end, symbols=request.symbols)
         frames: list[MarketFrame] = []
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            futures = {executor.submit(_fetch_dukascopy_bars, symbol, start, end): symbol for symbol in request.symbols}
+            futures = {
+                executor.submit(_fetch_dukascopy_bars, symbol, start, end): symbol
+                for symbol in request.symbols
+            }
             for future in as_completed(futures):
                 symbol = futures[future]
                 try:
@@ -62,7 +68,7 @@ class FakeDukascopyProvider(DukascopyProvider):
 
 
 def _is_supported_timeframe(timeframe: str) -> bool:
-    return timeframe.lower() in {"5m", "5min", "5min"}
+    return timeframe.lower() in {"5m", "5min"}
 
 
 def _parse_time(raw: str | None) -> datetime | None:
@@ -122,7 +128,10 @@ def _bars_from_frame(frame: pd.DataFrame) -> list[dict[str, object]]:
             continue
         bars.append(
             {
-                "timestamp": ts.to_pydatetime().replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+                "timestamp": ts.to_pydatetime()
+                .replace(microsecond=0)
+                .isoformat()
+                .replace("+00:00", "Z"),
                 "open": float(row.get("open", 0.0)),
                 "high": float(row.get("high", 0.0)),
                 "low": float(row.get("low", 0.0)),

@@ -5,11 +5,12 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 from pytest import MonkeyPatch
-
 from src.interfaces.gui.tauri_app.serializer import board_get_snapshot, collect_recent_events
 
 
-def test_board_snapshot_includes_ticket_action_fields(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
+def test_board_snapshot_includes_ticket_action_fields(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
     manifest = tmp_path / "data_manifest.json"
     manifest.write_text(
         json.dumps(
@@ -112,7 +113,11 @@ def test_collect_recent_events_merges_bus_and_audit(tmp_path: Path) -> None:
     )
 
     bus_records = [
-        {"ts": "2025-12-07T00:00:00Z", "event_type": "health.changed", "event": {"status": "degraded"}},
+        {
+            "ts": "2025-12-07T00:00:00Z",
+            "event_type": "health.changed",
+            "event": {"status": "degraded"},
+        },
         {"ts": "2025-12-07T00:00:01Z", "event_type": "execution.fill", "event": {"id": "fill-1"}},
     ]
     events = collect_recent_events(

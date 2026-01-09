@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, Mapping
 
 
 @dataclass(slots=True)
@@ -64,7 +64,7 @@ class ScenarioDatasetRegistry:
         return summaries
 
     @classmethod
-    def from_mapping(cls, payload: Iterable[Mapping[str, object]]) -> "ScenarioDatasetRegistry":
+    def from_mapping(cls, payload: Iterable[Mapping[str, object]]) -> ScenarioDatasetRegistry:
         registry = cls()
         for entry in payload:
             registry.register(

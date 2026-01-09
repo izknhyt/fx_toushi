@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Mapping, MutableMapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Mapping, MutableMapping, Sequence
+from typing import Any
 
 from src.scoreboard import (
     DEFAULT_BRIDGE_OUTPUT_DIR,
@@ -74,6 +75,10 @@ def _render_markdown(path: Path, diag: DiagnosticsPayload, *, timestamp: datetim
         if status_banner == "## Action Required"
         else "- Portfolio drift within guardrails. Continue monitoring weekly."
     )
+    mock_note = (
+        "_Mock report for audit scaffolding. Replace with live metrics when scoring "
+        "service is wired._"
+    )
     content = "\n".join(
         [
             f"# Scoring Diagnostics - {diag.strategy}",
@@ -94,7 +99,7 @@ def _render_markdown(path: Path, diag: DiagnosticsPayload, *, timestamp: datetim
             "",
             *(f"- {reason}" for reason in diag.reject_reasons),
             "",
-            "_Mock report for audit scaffolding. Replace with live metrics when scoring service is wired._",
+            mock_note,
             "",
         ]
     )
@@ -108,7 +113,8 @@ def _render_json(path: Path, diag: DiagnosticsPayload, *, timestamp: datetime) -
         "analysis": diag.to_mapping(),
         "action_required": not 0.9 <= diag.portfolio_drift <= 1.1,
         "notes": [
-            "Mock report for audit scaffolding. Replace with live metrics when scoring service is wired."
+            "Mock report for audit scaffolding. Replace with live metrics when scoring "
+            "service is wired."
         ],
     }
     path.parent.mkdir(parents=True, exist_ok=True)

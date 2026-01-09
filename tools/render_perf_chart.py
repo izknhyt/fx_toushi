@@ -1,8 +1,10 @@
 """CLI performance chart renderer.
 
 Usage examples:
-    python tools/render_perf_chart.py --metrics metrics/cli_perf.jsonl --out reports/perf/cli_perf_2025W08.svg
-    python tools/render_perf_chart.py --input metrics/pipeline_latency.jsonl --output reports/perf/pipeline.svg
+    python tools/render_perf_chart.py --metrics metrics/cli_perf.jsonl \\
+        --out reports/perf/cli_perf_2025W08.svg
+    python tools/render_perf_chart.py --input metrics/pipeline_latency.jsonl \\
+        --output reports/perf/pipeline.svg
 
 Design references:
     - detailed_design_fx_signal_tool_v1.md §18.5
@@ -13,11 +15,10 @@ from __future__ import annotations
 
 import argparse
 import json
+from collections.abc import Iterable
 from datetime import datetime, timezone
 from pathlib import Path
 from statistics import mean
-from typing import Iterable
-
 
 SPARKLINE_LEVELS = " .:-=+*#%@"
 
@@ -143,8 +144,12 @@ def _utcnow_iso() -> str:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Render performance charts from JSONL metrics.")
-    parser.add_argument("--metrics", "--input", dest="metrics", required=True, help="Input JSONL metrics path")
-    parser.add_argument("--out", "--output", dest="output", required=True, help="Output chart path (.svg/.md/.json)")
+    parser.add_argument(
+        "--metrics", "--input", dest="metrics", required=True, help="Input JSONL metrics path"
+    )
+    parser.add_argument(
+        "--out", "--output", dest="output", required=True, help="Output chart path (.svg/.md/.json)"
+    )
     parser.add_argument("--limit", type=int, default=120, help="Max samples to chart")
     parser.add_argument("--width", type=int, default=640, help="SVG width")
     parser.add_argument("--height", type=int, default=160, help="SVG height")
@@ -160,12 +165,18 @@ def main() -> int:
     if output_path.suffix.lower() == ".json":
         output_path.parent.mkdir(parents=True, exist_ok=True)
         output_path.write_text(
-            json.dumps({"summary": _summary(values), "source": str(metrics_path)}, ensure_ascii=False, indent=2),
+            json.dumps(
+                {"summary": _summary(values), "source": str(metrics_path)},
+                ensure_ascii=False,
+                indent=2,
+            ),
             encoding="utf-8",
         )
         return 0
 
-    svg_path = output_path if output_path.suffix.lower() == ".svg" else output_path.with_suffix(".svg")
+    svg_path = (
+        output_path if output_path.suffix.lower() == ".svg" else output_path.with_suffix(".svg")
+    )
     svg_path.parent.mkdir(parents=True, exist_ok=True)
     svg_path.write_text(_render_svg(values, width=args.width, height=args.height), encoding="utf-8")
 

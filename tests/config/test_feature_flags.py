@@ -52,6 +52,6 @@ def test_runbook_refs_point_to_feature_flag_runbook(
 
     for name, definition in config["definitions"].items():
         runbook_ref = definition["runbook_ref"]
-        assert runbook_ref.startswith("RUN-FEATURE-FLAG-01"), (
-            f"{name} should reference RUN-FEATURE-FLAG-01, got {runbook_ref!r}"
-        )
+        assert runbook_ref.startswith(
+            "RUN-FEATURE-FLAG-01"
+        ), f"{name} should reference RUN-FEATURE-FLAG-01, got {runbook_ref!r}"

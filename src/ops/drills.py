@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import json
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Iterable, Optional
-import json
+
 import yaml
 
 DRILL_SCENARIOS_CATALOG_PATH = Path("config/ops/drill_scenarios.yaml")
@@ -32,7 +33,7 @@ class DrillError(Exception):
     """Base exception for Ops drill orchestration."""
 
 
-class DrillScenarioExists(DrillError):
+class DrillScenarioExistsError(DrillError):
     """Raised when attempting to register a duplicate drill scenario identifier."""
 
 
@@ -40,11 +41,11 @@ class RunbookReferenceError(DrillError):
     """Raised when a drill references a Runbook entry that cannot be resolved."""
 
 
-class DrillCapacityExceeded(DrillError):
+class DrillCapacityExceededError(DrillError):
     """Raised when scheduling a drill would exceed the concurrent execution capacity."""
 
 
-class DrillPlanNotReady(DrillError):
+class DrillPlanNotReadyError(DrillError):
     """Raised when attempting to start a drill plan that has not been approved."""
 
 
@@ -56,7 +57,7 @@ class DrillStepValidationError(DrillError):
     """Raised when a recorded drill step fails validation."""
 
 
-class DrillSignOffMissing(DrillError):
+class DrillSignOffMissingError(DrillError):
     """Raised when completing a drill without the required sign-off entries."""
 
 
@@ -111,7 +112,7 @@ class DrillExecution:
     status: str
     kill_switch_state: str
     board_mode: str
-    notes: Optional[str] = None
+    notes: str | None = None
 
 
 @dataclass(slots=True)
@@ -120,7 +121,7 @@ class DrillStep:
 
     runbook_step: str
     duration_min: int
-    comment: Optional[str] = None
+    comment: str | None = None
     evidence_paths: list[str] = field(default_factory=list)
     metrics: dict[str, object] = field(default_factory=dict)
 
@@ -171,7 +172,7 @@ class OpsDrillService:
                 catalog = {}
         scenarios = catalog.get("scenarios", {})
         if scenario.scenario_id in scenarios:
-            raise DrillScenarioExists(scenario.scenario_id)
+            raise DrillScenarioExistsError(scenario.scenario_id)
         scenarios[scenario.scenario_id] = {
             "title": scenario.title,
             "runbook_refs": list(scenario.runbook_refs),
@@ -182,7 +183,9 @@ class OpsDrillService:
         }
         catalog["scenarios"] = scenarios
         self._scenarios_catalog.parent.mkdir(parents=True, exist_ok=True)
-        self._scenarios_catalog.write_text(yaml.safe_dump(catalog, allow_unicode=True), encoding="utf-8")
+        self._scenarios_catalog.write_text(
+            yaml.safe_dump(catalog, allow_unicode=True), encoding="utf-8"
+        )
         return scenario
 
     def schedule(self, plan: DrillPlan) -> DrillPlan:
@@ -246,7 +249,12 @@ class OpsDrillService:
             "follow_up_tickets": outcome.follow_up_tickets,
             "evidence_paths": outcome.evidence_paths,
             "sign_offs": [
-                {"role": s.role, "actor": s.actor, "status": s.status, "timestamp": s.timestamp.isoformat().replace("+00:00", "Z")}
+                {
+                    "role": s.role,
+                    "actor": s.actor,
+                    "status": s.status,
+                    "timestamp": s.timestamp.isoformat().replace("+00:00", "Z"),
+                }
                 for s in outcome.sign_offs
             ],
             "ts": datetime.utcnow().isoformat().replace("+00:00", "Z"),
@@ -311,7 +319,9 @@ class OpsDrillService:
             except json.JSONDecodeError:
                 continue
             try:
-                scheduled_for = datetime.fromisoformat(str(data.get("scheduled_for")).replace("Z", "+00:00"))
+                scheduled_for = datetime.fromisoformat(
+                    str(data.get("scheduled_for")).replace("Z", "+00:00")
+                )
             except Exception:
                 continue
             plans.append(
@@ -333,8 +343,12 @@ class OpsDrillService:
         payload = {
             "execution_id": execution.execution_id,
             "plan_id": execution.plan_id,
-            "started_at": execution.started_at.isoformat().replace("+00:00", "Z") if execution.started_at else None,
-            "ended_at": execution.ended_at.isoformat().replace("+00:00", "Z") if execution.ended_at else None,
+            "started_at": execution.started_at.isoformat().replace("+00:00", "Z")
+            if execution.started_at
+            else None,
+            "ended_at": execution.ended_at.isoformat().replace("+00:00", "Z")
+            if execution.ended_at
+            else None,
             "status": execution.status,
             "kill_switch_state": execution.kill_switch_state,
             "board_mode": execution.board_mode,

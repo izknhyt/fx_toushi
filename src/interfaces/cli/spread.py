@@ -2,13 +2,12 @@
 
 from __future__ import annotations
 
-import logging
 import json
-import os
+import logging
 from datetime import datetime, timezone
 from pathlib import Path
 
-from src.core.gate import GateState, GateAggregator
+from src.core.gate import GateAggregator, GateState
 from src.execution.spread import evaluate_spread_guard
 
 logger = logging.getLogger(__name__)
@@ -43,10 +42,7 @@ def _update_gate_state(
     reason: str | None,
     cooldown_eta: datetime | None,
 ) -> Path:
-    if path.exists():
-        gate_state = GateState.load(path)
-    else:
-        gate_state = GateState()
+    gate_state = GateState.load(path) if path.exists() else GateState()
     aggregator = GateAggregator(initial_state=gate_state)
     aggregator._state.market.spread.state = "halt" if status == "block" else status  # type: ignore[attr-defined]
     aggregator._state.market.spread.reason = reason  # type: ignore[attr-defined]

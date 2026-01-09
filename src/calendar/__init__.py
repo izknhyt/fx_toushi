@@ -1,5 +1,6 @@
+# ruff: noqa: A005
 """Economic calendar utilities."""
 
-from .service import CalendarService, CalendarEvent
+from .service import CalendarEvent, CalendarService
 
 __all__ = ["CalendarService", "CalendarEvent"]

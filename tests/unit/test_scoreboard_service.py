@@ -4,8 +4,6 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 
-import pytest
-
 from src.scoreboard.bridge import ScoreboardBridge
 from src.scoreboard.service import StrategyScoreboardService
 
@@ -13,9 +11,7 @@ from src.scoreboard.service import StrategyScoreboardService
 def _write_manifest(path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
-        "strategies:\n"
-        "  strat_a:\n"
-        "    name: Strat A\n",
+        "strategies:\n" "  strat_a:\n" "    name: Strat A\n",
         encoding="utf-8",
     )
 
@@ -166,6 +162,8 @@ def test_watchlist_records_written_when_thresholds_breached(tmp_path: Path) -> N
     assert record["strategy_id"] == "strat_a"
     assert "alpha_below_threshold" in record["reasons"]
 
-    readiness_lines = (tmp_path / "metrics/profit_readiness.jsonl").read_text(encoding="utf-8").splitlines()
+    readiness_lines = (
+        (tmp_path / "metrics/profit_readiness.jsonl").read_text(encoding="utf-8").splitlines()
+    )
     readiness_payload = json.loads(readiness_lines[-1])
     assert readiness_payload["status"] == "alert"

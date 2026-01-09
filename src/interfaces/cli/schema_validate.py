@@ -1,4 +1,5 @@
 """Lightweight JSON Schema validation CLI."""
+# ruff: noqa: B008
 
 from __future__ import annotations
 
@@ -8,8 +9,8 @@ from typing import Any
 
 import typer
 import yaml
-from jsonschema import Draft202012Validator, ValidationError
 
+from jsonschema import Draft202012Validator, ValidationError
 from src.core.schema_registry import build_schema_registry
 
 
@@ -48,7 +49,9 @@ def _build_validator(schema_path: Path) -> Draft202012Validator:
 
 
 def _cli(
-    target: Path = typer.Argument(..., exists=True, resolve_path=True, help="Config file or directory to validate."),
+    target: Path = typer.Argument(
+        ..., exists=True, resolve_path=True, help="Config file or directory to validate."
+    ),
     schema: Path = typer.Option(
         ...,
         "--schema",

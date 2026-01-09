@@ -1,16 +1,15 @@
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Iterable
 from types import SimpleNamespace
 
 import pytest
-
 from src.core.gate import GateBlockState, GateState, NewsGateState, SpreadGateState
-from src.features.pipeline import FeaturePipeline
 from src.execution import DeterministicExecutionModel
+from src.features.pipeline import FeaturePipeline
 from src.strategies.base import StrategyContext, StrategyMetadata, StrategyPluginProtocol
 from src.strategies.registry import ManifestValidationError, StrategyEngine
 from yaml import safe_load
@@ -178,22 +177,26 @@ def test_strategy_determinism_engine(project_root: Path, feature_pipeline: Featu
         seed=seed,
     )
 
-    assert first == second == [
-        DummySignal(
-            strategy_id="m1_baseline_ma_rsi",
-            symbol="EURUSD",
-            sequence=0,
-            seed=seed + plugin.metadata.seed_offset,
-            gate_blocked=True,
-        ),
-        DummySignal(
-            strategy_id="m1_baseline_ma_rsi",
-            symbol="USDJPY",
-            sequence=1,
-            seed=seed + plugin.metadata.seed_offset,
-            gate_blocked=True,
-        ),
-    ]
+    assert (
+        first
+        == second
+        == [
+            DummySignal(
+                strategy_id="m1_baseline_ma_rsi",
+                symbol="EURUSD",
+                sequence=0,
+                seed=seed + plugin.metadata.seed_offset,
+                gate_blocked=True,
+            ),
+            DummySignal(
+                strategy_id="m1_baseline_ma_rsi",
+                symbol="USDJPY",
+                sequence=1,
+                seed=seed + plugin.metadata.seed_offset,
+                gate_blocked=True,
+            ),
+        ]
+    )
 
     assert len(plugin.contexts) == 2
     first_context, second_context = plugin.contexts
@@ -209,7 +212,9 @@ def test_strategy_determinism_engine(project_root: Path, feature_pipeline: Featu
         manifest.validate_feature_contract({"nonexistent_feature"})
 
 
-def test_strategy_engine_runs_with_pipeline_update(project_root: Path, feature_pipeline: FeaturePipeline) -> None:
+def test_strategy_engine_runs_with_pipeline_update(
+    project_root: Path, feature_pipeline: FeaturePipeline
+) -> None:
     engine = StrategyEngine()
     plugin = DeterministicStrategy()
     engine.register_plugin(plugin)
@@ -224,8 +229,22 @@ def test_strategy_engine_runs_with_pipeline_update(project_root: Path, feature_p
         "symbol": "USDJPY",
         "timeframe": "5m",
         "bars": [
-            {"timestamp": now.isoformat().replace("+00:00", "Z"), "open": 1, "high": 1.1, "low": 0.9, "close": 1.0, "volume": 100},
-            {"timestamp": (now + timedelta(minutes=5)).isoformat().replace("+00:00", "Z"), "open": 1.0, "high": 1.2, "low": 0.95, "close": 1.1, "volume": 120},
+            {
+                "timestamp": now.isoformat().replace("+00:00", "Z"),
+                "open": 1,
+                "high": 1.1,
+                "low": 0.9,
+                "close": 1.0,
+                "volume": 100,
+            },
+            {
+                "timestamp": (now + timedelta(minutes=5)).isoformat().replace("+00:00", "Z"),
+                "open": 1.0,
+                "high": 1.2,
+                "low": 0.95,
+                "close": 1.1,
+                "volume": 120,
+            },
         ],
     }
 
@@ -261,9 +280,24 @@ def test_execution_model_spread_transition_badges(project_root: Path) -> None:
     signal = SimpleNamespace(symbol="EURUSD", entry_mode=None, price=1.0942)
     market_snapshot = {"mid": 1.0942, "spread_pips": 0.6}
 
-    normal = model.apply(signal, market_snapshot, spread_state=SimpleNamespace(state="normal"), mode_context=mode_context)
-    watch = model.apply(signal, market_snapshot, spread_state=SimpleNamespace(state="watch"), mode_context=mode_context)
-    cooldown = model.apply(signal, market_snapshot, spread_state=SimpleNamespace(state="cooldown"), mode_context=mode_context)
+    normal = model.apply(
+        signal,
+        market_snapshot,
+        spread_state=SimpleNamespace(state="normal"),
+        mode_context=mode_context,
+    )
+    watch = model.apply(
+        signal,
+        market_snapshot,
+        spread_state=SimpleNamespace(state="watch"),
+        mode_context=mode_context,
+    )
+    cooldown = model.apply(
+        signal,
+        market_snapshot,
+        spread_state=SimpleNamespace(state="cooldown"),
+        mode_context=mode_context,
+    )
 
     assert normal.mode_label == "Marketable Limit"
     assert watch.mode_label == "Market (IOC)"

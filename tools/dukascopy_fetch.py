@@ -2,24 +2,26 @@
 Dukascopy tick downloader and 5m aggregator.
 
 Usage:
-    python tools/dukascopy_fetch.py --pair USDJPY --from 2024-01-01 --to 2024-03-31 --out data/research/curated/usdjpy/usdjpy_m5_20240101_20240331_dukascopy.parquet
+    python tools/dukascopy_fetch.py --pair USDJPY --from 2024-01-01 --to 2024-03-31 \\
+        --out data/research/curated/usdjpy/usdjpy_m5_20240101_20240331_dukascopy.parquet
 
 Notes:
-- Downloads hourly tick files (.bi5) from Dukascopy datafeed, decompresses, and aggregates to 5m OHLCV (mid-price).
+- Downloads hourly tick files (.bi5) from Dukascopy datafeed, decompresses, and aggregates to
+  5m OHLCV (mid-price).
 - This script keeps dependencies minimal (requests, pandas) to run in the current repo.
 """
 
 from __future__ import annotations
 
 import argparse
+import contextlib
 import datetime as dt
-import io
 import lzma
 import struct
 import sys
 import time
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Iterable, List
 
 import pandas as pd
 import requests
@@ -59,10 +61,8 @@ def fetch_hour(
             / f"{when.hour:02d}.bi5"
         )
         if cache_path.exists():
-            try:
+            with contextlib.suppress(OSError):
                 return cache_path.read_bytes()
-            except OSError:
-                pass
     last_exc: Exception | None = None
     for attempt in range(retries + 1):
         try:
@@ -70,10 +70,8 @@ def fetch_hour(
             if resp.status_code == 200 and resp.content:
                 if cache_path is not None:
                     cache_path.parent.mkdir(parents=True, exist_ok=True)
-                    try:
+                    with contextlib.suppress(OSError):
                         cache_path.write_bytes(resp.content)
-                    except OSError:
-                        pass
                 return resp.content
             return None
         except Exception as exc:
@@ -94,7 +92,7 @@ def parse_bi5(raw: bytes, base_time: dt.datetime) -> pd.DataFrame:
     except Exception:
         return pd.DataFrame()
 
-    records: List[tuple] = []
+    records: list[tuple] = []
     tick_size = 20
     for offset in range(0, len(decompressed), tick_size):
         chunk = decompressed[offset : offset + tick_size]
@@ -130,16 +128,20 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Download Dukascopy ticks and aggregate to 5m.")
     parser.add_argument("--pair", required=True, help="Symbol, e.g., USDJPY")
     parser.add_argument("--from", dest="date_from", required=True, help="Start date YYYY-MM-DD")
-    parser.add_argument("--to", dest="date_to", required=True, help="End date YYYY-MM-DD (inclusive)")
+    parser.add_argument(
+        "--to", dest="date_to", required=True, help="End date YYYY-MM-DD (inclusive)"
+    )
     parser.add_argument("--out", dest="out_path", required=True, help="Output parquet path")
-    parser.add_argument("--cache-dir", default="data/cache/dukascopy", help="Cache directory for .bi5")
+    parser.add_argument(
+        "--cache-dir", default="data/cache/dukascopy", help="Cache directory for .bi5"
+    )
     args = parser.parse_args()
 
     start = dt.datetime.fromisoformat(args.date_from)
     end = dt.datetime.fromisoformat(args.date_to) + dt.timedelta(hours=23)
     cache_dir = Path(args.cache_dir)
 
-    frames: List[pd.DataFrame] = []
+    frames: list[pd.DataFrame] = []
     hours = list(daterange(start, end))
     for idx, when in enumerate(hours, 1):
         raw = fetch_hour(args.pair, when, cache_dir=cache_dir)
@@ -150,10 +152,10 @@ def main() -> int:
             continue
         frames.append(df)
         if idx % 48 == 0:
-            print(f"{when} processed ({idx}/{len(hours)})")
+            sys.stdout.write(f"{when} processed ({idx}/{len(hours)})\n")
 
     if not frames:
-        print("No data fetched; nothing to write", file=sys.stderr)
+        sys.stderr.write("No data fetched; nothing to write\n")
         return 1
 
     tick_df = pd.concat(frames).sort_index()
@@ -161,7 +163,7 @@ def main() -> int:
     out_path = Path(args.out_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     bar_df.to_parquet(out_path, index=False)
-    print(f"Written {len(bar_df)} bars to {out_path}")
+    sys.stdout.write(f"Written {len(bar_df)} bars to {out_path}\n")
     return 0
 
 

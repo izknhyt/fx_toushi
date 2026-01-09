@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Mapping
 from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Mapping
 
 import pandas as pd
 
@@ -47,7 +47,9 @@ def _append_event(path: Path, payload: Mapping[str, object]) -> None:
         handle.write("\n")
 
 
-def _write_sample_orders(path: Path, *, ticket_id: str, mode: str, ack_ts: datetime, latency_ms: int) -> None:
+def _write_sample_orders(
+    path: Path, *, ticket_id: str, mode: str, ack_ts: datetime, latency_ms: int
+) -> None:
     _ensure_parent(path)
     df = pd.DataFrame(
         [
@@ -57,7 +59,9 @@ def _write_sample_orders(path: Path, *, ticket_id: str, mode: str, ack_ts: datet
                 "symbol": "USDJPY",
                 "status": "oco_acknowledged",
                 "oco_ack_latency_ms": latency_ms,
-                "created_at": (ack_ts - timedelta(milliseconds=latency_ms)).isoformat().replace("+00:00", "Z"),
+                "created_at": (ack_ts - timedelta(milliseconds=latency_ms))
+                .isoformat()
+                .replace("+00:00", "Z"),
                 "acknowledged_at": ack_ts.isoformat().replace("+00:00", "Z"),
             }
         ]
@@ -90,7 +94,13 @@ def monitor_ticket(
 
     export_str: str | None = None
     if export_path is not None:
-        _write_sample_orders(export_path, ticket_id=effective_ticket_id, mode=mode, ack_ts=ack_ts, latency_ms=latency_ms)
+        _write_sample_orders(
+            export_path,
+            ticket_id=effective_ticket_id,
+            mode=mode,
+            ack_ts=ack_ts,
+            latency_ms=latency_ms,
+        )
         export_str = str(export_path)
 
     log_ticket_action(

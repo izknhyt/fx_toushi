@@ -9,8 +9,9 @@ coupling to concrete implementations.
 
 from __future__ import annotations
 
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import Any, ClassVar, Iterable, Mapping, Protocol, Sequence, runtime_checkable, Optional
+from typing import Any, ClassVar, Protocol, runtime_checkable
 
 from src.execution import SpreadCooldownState
 
@@ -20,9 +21,11 @@ class FeatureContext(Protocol):
 
     available_keys: frozenset[str]
 
-    def lookup(self, *, symbol: str, feature: str, timeframe: str) -> Any: ...
+    def lookup(self, *, symbol: str, feature: str, timeframe: str) -> Any:
+        ...
 
-    def get_latest(self, *, symbol: str, feature: str, timeframe: str) -> Any: ...
+    def get_latest(self, *, symbol: str, feature: str, timeframe: str) -> Any:
+        ...
 
 
 class RegimeState(Protocol):
@@ -203,7 +206,7 @@ class StrategyPluginProtocol(Protocol):
     id: ClassVar[str]
     determinism_key: ClassVar[str]
     metadata: StrategyMetadata
-    context: Optional[StrategyContext]
+    context: StrategyContext | None
 
     def generate_signals(self, context: StrategyContext) -> Iterable[RawSignal]:
         """Return deterministic signals for the supplied context."""

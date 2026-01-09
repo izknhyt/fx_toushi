@@ -44,7 +44,9 @@ class IdeaPipelineManagerStub:
         logger.info("ideas.manager.load_manifest noop (M1)", extra={"idea_id": idea_id})
         return IdeaManifestStub(idea_id=idea_id)
 
-    def transition_stage(self, idea_id: str, target_stage: str, *, note: str | None = None) -> IdeaStageResult:
+    def transition_stage(
+        self, idea_id: str, target_stage: str, *, note: str | None = None
+    ) -> IdeaStageResult:
         """Always deny stage transitions while governance is disabled."""
 
         logger.info(

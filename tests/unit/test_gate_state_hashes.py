@@ -3,10 +3,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import pytest
-
-from src.core.gate import GateAggregator, GateState
 from src.compliance import RiskDisclosureService
+from src.core.gate import GateAggregator, GateState
 
 
 def test_gate_state_hashes_can_be_set_and_serialised() -> None:
@@ -30,7 +28,9 @@ def test_gate_state_hashes_used_in_cli_actions(monkeypatch) -> None:
     monkeypatch.setattr(
         tickets,
         "RiskDisclosureService",
-        lambda: RiskDisclosureService(state_path=tickets.Path("risk_state.json"), audit_dir=tickets.Path("audit_dir")),
+        lambda: RiskDisclosureService(
+            state_path=tickets.Path("risk_state.json"), audit_dir=tickets.Path("audit_dir")
+        ),
     )
 
     gate_state = GateState(cfg_hash="sha256:cfg-gate", data_hash="sha256:data-gate")
@@ -48,7 +48,9 @@ def test_persist_latest_resolves_hashes_from_env_and_manifest(tmp_path: Path, mo
     manifest_dir = tmp_path / "reports"
     manifest_dir.mkdir(parents=True, exist_ok=True)
     (manifest_dir / "data_manifest.json").write_text(
-        json.dumps({"strategies": {"m1_baseline_ma_rsi": {"dataset_sha256": "sha256:data-manifest"}}}),
+        json.dumps(
+            {"strategies": {"m1_baseline_ma_rsi": {"dataset_sha256": "sha256:data-manifest"}}}
+        ),
         encoding="utf-8",
     )
     monkeypatch.setenv("TRADECTL_CFG_PATH", str(cfg_path))

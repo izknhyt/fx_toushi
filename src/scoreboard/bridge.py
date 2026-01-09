@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from hashlib import sha256
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 
 import pandas as pd
 import yaml
@@ -148,9 +149,7 @@ def _discover_latest_live_bridge_report(directory: Path) -> Path | None:
     if not directory.exists():
         return None
     candidates = sorted(
-        path
-        for path in directory.glob("live_bridge_*.md")
-        if "template" not in path.name.lower()
+        path for path in directory.glob("live_bridge_*.md") if "template" not in path.name.lower()
     )
     return candidates[-1] if candidates else None
 
@@ -228,7 +227,9 @@ class ScoreboardBridge:
         output.parent.mkdir(parents=True, exist_ok=True)
         payload = snapshot.to_mapping()
         output.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
-        logger.info("scoreboard.bridge.exported", extra={"path": str(output), "week": snapshot.week})
+        logger.info(
+            "scoreboard.bridge.exported", extra={"path": str(output), "week": snapshot.week}
+        )
         return output
 
     def _build_entry(

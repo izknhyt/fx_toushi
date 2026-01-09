@@ -5,7 +5,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 import pytest
-
 from src.strategies.base import StrategyContext, StrategyMetadata
 
 pytestmark = pytest.mark.strategy_plugin_contract

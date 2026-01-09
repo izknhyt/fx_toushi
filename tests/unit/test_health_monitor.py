@@ -33,7 +33,9 @@ def test_raise_and_clear_updates_status() -> None:
 def test_kill_switch_suggestion() -> None:
     monitor = HealthMonitor()
     monitor.raise_condition("soft_stop", "weekly_drawdown")
-    monitor.suggest_kill_switch(state="soft_stop", reason="weekly_drawdown", runbook="docs/runbooks/RUN-RISK-01.md")
+    monitor.suggest_kill_switch(
+        state="soft_stop", reason="weekly_drawdown", runbook="docs/runbooks/RUN-RISK-01.md"
+    )
 
     snapshot = monitor.snapshot()
     assert snapshot.status == "soft_stop"

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import sys
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -52,7 +53,7 @@ def main() -> None:
         "gap_count": int(len(mismatches)),
     }
 
-    print(summary)
+    sys.stdout.write(f"{summary}\n")
 
     if len(mismatches) > 0:
         raise SystemExit(f"Frequency gaps detected: {len(mismatches)} rows diverge from {expected}")

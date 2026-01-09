@@ -1,17 +1,21 @@
-"""Serializer helpers to expose TicketRecord v2 payloads and EventBus snapshots to the Tauri frontend."""
+"""Serializer helpers for TicketRecord v2 payloads and EventBus snapshots.
+
+Used by the Tauri frontend.
+"""
 
 from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Iterable, Mapping, Sequence
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any, Iterable, Mapping, Sequence
+from typing import Any
 
+from src.core.event_bus import EventBus, EventBusConfig
 from src.interfaces.cli.board import board as board_view
 from src.interfaces.cli.kill_switch import set_state as cli_kill_switch_set
 from src.ticket import TicketRecord, TicketRecordAdapter
-from src.core.event_bus import EventBus, EventBusConfig
 
 logger = logging.getLogger(__name__)
 
@@ -52,7 +56,8 @@ def board_get_snapshot(
 
     - tickets are normalized to TicketRecord v2
     - board payload is reused from CLI for banner/guardrail parity
-    - recent_events bundles last events per channel for initial render (EventBus + ticket.action audit)
+    - recent_events bundles last events per channel for initial render (EventBus + ticket.action
+      audit)
     """
 
     board_payload = board_view(manifest_path=manifest_path, **(board_kwargs or {}))
@@ -115,7 +120,12 @@ def collect_recent_events(
 ) -> dict[str, list[Mapping[str, Any]]]:
     """Merge EventBus replay with recent ticket.action audit records for GUI consumption."""
 
-    buckets: dict[str, list[Mapping[str, Any]]] = {"ticket": [], "gate": [], "health": [], "execution": []}
+    buckets: dict[str, list[Mapping[str, Any]]] = {
+        "ticket": [],
+        "gate": [],
+        "health": [],
+        "execution": [],
+    }
 
     def _append(channel: str, record: Mapping[str, Any]) -> None:
         buckets[channel].append(record)
@@ -193,9 +203,15 @@ def _normalize_ticket_action(record: Mapping[str, Any]) -> Mapping[str, Any]:
         "board_mode": record.get("board_mode"),
         "kill_switch_state": record.get("kill_switch_state") or guardrails.get("kill_switch"),
         "spread_status": record.get("spread_status") or guardrails.get("spread_status"),
-        "profit_readiness_status": record.get("profit_readiness_status") or guardrails.get("profit_readiness_status"),
-        "reduce_only": bool(record.get("reduce_only") if record.get("reduce_only") is not None else guardrails.get("reduce_only", False)),
-        "risk_disclosure_state": record.get("risk_disclosure_state") or guardrails.get("risk_disclosure"),
+        "profit_readiness_status": record.get("profit_readiness_status")
+        or guardrails.get("profit_readiness_status"),
+        "reduce_only": bool(
+            record.get("reduce_only")
+            if record.get("reduce_only") is not None
+            else guardrails.get("reduce_only", False)
+        ),
+        "risk_disclosure_state": record.get("risk_disclosure_state")
+        or guardrails.get("risk_disclosure"),
         "cfg_hash": record.get("cfg_hash"),
         "data_hash": record.get("data_hash"),
         "consent_reference_id": record.get("consent_reference_id"),
@@ -225,4 +241,9 @@ def _load_ticket_actions(path: Path, *, limit: int = 10) -> list[Mapping[str, An
     return list(reversed(actions))
 
 
-__all__ = ["TicketPayloadSerializer", "board_get_snapshot", "kill_switch_set", "collect_recent_events"]
+__all__ = [
+    "TicketPayloadSerializer",
+    "board_get_snapshot",
+    "kill_switch_set",
+    "collect_recent_events",
+]

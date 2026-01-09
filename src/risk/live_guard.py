@@ -4,15 +4,15 @@ from __future__ import annotations
 
 import json
 import math
-from dataclasses import dataclass, asdict
+from collections.abc import Mapping
+from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from statistics import mean
-from typing import Iterable, Mapping, Any
+from typing import Any
 
 import pandas as pd
 import yaml
-
 
 DEFAULT_CONFIG_PATH = Path("config") / "risk_live_guard.yaml"
 DEFAULT_LATENCY_PATH = Path("metrics") / "execution_bridge.jsonl"
@@ -175,7 +175,9 @@ def _load_returns(
     if "r" not in frame.columns and "return" in frame.columns:
         frame = frame.rename(columns={"return": "r"})
     if "r" not in frame.columns:
-        equity_col = next((col for col in ("equity", "balance", "equity_curve") if col in frame.columns), None)
+        equity_col = next(
+            (col for col in ("equity", "balance", "equity_curve") if col in frame.columns), None
+        )
         if equity_col is None:
             return [], 0
         returns = frame[equity_col].astype(float).pct_change().dropna()

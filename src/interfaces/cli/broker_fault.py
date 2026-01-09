@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import json
 import logging
+from collections.abc import Mapping
 from datetime import datetime
 from pathlib import Path
-import json
-from typing import Any, Mapping
+from typing import Any
 
 from src.brokers.order_lifecycle import OrderLifecycleManager
 from src.brokers.stage_guard import AutonomyStageGuard
@@ -29,7 +30,13 @@ def simulate_fault(
 
     logger.info(
         "cli.broker.simulate.fault",
-        extra={"scenario": scenario, "iterations": iterations, "auto_stage": auto_stage, "attach_evidence": attach_evidence, "dry_run": dry_run},
+        extra={
+            "scenario": scenario,
+            "iterations": iterations,
+            "auto_stage": auto_stage,
+            "attach_evidence": attach_evidence,
+            "dry_run": dry_run,
+        },
     )
     lifecycle = OrderLifecycleManager()
     guard = AutonomyStageGuard(stage="live")
@@ -83,21 +90,37 @@ def simulate_fault(
                 handle.write(json.dumps(sample, ensure_ascii=False))
                 handle.write("\n")
         except OSError:
-            logger.warning("cli.broker.simulate.metrics_write_failed", extra={"path": str(metrics_path)})
+            logger.warning(
+                "cli.broker.simulate.metrics_write_failed", extra={"path": str(metrics_path)}
+            )
 
     return record
 
 
-def simulate_list(*, fault_type: str | None = None, json_output: bool = False) -> list[dict[str, object]]:
+def simulate_list(
+    *, fault_type: str | None = None, json_output: bool = False
+) -> list[dict[str, object]]:
     """Stub for listing broker fault scenarios."""
 
     logger.info("cli.broker.simulate.list", extra={"fault_type": fault_type, "json": json_output})
     scenarios = [
         {"name": "timeout", "description": "Provider timeout -> retryable", "class": "retryable"},
         {"name": "429", "description": "Rate limited -> retryable", "class": "retryable"},
-        {"name": "auth_failure", "description": "Auth/permission failure -> fatal", "class": "fatal"},
-        {"name": "venue_halt", "description": "Venue halt -> circuit_breaker rollback", "class": "circuit_breaker"},
-        {"name": "venue_recover", "description": "Venue halt then recover to live", "class": "circuit_breaker"},
+        {
+            "name": "auth_failure",
+            "description": "Auth/permission failure -> fatal",
+            "class": "fatal",
+        },
+        {
+            "name": "venue_halt",
+            "description": "Venue halt -> circuit_breaker rollback",
+            "class": "circuit_breaker",
+        },
+        {
+            "name": "venue_recover",
+            "description": "Venue halt then recover to live",
+            "class": "circuit_breaker",
+        },
     ]
     if fault_type:
         return [s for s in scenarios if s["class"] == fault_type]
@@ -112,7 +135,14 @@ def simulate_verify(
 ) -> Mapping[str, Any]:
     """Stub for verifying broker fault expectations."""
 
-    logger.info("cli.broker.simulate.verify", extra={"scenario": scenario, "expected_stage": expected_stage, "expected_alert": expected_alert})
+    logger.info(
+        "cli.broker.simulate.verify",
+        extra={
+            "scenario": scenario,
+            "expected_stage": expected_stage,
+            "expected_alert": expected_alert,
+        },
+    )
     return {
         "status": "ok",
         "scenario": scenario,

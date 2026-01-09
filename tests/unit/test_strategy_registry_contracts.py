@@ -3,11 +3,10 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Iterable
 
 import pytest
-
 from src.features.pipeline import FeaturePipeline
 from src.strategies import StrategyEngine, StrategyRegistrationError
 from src.strategies.base import StrategyContext, StrategyMetadata, StrategyPluginProtocol
@@ -81,7 +80,7 @@ def _feature_context(project_root: Path):
 
 def _dummy_context_args():
     dummy = object()
-    return dict(regime=dummy, gate=dummy, account=dummy, config=dummy, clock=dummy)
+    return {"regime": dummy, "gate": dummy, "account": dummy, "config": dummy, "clock": dummy}
 
 
 def test_registering_duplicate_strategy_id_fails(project_root) -> None:
@@ -110,13 +109,19 @@ def test_metadata_mismatch_between_manifest_and_plugin_is_rejected(project_root,
     """StrategyEngine must compare manifest metadata with plugin metadata."""
 
     original_text = _manifest_path(project_root).read_text(encoding="utf-8")
-    mutated_text = original_text.replace('name: "M1 Baseline MA/RSI"', 'name: "M1 Baseline (renamed)"', 1)
+    mutated_text = original_text.replace(
+        'name: "M1 Baseline MA/RSI"', 'name: "M1 Baseline (renamed)"', 1
+    )
     mutated_path = tmp_path / "strategy_manifest.yaml"
     mutated_path.write_text(mutated_text, encoding="utf-8")
 
     engine = StrategyEngine()
-    engine.register_plugin(_RegistryStub(metadata=_strategy_metadata(project_root, "m1_baseline_ma_rsi")))
-    engine.register_plugin(_DonchianStub(metadata=_strategy_metadata(project_root, "m1_baseline_donchian")))
+    engine.register_plugin(
+        _RegistryStub(metadata=_strategy_metadata(project_root, "m1_baseline_ma_rsi"))
+    )
+    engine.register_plugin(
+        _DonchianStub(metadata=_strategy_metadata(project_root, "m1_baseline_donchian"))
+    )
     engine.load_manifest(mutated_path)
     features = _feature_context(project_root)
 

@@ -7,20 +7,16 @@ import json
 import sys
 import time
 from collections import deque
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Iterable
 
 import pandas as pd
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
-
-from src.data.quality import DataQualityGuard
-from src.data.service import fetch_latest, load_provider_sla_thresholds, build_provider_handlers
-from tools.dukascopy_fetch import aggregate_to_5m, fetch_hour, parse_bi5
 
 
 @dataclass(slots=True)
@@ -84,6 +80,8 @@ def _daterange(start: datetime, end: datetime) -> Iterable[datetime]:
 
 
 def _fetch_dukascopy_bars(symbol: str, start: datetime, end: datetime) -> pd.DataFrame:
+    from tools.dukascopy_fetch import aggregate_to_5m, fetch_hour, parse_bi5
+
     frames: list[pd.DataFrame] = []
     for when in _daterange(start, end):
         raw = fetch_hour(symbol, when)
@@ -110,7 +108,9 @@ def _normalize_yfinance_symbol(symbol: str) -> str:
     return symbol
 
 
-def _fetch_yfinance_bars(symbol: str, start: datetime, end: datetime, *, interval: str) -> pd.DataFrame:
+def _fetch_yfinance_bars(
+    symbol: str, start: datetime, end: datetime, *, interval: str
+) -> pd.DataFrame:
     try:
         import yfinance as yf
     except ImportError as exc:  # pragma: no cover - dependency guard
@@ -178,6 +178,13 @@ def run_once(
     curated_dir: Path,
     metrics_path: Path,
 ) -> list[IngestionResult]:
+    from src.data.quality import DataQualityGuard
+    from src.data.service import (
+        build_provider_handlers,
+        fetch_latest,
+        load_provider_sla_thresholds,
+    )
+
     anchor = as_of or _utcnow()
     results: list[IngestionResult] = []
     guard = DataQualityGuard(expected_timeframe_minutes=5, max_gap_minutes=10)
@@ -213,14 +220,25 @@ def run_once(
             last_ts = None
             bar_gap = None
         else:
-            ts_col = "timestamp" if "timestamp" in bars_df.columns else "ts" if "ts" in bars_df.columns else None
+            ts_col = (
+                "timestamp"
+                if "timestamp" in bars_df.columns
+                else "ts"
+                if "ts" in bars_df.columns
+                else None
+            )
             last_ts = pd.to_datetime(bars_df[ts_col]).max().to_pydatetime() if ts_col else None
             bar_gap = int((anchor - last_ts).total_seconds() // 60) if last_ts else None
             if bar_gap is not None and bar_gap < 0:
                 bar_gap = 0
 
         symbol_lower = symbol.lower()
-        raw_path = raw_dir / (provider if provider != "auto" else "auto") / symbol_lower / f"{anchor.strftime('%Y%m%d')}_m5.parquet"
+        raw_path = (
+            raw_dir
+            / (provider if provider != "auto" else "auto")
+            / symbol_lower
+            / f"{anchor.strftime('%Y%m%d')}_m5.parquet"
+        )
         curated_path = curated_dir / symbol_lower / f"{symbol_lower}_m5_latest.parquet"
         raw_path.parent.mkdir(parents=True, exist_ok=True)
         curated_path.parent.mkdir(parents=True, exist_ok=True)
@@ -301,7 +319,9 @@ def run_loop(
             curated_dir=curated_dir,
             metrics_path=metrics_path,
         )
-        print(json.dumps({"results": [r.as_dict() for r in results]}, ensure_ascii=False))
+        sys.stdout.write(
+            json.dumps({"results": [r.as_dict() for r in results]}, ensure_ascii=False) + "\n"
+        )
         iteration += 1
         if max_iterations is not None and iteration >= max_iterations:
             break
@@ -311,14 +331,22 @@ def run_loop(
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run minimal Dukascopy ingestion loop.")
-    parser.add_argument("--provider", default="auto", help="Provider name (dukascopy/yfinance/auto)")
+    parser.add_argument(
+        "--provider", default="auto", help="Provider name (dukascopy/yfinance/auto)"
+    )
     parser.add_argument("--symbols", default="USDJPY", help="Comma-separated symbols")
     parser.add_argument("--timeframe", default="5m", help="Timeframe label")
     parser.add_argument("--lookback-hours", type=int, default=6, help="Lookback window in hours")
-    parser.add_argument("--as-of", default=None, help="ISO timestamp to anchor the fetch window (UTC)")
+    parser.add_argument(
+        "--as-of", default=None, help="ISO timestamp to anchor the fetch window (UTC)"
+    )
     parser.add_argument("--raw-dir", default="data/raw", help="Raw output root")
-    parser.add_argument("--curated-dir", default="data/research/curated", help="Curated output root")
-    parser.add_argument("--metrics-path", default="metrics/data_ingestion_sla.jsonl", help="Metrics path")
+    parser.add_argument(
+        "--curated-dir", default="data/research/curated", help="Curated output root"
+    )
+    parser.add_argument(
+        "--metrics-path", default="metrics/data_ingestion_sla.jsonl", help="Metrics path"
+    )
     parser.add_argument("--interval-sec", type=int, default=300, help="Polling interval seconds")
     parser.add_argument("--jitter-sec", type=int, default=3, help="Sleep jitter seconds")
     parser.add_argument("--once", action="store_true", help="Run once and exit")
@@ -342,7 +370,9 @@ def main() -> int:
             curated_dir=curated_dir,
             metrics_path=metrics_path,
         )
-        print(json.dumps({"results": [r.as_dict() for r in results]}, ensure_ascii=False))
+        sys.stdout.write(
+            json.dumps({"results": [r.as_dict() for r in results]}, ensure_ascii=False) + "\n"
+        )
         return 0
 
     run_loop(

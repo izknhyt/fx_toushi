@@ -29,7 +29,8 @@ def _run_command(cmd: list[str], *, env: dict[str, str] | None = None) -> str:
     )
     if result.returncode != 0:
         raise RuntimeError(
-            f"Command {' '.join(cmd)} failed with code {result.returncode}:\n{result.stdout}\n{result.stderr}"
+            f"Command {' '.join(cmd)} failed with code {result.returncode}:\n"
+            f"{result.stdout}\n{result.stderr}"
         )
     return result.stdout + result.stderr
 
@@ -123,25 +124,32 @@ def verify_latest(grace_days: int) -> Path:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Generate or verify CONFIG-SCAFF-01 evidence.")
-    parser.add_argument("--verify-only", action="store_true", help="Only verify today's evidence file exists.")
-    parser.add_argument("--overwrite", action="store_true", help="Overwrite the evidence file if it already exists.")
+    parser.add_argument(
+        "--verify-only", action="store_true", help="Only verify today's evidence file exists."
+    )
+    parser.add_argument(
+        "--overwrite", action="store_true", help="Overwrite the evidence file if it already exists."
+    )
     parser.add_argument(
         "--grace-days",
         type=int,
         default=0,
-        help="Permit verification to succeed if an evidence file exists within the past N days (default: 0).",
+        help=(
+            "Permit verification to succeed if an evidence file exists within the past N "
+            "days (default: 0)."
+        ),
     )
     args = parser.parse_args()
 
     try:
         if args.verify_only:
             path = verify_latest(max(args.grace_days, 0))
-            print(f"[config-evidence] Found {path.relative_to(REPO_ROOT)}")
+            sys.stdout.write(f"[config-evidence] Found {path.relative_to(REPO_ROOT)}\n")
         else:
             path = generate_evidence(overwrite=args.overwrite)
-            print(f"[config-evidence] Wrote {path.relative_to(REPO_ROOT)}")
+            sys.stdout.write(f"[config-evidence] Wrote {path.relative_to(REPO_ROOT)}\n")
     except RuntimeError as exc:
-        print(f"[config-evidence] {exc}", file=sys.stderr)
+        sys.stderr.write(f"[config-evidence] {exc}\n")
         sys.exit(1)
 
 

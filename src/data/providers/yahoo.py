@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable, Iterator, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import Iterable, Iterator, Sequence
 
-from .base import ProviderAdapter
 from ..service import MarketFrame, MarketRequest
+from .base import ProviderAdapter
 
 __all__ = ["YahooProvider", "FakeYahooProvider"]
 
@@ -89,7 +89,7 @@ def _normalize_symbol(symbol: str) -> str:
 
 def _normalize_interval(timeframe: str) -> str:
     lowered = timeframe.lower()
-    if lowered in {"5m", "5min", "5min"}:
+    if lowered in {"5m", "5min"}:
         return "5m"
     if lowered in {"1m", "1min"}:
         return "1m"

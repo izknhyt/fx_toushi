@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Sequence
+from collections.abc import Sequence
 
 
 def match_entries(left: Sequence[str], right: Sequence[str]) -> bool:

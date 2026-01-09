@@ -3,13 +3,12 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from pytest import MonkeyPatch
+from src.interfaces.cli import create_cli_app, tickets as tickets_actions
 from typer.testing import CliRunner
 
-from src.interfaces.cli import create_cli_app
-from src.interfaces.cli import tickets as tickets_actions
 
-
-def test_report_weekly_renders_ticket_summary(monkeypatch: "MonkeyPatch", tmp_path: Path) -> None:
+def test_report_weekly_renders_ticket_summary(monkeypatch: MonkeyPatch, tmp_path: Path) -> None:
     app = create_cli_app()
     runner = CliRunner()
     # prepare ticket store with one pending disclosure
@@ -18,7 +17,11 @@ def test_report_weekly_renders_ticket_summary(monkeypatch: "MonkeyPatch", tmp_pa
         json.dumps(
             {
                 "ticket_id": "T1",
-                "guardrails": {"kill_switch": "soft_stop", "spread_status": "cooldown", "reduce_only": True},
+                "guardrails": {
+                    "kill_switch": "soft_stop",
+                    "spread_status": "cooldown",
+                    "reduce_only": True,
+                },
                 "board_mode": "guarded",
                 "risk_summary": {"risk_disclosure": "pending"},
                 "audit_refs": {"determinism_hash": "deadbeef"},
@@ -31,11 +34,21 @@ def test_report_weekly_renders_ticket_summary(monkeypatch: "MonkeyPatch", tmp_pa
     out_path = tmp_path / "weekly.md"
     stress_dir = tmp_path / "reports" / "stress"
     stress_dir.mkdir(parents=True, exist_ok=True)
-    (stress_dir / "brexit_report.md").write_text("# Stress Test Report: brexit\nresult: ok\n", encoding="utf-8")
+    (stress_dir / "brexit_report.md").write_text(
+        "# Stress Test Report: brexit\nresult: ok\n", encoding="utf-8"
+    )
     journal_path = tmp_path / "logs" / "journal" / "entries.jsonl"
     journal_path.parent.mkdir(parents=True, exist_ok=True)
     journal_path.write_text(
-        json.dumps({"ts": "2025-03-20T12:00:00Z", "ticket_id": "T1", "user": "alice", "note": "approved", "week": "2025-W12"}),
+        json.dumps(
+            {
+                "ts": "2025-03-20T12:00:00Z",
+                "ticket_id": "T1",
+                "user": "alice",
+                "note": "approved",
+                "week": "2025-W12",
+            }
+        ),
         encoding="utf-8",
     )
     result = runner.invoke(

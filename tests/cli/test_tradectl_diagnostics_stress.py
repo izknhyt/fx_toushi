@@ -3,9 +3,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from typer.testing import CliRunner
-
 from src.interfaces.cli import create_cli_app
+from typer.testing import CliRunner
 
 
 def test_stress_test_cli_lists_and_runs(tmp_path: Path) -> None:

@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
+import json
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import date, datetime
 from pathlib import Path
-from typing import Iterable, Optional
-import json
-import hashlib
 
 AUTOMATION_EFFECT_JSONL_PATH = Path("automation_effect.jsonl")
 """Default ledger containing automation effect measurements."""
@@ -45,11 +44,11 @@ class AutomationEffectDelta:
     """Change request applied through :meth:`AutomationEffectTracker.apply`."""
 
     task: str
-    before_min: Optional[int]
-    after_min: Optional[int]
-    effective_date: Optional[date] = None
-    runbook_ref: Optional[str] = None
-    evidence: Optional[list[str]] = None
+    before_min: int | None
+    after_min: int | None
+    effective_date: date | None = None
+    runbook_ref: str | None = None
+    evidence: list[str] | None = None
 
 
 class AutomationEffectTracker:
@@ -98,7 +97,7 @@ class AutomationEffectTracker:
             raise AutomationEffectError(str(exc)) from exc
         return entry
 
-    def iter_effects(self, task: Optional[str] = None) -> Iterable[AutomationEffectEntry]:
+    def iter_effects(self, task: str | None = None) -> Iterable[AutomationEffectEntry]:
         """Iterate over persisted automation effect entries, optionally filtered by *task*."""
 
         if not self._ledger_path.exists():

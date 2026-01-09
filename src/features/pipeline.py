@@ -29,14 +29,15 @@ import hashlib
 import json
 import os
 import time
+from collections.abc import Iterable, Mapping, MutableMapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Iterable, Mapping, MutableMapping
+from typing import Any
 
-import yaml
-import pandas as pd
 import numpy as np
+import pandas as pd
+import yaml
 
 _TIMEFRAME_RULES: Mapping[str, str] = {
     "5m": "5t",
@@ -98,9 +99,7 @@ class FeatureContext:
     timeframes: frozenset[str]
     available_keys: frozenset[str]
     determinism: FeatureDeterminismMetadata | None = None
-    _store: Mapping[str, Mapping[str, Mapping[str, Any]]] = field(
-        default_factory=dict, repr=False
-    )
+    _store: Mapping[str, Mapping[str, Mapping[str, Any]]] = field(default_factory=dict, repr=False)
 
     def lookup(self, *, symbol: str, feature: str, timeframe: str) -> Any:
         """Return the feature payload for ``symbol``/``timeframe``/``feature``.
@@ -169,8 +168,12 @@ class FeaturePipeline:
         pipeline_steps: Sequence[Mapping[str, Any]] | None = None,
     ):
         self._config = config
-        self._feature_version = feature_version or self._load_feature_set_version(Path("config") / "features" / "feature_versions.yaml")
-        self._data_manifest_hash = data_manifest_hash or self._compute_data_manifest_hash(Path("reports") / "data_manifest.json")
+        self._feature_version = feature_version or self._load_feature_set_version(
+            Path("config") / "features" / "feature_versions.yaml"
+        )
+        self._data_manifest_hash = data_manifest_hash or self._compute_data_manifest_hash(
+            Path("reports") / "data_manifest.json"
+        )
         self._determinism = FeatureDeterminismMetadata(
             feature_version=self._feature_version,
             data_manifest_hash=self._data_manifest_hash,
@@ -257,7 +260,9 @@ class FeaturePipeline:
         )
         return aggregated
 
-    def _compute_indicator(self, indicator: IndicatorDefinition, frame: pd.DataFrame) -> Mapping[str, pd.Series]:
+    def _compute_indicator(
+        self, indicator: IndicatorDefinition, frame: pd.DataFrame
+    ) -> Mapping[str, pd.Series]:
         """Compute a single indicator over the provided price frame."""
 
         close = frame["close"]
@@ -329,6 +334,7 @@ class FeaturePipeline:
             zscore = (close - mean) / std
             outputs[indicator.output_keys["default"]] = zscore
         elif indicator.identifier.startswith("session_tag"):
+
             def _session_label(ts: pd.Timestamp) -> str:
                 hour = ts.hour
                 if 0 <= hour < 7:
@@ -368,7 +374,11 @@ class FeaturePipeline:
         feature_columns: dict[str, pd.Series] = {}
         for indicator in self._indicators.values():
             for timeframe in indicator.timeframes:
-                resampled = self._resample(frame, timeframe) if timeframe != self._default_timeframe else frame
+                resampled = (
+                    self._resample(frame, timeframe)
+                    if timeframe != self._default_timeframe
+                    else frame
+                )
                 computed = self._compute_indicator(indicator, resampled)
                 for alias, series in computed.items():
                     column_name = f"{alias}_{timeframe}"
@@ -406,13 +416,15 @@ class FeaturePipeline:
         data_manifest_hash: str | None = None,
         seed: int = 0,
         pipeline_steps_path: str | Path | None = None,
-    ) -> "FeaturePipeline":
+    ) -> FeaturePipeline:
         """Instantiate the pipeline from a YAML configuration file."""
 
         cfg_path = Path(path)
         with cfg_path.open("r", encoding="utf-8") as fh:
             config = yaml.safe_load(fh.read())
-        pipeline_steps = cls._load_pipeline_steps(pipeline_steps_path) if pipeline_steps_path else None
+        pipeline_steps = (
+            cls._load_pipeline_steps(pipeline_steps_path) if pipeline_steps_path else None
+        )
         return cls(
             config=config,
             feature_version=feature_version,
@@ -430,7 +442,7 @@ class FeaturePipeline:
         feature_version: str | None = None,
         data_manifest_hash: str | None = None,
         seed: int = 0,
-    ) -> "FeaturePipeline":
+    ) -> FeaturePipeline:
         """Instantiate the pipeline from standard config paths."""
 
         return cls.from_config_file(
@@ -488,8 +500,7 @@ class FeaturePipeline:
                 output_keys: Mapping[str, str] = {"default": str(raw_cfg["output_key"])}
             elif "output_keys" in raw_cfg:
                 output_keys = {
-                    str(column): str(alias)
-                    for column, alias in raw_cfg["output_keys"].items()
+                    str(column): str(alias) for column, alias in raw_cfg["output_keys"].items()
                 }
             else:  # pragma: no cover - schema validation should prevent this
                 raise ValueError(
@@ -574,7 +585,10 @@ class FeaturePipeline:
         cpu_ms: float,
     ) -> None:
         payload = {
-            "ts": datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+            "ts": datetime.now(timezone.utc)
+            .replace(microsecond=0)
+            .isoformat()
+            .replace("+00:00", "Z"),
             "symbol": symbol,
             "timeframe": timeframe,
             "bars": bars,
@@ -632,7 +646,9 @@ class FeaturePipeline:
         frame = pd.DataFrame(list(bars))
         if frame.empty:
             return frame
-        ts_col = "timestamp" if "timestamp" in frame.columns else "ts" if "ts" in frame.columns else None
+        ts_col = (
+            "timestamp" if "timestamp" in frame.columns else "ts" if "ts" in frame.columns else None
+        )
         if ts_col is None:
             return pd.DataFrame()
         frame = frame.rename(columns={ts_col: "timestamp"})

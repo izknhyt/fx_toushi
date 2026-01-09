@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+import glob
 import json
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from statistics import mean, pstdev
 from pathlib import Path
-import glob
-from typing import Any, Iterable, Mapping
+from statistics import mean, pstdev
+from typing import Any
 
 DEFAULT_PROFIT_READINESS_PATH = Path("metrics/profit_readiness.jsonl")
 ALLOWED_STATUSES = {"ok", "warning", "alert", "upgraded", "downgraded"}
@@ -76,7 +77,9 @@ def record_readiness(
     """Append a readiness event to metrics/profit_readiness.jsonl."""
 
     if status not in ALLOWED_STATUSES:
-        raise ProfitReadinessError(f"Unsupported status '{status}'. Allowed: {sorted(ALLOWED_STATUSES)}")
+        raise ProfitReadinessError(
+            f"Unsupported status '{status}'. Allowed: {sorted(ALLOWED_STATUSES)}"
+        )
     payload = ProfitReadinessEntry(
         lever=lever,
         status=status,
@@ -148,6 +151,7 @@ def latest_by_lever(
 
 # --------------------------------------------------------------------------- #
 # Verification helpers
+
 
 def _parse_timestamp(value: str | None) -> datetime | None:
     if not value:
@@ -343,22 +347,10 @@ def verify_profit_readiness(
     status = "ok"
     exit_code = EXIT_OK
 
-    if (
-        pf < 1.05
-        or sharpe < 0.8
-        or max_dd > 0.10
-        or spread_penalty > 0.08
-        or watchlist >= 2
-    ):
+    if pf < 1.05 or sharpe < 0.8 or max_dd > 0.10 or spread_penalty > 0.08 or watchlist >= 2:
         status = "alert"
         exit_code = EXIT_HALT
-    elif (
-        pf < 1.15
-        or sharpe < 0.9
-        or max_dd > 0.09
-        or spread_penalty > 0.05
-        or watchlist >= 1
-    ):
+    elif pf < 1.15 or sharpe < 0.9 or max_dd > 0.09 or spread_penalty > 0.05 or watchlist >= 1:
         status = "warning"
         exit_code = EXIT_WARN
 

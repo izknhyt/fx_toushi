@@ -11,8 +11,14 @@ def test_audit_chain_trace(tmp_path: Path) -> None:
     log_path.write_text(
         "\n".join(
             [
-                '{"ts": "2025-01-01T00:00:00Z", "event": "ticket.created", "ticket_id": "TKT-AC06", "actor": "strategy"}',
-                '{"ts": "2025-01-01T00:05:00Z", "event": "ticket.approved", "ticket_id": "TKT-AC06", "actor": "ops"}',
+                (
+                    '{"ts": "2025-01-01T00:00:00Z", "event": "ticket.created", '
+                    '"ticket_id": "TKT-AC06", "actor": "strategy"}'
+                ),
+                (
+                    '{"ts": "2025-01-01T00:05:00Z", "event": "ticket.approved", '
+                    '"ticket_id": "TKT-AC06", "actor": "ops"}'
+                ),
             ]
         ),
         encoding="utf-8",

@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import time
+from collections.abc import Sequence
 from functools import partial
 from pathlib import Path
-from typing import Sequence
 
 import pandas as pd
 
@@ -37,7 +37,9 @@ def parquet_provider(
         bars = df.to_dict(orient="records")
         frames.append(MarketFrame(symbol=symbol, timeframe=timeframe, bars=bars, quality_flag=0))
     elapsed_ms = (time.perf_counter() - start) * 1000.0
-    return ProviderResult(frames=frames, p95_ms=elapsed_ms, p99_ms=elapsed_ms * 1.1, rate_limit_ratio=0.0)
+    return ProviderResult(
+        frames=frames, p95_ms=elapsed_ms, p99_ms=elapsed_ms * 1.1, rate_limit_ratio=0.0
+    )
 
 
 def build_parquet_provider(*, base_path: Path, timeframe: str):

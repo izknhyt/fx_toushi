@@ -5,6 +5,7 @@ from copy import deepcopy
 from pathlib import Path
 
 import pytest
+
 from jsonschema import Draft202012Validator, ValidationError
 
 pytestmark = pytest.mark.contracts
@@ -13,9 +14,7 @@ pytestmark = pytest.mark.contracts
 def _load_sample(project_root: Path) -> dict:
     """Load the canonical performance snapshot example."""
 
-    sample_path = (
-        project_root / "docs/schemas/examples/performance_snapshot.sample.json"
-    )
+    sample_path = project_root / "docs/schemas/examples/performance_snapshot.sample.json"
     return json.loads(sample_path.read_text(encoding="utf-8"))
 
 
@@ -33,9 +32,7 @@ def test_performance_snapshot_sample_is_contract_compliant(
     validator.validate(sample)
 
 
-def test_performance_snapshot_rejects_invalid_payload(
-    load_json_schema, project_root: Path
-) -> None:
+def test_performance_snapshot_rejects_invalid_payload(load_json_schema, project_root: Path) -> None:
     """Reject snapshots that fail fundamental constraints (UTC timestamps, KPI bounds)."""
 
     schema = load_json_schema("docs/schemas/performance_snapshot.schema.json")
@@ -47,4 +44,3 @@ def test_performance_snapshot_rejects_invalid_payload(
 
     with pytest.raises(ValidationError):
         validator.validate(invalid_snapshot)
-

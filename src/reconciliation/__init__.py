@@ -1,8 +1,8 @@
 """Reconciliation stubs."""
 
-from .service_stub import StatementReconciliationServiceStub, ReconciliationReport
-from .normalizer_stub import normalize_statement
 from .matcher_stub import match_entries
+from .normalizer_stub import normalize_statement
+from .service_stub import ReconciliationReport, StatementReconciliationServiceStub
 
 __all__ = [
     "StatementReconciliationServiceStub",

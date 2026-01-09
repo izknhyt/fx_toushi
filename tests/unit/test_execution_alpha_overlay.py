@@ -1,5 +1,4 @@
 import pytest
-
 from src.analytics.pnl_feedback import FeedbackVector
 from src.execution.alpha_overlay import LotLadderRule, apply_hands_off_sizing, apply_lot_ladder
 
@@ -10,7 +9,9 @@ def test_auto_execute_applies_lot_ladder_and_clips() -> None:
         board_mode="normal",
         auto_execute=True,
         lot_ladder=[
-            LotLadderRule(pf_min=1.2, sharpe_min=1.0, maxdd_max=8.0, watchlist_max=0, size_factor=1.2)
+            LotLadderRule(
+                pf_min=1.2, sharpe_min=1.0, maxdd_max=8.0, watchlist_max=0, size_factor=1.2
+            )
         ],
         pf_all=1.25,
         sharpe=1.05,
@@ -87,7 +88,11 @@ def test_hands_off_sizing_composes_ladder_and_dynamic() -> None:
         board_mode="normal",
         auto_execute=True,
         reduce_only=False,
-        lot_ladder=[LotLadderRule(pf_min=1.2, sharpe_min=1.0, maxdd_max=8.0, watchlist_max=0, size_factor=1.1)],
+        lot_ladder=[
+            LotLadderRule(
+                pf_min=1.2, sharpe_min=1.0, maxdd_max=8.0, watchlist_max=0, size_factor=1.1
+            )
+        ],
         pf_all=1.3,
         sharpe=1.1,
         maxdd_pct=7.0,

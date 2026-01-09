@@ -53,4 +53,6 @@ def validate_manual(path: str) -> None:
     """Stub for validating manual benchmark CSV files."""
 
     logger.info("cli.benchmark.validate_manual.stub", extra={"path": path})
-    raise NotImplementedError("tradectl benchmark validate-manual is not implemented in the M1 scaffold")
+    raise NotImplementedError(
+        "tradectl benchmark validate-manual is not implemented in the M1 scaffold"
+    )

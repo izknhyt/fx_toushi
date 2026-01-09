@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any
 
 __all__ = ["FeatureCacheStore", "FeatureCacheRecord"]
 
@@ -79,7 +80,9 @@ class FeatureCacheStore:
         if self._metrics_path is None:
             return
 
-        record = FeatureCacheRecord(event="feature_cache", status=status, key=key, metadata=metadata)
+        record = FeatureCacheRecord(
+            event="feature_cache", status=status, key=key, metadata=metadata
+        )
         self._metrics_path.parent.mkdir(parents=True, exist_ok=True)
         with self._metrics_path.open("a", encoding="utf-8") as handle:
             handle.write(record.to_json())

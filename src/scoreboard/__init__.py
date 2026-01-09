@@ -8,8 +8,8 @@ from .bridge import (
     DEFAULT_SCOREBOARD_CONFIG_PATH,
     DEFAULT_STRATEGY_SCORES_PATH,
     ScoreboardBridge,
-    ScoreboardBridgeError,
     ScoreboardBridgeEntry,
+    ScoreboardBridgeError,
     ScoreboardBridgeSnapshot,
 )
 from .service import (
@@ -17,7 +17,7 @@ from .service import (
     DEFAULT_OPS_WORKLOG,
     DEFAULT_PROFIT_LOOP_REPORT,
     DEFAULT_WATCHLIST_LOG,
-    ScoreboardComputationFailed,
+    ScoreboardComputationFailedError,
     SnapshotSummary,
     StrategyScoreboardService,
     WatchlistRecord,
@@ -38,7 +38,7 @@ __all__ = [
     "ScoreboardBridgeError",
     "ScoreboardBridgeEntry",
     "ScoreboardBridgeSnapshot",
-    "ScoreboardComputationFailed",
+    "ScoreboardComputationFailedError",
     "SnapshotSummary",
     "StrategyScoreboardService",
     "WatchlistRecord",

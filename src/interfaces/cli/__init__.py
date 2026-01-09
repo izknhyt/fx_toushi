@@ -1,4 +1,5 @@
 """CLI entrypoints for the ``tradectl`` operator tooling."""
+# ruff: noqa: B008
 
 from __future__ import annotations
 
@@ -7,100 +8,103 @@ import logging
 import os
 import subprocess
 import sys
+from collections.abc import Iterable, Mapping
 from dataclasses import asdict
 from datetime import date, datetime
 from pathlib import Path
-from typing import Any, Iterable, Mapping
+from typing import Any
 
 import typer
 from rich.console import Console
-from rich.json import JSON
 from rich.panel import Panel
 from rich.pretty import Pretty
+from tools.ingestion_loop import (
+    parse_as_of as ingestion_parse_as_of,
+    run_loop as ingestion_loop_run,
+    run_once as ingestion_loop_run_once,
+)
 
-from .alpha import AlphaReviewError, AlphaWatchlistAlert, review as alpha_review
-from .backtest import run_backtest, walk_forward_backtest, run_paper_poc_all
+from src.audit.bundle import AuditBundleService
+from src.audit.trace import DEFAULT_AUDIT_LOG, trace_order
+from src.core.gate import GateAggregator, GateState
+from src.interfaces.cli import tickets as tickets_actions
+from src.journal import TradeJournalService
+from src.release.gate import ReleaseGateService
+from src.stress import ScenarioDatasetRegistry, StressTestEngine
+from src.ticket.monitor import (
+    DEFAULT_EVENT_LOG_PATH as DEFAULT_TICKET_EVENT_LOG_PATH,
+    DEFAULT_EXPORT_PATH as DEFAULT_TICKET_EXPORT_PATH,
+    monitor_ticket,
+)
+
+from . import audit as audit_actions, events as events_actions
+from .alpha import AlphaReviewError, AlphaWatchlistAlertError, review as alpha_review
+from .backtest import run_backtest, run_paper_poc, run_paper_poc_all, walk_forward_backtest
+from .benchmark import (
+    compare as benchmark_compare,
+    ingest as benchmark_ingest,
+    validate_manual as benchmark_validate_manual,
+)
 from .board import board as board_view
-from .backtest import run_paper_poc
+from .compliance import (
+    ack as compliance_ack,
+    refresh as compliance_refresh,
+    status as compliance_status,
+)
 from .data import (
     acknowledge_degradation,
+    enqueue_manual_csv_job,
+    export_rate_limit_env,
     failover as data_failover,
     hash_path as data_hash_path,
     health_snapshot,
     jobs as data_jobs,
-    enqueue_manual_csv_job,
-    run_manual_csv_jobs,
     manual_report as data_manual_report,
     manual_template,
     rate_limit_snapshot,
-    export_rate_limit_env,
+    run_manual_csv_jobs,
     status as data_status,
     update_latest as data_update_latest,
     validate_csv,
 )
+from .determinism import _should_exit, determinism_replay
 from .diagnostics import DeterminismDiagnosticsError, load_determinism_events
-from .execution_dashboard import execution_dashboard
-from .determinism import determinism_replay, _should_exit
 from .execution import ExecutionBridgeLogError, ExecutionEvidenceError, bridge_log, recalibrate
-from . import audit as audit_actions
-from . import events as events_actions
-from .metrics import report as metrics_report
-from .preflight import preflight
+from .execution_dashboard import execution_dashboard
 from .funding import FundingSyncError, funding_status, funding_sync
 from .kill_switch import (
     DEFAULT_KILL_SWITCH_AUDIT,
     DEFAULT_KILL_SWITCH_LOG,
     DEFAULT_KILL_SWITCH_STATE,
     KillSwitchEvidenceError,
-    ResumeBlocked,
+    ResumeBlockedError,
     review as kill_switch_review,
     set_state as kill_switch_set_state,
 )
-from .performance import live_guard as performance_live_guard
+from .metrics import report as metrics_report
 from .ops import action_item_sync, readiness
-from .benchmark import (
-    compare as benchmark_compare,
-    ingest as benchmark_ingest,
-    validate_manual as benchmark_validate_manual,
-)
-from .report import weekly as generate_weekly_report, daily as generate_daily_report
-from .spread import (
-    DEFAULT_SPREAD_AUDIT,
-    DEFAULT_SPREAD_METRICS,
-    inspect as spread_inspect,
-)
-from .compliance import ack as compliance_ack, refresh as compliance_refresh, status as compliance_status
+from .performance import live_guard as performance_live_guard
+from .preflight import preflight
+from .report import daily as generate_daily_report, weekly as generate_weekly_report
 from .resync import resync
-from .session import start_session, stop_session
 from .scoring import (
     DiagnosticsEvidenceError,
     ScoreboardBridgeError,
     generate_scoreboard_bridge,
     run_diagnostics,
 )
+from .session import start_session, stop_session
+from .spread import (
+    DEFAULT_SPREAD_AUDIT,
+    DEFAULT_SPREAD_METRICS,
+    inspect as spread_inspect,
+)
 from .status import (
-    DEFAULT_GATE_STATE_PATH,
     DEFAULT_GUARDRAILS_METRICS,
     DEFAULT_HEALTH_ACTION_AUDIT,
-    DEFAULT_HEALTH_STATE_PATH,
     DEFAULT_KILL_SWITCH_STATE_PATH,
     status,
 )
-from src.audit.trace import DEFAULT_AUDIT_LOG, trace_order
-from src.audit.bundle import AuditBundleService
-from src.release.gate import ReleaseGateService
-from src.interfaces.cli import tickets as tickets_actions
-from src.stress import ScenarioDatasetRegistry, StressTestEngine
-from src.journal import TradeJournalService
-from src.core.gate import GateState, GateAggregator
-from src.ticket.monitor import (
-    DEFAULT_EVENT_LOG_PATH as DEFAULT_TICKET_EVENT_LOG_PATH,
-    DEFAULT_EXPORT_PATH as DEFAULT_TICKET_EXPORT_PATH,
-    monitor_ticket,
-)
-from tools.ingestion_loop import run_loop as ingestion_loop_run
-from tools.ingestion_loop import run_once as ingestion_loop_run_once
-from tools.ingestion_loop import parse_as_of as ingestion_parse_as_of
 
 logger = logging.getLogger(__name__)
 
@@ -168,7 +172,9 @@ def create_cli_app() -> typer.Typer:
     """Return the root Typer application wired with Typer/Rich."""
 
     console = Console()
-    app = typer.Typer(add_completion=False, no_args_is_help=True, help="Trading Ops control surface")
+    app = typer.Typer(
+        add_completion=False, no_args_is_help=True, help="Trading Ops control surface"
+    )
 
     @app.callback()
     def main(
@@ -188,8 +194,11 @@ def create_cli_app() -> typer.Typer:
         filters: list[str] = typer.Option([], "--filter", help="Filter tokens", show_default=False),
         guarded: bool = typer.Option(False, "--guarded", help="Render guarded state snapshot"),
         normal: bool = typer.Option(False, "--normal", help="Force normal state snapshot"),
-        include: list[str] = typer.Option([], "--include", help="Additional payload sections", show_default=False),
-        save_snapshot: Path | None = typer.Option(
+        include: list[str] = typer.Option(
+            [], "--include", help="Additional payload sections", show_default=False
+        ),
+        save_snapshot: Path
+        | None = typer.Option(
             None,
             "--save-snapshot",
             help="Optional JSON file path for the rendered snapshot",
@@ -224,14 +233,16 @@ def create_cli_app() -> typer.Typer:
             "--slippage-status",
             help="Slippage data badge (ok|degraded|halt_recommended).",
         ),
-        risk_disclosure: str | None = typer.Option(
+        risk_disclosure: str
+        | None = typer.Option(
             None,
             "--risk-disclosure",
             help="Risk disclosure status (accepted|pending|auto)",
             hidden=False,
             show_default=False,
         ),
-        compat: str | None = typer.Option(
+        compat: str
+        | None = typer.Option(
             None,
             "--compat",
             help="Compatibility mode (e.g. v1) to relax exit codes/output shape.",
@@ -266,7 +277,9 @@ def create_cli_app() -> typer.Typer:
             compat_mode=compat_mode,
         )
         _render_payload(console, payload, json_output=effective_json)
-        rd_status = payload.get("guardrails", {}).get("risk_disclosure", risk_disclosure or "accepted")
+        rd_status = payload.get("guardrails", {}).get(
+            "risk_disclosure", risk_disclosure or "accepted"
+        )
         exit_code = _determine_board_exit_code(
             kill_switch=kill_switch,
             spread_status=spread_status,
@@ -287,7 +300,8 @@ def create_cli_app() -> typer.Typer:
         window_to: str = typer.Option(..., "--to", help="Backtest end date (YYYY-MM-DD)"),
         export: str | None = typer.Option(None, "--export", help="Export target (e.g. metrics)"),
         output: Path | None = typer.Option(None, "--output", help="Path for exported artifact"),
-        out_dir: Path | None = typer.Option(None, "--out", help="Directory to store derived artifacts"),
+        out_dir: Path
+        | None = typer.Option(None, "--out", help="Directory to store derived artifacts"),
         manifest_path: Path = typer.Option(
             Path("reports") / "data_manifest.json",
             "--manifest",
@@ -319,7 +333,9 @@ def create_cli_app() -> typer.Typer:
         step_spec: str = typer.Option("1m", "--step", help="Walk-forward step size (e.g. 1m)"),
         window_from: str = typer.Option(..., "--from", help="Evaluation start date (YYYY-MM-DD)"),
         window_to: str = typer.Option(..., "--to", help="Evaluation end date (YYYY-MM-DD)"),
-        out_dir: Path = typer.Option(..., "--out", help="Output directory for walk-forward segments."),
+        out_dir: Path = typer.Option(
+            ..., "--out", help="Output directory for walk-forward segments."
+        ),
         manifest_path: Path = typer.Option(
             Path("reports") / "data_manifest.json",
             "--manifest",
@@ -361,7 +377,7 @@ def create_cli_app() -> typer.Typer:
             payload = load_determinism_events(log_path, limit=limit)
         except DeterminismDiagnosticsError as exc:
             typer.echo(f"determinism diagnostics failed: {exc}", err=True)
-            raise typer.Exit(code=1)
+            raise typer.Exit(code=1) from exc
         _render_payload(console, payload, json_output=effective_json)
 
     @diagnostics_app.command("execution-dashboard")
@@ -372,12 +388,16 @@ def create_cli_app() -> typer.Typer:
             "--log",
             help="Path to execution determinism metrics log",
         ),
-        since: str | None = typer.Option(None, "--since", help="ISO8601 filter for event start time"),
-        window_hours: int | None = typer.Option(None, "--window-hours", help="Lookback window in hours"),
+        since: str
+        | None = typer.Option(None, "--since", help="ISO8601 filter for event start time"),
+        window_hours: int
+        | None = typer.Option(None, "--window-hours", help="Lookback window in hours"),
         limit: int | None = typer.Option(None, "--limit", help="Use only the latest N events"),
         output: Path | None = typer.Option(None, "--output", help="Output JSON dashboard path"),
-        markdown: Path | None = typer.Option(None, "--markdown", help="Output markdown dashboard path"),
-        metrics_path: Path | None = typer.Option(None, "--metrics", help="Append metrics summary JSONL here"),
+        markdown: Path
+        | None = typer.Option(None, "--markdown", help="Output markdown dashboard path"),
+        metrics_path: Path
+        | None = typer.Option(None, "--metrics", help="Append metrics summary JSONL here"),
         dry_run: bool = typer.Option(False, "--dry-run", help="Skip writing dashboard files"),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
@@ -399,8 +419,13 @@ def create_cli_app() -> typer.Typer:
     def diagnostics_stress_test_command(
         ctx: typer.Context,
         scenario: str | None = typer.Option(None, "--scenario", help="Scenario name to run"),
-        config: Path = typer.Option(Path("config") / "stress_scenarios.json", "--config", help="Scenario registry JSON"),
-        export_dir: Path | None = typer.Option(None, "--export-dir", help="Optional directory to export report artifacts"),
+        config: Path = typer.Option(
+            Path("config") / "stress_scenarios.json", "--config", help="Scenario registry JSON"
+        ),
+        export_dir: Path
+        | None = typer.Option(
+            None, "--export-dir", help="Optional directory to export report artifacts"
+        ),
         list_only: bool = typer.Option(False, "--list", help="List scenarios without running"),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
@@ -410,7 +435,7 @@ def create_cli_app() -> typer.Typer:
             registry = _load_stress_registry(config)
         except ValueError as exc:
             typer.echo(f"stress-test config error: {exc}", err=True)
-            raise typer.Exit(code=1)
+            raise typer.Exit(code=1) from exc
         engine = StressTestEngine(registry=registry)
         if list_only or scenario is None:
             payload = {
@@ -423,7 +448,7 @@ def create_cli_app() -> typer.Typer:
             result = engine.run(scenario, export_dir=export_dir)
         except KeyError as exc:
             typer.echo(str(exc), err=True)
-            raise typer.Exit(code=1)
+            raise typer.Exit(code=1) from exc
         payload = {"config": str(config), "result": result.to_dict()}
         _render_payload(console, payload, json_output=effective_json)
 
@@ -437,41 +462,51 @@ def create_cli_app() -> typer.Typer:
         mode: str = typer.Option("paper", "--mode", help="Mode to replay (backtest|paper)"),
         strategy: str | None = typer.Option(None, "--strategy", help="Strategy identifier filter"),
         window: str | None = typer.Option(None, "--window", help="Bar window (e.g. 1000bars)"),
-        output: Path | None = typer.Option(None, "--output", help="Optional diff report output path"),
-        log_path: Path | None = typer.Option(
+        output: Path
+        | None = typer.Option(None, "--output", help="Optional diff report output path"),
+        log_path: Path
+        | None = typer.Option(
             None,
             "--log",
             help="Optional determinism log to include in diagnostics",
         ),
-        metrics_path: Path | None = typer.Option(
+        metrics_path: Path
+        | None = typer.Option(
             None,
             "--metrics",
             help="Optional metrics file to append replay summary",
             hidden=True,
         ),
-        signals_path: Path | None = typer.Option(
+        signals_path: Path
+        | None = typer.Option(
             None,
             "--signals",
             help="Deprecated; use --signals-expected/--signals-actual",
             show_default=False,
             hidden=True,
         ),
-        signals_expected: Path | None = typer.Option(
+        signals_expected: Path
+        | None = typer.Option(
             None,
             "--signals-expected",
             help="Expected SignalRecord JSONL (e.g. backtest)",
             show_default=False,
         ),
-        signals_actual: Path | None = typer.Option(
+        signals_actual: Path
+        | None = typer.Option(
             None,
             "--signals-actual",
             help="Actual SignalRecord JSONL (e.g. paper/live)",
             show_default=False,
         ),
-        signals_schema: Path | None = typer.Option(
+        signals_schema: Path
+        | None = typer.Option(
             None,
             "--signals-schema",
-            help="SignalRecord JSON schema for validation (defaults to docs/schemas/signal_record.schema.json)",
+            help=(
+                "SignalRecord JSON schema for validation "
+                "(defaults to docs/schemas/signal_record.schema.json)"
+            ),
             show_default=False,
         ),
         allow_missing_signals: bool = typer.Option(
@@ -526,15 +561,27 @@ def create_cli_app() -> typer.Typer:
     @backtest_app.command("poc-paper")
     def backtest_poc_paper_command(
         ctx: typer.Context,
-        strategy: str = typer.Option("m1_baseline_ma_rsi", "--strategy", help="Strategy identifier."),
+        strategy: str = typer.Option(
+            "m1_baseline_ma_rsi", "--strategy", help="Strategy identifier."
+        ),
         profile: str = typer.Option("m1_baseline", "--profile", help="Risk profile key"),
-        window_from: str | None = typer.Option(None, "--from", help="Start date (YYYY-MM-DD)", show_default=False),
-        window_to: str | None = typer.Option(None, "--to", help="End date (YYYY-MM-DD)", show_default=False),
+        window_from: str
+        | None = typer.Option(None, "--from", help="Start date (YYYY-MM-DD)", show_default=False),
+        window_to: str
+        | None = typer.Option(None, "--to", help="End date (YYYY-MM-DD)", show_default=False),
         spread_pips: float = typer.Option(0.01, "--spread", help="Assumed spread in price units"),
-        slippage_pips: float = typer.Option(0.0, "--slippage", help="Assumed slippage in price units"),
-        slippage_std: float = typer.Option(0.0, "--slippage-std", help="Slippage stddev (random normal) in price units"),
-        commission_pct: float = typer.Option(0.0, "--commission-pct", help="Commission per trade as % of risk amount"),
-        fixed_risk: bool = typer.Option(False, "--fixed-risk", help="Use base capital for per-trade risk (no compounding)"),
+        slippage_pips: float = typer.Option(
+            0.0, "--slippage", help="Assumed slippage in price units"
+        ),
+        slippage_std: float = typer.Option(
+            0.0, "--slippage-std", help="Slippage stddev (random normal) in price units"
+        ),
+        commission_pct: float = typer.Option(
+            0.0, "--commission-pct", help="Commission per trade as % of risk amount"
+        ),
+        fixed_risk: bool = typer.Option(
+            False, "--fixed-risk", help="Use base capital for per-trade risk (no compounding)"
+        ),
         target_r: float = typer.Option(2.0, "--target-r", help="Target R multiple for take profit"),
         ttl_bars: int = typer.Option(12, "--ttl-bars", help="Max bars to hold before exit"),
         risk_policy_path: Path = typer.Option(
@@ -561,7 +608,8 @@ def create_cli_app() -> typer.Typer:
             help="Strategy manifest path",
             show_default=False,
         ),
-        output: Path | None = typer.Option(
+        output: Path
+        | None = typer.Option(
             None,
             "--output",
             help="Optional JSON output path for evidence logs",
@@ -595,8 +643,10 @@ def create_cli_app() -> typer.Typer:
     def backtest_poc_paper_all_command(
         ctx: typer.Context,
         profile: str = typer.Option("m1_baseline", "--profile", help="Risk profile key"),
-        window_from: str | None = typer.Option(None, "--from", help="Start date (YYYY-MM-DD)", show_default=False),
-        window_to: str | None = typer.Option(None, "--to", help="End date (YYYY-MM-DD)", show_default=False),
+        window_from: str
+        | None = typer.Option(None, "--from", help="Start date (YYYY-MM-DD)", show_default=False),
+        window_to: str
+        | None = typer.Option(None, "--to", help="End date (YYYY-MM-DD)", show_default=False),
         spread_pips: float = typer.Option(0.01, "--spread", help="Assumed spread in price units"),
         target_r: float = typer.Option(2.0, "--target-r", help="Target R multiple for take profit"),
         ttl_bars: int = typer.Option(12, "--ttl-bars", help="Max bars to hold before exit"),
@@ -624,7 +674,8 @@ def create_cli_app() -> typer.Typer:
             help="Strategy manifest path",
             show_default=False,
         ),
-        output: Path | None = typer.Option(
+        output: Path
+        | None = typer.Option(
             None,
             "--output",
             help="Optional JSON output path for evidence logs",
@@ -657,9 +708,13 @@ def create_cli_app() -> typer.Typer:
     @gate_app.command("persist")
     def gate_persist_command(
         ctx: typer.Context,
-        path: Path = typer.Option(Path("snapshots/latest/gate_state.json"), "--path", help="Gate state output path"),
-        cfg_hash: str | None = typer.Option(None, "--cfg-hash", help="Config hash override (sha256:...)"),
-        data_hash: str | None = typer.Option(None, "--data-hash", help="Data hash override (sha256:...)"),
+        path: Path = typer.Option(
+            Path("snapshots/latest/gate_state.json"), "--path", help="Gate state output path"
+        ),
+        cfg_hash: str
+        | None = typer.Option(None, "--cfg-hash", help="Config hash override (sha256:...)"),
+        data_hash: str
+        | None = typer.Option(None, "--data-hash", help="Data hash override (sha256:...)"),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
         ctx_obj = ctx.obj or {"json": False}
@@ -686,7 +741,9 @@ def create_cli_app() -> typer.Typer:
         user: str = typer.Option(..., "--user", help="Actor name"),
         note: str = typer.Option(..., "--note", help="Journal note"),
         week: str | None = typer.Option(None, "--week", help="ISO week (e.g. 2025-W12)"),
-        path: Path = typer.Option(Path("logs/journal/entries.jsonl"), "--path", help="Journal file path"),
+        path: Path = typer.Option(
+            Path("logs/journal/entries.jsonl"), "--path", help="Journal file path"
+        ),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
         ctx_obj = ctx.obj or {"json": False}
@@ -695,20 +752,6 @@ def create_cli_app() -> typer.Typer:
         entry = service.from_ticket_action(ticket_id=ticket_id, user=user, note=note, week=week)
         service.append(entry)
         payload = {"status": "ok", "entry": entry.to_dict()}
-        _render_payload(console, payload, json_output=effective_json)
-
-    @journal_app.command("list")
-    def journal_list_command(
-        ctx: typer.Context,
-        week: str | None = typer.Option(None, "--week", help="Filter by ISO week"),
-        path: Path = typer.Option(Path("logs/journal/entries.jsonl"), "--path", help="Journal file path"),
-        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
-    ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
-        service = TradeJournalService(path=path)
-        entries = service.list(week=week)
-        payload = {"entries": entries, "count": len(entries)}
         _render_payload(console, payload, json_output=effective_json)
 
     app.add_typer(journal_app, name="journal")
@@ -720,8 +763,11 @@ def create_cli_app() -> typer.Typer:
         ctx: typer.Context,
         ticket_id: str | None = typer.Option(None, "--id", help="Ticket identifier"),
         mode: str = typer.Option("paper", "--mode", help="Mode to monitor"),
-        watch_seconds: int = typer.Option(120, "--watch", help="Seconds to wait for OCO ack", min=1),
-        export_path: Path | None = typer.Option(
+        watch_seconds: int = typer.Option(
+            120, "--watch", help="Seconds to wait for OCO ack", min=1
+        ),
+        export_path: Path
+        | None = typer.Option(
             DEFAULT_TICKET_EXPORT_PATH,
             "--export",
             help="Path to write sample orders Parquet",
@@ -754,7 +800,10 @@ def create_cli_app() -> typer.Typer:
         take_over: bool = typer.Option(False, "--takeover", help="Take lock from another owner"),
         cfg_hash: str | None = typer.Option(None, "--cfg-hash", help="Config hash override"),
         data_hash: str | None = typer.Option(None, "--data-hash", help="Data hash override"),
-        gate_state_path: Path | None = typer.Option(None, "--gate-state", help="Optional GateState JSON (for hashes/guardrails)"),
+        gate_state_path: Path
+        | None = typer.Option(
+            None, "--gate-state", help="Optional GateState JSON (for hashes/guardrails)"
+        ),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
         ctx_obj = ctx.obj or {"json": False}
@@ -766,14 +815,18 @@ def create_cli_app() -> typer.Typer:
                 reason=reason,
                 user=user,
                 take_over=take_over,
-                guardrails={"cfg_hash": cfg_hash, "data_hash": data_hash} if cfg_hash or data_hash else None,
+                guardrails={"cfg_hash": cfg_hash, "data_hash": data_hash}
+                if cfg_hash or data_hash
+                else None,
                 gate_state=gate_state,
             )
         except tickets_actions.ConsentRequiredError as exc:
             typer.echo(f"[ticket.reject] {exc}", err=True)
             raise typer.Exit(code=120) from exc
         except Exception as exc:  # noqa: BLE001
-            logger.error("cli.ticket.reject.failed", extra={"ticket_id": ticket_id, "error": str(exc)})
+            logger.error(
+                "cli.ticket.reject.failed", extra={"ticket_id": ticket_id, "error": str(exc)}
+            )
             raise typer.Exit(code=1) from exc
         _render_payload(console, result, json_output=effective_json)
 
@@ -783,14 +836,23 @@ def create_cli_app() -> typer.Typer:
         ticket_id: str = typer.Option(..., "--id", help="Ticket identifier"),
         note: str | None = typer.Option(None, "--note", help="Optional approval note"),
         user: str | None = typer.Option(None, "--user", help="Actor"),
-        force_consent: bool = typer.Option(False, "--force-consent", help="Bypass RiskDisclosure pending"),
-        consent_reference_id: str | None = typer.Option(None, "--consent-ref", help="RiskDisclosure reference id"),
-        double_entry_user: str | None = typer.Option(None, "--double-entry", help="Second operator user id"),
-        require_double_entry: bool = typer.Option(False, "--require-double-entry", help="Enforce double-entry"),
+        force_consent: bool = typer.Option(
+            False, "--force-consent", help="Bypass RiskDisclosure pending"
+        ),
+        consent_reference_id: str
+        | None = typer.Option(None, "--consent-ref", help="RiskDisclosure reference id"),
+        double_entry_user: str
+        | None = typer.Option(None, "--double-entry", help="Second operator user id"),
+        require_double_entry: bool = typer.Option(
+            False, "--require-double-entry", help="Enforce double-entry"
+        ),
         take_over: bool = typer.Option(False, "--takeover", help="Take lock from another owner"),
         cfg_hash: str | None = typer.Option(None, "--cfg-hash", help="Config hash override"),
         data_hash: str | None = typer.Option(None, "--data-hash", help="Data hash override"),
-        gate_state_path: Path | None = typer.Option(None, "--gate-state", help="Optional GateState JSON (for hashes/guardrails)"),
+        gate_state_path: Path
+        | None = typer.Option(
+            None, "--gate-state", help="Optional GateState JSON (for hashes/guardrails)"
+        ),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
         ctx_obj = ctx.obj or {"json": False}
@@ -806,14 +868,18 @@ def create_cli_app() -> typer.Typer:
                 double_entry_user=double_entry_user,
                 require_double_entry=require_double_entry,
                 take_over=take_over,
-                guardrails={"cfg_hash": cfg_hash, "data_hash": data_hash} if cfg_hash or data_hash else None,
+                guardrails={"cfg_hash": cfg_hash, "data_hash": data_hash}
+                if cfg_hash or data_hash
+                else None,
                 gate_state=gate_state,
             )
         except tickets_actions.ConsentRequiredError as exc:
             typer.echo(f"[ticket.approve] {exc}", err=True)
             raise typer.Exit(code=120) from exc
         except Exception as exc:  # noqa: BLE001
-            logger.error("cli.ticket.approve.failed", extra={"ticket_id": ticket_id, "error": str(exc)})
+            logger.error(
+                "cli.ticket.approve.failed", extra={"ticket_id": ticket_id, "error": str(exc)}
+            )
             raise typer.Exit(code=1) from exc
         _render_payload(console, result, json_output=effective_json)
 
@@ -827,7 +893,10 @@ def create_cli_app() -> typer.Typer:
         take_over: bool = typer.Option(False, "--takeover", help="Take lock from another owner"),
         cfg_hash: str | None = typer.Option(None, "--cfg-hash", help="Config hash override"),
         data_hash: str | None = typer.Option(None, "--data-hash", help="Data hash override"),
-        gate_state_path: Path | None = typer.Option(None, "--gate-state", help="Optional GateState JSON (for hashes/guardrails)"),
+        gate_state_path: Path
+        | None = typer.Option(
+            None, "--gate-state", help="Optional GateState JSON (for hashes/guardrails)"
+        ),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
         ctx_obj = ctx.obj or {"json": False}
@@ -840,14 +909,18 @@ def create_cli_app() -> typer.Typer:
                 value=value,
                 user=user,
                 take_over=take_over,
-                guardrails={"cfg_hash": cfg_hash, "data_hash": data_hash} if cfg_hash or data_hash else None,
+                guardrails={"cfg_hash": cfg_hash, "data_hash": data_hash}
+                if cfg_hash or data_hash
+                else None,
                 gate_state=gate_state,
             )
         except tickets_actions.ConsentRequiredError as exc:
             typer.echo(f"[ticket.edit] {exc}", err=True)
             raise typer.Exit(code=120) from exc
         except Exception as exc:  # noqa: BLE001
-            logger.error("cli.ticket.edit.failed", extra={"ticket_id": ticket_id, "error": str(exc)})
+            logger.error(
+                "cli.ticket.edit.failed", extra={"ticket_id": ticket_id, "error": str(exc)}
+            )
             raise typer.Exit(code=1) from exc
         _render_payload(console, result, json_output=effective_json)
 
@@ -860,7 +933,9 @@ def create_cli_app() -> typer.Typer:
     ) -> None:
         ctx_obj = ctx.obj or {"json": False}
         effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
-        records = tickets_actions.list_tickets(status=status, include_history=include_history, json_output=effective_json)
+        records = tickets_actions.list_tickets(
+            status=status, include_history=include_history, json_output=effective_json
+        )
         _render_payload(console, {"tickets": records}, json_output=effective_json)
 
     app.add_typer(ticket_app, name="ticket")
@@ -872,7 +947,8 @@ def create_cli_app() -> typer.Typer:
         ctx: typer.Context,
         kind: str = typer.Option(..., "--kind", help="Report kind", case_sensitive=False),
         window: str = typer.Option("7d", "--window", help="Metrics window"),
-        out: Path | None = typer.Option(
+        out: Path
+        | None = typer.Option(
             None,
             "--out",
             "--export",
@@ -970,14 +1046,19 @@ def create_cli_app() -> typer.Typer:
         profile: str = typer.Option("m1", "--profile", help="Report profile"),
         out: Path | None = typer.Option(None, "--out", help="Output markdown path"),
         week: str | None = typer.Option(None, "--week", help="ISO week to render (e.g. 2025-W12)"),
-        template: Path | None = typer.Option(
+        template: Path
+        | None = typer.Option(
             None,
             "--template",
             help="Ticket Summary template (defaults to profile-specific if present)",
             hidden=True,
         ),
-        stress_dir: Path = typer.Option(Path("reports") / "stress", "--stress-dir", help="Stress run artifacts directory"),
-        journal_path: Path = typer.Option(Path("logs") / "journal" / "entries.jsonl", "--journal-path", help="Journal JSONL path"),
+        stress_dir: Path = typer.Option(
+            Path("reports") / "stress", "--stress-dir", help="Stress run artifacts directory"
+        ),
+        journal_path: Path = typer.Option(
+            Path("logs") / "journal" / "entries.jsonl", "--journal-path", help="Journal JSONL path"
+        ),
         dry_run: bool = typer.Option(False, "--dry-run", help="Render without writing output"),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
@@ -997,7 +1078,9 @@ def create_cli_app() -> typer.Typer:
     @report_app.command("daily")
     def report_daily_command(
         ctx: typer.Context,
-        date_value: str = typer.Option(date.today().isoformat(), "--date", help="Target date (YYYY-MM-DD)"),
+        date_value: str = typer.Option(
+            date.today().isoformat(), "--date", help="Target date (YYYY-MM-DD)"
+        ),
         profile: str | None = typer.Option(None, "--profile", help="Optional profile hint"),
         out: Path | None = typer.Option(None, "--out", help="Output markdown path"),
         dry_run: bool = typer.Option(False, "--dry-run", help="Render without writing output"),
@@ -1042,7 +1125,14 @@ def create_cli_app() -> typer.Typer:
             raise typer.Exit(code=1) from exc
         _render_payload(
             console,
-            {"status": "ok", "provider": provider, "file": str(file), "mode": mode, "symbol": symbol, "email": email},
+            {
+                "status": "ok",
+                "provider": provider,
+                "file": str(file),
+                "mode": mode,
+                "symbol": symbol,
+                "email": email,
+            },
             json_output=effective_json,
         )
 
@@ -1051,7 +1141,9 @@ def create_cli_app() -> typer.Typer:
         ctx: typer.Context,
         window: str = typer.Option("7d", "--window", help="Lookback window"),
         mode: str = typer.Option("paper", "--mode", help="Target mode (backtest|paper|live)"),
-        provider: list[str] = typer.Option([], "--provider", help="Providers to compare", show_default=False),
+        provider: list[str] = typer.Option(
+            [], "--provider", help="Providers to compare", show_default=False
+        ),
         export: Path | None = typer.Option(None, "--export", help="Optional export path"),
         fail_on_gap: bool = typer.Option(False, "--fail-on-gap", help="Fail if gaps are detected"),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
@@ -1112,12 +1204,16 @@ def create_cli_app() -> typer.Typer:
         ctx_obj = ctx.obj or {"json": False}
         effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
         entries = audit_actions.tail(since=since, event=event, json_output=effective_json)
-        _render_payload(console, {"count": len(entries), "events": entries}, json_output=effective_json)
+        _render_payload(
+            console, {"count": len(entries), "events": entries}, json_output=effective_json
+        )
 
     @audit_app.command("export")
     def audit_export_command(
         ctx: typer.Context,
-        export_type: str = typer.Option(..., "--type", help="Audit log type (health_action, ticket_action, all)"),
+        export_type: str = typer.Option(
+            ..., "--type", help="Audit log type (health_action, ticket_action, all)"
+        ),
         date_from: str = typer.Option(..., "--from", help="Start date (YYYY-MM-DD)"),
         date_to: str = typer.Option(..., "--to", help="End date (YYYY-MM-DD)"),
         out: Path = typer.Option(..., "--out", help="Output JSONL path"),
@@ -1138,7 +1234,9 @@ def create_cli_app() -> typer.Typer:
         ctx: typer.Context,
         period: str = typer.Option(..., "--period", help="Period label (e.g. 2025Q1, 202512)"),
         signer: str = typer.Option("local", "--signer", help="Signer identifier"),
-        dry_run: bool = typer.Option(False, "--dry-run", help="Preview bundle without writing files"),
+        dry_run: bool = typer.Option(
+            False, "--dry-run", help="Preview bundle without writing files"
+        ),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
         ctx_obj = ctx.obj or {"json": False}
@@ -1184,7 +1282,8 @@ def create_cli_app() -> typer.Typer:
     def audit_trace_command(
         ctx: typer.Context,
         order: str = typer.Option(..., "--order", help="Ticket/Order identifier"),
-        export: Path | None = typer.Option(
+        export: Path
+        | None = typer.Option(
             None,
             "--export",
             help="Optional markdown export path",
@@ -1217,7 +1316,9 @@ def create_cli_app() -> typer.Typer:
         ctx_obj = ctx.obj or {"json": False}
         effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
         entries = events_actions.tail_events(since=since, follow=follow)
-        _render_payload(console, {"count": len(entries), "events": entries}, json_output=effective_json)
+        _render_payload(
+            console, {"count": len(entries), "events": entries}, json_output=effective_json
+        )
 
     app.add_typer(events_app, name="events")
 
@@ -1236,7 +1337,9 @@ def create_cli_app() -> typer.Typer:
         effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
         service = ReleaseGateService()
         checklist = service.prepare(version=version)
-        _render_payload(console, {"status": "ok", **checklist.to_dict()}, json_output=effective_json)
+        _render_payload(
+            console, {"status": "ok", **checklist.to_dict()}, json_output=effective_json
+        )
 
     @release_app.command("record")
     def release_record_command(
@@ -1250,8 +1353,12 @@ def create_cli_app() -> typer.Typer:
         ctx_obj = ctx.obj or {"json": False}
         effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
         service = ReleaseGateService()
-        checklist = service.record_result(version=version, task_id=task, status=status, evidence_path=evidence)
-        _render_payload(console, {"status": "ok", **checklist.to_dict()}, json_output=effective_json)
+        checklist = service.record_result(
+            version=version, task_id=task, status=status, evidence_path=evidence
+        )
+        _render_payload(
+            console, {"status": "ok", **checklist.to_dict()}, json_output=effective_json
+        )
 
     @release_app.command("verify")
     def release_verify_command(
@@ -1289,7 +1396,8 @@ def create_cli_app() -> typer.Typer:
         p95: float = typer.Option(..., "--p95", help="Spread p95 (pips)"),
         p99: float = typer.Option(..., "--p99", help="Spread p99 (pips)"),
         ntp_drift_ms: int = typer.Option(0, "--ntp-drift-ms", help="NTP drift in milliseconds"),
-        news_event: str | None = typer.Option(
+        news_event: str
+        | None = typer.Option(
             None,
             "--news-event",
             help="Upcoming or active high-impact news identifier",
@@ -1326,7 +1434,8 @@ def create_cli_app() -> typer.Typer:
             help="Spread audit jsonl output path",
             hidden=True,
         ),
-        gate_state_path: Path | None = typer.Option(
+        gate_state_path: Path
+        | None = typer.Option(
             None,
             "--gate-state",
             help="Optional gate_state.json path to update",
@@ -1356,7 +1465,7 @@ def create_cli_app() -> typer.Typer:
             )
         except ValueError as exc:
             typer.echo(str(exc), err=True)
-            raise typer.Exit(code=1)
+            raise typer.Exit(code=1) from exc
         _render_payload(console, payload, json_output=effective_json)
         raise typer.Exit(code=int(payload.get("exit_code", 0)))
 
@@ -1374,17 +1483,22 @@ def create_cli_app() -> typer.Typer:
         service = TradeJournalService()
         entry = service.from_ticket_action(ticket_id=ticket_id, user=user, note=note, week=week)
         saved = service.append(entry)
-        _render_payload(console, {"status": "ok", "entry": saved.to_dict()}, json_output=effective_json)
+        _render_payload(
+            console, {"status": "ok", "entry": saved.to_dict()}, json_output=effective_json
+        )
 
     @journal_app.command("list")
     def journal_list_command(
         ctx: typer.Context,
         week: str | None = typer.Option(None, "--week", help="Week label filter"),
+        path: Path = typer.Option(
+            Path("logs/journal/entries.jsonl"), "--path", help="Journal file path"
+        ),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
         ctx_obj = ctx.obj or {"json": False}
         effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
-        service = TradeJournalService()
+        service = TradeJournalService(path=path)
         entries = service.list(week=week)
         _render_payload(console, {"status": "ok", "entries": entries}, json_output=effective_json)
 
@@ -1392,7 +1506,9 @@ def create_cli_app() -> typer.Typer:
     def journal_export_weekly_command(
         ctx: typer.Context,
         week: str = typer.Option(..., "--week", help="Week label (e.g. 2025-W12)"),
-        output_dir: Path = typer.Option(Path("reports/journal"), "--output-dir", help="Output directory"),
+        output_dir: Path = typer.Option(
+            Path("reports/journal"), "--output-dir", help="Output directory"
+        ),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
         ctx_obj = ctx.obj or {"json": False}
@@ -1409,9 +1525,11 @@ def create_cli_app() -> typer.Typer:
     def status_command(
         ctx: typer.Context,
         ack: str | None = typer.Option(None, "--ack", help="Ack reference or Runbook ID"),
-        kill_switch: str | None = typer.Option(None, "--kill-switch", help="Requested kill switch state"),
+        kill_switch: str
+        | None = typer.Option(None, "--kill-switch", help="Requested kill switch state"),
         board: str | None = typer.Option(None, "--board", help="Board guard operation reference"),
-        history: str | None = typer.Option(
+        history: str
+        | None = typer.Option(
             None,
             "--history",
             help="History view to render (e.g. kill-switch)",
@@ -1430,19 +1548,22 @@ def create_cli_app() -> typer.Typer:
             help="Health action audit log path",
             hidden=True,
         ),
-        gate_state_path: Path | None = typer.Option(
+        gate_state_path: Path
+        | None = typer.Option(
             None,
             "--gate-state",
             help="Optional GateState JSON path",
             hidden=True,
         ),
-        health_state_path: Path | None = typer.Option(
+        health_state_path: Path
+        | None = typer.Option(
             None,
             "--health-state",
             help="Optional HealthState JSON path",
             hidden=True,
         ),
-        kill_switch_state_path: Path | None = typer.Option(
+        kill_switch_state_path: Path
+        | None = typer.Option(
             DEFAULT_KILL_SWITCH_STATE_PATH,
             "--kill-switch-state",
             help="Optional kill switch state JSON path",
@@ -1481,11 +1602,17 @@ def create_cli_app() -> typer.Typer:
     def resync_command(
         ctx: typer.Context,
         since: str | None = typer.Option(None, "--since", help="Start timestamp for catch-up"),
-        symbols: list[str] = typer.Option([], "--symbol", help="Target symbols", show_default=False),
+        symbols: list[str] = typer.Option(
+            [], "--symbol", help="Target symbols", show_default=False
+        ),
         force: bool = typer.Option(False, "--force", help="Force replay despite active run"),
-        failover_report: bool = typer.Option(False, "--failover-report", help="Emit failover summary"),
+        failover_report: bool = typer.Option(
+            False, "--failover-report", help="Emit failover summary"
+        ),
         dry_run: bool = typer.Option(False, "--dry-run", help="Plan without executing"),
-        attachment: list[str] = typer.Option([], "--attachment", help="Add evidence paths", show_default=False),
+        attachment: list[str] = typer.Option(
+            [], "--attachment", help="Add evidence paths", show_default=False
+        ),
         verbose: bool | None = typer.Option(None, "--verbose", "-v", help="Override verbose flag"),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
@@ -1512,8 +1639,12 @@ def create_cli_app() -> typer.Typer:
     def preflight_run_command(
         ctx: typer.Context,
         profile: str = typer.Option(..., "--profile", help="Profile name for the checklist"),
-        ntp_check: bool = typer.Option(True, "--ntp-check/--no-ntp-check", help="Enable NTP drift check"),
-        smtp_check: bool = typer.Option(False, "--smtp-check", help="Enable SMTP connectivity check"),
+        ntp_check: bool = typer.Option(
+            True, "--ntp-check/--no-ntp-check", help="Enable NTP drift check"
+        ),
+        smtp_check: bool = typer.Option(
+            False, "--smtp-check", help="Enable SMTP connectivity check"
+        ),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
         ctx_obj = ctx.obj or {"json": False}
@@ -1542,11 +1673,20 @@ def create_cli_app() -> typer.Typer:
     @app.command("start")
     def start_command(
         ctx: typer.Context,
-        profile: str = typer.Option(..., "--profile", "-p", help="Profile to bootstrap (backtest|paper|live)."),
-        session_id: str | None = typer.Option(None, "--session-id", help="Override the generated session identifier."),
-        profiles_dir: Path = typer.Option(Path("config") / "profiles", "--profiles-dir", hidden=True),
+        profile: str = typer.Option(
+            ..., "--profile", "-p", help="Profile to bootstrap (backtest|paper|live)."
+        ),
+        session_id: str
+        | None = typer.Option(
+            None, "--session-id", help="Override the generated session identifier."
+        ),
+        profiles_dir: Path = typer.Option(
+            Path("config") / "profiles", "--profiles-dir", hidden=True
+        ),
         log_dir: Path = typer.Option(Path("logs") / "sessions", "--log-dir", hidden=True),
-        snapshot_root: Path = typer.Option(Path("snapshots") / "sessions", "--snapshot-root", hidden=True),
+        snapshot_root: Path = typer.Option(
+            Path("snapshots") / "sessions", "--snapshot-root", hidden=True
+        ),
         verbose: bool | None = typer.Option(None, "--verbose", "-v", help="Override verbose flag"),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
@@ -1574,7 +1714,9 @@ def create_cli_app() -> typer.Typer:
         ctx: typer.Context,
         session_id: str = typer.Option(..., "--session-id", help="Session identifier to stop."),
         log_dir: Path = typer.Option(Path("logs") / "sessions", "--log-dir", hidden=True),
-        snapshot_root: Path = typer.Option(Path("snapshots") / "sessions", "--snapshot-root", hidden=True),
+        snapshot_root: Path = typer.Option(
+            Path("snapshots") / "sessions", "--snapshot-root", hidden=True
+        ),
         verbose: bool | None = typer.Option(None, "--verbose", "-v", help="Override verbose flag"),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
@@ -1599,8 +1741,11 @@ def create_cli_app() -> typer.Typer:
     @funding_app.command("sync")
     def funding_sync_command(
         ctx: typer.Context,
-        csv_path: Path = typer.Option(Path("config") / "swap_rates.csv", "--csv", help="Primary funding CSV"),
-        shadow_path: Path | None = typer.Option(
+        csv_path: Path = typer.Option(
+            Path("config") / "swap_rates.csv", "--csv", help="Primary funding CSV"
+        ),
+        shadow_path: Path
+        | None = typer.Option(
             Path("reports") / "funding" / "swap_rates_shadow.csv",
             "--shadow",
             help="Shadow CSV for reconciliation",
@@ -1610,10 +1755,15 @@ def create_cli_app() -> typer.Typer:
             "--state",
             help="Path to funding_state.json",
         ),
-        prepared_by: str | None = typer.Option(None, "--prepared-by", help="Initials of Ops preparer"),
-        reviewed_by: str | None = typer.Option(None, "--reviewed-by", help="Initials of Risk reviewer"),
-        approved_by: str | None = typer.Option(None, "--approved-by", help="Initials of PO approver"),
-        dry_run: bool = typer.Option(False, "--dry-run", help="Validate without writing funding_state.json"),
+        prepared_by: str
+        | None = typer.Option(None, "--prepared-by", help="Initials of Ops preparer"),
+        reviewed_by: str
+        | None = typer.Option(None, "--reviewed-by", help="Initials of Risk reviewer"),
+        approved_by: str
+        | None = typer.Option(None, "--approved-by", help="Initials of PO approver"),
+        dry_run: bool = typer.Option(
+            False, "--dry-run", help="Validate without writing funding_state.json"
+        ),
         verbose: bool | None = typer.Option(None, "--verbose", "-v", help="Override verbose flag"),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
@@ -1666,8 +1816,12 @@ def create_cli_app() -> typer.Typer:
         source: Path = typer.Option(..., "--from", help="Input parquet containing recent fills."),
         window: str = typer.Option("30d", "--window", help="Lookback window for recalibration."),
         out: Path | None = typer.Option(None, "--out", help="Optional override for output path."),
-        dry_run: bool = typer.Option(False, "--dry-run", help="Plan recalibration without writing output."),
-        strict: bool = typer.Option(False, "--strict", help="Exit with code 44 if thresholds are violated."),
+        dry_run: bool = typer.Option(
+            False, "--dry-run", help="Plan recalibration without writing output."
+        ),
+        strict: bool = typer.Option(
+            False, "--strict", help="Exit with code 44 if thresholds are violated."
+        ),
         verbose: bool | None = typer.Option(None, "--verbose", "-v", help="Override verbose flag."),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON."),
     ) -> None:
@@ -1705,11 +1859,16 @@ def create_cli_app() -> typer.Typer:
             "--session-id",
             help="Session identifier recorded in logs.",
         ),
-        latency_ms: float = typer.Option(320.0, "--latency-ms", help="Observed latency p95 in milliseconds."),
-        error_rate: float = typer.Option(0.005, "--error-rate", help="Observed error rate as ratio (e.g. 0.01 for 1%)."),
+        latency_ms: float = typer.Option(
+            320.0, "--latency-ms", help="Observed latency p95 in milliseconds."
+        ),
+        error_rate: float = typer.Option(
+            0.005, "--error-rate", help="Observed error rate as ratio (e.g. 0.01 for 1%)."
+        ),
         decision: str = typer.Option("guarded", "--decision", help="StageGuard decision outcome."),
         notes: str | None = typer.Option(None, "--notes", help="Optional free-form notes."),
-        report_date: str | None = typer.Option(
+        report_date: str
+        | None = typer.Option(
             None,
             "--report-date",
             help="Override report date (YYYY-MM-DD). Defaults to today (UTC).",
@@ -1772,7 +1931,9 @@ def create_cli_app() -> typer.Typer:
             help="Provider(s) to query (default: yfinance)",
             show_default=False,
         ),
-        watch: bool = typer.Option(False, "--watch", help="Reserved for future streaming dashboard."),
+        watch: bool = typer.Option(
+            False, "--watch", help="Reserved for future streaming dashboard."
+        ),
         log_stage_eval: bool = typer.Option(
             False,
             "--log-stage-eval",
@@ -1811,11 +1972,16 @@ def create_cli_app() -> typer.Typer:
     @data_app.command("loop")
     def data_loop_command(
         ctx: typer.Context,
-        provider: str = typer.Option("auto", "--provider", help="Provider name (dukascopy/yfinance/auto)"),
+        provider: str = typer.Option(
+            "auto", "--provider", help="Provider name (dukascopy/yfinance/auto)"
+        ),
         symbols: str = typer.Option("USDJPY", "--symbols", help="Comma-separated symbols"),
         timeframe: str = typer.Option("5m", "--timeframe", help="Timeframe label"),
         lookback_hours: int = typer.Option(6, "--lookback-hours", help="Lookback window in hours"),
-        as_of: str | None = typer.Option(None, "--as-of", help="ISO timestamp to anchor the fetch window (UTC)"),
+        as_of: str
+        | None = typer.Option(
+            None, "--as-of", help="ISO timestamp to anchor the fetch window (UTC)"
+        ),
         raw_dir: Path = typer.Option(Path("data/raw"), "--raw-dir", help="Raw output root"),
         curated_dir: Path = typer.Option(
             Path("data/research/curated"),
@@ -1830,7 +1996,8 @@ def create_cli_app() -> typer.Typer:
         interval_sec: int = typer.Option(300, "--interval-sec", help="Polling interval seconds"),
         jitter_sec: int = typer.Option(3, "--jitter-sec", help="Sleep jitter seconds"),
         once: bool = typer.Option(False, "--once", help="Run once and exit"),
-        max_iterations: int | None = typer.Option(None, "--max-iterations", help="Loop iterations cap"),
+        max_iterations: int
+        | None = typer.Option(None, "--max-iterations", help="Loop iterations cap"),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
         ctx_obj = ctx.obj or {"json": False}
@@ -1934,7 +2101,8 @@ def create_cli_app() -> typer.Typer:
     def data_failover_command(
         ctx: typer.Context,
         target: str = typer.Option(..., "--target", help="Failover target identifier"),
-        mode: str | None = typer.Option(None, "--mode", help="Optional mode label (backtest|paper|live)"),
+        mode: str
+        | None = typer.Option(None, "--mode", help="Optional mode label (backtest|paper|live)"),
         log_stage_change: bool = typer.Option(
             False,
             "--log-stage-change",
@@ -1967,7 +2135,9 @@ def create_cli_app() -> typer.Typer:
         ctx_obj = ctx.obj or {"json": False}
         effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
         try:
-            path = manual_template(provider=provider, symbol=symbol, date=date_str, timeframe=timeframe)
+            path = manual_template(
+                provider=provider, symbol=symbol, date=date_str, timeframe=timeframe
+            )
         except Exception as exc:  # noqa: BLE001
             typer.echo(f"[data.manual-template] {exc}", err=True)
             raise typer.Exit(code=1) from exc
@@ -1996,7 +2166,8 @@ def create_cli_app() -> typer.Typer:
     def data_jobs_command(
         ctx: typer.Context,
         pending: bool = typer.Option(False, "--pending", help="Show pending jobs only"),
-        export_json: Path | None = typer.Option(
+        export_json: Path
+        | None = typer.Option(
             None,
             "--export-json",
             help="Optional path to export jobs as JSON",
@@ -2011,10 +2182,16 @@ def create_cli_app() -> typer.Typer:
         entries = data_jobs(pending=pending, export_json=export_json is not None)
         if export_json:
             export_json.parent.mkdir(parents=True, exist_ok=True)
-            export_json.write_text(json.dumps(entries, ensure_ascii=False, indent=2), encoding="utf-8")
+            export_json.write_text(
+                json.dumps(entries, ensure_ascii=False, indent=2), encoding="utf-8"
+            )
         _render_payload(
             console,
-            {"pending": pending, "jobs": entries, "export": str(export_json) if export_json else None},
+            {
+                "pending": pending,
+                "jobs": entries,
+                "export": str(export_json) if export_json else None,
+            },
             json_output=effective_json,
         )
 
@@ -2061,7 +2238,9 @@ def create_cli_app() -> typer.Typer:
         date: str = typer.Option(..., "--date", help="Date (YYYY-MM-DD)"),
         provider: str | None = typer.Option(None, "--provider", help="Provider name"),
         symbol: str | None = typer.Option(None, "--symbol", help="Symbol (e.g. USDJPY)"),
-        attach: bool = typer.Option(False, "--attach", help="Mark that evidence attachments were added"),
+        attach: bool = typer.Option(
+            False, "--attach", help="Mark that evidence attachments were added"
+        ),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
         ctx_obj = ctx.obj or {"json": False}
@@ -2073,7 +2252,13 @@ def create_cli_app() -> typer.Typer:
             raise typer.Exit(code=1) from exc
         _render_payload(
             console,
-            {"status": "ok", "path": path, "provider": provider, "symbol": symbol, "attach": attach},
+            {
+                "status": "ok",
+                "path": path,
+                "provider": provider,
+                "symbol": symbol,
+                "attach": attach,
+            },
             json_output=effective_json,
         )
 
@@ -2125,12 +2310,19 @@ def create_cli_app() -> typer.Typer:
     def data_update_command(
         ctx: typer.Context,
         symbol: str = typer.Option("USDJPY", "--symbol", help="Symbol to update"),
-        source_dir: Path | None = typer.Option(None, "--source-dir", help="Source directory override"),
+        source_dir: Path
+        | None = typer.Option(None, "--source-dir", help="Source directory override"),
         merged: Path | None = typer.Option(None, "--merged", help="Use existing merged parquet"),
-        extra_csv: list[Path] = typer.Option([], "--extra-csv", help="Extra CSV inputs", show_default=False),
+        extra_csv: list[Path] = typer.Option(
+            [], "--extra-csv", help="Extra CSV inputs", show_default=False
+        ),
         latest_days: int = typer.Option(30, "--latest-days", help="Rolling window in days"),
-        write_latest: bool = typer.Option(False, "--write-latest", help="Write *_m5_latest.parquet"),
-        update_manifest: bool = typer.Option(False, "--update-manifest", help="Update data_manifest.json"),
+        write_latest: bool = typer.Option(
+            False, "--write-latest", help="Write *_m5_latest.parquet"
+        ),
+        update_manifest: bool = typer.Option(
+            False, "--update-manifest", help="Update data_manifest.json"
+        ),
         manifest: Path = typer.Option(
             Path("reports") / "data_manifest.json",
             "--manifest",
@@ -2138,8 +2330,11 @@ def create_cli_app() -> typer.Typer:
         ),
         gap_report: Path | None = typer.Option(None, "--gap-report", help="Gap report JSON path"),
         gap_minutes: int = typer.Option(5, "--gap-minutes", help="Gap threshold in minutes"),
-        gap_exclude_weekend: bool = typer.Option(False, "--gap-exclude-weekend", help="Exclude weekend gaps"),
-        emit_fetch_plan: Path | None = typer.Option(None, "--emit-fetch-plan", help="Backfill shell output"),
+        gap_exclude_weekend: bool = typer.Option(
+            False, "--gap-exclude-weekend", help="Exclude weekend gaps"
+        ),
+        emit_fetch_plan: Path
+        | None = typer.Option(None, "--emit-fetch-plan", help="Backfill shell output"),
         chunk_hours: int = typer.Option(6, "--chunk-hours", help="Backfill chunk size in hours"),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
@@ -2183,7 +2378,10 @@ def create_cli_app() -> typer.Typer:
         ctx: typer.Context,
         strategy: str = typer.Option(..., "--strategy", help="Target strategy identifier."),
         window: str = typer.Option("4w", "--window", help="Lookback window for diagnostics."),
-        out: Path | None = typer.Option(None, "--out", help="Optional override for output file or directory."),
+        out: Path
+        | None = typer.Option(
+            None, "--out", help="Optional override for output file or directory."
+        ),
         fmt: str = typer.Option("md", "--format", help="Output format: md or json."),
         verbose: bool | None = typer.Option(None, "--verbose", "-v", help="Override verbose flag."),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON."),
@@ -2209,14 +2407,16 @@ def create_cli_app() -> typer.Typer:
     @scoring_app.command("bridge")
     def scoring_bridge_command(
         ctx: typer.Context,
-        week: str | None = typer.Option(
+        week: str
+        | None = typer.Option(
             None,
             "--week",
             help="ISO week identifier (YYYY-Www). Defaults to current week.",
             show_default=False,
         ),
         mode: str = typer.Option("paper", "--mode", help="Operating mode."),
-        out: Path | None = typer.Option(
+        out: Path
+        | None = typer.Option(
             None,
             "--out",
             help="Optional override for the exported JSON file path.",
@@ -2309,7 +2509,10 @@ def create_cli_app() -> typer.Typer:
     def alpha_review_command(
         ctx: typer.Context,
         strategy: str = typer.Option(..., "--strategy", help="Strategy identifier."),
-        week: str | None = typer.Option(None, "--week", help="Target ISO week (YYYY-Www). Defaults to latest."),
+        week: str
+        | None = typer.Option(
+            None, "--week", help="Target ISO week (YYYY-Www). Defaults to latest."
+        ),
         with_scoreboard: bool = typer.Option(
             True,
             "--with-scoreboard/--without-scoreboard",
@@ -2343,7 +2546,7 @@ def create_cli_app() -> typer.Typer:
                     profit_loop_limit=limit,
                 )
             )
-        except AlphaWatchlistAlert as exc:
+        except AlphaWatchlistAlertError as exc:
             payload = dict(exc.payload or {"error": str(exc)})
             _render_payload(console, payload, json_output=effective_json)
             raise typer.Exit(123) from exc
@@ -2397,7 +2600,9 @@ def create_cli_app() -> typer.Typer:
     @kill_switch_app.command("set")
     def kill_switch_set_command(
         ctx: typer.Context,
-        state: str = typer.Option(..., "--state", help="Kill switch state (none|soft_stop|hard_stop)"),
+        state: str = typer.Option(
+            ..., "--state", help="Kill switch state (none|soft_stop|hard_stop)"
+        ),
         reason: str | None = typer.Option(None, "--reason", help="Reason for the state change"),
         actor: str = typer.Option("cli", "--actor", help="Actor ID for audit logging", hidden=True),
         evidence: list[Path] = typer.Option(
@@ -2450,7 +2655,8 @@ def create_cli_app() -> typer.Typer:
     def kill_switch_review_command(
         ctx: typer.Context,
         reason: str = typer.Option(..., "--reason", help="Kill switch reason code."),
-        strategy: str | None = typer.Option(None, "--strategy", help="Associated strategy identifier."),
+        strategy: str
+        | None = typer.Option(None, "--strategy", help="Associated strategy identifier."),
         mode: str = typer.Option("paper", "--mode", help="Operating mode (paper|live)."),
         recommend: str = typer.Option(
             "guarded",
@@ -2479,7 +2685,7 @@ def create_cli_app() -> typer.Typer:
                     attachments=attach,
                 )
             )
-        except ResumeBlocked as exc:
+        except ResumeBlockedError as exc:
             typer.echo(f"[kill-switch.review] {exc}", err=True)
             raise typer.Exit(43) from exc
         except KillSwitchEvidenceError as exc:
@@ -2492,9 +2698,7 @@ def create_cli_app() -> typer.Typer:
 
     ops_app = typer.Typer(help="Ops coordination utilities")
     default_change_request = (
-        Path("docs")
-        / "change_requests"
-        / f"CR-{date.today():%Y%m%d}-ops-followups.md"
+        Path("docs") / "change_requests" / f"CR-{date.today():%Y%m%d}-ops-followups.md"
     )
 
     @ops_app.command("action-sync")
@@ -2510,12 +2714,14 @@ def create_cli_app() -> typer.Typer:
             "--out",
             help="Destination Markdown under docs/change_requests/",
         ),
-        agenda: Path | None = typer.Option(
+        agenda: Path
+        | None = typer.Option(
             None,
             "--agenda",
             help="Optional docs/runbooks/daily_agenda/<date>.md to update",
         ),
-        label_date: str | None = typer.Option(
+        label_date: str
+        | None = typer.Option(
             None,
             "--label-date",
             help="Label to show in the generated Change Request heading (default: today)",
@@ -2535,9 +2741,13 @@ def create_cli_app() -> typer.Typer:
     @ops_app.command("readiness")
     def ops_readiness_command(
         ctx: typer.Context,
-        explain: bool = typer.Option(False, "--explain", help="Include descriptive text in the payload."),
+        explain: bool = typer.Option(
+            False, "--explain", help="Include descriptive text in the payload."
+        ),
         period: str = typer.Option("weekly", "--period", help="Reporting cadence label."),
-        include_ops: bool = typer.Option(True, "--ops/--no-ops", help="Include ops readiness evaluation."),
+        include_ops: bool = typer.Option(
+            True, "--ops/--no-ops", help="Include ops readiness evaluation."
+        ),
         ops_config_path: Path = typer.Option(
             Path("config") / "ops_readiness.yaml",
             "--ops-config",
@@ -2559,14 +2769,17 @@ def create_cli_app() -> typer.Typer:
         output: str = typer.Option("json", "--output", help="Output format (json/md)"),
         save: Path | None = typer.Option(None, "--save", help="Output file path"),
         profit: bool = typer.Option(False, "--profit", help="Include profit readiness levers."),
-        limit: int = typer.Option(5, "--limit", help="Number of profit readiness entries to display."),
+        limit: int = typer.Option(
+            5, "--limit", help="Number of profit readiness entries to display."
+        ),
         lever: list[str] = typer.Option(
             [],
             "--lever",
             help="Filter profit readiness output to the specified levers (repeatable).",
             show_default=False,
         ),
-        set_lever: str | None = typer.Option(
+        set_lever: str
+        | None = typer.Option(
             None,
             "--set-lever",
             help="Record a new readiness entry for the given lever before rendering the report.",
@@ -2582,17 +2795,28 @@ def create_cli_app() -> typer.Typer:
             help="Evidence paths attached to --set-lever entries.",
             show_default=False,
         ),
-        verify: bool = typer.Option(False, "--verify", help="Verify profit readiness KPIs and evidence."),
-        window_days: int = typer.Option(30, "--window-days", help="Window for KPI computation in days."),
-        min_samples: int = typer.Option(20, "--min-samples", help="Minimum live samples required for verification."),
-        staleness_days: int = typer.Option(7, "--staleness-days", help="Max age in days for scoreboard/evidence."),
-        profit_loop_hours: int = typer.Option(48, "--profit-loop-hours", help="Max age in hours for profit_loop telemetry."),
+        verify: bool = typer.Option(
+            False, "--verify", help="Verify profit readiness KPIs and evidence."
+        ),
+        window_days: int = typer.Option(
+            30, "--window-days", help="Window for KPI computation in days."
+        ),
+        min_samples: int = typer.Option(
+            20, "--min-samples", help="Minimum live samples required for verification."
+        ),
+        staleness_days: int = typer.Option(
+            7, "--staleness-days", help="Max age in days for scoreboard/evidence."
+        ),
+        profit_loop_hours: int = typer.Option(
+            48, "--profit-loop-hours", help="Max age in hours for profit_loop telemetry."
+        ),
         require_auto_execute: bool = typer.Option(
             False,
             "--require-auto-execute",
             help="Enforce hands-off auto_execute criteria when verifying profit readiness.",
         ),
-        note: str | None = typer.Option(None, "--note", help="Optional annotation for --set-lever."),
+        note: str
+        | None = typer.Option(None, "--note", help="Optional annotation for --set-lever."),
         actor: str | None = typer.Option(None, "--actor", help="Person recording --set-lever."),
         profit_path: Path = typer.Option(
             Path("metrics") / "profit_readiness.jsonl",

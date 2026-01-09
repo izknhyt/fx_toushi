@@ -4,12 +4,16 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Callable, Iterable, Mapping, Sequence
 
-from src.ops.profit_readiness import DEFAULT_PROFIT_READINESS_PATH, ProfitReadinessEntry, record_readiness
+from src.ops.profit_readiness import (
+    DEFAULT_PROFIT_READINESS_PATH,
+    ProfitReadinessEntry,
+    record_readiness,
+)
 from src.scoreboard.bridge import ScoreboardBridge, ScoreboardBridgeSnapshot
 
 logger = logging.getLogger(__name__)
@@ -20,7 +24,7 @@ DEFAULT_WATCHLIST_LOG = Path("logs") / "scoreboard_watchlist.jsonl"
 DEFAULT_PROFIT_LOOP_REPORT = Path("reports/performance/profit_loop_daily.md")
 
 
-class ScoreboardComputationFailed(RuntimeError):
+class ScoreboardComputationFailedError(RuntimeError):
     """Raised when the scoreboard snapshot cannot be generated."""
 
 
@@ -128,7 +132,7 @@ class StrategyScoreboardService:
         try:
             return json.loads(target.read_text(encoding="utf-8"))
         except json.JSONDecodeError as exc:
-            raise ScoreboardComputationFailed(f"Alpha snapshot malformed: {target}") from exc
+            raise ScoreboardComputationFailedError(f"Alpha snapshot malformed: {target}") from exc
 
     def trigger_watchlist(
         self,
@@ -148,7 +152,9 @@ class StrategyScoreboardService:
         )
         self._log_watchlist_records((record,))
 
-    def _write_alpha_snapshot(self, snapshot: ScoreboardBridgeSnapshot, *, bridge_path: Path) -> Path:
+    def _write_alpha_snapshot(
+        self, snapshot: ScoreboardBridgeSnapshot, *, bridge_path: Path
+    ) -> Path:
         payload = snapshot.to_mapping()
         alpha_path = self._alpha_dir / f"{snapshot.week}.json"
         alpha_path.parent.mkdir(parents=True, exist_ok=True)
@@ -259,7 +265,9 @@ class StrategyScoreboardService:
         self._watchlist_log_path.parent.mkdir(parents=True, exist_ok=True)
         with self._watchlist_log_path.open("a", encoding="utf-8") as handle:
             for record in items:
-                handle.write(json.dumps(record.to_mapping(timestamp=timestamp), ensure_ascii=False) + "\n")
+                handle.write(
+                    json.dumps(record.to_mapping(timestamp=timestamp), ensure_ascii=False) + "\n"
+                )
 
 
 __all__ = [
@@ -267,7 +275,7 @@ __all__ = [
     "DEFAULT_OPS_WORKLOG",
     "DEFAULT_PROFIT_LOOP_REPORT",
     "DEFAULT_WATCHLIST_LOG",
-    "ScoreboardComputationFailed",
+    "ScoreboardComputationFailedError",
     "SnapshotSummary",
     "StrategyScoreboardService",
     "WatchlistRecord",

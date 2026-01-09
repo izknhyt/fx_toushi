@@ -2,15 +2,15 @@
 
 from __future__ import annotations
 
-import logging
-import json
 import hashlib
+import json
+import logging
 import os
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 
 class SnapshotError(Enum):
@@ -30,7 +30,7 @@ class SnapshotMetadata:
 
     cfg_hash: str
     data_hash: str
-    actor: Optional[str]
+    actor: str | None
     created_at: datetime
 
 
@@ -72,7 +72,7 @@ class SnapshotManager:
         *,
         cfg_hash: str,
         data_hash: str,
-        actor: Optional[str] = None,
+        actor: str | None = None,
     ) -> SnapshotPersistResult:
         """Atomically write the provided snapshot to disk."""
 
@@ -110,7 +110,7 @@ class SnapshotManager:
             raise RuntimeError(SnapshotError.SNAPSHOT_PERSIST_ERROR.value) from exc
         return SnapshotPersistResult(path=target, checksum=checksum)
 
-    def restore(self, path: Optional[Path] = None) -> SnapshotRestoreResult:
+    def restore(self, path: Path | None = None) -> SnapshotRestoreResult:
         """Restore the most recent snapshot from disk."""
 
         target = path or self.base_path / "latest.json"
@@ -127,7 +127,7 @@ class SnapshotManager:
         if not cfg_hash or not data_hash:
             raise RuntimeError(SnapshotError.SNAPSHOT_HASH_ERROR.value)
         state = data.get("state")
-        return SnapshotRestoreResult(state=state, warnings=tuple())
+        return SnapshotRestoreResult(state=state, warnings=())
 
     def compare_hash(self, data_hash: str, expected_hash: str) -> HashComparisonReport:
         """Compare the current data hash with the stored expectation."""
@@ -137,7 +137,9 @@ class SnapshotManager:
         matches = data_hash == expected_hash
         if not matches:
             self._emit_data_mismatch(data_hash=data_hash, expected_hash=expected_hash)
-        return HashComparisonReport(expected_hash=expected_hash, actual_hash=data_hash, matches=matches)
+        return HashComparisonReport(
+            expected_hash=expected_hash, actual_hash=data_hash, matches=matches
+        )
 
     def _emit_data_mismatch(self, *, data_hash: str, expected_hash: str) -> None:
         """Placeholder hook for raising the DataMismatch event."""

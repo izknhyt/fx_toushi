@@ -10,16 +10,16 @@ future packets.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import contextlib
 import json
 import os
 import random
-from datetime import datetime, timezone
+from collections.abc import Mapping
+from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any, Mapping, Protocol, runtime_checkable, cast
-
-from typing_extensions import Literal
+from typing import Any, Literal, Protocol, cast, runtime_checkable
 
 EntryMode = Literal["market", "marketable_limit", "limit_requote"]
 """Enumeration of strategy-requested entry modes from the design contract."""
@@ -76,7 +76,7 @@ class ExecutionConfigError(ExecutionError):
     """Raised when execution configuration validation fails."""
 
 
-class ExecutionRuleViolation(ExecutionError):
+class ExecutionRuleViolationError(ExecutionError):
     """Raised when a signal violates execution guardrails."""
 
 
@@ -141,7 +141,11 @@ class DeterministicExecutionModel(ExecutionModelProtocol):
             self._metrics_path = (
                 Path(env_path)
                 if env_path
-                else (Path(metrics_path) if metrics_path is not None else Path("metrics") / "execution_determinism.jsonl")
+                else (
+                    Path(metrics_path)
+                    if metrics_path is not None
+                    else Path("metrics") / "execution_determinism.jsonl"
+                )
             )
         self.validate_config(config)
 
@@ -157,7 +161,7 @@ class DeterministicExecutionModel(ExecutionModelProtocol):
     ) -> ExecutionAdjustments:
         state = self._resolve_spread_state(spread_state)
         if state == "halt":
-            raise ExecutionRuleViolation("Spread halt prohibits order routing")
+            raise ExecutionRuleViolationError("Spread halt prohibits order routing")
         if state is None:
             raise ExecutionModelInputError("Spread state is required for execution")
 
@@ -215,12 +219,12 @@ class DeterministicExecutionModel(ExecutionModelProtocol):
         expected_slippage = self._apply_observed_slippage(expected_slippage, observed_slippage)
         max_candidates = [expected_slippage or 0.0, observed_max]
         if rollover_pips is not None:
-            try:
+            with contextlib.suppress(TypeError, ValueError):
                 max_candidates.append(abs(float(rollover_pips)))
-            except (TypeError, ValueError):
-                pass
         expected_slippage = max(max_candidates)
-        expected_slippage = self._apply_rollover_cost(expected_slippage, rollover_pips, direction=direction)
+        expected_slippage = self._apply_rollover_cost(
+            expected_slippage, rollover_pips, direction=direction
+        )
 
         ttl_seconds = self._apply_ttl_fallback(ttl_seconds, latency_status)
         expected_slippage = self._apply_slippage_fallback(expected_slippage, slippage_status)
@@ -288,7 +292,9 @@ class DeterministicExecutionModel(ExecutionModelProtocol):
             for key in ("slippage_fallback_pips", "ttl_fallback_sec"):
                 value = fallbacks.get(key)
                 if not isinstance(value, (int, float)):
-                    raise ExecutionConfigError(f"defaults.fallbacks.{key} must be numeric when provided")
+                    raise ExecutionConfigError(
+                        f"defaults.fallbacks.{key} must be numeric when provided"
+                    )
 
         entry_defaults = defaults.get("entry_modes")
         if not isinstance(entry_defaults, Mapping):
@@ -318,7 +324,9 @@ class DeterministicExecutionModel(ExecutionModelProtocol):
 
     # ------------------------------------------------------------------
     # helpers
-    def _extract_value(self, source: Mapping[str, Any] | Any | None, key: str, *, default: Any) -> Any:
+    def _extract_value(
+        self, source: Mapping[str, Any] | Any | None, key: str, *, default: Any
+    ) -> Any:
         if source is None:
             return default
         if isinstance(source, Mapping):
@@ -361,7 +369,9 @@ class DeterministicExecutionModel(ExecutionModelProtocol):
                     return config
         raise ExecutionConfigError(f"Entry mode '{entry_mode}' not configured")
 
-    def _resolve_fill_style(self, entry_config: Mapping[str, Any]) -> tuple[FillStyle, FillPolicy | None]:
+    def _resolve_fill_style(
+        self, entry_config: Mapping[str, Any]
+    ) -> tuple[FillStyle, FillPolicy | None]:
         fill_style = entry_config.get("fill_style")
         if fill_style not in {"ioc", "fok", "gtd"}:
             if entry_config.get("allow_ioc"):
@@ -374,7 +384,9 @@ class DeterministicExecutionModel(ExecutionModelProtocol):
         if fill_style == "gtd" and entry_config.get("allow_day"):
             fill_policy = "day"
         else:
-            fill_policy = cast(FillPolicy, fill_style) if fill_style in {"ioc", "fok", "gtd"} else None
+            fill_policy = (
+                cast(FillPolicy, fill_style) if fill_style in {"ioc", "fok", "gtd"} else None
+            )
         return cast(FillStyle, fill_style), fill_policy
 
     def _resolve_delay_stats(self, *, mode: str, symbol: Any) -> Mapping[str, float]:
@@ -420,7 +432,9 @@ class DeterministicExecutionModel(ExecutionModelProtocol):
             ttl += extra  # double bump when hard degraded
         return int(round(ttl))
 
-    def _apply_slippage_fallback(self, expected_slippage: float | None, slippage_status: str) -> float | None:
+    def _apply_slippage_fallback(
+        self, expected_slippage: float | None, slippage_status: str
+    ) -> float | None:
         fallbacks = self._config.get("defaults", {}).get("fallbacks", {})
         if not isinstance(fallbacks, Mapping):
             return expected_slippage
@@ -437,7 +451,9 @@ class DeterministicExecutionModel(ExecutionModelProtocol):
             return max(expected_slippage, fallback)
         return expected_slippage
 
-    def _resolve_expected_entry(self, signal: Any, market_snapshot: Mapping[str, Any]) -> float | None:
+    def _resolve_expected_entry(
+        self, signal: Any, market_snapshot: Mapping[str, Any]
+    ) -> float | None:
         for attribute in ("expected_entry", "entry_price", "price", "mid"):
             value = getattr(signal, attribute, None)
             if value is not None:
@@ -466,7 +482,9 @@ class DeterministicExecutionModel(ExecutionModelProtocol):
             percentile = "p50"
         bucket = slippage_defaults.get(bucket_name)
         if not isinstance(bucket, Mapping):
-            bucket = next((cfg for cfg in slippage_defaults.values() if isinstance(cfg, Mapping)), None)
+            bucket = next(
+                (cfg for cfg in slippage_defaults.values() if isinstance(cfg, Mapping)), None
+            )
         if not bucket:
             return None
         value = bucket.get(percentile)
@@ -477,7 +495,14 @@ class DeterministicExecutionModel(ExecutionModelProtocol):
             value = fallback
         return float(value)
 
-    def _apply_spread_to_slippage(self, expected_slippage: float | None, spread_pips: float | None, entry_config: Mapping[str, Any], *, allow_exceed: bool = False) -> float | None:
+    def _apply_spread_to_slippage(
+        self,
+        expected_slippage: float | None,
+        spread_pips: float | None,
+        entry_config: Mapping[str, Any],
+        *,
+        allow_exceed: bool = False,
+    ) -> float | None:
         if spread_pips is None:
             return expected_slippage
         value = expected_slippage or 0.0
@@ -492,13 +517,21 @@ class DeterministicExecutionModel(ExecutionModelProtocol):
                 value = min(value, cap)
         return value
 
-    def _apply_observed_slippage(self, expected_slippage: float | None, observed_slippage: float | None) -> float | None:
+    def _apply_observed_slippage(
+        self, expected_slippage: float | None, observed_slippage: float | None
+    ) -> float | None:
         if observed_slippage is None:
             return expected_slippage
         value = expected_slippage or 0.0
         return max(value, observed_slippage)
 
-    def _apply_rollover_cost(self, expected_slippage: float | None, rollover_pips: float | None, *, direction: str = "long") -> float | None:
+    def _apply_rollover_cost(
+        self,
+        expected_slippage: float | None,
+        rollover_pips: float | None,
+        *,
+        direction: str = "long",
+    ) -> float | None:
         if rollover_pips is None:
             return expected_slippage
         value = expected_slippage or 0.0
@@ -519,7 +552,9 @@ class DeterministicExecutionModel(ExecutionModelProtocol):
         except (TypeError, ValueError):
             return
         if spread_pips > max_spread_val:
-            raise ExecutionRuleViolation(f"Spread {spread_pips} exceeds max_spread_pips {max_spread_val}")
+            raise ExecutionRuleViolationError(
+                f"Spread {spread_pips} exceeds max_spread_pips {max_spread_val}"
+            )
 
     def _extract_spread_pips(self, signal: Any, market_snapshot: Mapping[str, Any]) -> float | None:
         value = getattr(signal, "spread_pips", None)
@@ -530,7 +565,9 @@ class DeterministicExecutionModel(ExecutionModelProtocol):
         except (TypeError, ValueError):
             return None
 
-    def _resolve_observed_slippage(self, market_snapshot: Mapping[str, Any], mode_context: Mapping[str, Any] | Any | None) -> float | None:
+    def _resolve_observed_slippage(
+        self, market_snapshot: Mapping[str, Any], mode_context: Mapping[str, Any] | Any | None
+    ) -> float | None:
         for key in ("observed_slippage_pips", "slippage_pips"):
             value = market_snapshot.get(key)
             if value is not None:
@@ -554,7 +591,9 @@ class DeterministicExecutionModel(ExecutionModelProtocol):
                     return float(value)
                 except (TypeError, ValueError):
                     continue
-        spread_obs = market_snapshot.get("spread_observations") or market_snapshot.get("spread_history")
+        spread_obs = market_snapshot.get("spread_observations") or market_snapshot.get(
+            "spread_history"
+        )
         if spread_obs:
             try:
                 values = [abs(float(v)) for v in spread_obs if v is not None]
@@ -572,7 +611,9 @@ class DeterministicExecutionModel(ExecutionModelProtocol):
                 return None
         return None
 
-    def _resolve_rollover_cost(self, market_snapshot: Mapping[str, Any], mode_context: Mapping[str, Any] | Any | None) -> float | None:
+    def _resolve_rollover_cost(
+        self, market_snapshot: Mapping[str, Any], mode_context: Mapping[str, Any] | Any | None
+    ) -> float | None:
         for key in ("rollover_pips", "swap_pips"):
             value = market_snapshot.get(key)
             if value is not None:
@@ -669,7 +710,7 @@ __all__ = [
     "ExecutionConfigError",
     "ExecutionModelInputError",
     "ExecutionModelProtocol",
-    "ExecutionRuleViolation",
+    "ExecutionRuleViolationError",
     "DeterministicExecutionModel",
     "FillPolicy",
     "FillStyle",

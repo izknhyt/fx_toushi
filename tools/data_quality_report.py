@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from datetime import timedelta
 from pathlib import Path
 
@@ -25,7 +26,7 @@ def _gap_stats(df: pd.DataFrame, expected_minutes: int) -> dict[str, int]:
     gaps = 0
     max_gap = 0
     ts = df["timestamp"].to_list()
-    for prev, curr in zip(ts, ts[1:]):
+    for prev, curr in zip(ts, ts[1:], strict=False):
         delta = curr - prev
         if delta > expected:
             gaps += 1
@@ -50,12 +51,18 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Generate a data quality report for curated data.")
     parser.add_argument("--symbol", required=True, help="Symbol, e.g. USDJPY")
     parser.add_argument("--path", help="Parquet path (defaults to *_m5_latest.parquet)")
-    parser.add_argument("--expected-minutes", type=int, default=5, help="Expected bar interval in minutes")
+    parser.add_argument(
+        "--expected-minutes", type=int, default=5, help="Expected bar interval in minutes"
+    )
     parser.add_argument("--output", required=True, help="Output JSON path")
     args = parser.parse_args()
 
     symbol = args.symbol.lower()
-    path = Path(args.path) if args.path else Path(f"data/research/curated/{symbol}/{symbol}_m5_latest.parquet")
+    path = (
+        Path(args.path)
+        if args.path
+        else Path(f"data/research/curated/{symbol}/{symbol}_m5_latest.parquet")
+    )
     df = _load_frame(path)
 
     payload = {
@@ -69,7 +76,7 @@ def main() -> int:
     out_path = Path(args.output)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-    print(json.dumps({"output": str(out_path)}))
+    sys.stdout.write(json.dumps({"output": str(out_path)}) + "\n")
     return 0
 
 

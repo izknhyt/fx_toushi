@@ -4,7 +4,6 @@ import asyncio
 from pathlib import Path
 
 import pytest
-
 from src.core import EventBus, EventBusConfig, SnapshotManager
 
 
@@ -33,7 +32,9 @@ def test_event_bus_backpressure_drop_oldest() -> None:
 
 def test_snapshot_manager_persist_and_restore(tmp_path: Path) -> None:
     manager = SnapshotManager(base_path=tmp_path)
-    result = manager.persist(snapshot={"foo": "bar"}, cfg_hash="sha256:" + "0" * 64, data_hash="sha256:" + "1" * 64)
+    result = manager.persist(
+        snapshot={"foo": "bar"}, cfg_hash="sha256:" + "0" * 64, data_hash="sha256:" + "1" * 64
+    )
     assert result.path.exists()
     restored = manager.restore(result.path)
     assert restored.state["foo"] == "bar"
@@ -41,6 +42,8 @@ def test_snapshot_manager_persist_and_restore(tmp_path: Path) -> None:
 
 def test_snapshot_hash_mismatch_raises(tmp_path: Path) -> None:
     manager = SnapshotManager(base_path=tmp_path)
-    manager.persist(snapshot={"foo": "bar"}, cfg_hash="sha256:" + "0" * 64, data_hash="sha256:" + "1" * 64)
+    manager.persist(
+        snapshot={"foo": "bar"}, cfg_hash="sha256:" + "0" * 64, data_hash="sha256:" + "1" * 64
+    )
     with pytest.raises(RuntimeError):
         manager.compare_hash(data_hash="sha256:" + "dead" * 16, expected_hash="sha256:" + "1" * 64)

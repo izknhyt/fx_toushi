@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 from copy import deepcopy
-import pytest
 
+import pytest
 from src.features.pipeline import FeaturePipeline
 from src.strategies.registry import ManifestValidationError, StrategyManifest
 

@@ -6,9 +6,8 @@ import json
 from pathlib import Path
 from textwrap import dedent
 
-from typer.testing import CliRunner
-
 from src.interfaces.cli import create_cli_app
+from typer.testing import CliRunner
 
 runner = CliRunner()
 

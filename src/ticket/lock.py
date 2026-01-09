@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import Callable, Dict, Iterable, List
 
 
 class TicketLockError(Exception):
@@ -50,7 +50,7 @@ class TicketLockManager:
 
     def __init__(self, *, clock: Callable[[], datetime] | None = None) -> None:
         self._clock = clock or _now
-        self._locks: Dict[str, TicketLock] = {}
+        self._locks: dict[str, TicketLock] = {}
 
     def acquire(
         self,
@@ -65,9 +65,19 @@ class TicketLockManager:
         if current and not current.is_expired(now):
             raise TicketLockError(
                 f"Ticket {ticket_id} is locked by {current.owner}",
-                context={"ticket_id": ticket_id, "owner": current.owner, "expires_at": current.acquired_at},
+                context={
+                    "ticket_id": ticket_id,
+                    "owner": current.owner,
+                    "expires_at": current.acquired_at,
+                },
             )
-        lock = TicketLock(ticket_id=ticket_id, owner=owner, acquired_at=now, ttl_seconds=ttl_seconds, reason=reason)
+        lock = TicketLock(
+            ticket_id=ticket_id,
+            owner=owner,
+            acquired_at=now,
+            ttl_seconds=ttl_seconds,
+            reason=reason,
+        )
         self._locks[ticket_id] = lock
         return lock
 
@@ -95,17 +105,25 @@ class TicketLockManager:
         if previous and not previous.is_expired(now):
             # Explicitly replace lock but keep context for audit.
             self._locks.pop(ticket_id, None)
-        lock = TicketLock(ticket_id=ticket_id, owner=new_owner, acquired_at=now, ttl_seconds=ttl_seconds, reason=reason)
+        lock = TicketLock(
+            ticket_id=ticket_id,
+            owner=new_owner,
+            acquired_at=now,
+            ttl_seconds=ttl_seconds,
+            reason=reason,
+        )
         self._locks[ticket_id] = lock
         return lock
 
-    def active(self) -> List[TicketLock]:
+    def active(self) -> list[TicketLock]:
         now = self._clock()
         return [lock for lock in self._locks.values() if not lock.is_expired(now)]
 
     def purge_expired(self) -> None:
         now = self._clock()
-        expired: Iterable[str] = [ticket_id for ticket_id, lock in self._locks.items() if lock.is_expired(now)]
+        expired: Iterable[str] = [
+            ticket_id for ticket_id, lock in self._locks.items() if lock.is_expired(now)
+        ]
         for ticket_id in expired:
             self._locks.pop(ticket_id, None)
 

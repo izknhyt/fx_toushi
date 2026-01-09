@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from pathlib import Path
-from typing import Iterable, Mapping
 
 DEFAULT_BRIDGE_DIR = Path("scoreboard") / "bridge"
 DEFAULT_PROFIT_LOOP_METRICS = Path("metrics") / "profit_loop.jsonl"
@@ -18,7 +18,7 @@ class AlphaReviewError(RuntimeError):
         self.payload = payload
 
 
-class AlphaWatchlistAlert(AlphaReviewError):
+class AlphaWatchlistAlertError(AlphaReviewError):
     """Raised when the review finds watchlist reasons and should warn the caller."""
 
 
@@ -113,14 +113,16 @@ def review(
         payload["bridge_path"] = str(bridge_path)
         payload["bridge_meta"] = snapshot.get("meta")
 
-    profit_samples = _read_profit_loop_metrics(profit_loop_metrics_path, strategy=strategy, limit=profit_loop_limit)
+    profit_samples = _read_profit_loop_metrics(
+        profit_loop_metrics_path, strategy=strategy, limit=profit_loop_limit
+    )
     payload["profit_loop_samples"] = profit_samples
     payload["week"] = resolved_week
 
     if scoreboard_entry:
         reasons = list(scoreboard_entry.get("watchlist_reasons") or [])
         if reasons:
-            raise AlphaWatchlistAlert(
+            raise AlphaWatchlistAlertError(
                 "Scoreboard watchlist reasons present",
                 payload=payload,
             )

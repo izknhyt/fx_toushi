@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 
 import pandas as pd
-
 from src.ticket.monitor import monitor_ticket
 
 

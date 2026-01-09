@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Mapping, Sequence
+from typing import Any
 
 
 def _now() -> datetime:
@@ -161,8 +162,8 @@ class TicketRecordAdapter:
             if hasattr(item, "field"):
                 checklist_items.append(
                     TicketChecklistItem(
-                        id=getattr(item, "field"),
-                        label=getattr(item, "label", getattr(item, "field")),
+                        id=item.field,
+                        label=getattr(item, "label", item.field),
                         status=getattr(item, "status", "pending"),
                         mandatory=getattr(item, "mandatory", True),
                         metadata=getattr(item, "metadata", {}),
@@ -180,10 +181,18 @@ class TicketRecordAdapter:
                     )
                 )
 
-        ticket_id = ticket_id or str(payload.get("ticket_id") or payload.get("id") or "unknown_ticket")
+        ticket_id = ticket_id or str(
+            payload.get("ticket_id") or payload.get("id") or "unknown_ticket"
+        )
         issued_ts = _as_utc(issued_at or payload.get("issued_at") or _now())
         action = str(payload.get("action") or payload.get("side") or "unknown").lower()
-        direction = "long" if action in {"buy", "long"} else "short" if action in {"sell", "short"} else "unknown"
+        direction = (
+            "long"
+            if action in {"buy", "long"}
+            else "short"
+            if action in {"sell", "short"}
+            else "unknown"
+        )
 
         # Size inference is intentionally forgiving for legacy payloads.
         raw_qty = payload.get("quantity") or payload.get("qty") or 0.0

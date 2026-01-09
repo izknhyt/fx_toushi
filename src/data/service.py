@@ -12,10 +12,11 @@ import json
 import logging
 import time
 from collections import deque
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable, Iterable, Mapping, Sequence, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import yaml
 
@@ -32,15 +33,16 @@ class WorkerPlan:
     poll_interval_sec: float
     max_workers: int
 
+
 __all__ = [
     "MarketRequest",
     "MarketFrame",
     "ProviderResult",
     "ProviderError",
-    "DataSourceDown",
+    "DataSourceDownError",
     "DataQualityError",
     "BackfillRangeError",
-    "BackfillFailed",
+    "BackfillFailedError",
     "CacheWarmupError",
     "WorkerSpawnError",
     "BufferDrainError",
@@ -391,7 +393,7 @@ class ProviderError(DataIngestionError):
     """Raised when the upstream data provider fails to serve a request."""
 
 
-class DataSourceDown(ProviderError):
+class DataSourceDownError(ProviderError):
     """Raised after all fallback providers failed to supply bars."""
 
 
@@ -407,7 +409,7 @@ class BackfillRangeError(DataIngestionError):
     """Raised when a requested backfill window is invalid."""
 
 
-class BackfillFailed(DataIngestionError):
+class BackfillFailedError(DataIngestionError):
     """Raised when a backfill job exhausts its retries without success."""
 
 
@@ -544,7 +546,9 @@ def _persist_rate_limit_state(path: Path | None, state: Mapping[str, str]) -> No
         handle.write(json.dumps(state, ensure_ascii=False, indent=2))
 
 
-def _compute_latency_status(p95_ms: float, *, warn_ms: float = 1_000.0, breach_ms: float = 1_500.0) -> str:
+def _compute_latency_status(
+    p95_ms: float, *, warn_ms: float = 1_000.0, breach_ms: float = 1_500.0
+) -> str:
     """Coarse latency health classification."""
 
     if p95_ms >= breach_ms:
@@ -636,12 +640,13 @@ def fetch_latest(
     retries: int = 2,
     backoff_ms: float = 500.0,
     metrics_path: Path = DEFAULT_METRICS_PATH,
-    provider_handlers: dict[str, Callable[[Sequence[str], str], ProviderResult | list[MarketFrame]]] | None = None,
+    provider_handlers: dict[str, Callable[[Sequence[str], str], ProviderResult | list[MarketFrame]]]
+    | None = None,
     warn_ms: float = 1_000.0,
     breach_ms: float = 1_500.0,
     provider_sla_thresholds: Mapping[str, tuple[float, float]] | None = None,
-    metrics_collector: "IngestionMetricsCollector | None" = None,
-    data_quality_guard: "DataQualityGuard | None" = None,
+    metrics_collector: IngestionMetricsCollector | None = None,
+    data_quality_guard: DataQualityGuard | None = None,
     rate_limit_guard: RateLimitGuard | None = None,
     rate_limit_state: dict[str, str] | None = None,
     rate_limit_log_path: Path | None = None,
@@ -659,13 +664,21 @@ def fetch_latest(
     symbols = order_symbols_by_priority(symbols, timeframe=timeframe, priorities=priorities)
     providers = resolve_provider_priority(symbols, provider_priority=provider_priority)
     frames: list[MarketFrame] = []
-    handler_map = provider_handlers or build_provider_handlers(timeframe=timeframe, start=start, end=end)
+    handler_map = provider_handlers or build_provider_handlers(
+        timeframe=timeframe, start=start, end=end
+    )
     provider_sla_thresholds = provider_sla_thresholds or {}
-    rate_limit_state = rate_limit_state if rate_limit_state is not None else _load_rate_limit_state(rate_limit_state_path)
+    rate_limit_state = (
+        rate_limit_state
+        if rate_limit_state is not None
+        else _load_rate_limit_state(rate_limit_state_path)
+    )
     provider_plans: Mapping[str, WorkerPlan] = {}
     if rate_limit_guard:
         for provider in providers:
-            plan = rate_limit_guard.worker_plan(provider=provider, stage=rate_limit_state.get(provider))
+            plan = rate_limit_guard.worker_plan(
+                provider=provider, stage=rate_limit_state.get(provider)
+            )
             provider_plans[provider] = WorkerPlan(
                 provider=provider,
                 stage=plan["stage"],
@@ -673,7 +686,9 @@ def fetch_latest(
                 max_workers=int(plan["max_workers"]),
             )
 
-    def _fetch_provider_once(provider: str, current_plan: WorkerPlan | None = None) -> tuple[list[MarketFrame], float]:
+    def _fetch_provider_once(
+        provider: str, current_plan: WorkerPlan | None = None
+    ) -> tuple[list[MarketFrame], float]:
         local_frames: list[MarketFrame] = []
         retry_budget = retries
         attempt = 0
@@ -766,9 +781,15 @@ def fetch_latest(
                 if retry_budget < 0:
                     break
                 current_plan_for_backoff = current_plan or provider_plans.get(provider)
-                backoff_base = current_plan_for_backoff.poll_interval_sec * 1000 if current_plan_for_backoff else backoff_ms
+                backoff_base = (
+                    current_plan_for_backoff.poll_interval_sec * 1000
+                    if current_plan_for_backoff
+                    else backoff_ms
+                )
                 delay_ms = backoff_base if attempt == 1 else backoff_base * 2
-                logger.info("data.fetch_latest.backoff", extra={"delay_ms": delay_ms, "provider": provider})
+                logger.info(
+                    "data.fetch_latest.backoff", extra={"delay_ms": delay_ms, "provider": provider}
+                )
             except Exception as exc:  # pragma: no cover - defensive
                 logger.error("data.fetch_latest.unexpected", extra={"error": str(exc)})
                 break
@@ -777,15 +798,29 @@ def fetch_latest(
     if apply_worker_plan:
         plans: list[WorkerPlan] = list(provider_plans.values())
         if worker_plan and not plans:
-            plans = [WorkerPlan(provider=p, stage=worker_plan.stage, poll_interval_sec=worker_plan.poll_interval_sec, max_workers=worker_plan.max_workers) for p in providers]
+            plans = [
+                WorkerPlan(
+                    provider=p,
+                    stage=worker_plan.stage,
+                    poll_interval_sec=worker_plan.poll_interval_sec,
+                    max_workers=worker_plan.max_workers,
+                )
+                for p in providers
+            ]
         if not plans:
-            plans = spawn_provider_workers(providers=providers, rate_limit_guard=rate_limit_guard, rate_limit_state=rate_limit_state)
+            plans = spawn_provider_workers(
+                providers=providers,
+                rate_limit_guard=rate_limit_guard,
+                rate_limit_state=rate_limit_state,
+            )
         plan_lookup = {plan.provider: plan for plan in plans}
         result_frames: dict[str, list[MarketFrame]] = {}
 
         def _make_job(target_provider: str) -> Callable[[], None]:
             def _job() -> None:
-                frames_for_provider, rl_ratio = _fetch_provider_once(target_provider, plan_lookup.get(target_provider))
+                frames_for_provider, rl_ratio = _fetch_provider_once(
+                    target_provider, plan_lookup.get(target_provider)
+                )
                 result_frames[target_provider] = frames_for_provider
                 if rate_limit_guard:
                     decision = _evaluate_rate_limit(
@@ -799,6 +834,7 @@ def fetch_latest(
                     )
                     if auto_apply_rate_limit_stage:
                         rate_limit_state[target_provider] = decision.stage
+
             return _job
 
         job_queue = [(provider, _make_job(provider)) for provider in providers]
@@ -901,7 +937,9 @@ def fetch_latest(
                 current_plan = provider_plans.get(provider) if provider_plans else worker_plan
                 backoff_base = current_plan.poll_interval_sec * 1000 if current_plan else backoff_ms
                 delay_ms = backoff_base if attempt == 1 else backoff_base * 2
-                logger.info("data.fetch_latest.backoff", extra={"delay_ms": delay_ms, "provider": provider})
+                logger.info(
+                    "data.fetch_latest.backoff", extra={"delay_ms": delay_ms, "provider": provider}
+                )
                 # placeholder: in async/real mode use asyncio.sleep(delay_ms/1000)
             except Exception as exc:  # pragma: no cover - defensive
                 logger.error("data.fetch_latest.unexpected", extra={"error": str(exc)})
@@ -910,7 +948,7 @@ def fetch_latest(
         if frames and rate_limit_guard:
             decision = _evaluate_rate_limit(
                 provider=provider,
-                rate_limit_ratio=result.rate_limit_ratio if 'result' in locals() else 0.0,
+                rate_limit_ratio=result.rate_limit_ratio if "result" in locals() else 0.0,
                 guard=rate_limit_guard,
                 state=rate_limit_state,
                 log_path=rate_limit_log_path,
@@ -921,7 +959,10 @@ def fetch_latest(
                 rate_limit_state[provider] = decision.stage
             if decision.decision == "rollback" and provider != providers[-1]:
                 frames = []
-                logger.info("data.fetch_latest.failover_rate_limit", extra={"from": provider, "reason": "rate_limit_high"})
+                logger.info(
+                    "data.fetch_latest.failover_rate_limit",
+                    extra={"from": provider, "reason": "rate_limit_high"},
+                )
                 continue
         if frames:
             break
@@ -984,8 +1025,12 @@ def backfill(
         bars=len(frames) * 2,
         status=_compute_latency_status(
             150.0,
-            warn_ms=provider_sla_thresholds.get(priority, (warn_ms, breach_ms))[0] if provider_sla_thresholds else warn_ms,
-            breach_ms=provider_sla_thresholds.get(priority, (warn_ms, breach_ms))[1] if provider_sla_thresholds else breach_ms,
+            warn_ms=provider_sla_thresholds.get(priority, (warn_ms, breach_ms))[0]
+            if provider_sla_thresholds
+            else warn_ms,
+            breach_ms=provider_sla_thresholds.get(priority, (warn_ms, breach_ms))[1]
+            if provider_sla_thresholds
+            else breach_ms,
         ),
         rate_limit_ratio=0.0,
         metrics_path=metrics_path,

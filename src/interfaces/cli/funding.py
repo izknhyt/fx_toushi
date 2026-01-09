@@ -5,12 +5,11 @@ from __future__ import annotations
 import csv
 import hashlib
 import json
-from dataclasses import dataclass, asdict
+from collections.abc import Iterable
+from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Iterable
-
-import typer
+from typing import Any
 
 __all__ = ["FundingSyncError", "funding_sync", "funding_status"]
 
@@ -128,7 +127,9 @@ def funding_sync(
 
     if not dry_run:
         state_path.parent.mkdir(parents=True, exist_ok=True)
-        state_path.write_text(json.dumps(asdict(state), ensure_ascii=False, indent=2), encoding="utf-8")
+        state_path.write_text(
+            json.dumps(asdict(state), ensure_ascii=False, indent=2), encoding="utf-8"
+        )
 
     return state
 

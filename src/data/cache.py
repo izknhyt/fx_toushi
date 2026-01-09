@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable
 
 import pandas as pd
 
@@ -39,7 +39,9 @@ class DataCache:
         path.parent.mkdir(parents=True, exist_ok=True)
         frame.to_parquet(path)
         entry = CacheEntry(path=path, rows=len(frame.index), columns=len(frame.columns))
-        logger.info("data.cache.store", extra={"key": key, "rows": entry.rows, "columns": entry.columns})
+        logger.info(
+            "data.cache.store", extra={"key": key, "rows": entry.rows, "columns": entry.columns}
+        )
         return entry
 
     def load(self, key: str, columns: Iterable[str] | None = None) -> pd.DataFrame:

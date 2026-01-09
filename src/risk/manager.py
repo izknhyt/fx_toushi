@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Dict
+from typing import Any
 
 from src.core.gate import GateState, RiskGateState
 
@@ -28,7 +28,7 @@ class RiskAssessment:
     kill_switch_suggestion: str | None
     kill_switch_reason: str | None
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "risk_state": self.risk_state.to_dict(),
             "kill_switch_suggestion": self.kill_switch_suggestion,
@@ -48,7 +48,7 @@ class RiskDecision:
     reason: str | None
     exit_code: int
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "allowed": self.allowed,
             "reduce_only": self.reduce_only,
@@ -143,9 +143,7 @@ class RiskManager:
         """Evaluate guardrails for ticket/board operations."""
 
         gate = gate_state or GateState()
-        effective_spread = self._normalise_spread_state(
-            spread_status or gate.market.spread.state
-        )
+        effective_spread = self._normalise_spread_state(spread_status or gate.market.spread.state)
         kill_switch_effective = (
             kill_switch_state
             or (assessment.kill_switch_suggestion if assessment else None)
@@ -153,8 +151,14 @@ class RiskManager:
             or "none"
         )
 
-        reduce_only = gate.risk.reduce_only or (assessment.risk_state.reduce_only if assessment else False)
-        reason = gate.market.spread.reason or gate.risk.kill_switch_reason or (assessment.kill_switch_reason if assessment else None)
+        reduce_only = gate.risk.reduce_only or (
+            assessment.risk_state.reduce_only if assessment else False
+        )
+        reason = (
+            gate.market.spread.reason
+            or gate.risk.kill_switch_reason
+            or (assessment.kill_switch_reason if assessment else None)
+        )
 
         board_mode = "normal"
         allowed = True

@@ -9,13 +9,13 @@ Runbook ``OPS-READINESS-01#evidence-recovery``.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from datetime import datetime, timezone
 import argparse
 import json
 import sys
+from collections.abc import Iterable
+from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Iterable
 
 import yaml
 
@@ -115,11 +115,15 @@ def validate_thresholds(thresholds: dict) -> list[str]:
     return errors
 
 
-def gather_evidence_statuses(evidence_map: dict[str, str], *, now: datetime, max_age_days: int) -> list[EvidenceStatus]:
+def gather_evidence_statuses(
+    evidence_map: dict[str, str], *, now: datetime, max_age_days: int
+) -> list[EvidenceStatus]:
     statuses: list[EvidenceStatus] = []
     for key, raw_path in sorted(evidence_map.items()):
         path = Path(raw_path)
-        status = EvidenceStatus(key=key, path=path, exists=path.exists(), is_dir=path.is_dir(), last_modified=None)
+        status = EvidenceStatus(
+            key=key, path=path, exists=path.exists(), is_dir=path.is_dir(), last_modified=None
+        )
         if not status.exists:
             status.issue = "missing"
             statuses.append(status)
@@ -179,7 +183,14 @@ def _most_recent_mtime(directory: Path) -> float | None:
     return latest
 
 
-def record_event(events_path: Path, *, missing: list[EvidenceStatus], max_age_days: int, config_path: Path, runbook: str) -> bool:
+def record_event(
+    events_path: Path,
+    *,
+    missing: list[EvidenceStatus],
+    max_age_days: int,
+    config_path: Path,
+    runbook: str,
+) -> bool:
     try:
         events_path.parent.mkdir(parents=True, exist_ok=True)
     except OSError:
@@ -194,7 +205,9 @@ def record_event(events_path: Path, *, missing: list[EvidenceStatus], max_age_da
                     "key": status.key,
                     "path": str(status.path),
                     "issue": status.issue,
-                    "last_modified": status.last_modified.isoformat() if status.last_modified else None,
+                    "last_modified": status.last_modified.isoformat()
+                    if status.last_modified
+                    else None,
                 }
                 for status in missing
             ],
@@ -215,7 +228,9 @@ def record_event(events_path: Path, *, missing: list[EvidenceStatus], max_age_da
     return True
 
 
-def render_summary(*, statuses: list[EvidenceStatus], weight_errors: list[str], threshold_errors: list[str]) -> str:
+def render_summary(
+    *, statuses: list[EvidenceStatus], weight_errors: list[str], threshold_errors: list[str]
+) -> str:
     lines: list[str] = []
     lines.append("Ops readiness evidence check")
     if weight_errors or threshold_errors:
@@ -240,7 +255,7 @@ def main(argv: Iterable[str] | None = None) -> int:
     try:
         config = load_config(args.config)
     except (FileNotFoundError, ValueError, yaml.YAMLError) as exc:
-        print(f"[ERROR] {exc}", file=sys.stderr)
+        sys.stderr.write(f"[ERROR] {exc}\n")
         return 2
 
     weights = config.get("weights", {})
@@ -252,7 +267,7 @@ def main(argv: Iterable[str] | None = None) -> int:
     threshold_errors = validate_thresholds(thresholds)
 
     if not isinstance(evidence_paths, dict) or not evidence_paths:
-        print("[ERROR] evidence_paths must be a non-empty mapping", file=sys.stderr)
+        sys.stderr.write("[ERROR] evidence_paths must be a non-empty mapping\n")
         return 2
 
     now = datetime.now(timezone.utc)
@@ -269,11 +284,11 @@ def main(argv: Iterable[str] | None = None) -> int:
         weight_errors=weight_errors,
         threshold_errors=threshold_errors,
     )
-    print(summary)
+    sys.stdout.write(f"{summary}\n")
     if template_errors:
-        print("Sign-off template issues detected:")
+        sys.stdout.write("Sign-off template issues detected:\n")
         for message in template_errors:
-            print(f"  - {message}")
+            sys.stdout.write(f"  - {message}\n")
 
     exit_code = 0
     if weight_errors or threshold_errors:
@@ -291,12 +306,11 @@ def main(argv: Iterable[str] | None = None) -> int:
             runbook=runbook,
         )
         if event_recorded:
-            print(f"[WARN] Recorded OpsEvidenceMissing event in {args.events_log}")
+            sys.stdout.write(f"[WARN] Recorded OpsEvidenceMissing event in {args.events_log}\n")
         else:
-            print(
+            sys.stderr.write(
                 f"[WARN] Failed to record OpsEvidenceMissing event at {args.events_log}. "
-                "Check filesystem permissions.",
-                file=sys.stderr,
+                "Check filesystem permissions.\n"
             )
 
     return exit_code

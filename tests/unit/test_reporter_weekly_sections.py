@@ -10,7 +10,8 @@ def test_weekly_report_includes_stress_and_journal(tmp_path: Path) -> None:
     template.write_text(
         "## Ticket Summary\n"
         "- mode={board_mode}\n"
-        "- guardrails={guardrails.kill_switch}/{guardrails.spread_status}/{guardrails.reduce_only}\n"
+        "- guardrails={guardrails.kill_switch}/{guardrails.spread_status}/"
+        "{guardrails.reduce_only}\n"
         "## Stress Runs\n"
         "{stress_runs}\n"
         "## Trade Journal\n"
@@ -20,16 +21,27 @@ def test_weekly_report_includes_stress_and_journal(tmp_path: Path) -> None:
 
     tickets = [
         {
-            "guardrails": {"kill_switch": "guarded", "spread_status": "cooldown", "reduce_only": True},
+            "guardrails": {
+                "kill_switch": "guarded",
+                "spread_status": "cooldown",
+                "reduce_only": True,
+            },
             "board_mode": "guarded",
             "risk_summary": {"risk_disclosure": "pending"},
             "audit_refs": {"determinism_hash": "deadbeef"},
         }
     ]
     stress_runs = [
-        {"scenario": "brexit", "status": "ok", "summary": "vol spike contained", "artifacts": ["reports/stress/brexit_report.md"]}
+        {
+            "scenario": "brexit",
+            "status": "ok",
+            "summary": "vol spike contained",
+            "artifacts": ["reports/stress/brexit_report.md"],
+        }
     ]
-    journal_entries = [{"ts": "2025-03-20T12:00:00Z", "ticket_id": "T1", "user": "alice", "note": "approved"}]
+    journal_entries = [
+        {"ts": "2025-03-20T12:00:00Z", "ticket_id": "T1", "user": "alice", "note": "approved"}
+    ]
 
     text = ReportGenerator().render_weekly_report(
         week="2025-W12",

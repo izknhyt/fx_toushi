@@ -3,17 +3,14 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Mapping, MutableMapping
 from datetime import date, datetime, timezone
 from pathlib import Path
-from typing import Any, Mapping, MutableMapping
+from typing import Any
 
 from src.execution.bridge import (
     DEFAULT_METRICS_PATH as DEFAULT_EXECUTION_BRIDGE_METRICS,
-)
-from src.execution.bridge import (
     DEFAULT_REPORT_DIR as DEFAULT_EXECUTION_REPORT_DIR,
-)
-from src.execution.bridge import (
     ExecutionBridgeLogError,
     log_execution_bridge,
 )

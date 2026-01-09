@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any
 
 import pandas as pd
 import yaml
@@ -50,7 +51,11 @@ class BacktestEngine:
         dataset_hash = entry["dataset_sha256"]
         df = self._load_dataset(dataset_path)
         returns = df["close"].pct_change().dropna()
-        pf = (returns[returns > 0].sum() / abs(returns[returns < 0].sum() or 1.0)) if not returns.empty else 1.0
+        pf = (
+            (returns[returns > 0].sum() / abs(returns[returns < 0].sum() or 1.0))
+            if not returns.empty
+            else 1.0
+        )
         sharpe = returns.mean() / (returns.std(ddof=0) or 1e-9) if not returns.empty else 0.0
         max_dd = min(0.12, abs(returns.min() or 0.0))
         metrics = {

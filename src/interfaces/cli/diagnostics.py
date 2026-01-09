@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any
 
 DEFAULT_DETERMINISM_LOG = Path("logs") / "strategy" / "registry.log"
 
@@ -15,7 +16,9 @@ class DeterminismDiagnosticsError(RuntimeError):
     """Raised when determinism diagnostics cannot be loaded."""
 
 
-def load_determinism_events(log_path: str | Path = DEFAULT_DETERMINISM_LOG, *, limit: int = 20) -> Mapping[str, Any]:
+def load_determinism_events(
+    log_path: str | Path = DEFAULT_DETERMINISM_LOG, *, limit: int = 20
+) -> Mapping[str, Any]:
     """Return recent determinism events from the registry log."""
 
     path = Path(log_path)

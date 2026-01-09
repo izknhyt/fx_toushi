@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-import json
 import hashlib
+import json
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Iterable, Optional
 
 OPS_WORKLOG_JSONL_PATH = Path("ops_worklog.jsonl")
 """Default location of the ops worklog ledger."""
@@ -49,7 +49,7 @@ class OpsWorklogEntry:
     related_artifacts: list[str]
     health_state: str
     board_mode: str
-    notes: Optional[str] = None
+    notes: str | None = None
 
 
 @dataclass(slots=True)
@@ -112,7 +112,7 @@ class OpsWorklogService:
         exists = self._ledger_path.exists()
         return FlushResult(path=self._ledger_path, flushed=exists, pending_entries=0)
 
-    def query(self, *, window: timedelta, task: Optional[str] = None) -> Iterable[OpsWorklogEntry]:
+    def query(self, *, window: timedelta, task: str | None = None) -> Iterable[OpsWorklogEntry]:
         """Yield worklog entries within *window*, optionally filtered by *task*."""
 
         if not self._ledger_path.exists():

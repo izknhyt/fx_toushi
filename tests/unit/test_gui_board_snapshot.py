@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+
 from pytest import MonkeyPatch
+from src.interfaces.gui.tauri_app.serializer import TicketPayloadSerializer, board_get_snapshot
 
-from src.interfaces.gui.tauri_app.serializer import board_get_snapshot, TicketPayloadSerializer
 
-
-def test_board_snapshot_includes_ticket_payload_version(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
+def test_board_snapshot_includes_ticket_payload_version(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
     manifest = tmp_path / "data_manifest.json"
     manifest.write_text(
         json.dumps(

@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Mapping
 from dataclasses import asdict, dataclass
-from pathlib import Path
-from typing import Mapping
 from datetime import datetime, timezone
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -66,7 +66,11 @@ def trace_order(
     export_path: Path | None = None,
 ) -> AuditTrace:
     entries = _load_entries(log_path)
-    filtered = [entry for entry in entries if entry.get("ticket_id") == order_id or entry.get("order_id") == order_id]
+    filtered = [
+        entry
+        for entry in entries
+        if entry.get("ticket_id") == order_id or entry.get("order_id") == order_id
+    ]
     trace = AuditTrace(
         order_id=order_id,
         entries=filtered,
@@ -151,5 +155,7 @@ def log_ticket_action(
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(record, default=str, ensure_ascii=False) + "\n")
-    logger.info("audit.ticket_action.logged", extra={"ticket_id": ticket_id, "auto_execute": auto_execute})
+    logger.info(
+        "audit.ticket_action.logged", extra={"ticket_id": ticket_id, "auto_execute": auto_execute}
+    )
     return record

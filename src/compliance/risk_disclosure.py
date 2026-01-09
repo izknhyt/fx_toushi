@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 import json
+import os
 import uuid
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
-import os
 from pathlib import Path
-from typing import Mapping
 
 
 def _as_utc(value: datetime | None) -> datetime | None:
@@ -55,13 +55,17 @@ class RiskDisclosureState:
         }
 
     @classmethod
-    def from_dict(cls, payload: Mapping[str, object]) -> "RiskDisclosureState":
+    def from_dict(cls, payload: Mapping[str, object]) -> RiskDisclosureState:
         return cls(
             status=str(payload.get("status") or "pending"),
             version=str(payload.get("version") or "v1"),
             consent_reference_id=payload.get("consent_reference_id") or None,
-            accepted_at=_parse_dt(payload.get("accepted_at") if isinstance(payload, Mapping) else None),  # type: ignore[arg-type]
-            expires_at=_parse_dt(payload.get("expires_at") if isinstance(payload, Mapping) else None),  # type: ignore[arg-type]
+            accepted_at=_parse_dt(
+                payload.get("accepted_at") if isinstance(payload, Mapping) else None
+            ),  # type: ignore[arg-type]
+            expires_at=_parse_dt(
+                payload.get("expires_at") if isinstance(payload, Mapping) else None
+            ),  # type: ignore[arg-type]
             document_hash=payload.get("document_hash") or None,
         )
 
@@ -89,7 +93,11 @@ class RiskDisclosureService:
 
         self._state = self._load_state()
         now = now or datetime.now(timezone.utc)
-        if self._state.status == "accepted" and self._state.expires_at and self._state.expires_at <= now:
+        if (
+            self._state.status == "accepted"
+            and self._state.expires_at
+            and self._state.expires_at <= now
+        ):
             self._state.status = "expired"
         if self._state.version != self._version:
             # Version mismatch triggers a warning/renewal requirement.
@@ -128,17 +136,28 @@ class RiskDisclosureService:
             state.accepted_at = None
             state.consent_reference_id = consent_id
         self._persist_state(state)
-        self._append_audit(decision=normalized, user=user, note=note, evidence_path=evidence_path, consent_id=consent_id, ts=now)
+        self._append_audit(
+            decision=normalized,
+            user=user,
+            note=note,
+            evidence_path=evidence_path,
+            consent_id=consent_id,
+            ts=now,
+        )
         return state, consent_id
 
-    def link_event(self, consent_reference_id: str | None, event_payload: Mapping[str, object]) -> dict[str, object]:
+    def link_event(
+        self, consent_reference_id: str | None, event_payload: Mapping[str, object]
+    ) -> dict[str, object]:
         """Attach consent id to an event, marking consent_required on mismatch."""
 
         state = self.fetch_state()
         payload = dict(event_payload)
         effective_id = consent_reference_id or state.consent_reference_id
         payload["consent_reference_id"] = effective_id
-        payload["consent_required"] = state.status in {"pending", "warning", "expired"} or not effective_id
+        payload["consent_required"] = (
+            state.status in {"pending", "warning", "expired"} or not effective_id
+        )
         return payload
 
     @property
@@ -157,7 +176,9 @@ class RiskDisclosureService:
 
     def _persist_state(self, state: RiskDisclosureState) -> None:
         self._state_path.parent.mkdir(parents=True, exist_ok=True)
-        self._state_path.write_text(json.dumps(state.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8")
+        self._state_path.write_text(
+            json.dumps(state.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8"
+        )
 
     def _append_audit(
         self,

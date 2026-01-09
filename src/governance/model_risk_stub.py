@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import List
 
 
 @dataclass(slots=True)
@@ -14,7 +13,7 @@ class ModelRiskItem:
 
 
 class ModelRiskRegisterStub:
-    def list_open_items(self) -> List[ModelRiskItem]:
+    def list_open_items(self) -> list[ModelRiskItem]:
         return []
 
 

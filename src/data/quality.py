@@ -6,11 +6,12 @@ The stub mirrors the interfaces referenced in detailed_design_fx_signal_tool_v1.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from pathlib import Path
-from typing import Any, Iterable
 import json
+from collections.abc import Iterable
+from dataclasses import dataclass
 from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
 
 from .service import MarketFrame
 
@@ -74,7 +75,7 @@ class DataQualityGuard:
 
         if timestamps:
             timestamps.sort()
-            for prev, cur in zip(timestamps, timestamps[1:]):
+            for prev, cur in zip(timestamps, timestamps[1:], strict=False):
                 gap_minutes = int((cur - prev).total_seconds() // 60)
                 if gap_minutes > self.max_gap_minutes:
                     issues.append("gap_exceeds_threshold")

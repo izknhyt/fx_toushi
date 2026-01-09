@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 from pathlib import Path
-from pytest import MonkeyPatch
 
+from pytest import MonkeyPatch
 from src.interfaces.cli.board import board
 
 
-def test_board_includes_profit_and_execution_badges(tmp_path: Path, monkeypatch: "MonkeyPatch") -> None:
+def test_board_includes_profit_and_execution_badges(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
     manifest = tmp_path / "reports/data_manifest.json"
     manifest.parent.mkdir(parents=True, exist_ok=True)
     manifest.write_text(

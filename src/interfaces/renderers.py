@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Iterable, Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 
 from rich.console import Console
 from rich.table import Table
@@ -21,7 +21,9 @@ def render_key_values(items: Mapping[str, object], *, title: str | None = None) 
     _console.print(table)
 
 
-def render_table(rows: Iterable[Sequence[object]], headers: Sequence[str], *, title: str | None = None) -> None:
+def render_table(
+    rows: Iterable[Sequence[object]], headers: Sequence[str], *, title: str | None = None
+) -> None:
     """Render an arbitrary table with the supplied headers."""
 
     table = Table(title=title)

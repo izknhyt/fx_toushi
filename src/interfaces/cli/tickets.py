@@ -3,19 +3,19 @@
 from __future__ import annotations
 
 import builtins
-import logging
 import json
-import yaml
-from datetime import datetime, timezone
+import logging
 import os
+from collections.abc import Iterable, Mapping
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Iterable, Mapping
+
+import yaml
 
 from src.compliance import RiskDisclosureService
-from src.interfaces.cli.board import DEFAULT_MANIFEST
 from src.core.gate import GateState
+from src.interfaces.cli.board import DEFAULT_MANIFEST
 from src.persistence.audit import AuditLogger
-
 from src.ticket.lock import TicketLockError, TicketLockManager
 
 logger = logging.getLogger(__name__)
@@ -76,8 +76,14 @@ def approve(
     risk_status, consent_from_state = _resolve_risk_disclosure(
         actor=actor, force=force_consent and consent_reference_id is None
     )
-    if _enforce_risk_disclosure() and risk_status in {"pending", "warning", "expired"} and not force_consent:
-        raise ConsentRequiredError("risk disclosure consent required; use --force-consent or provide --consent-ref")
+    if (
+        _enforce_risk_disclosure()
+        and risk_status in {"pending", "warning", "expired"}
+        and not force_consent
+    ):
+        raise ConsentRequiredError(
+            "risk disclosure consent required; use --force-consent or provide --consent-ref"
+        )
     consent_id = consent_reference_id or consent_from_state
     guardrails_payload = _build_guardrails(guardrails, risk_status=risk_status)
     _acquire_lock(ticket_id, owner=actor, take_over=take_over, reason="approve")
@@ -268,7 +274,9 @@ def edit(
     return {"status": "ok", "ticket_id": ticket_id, "audit": audit_entry}
 
 
-def list_tickets(*, status: str | None = None, include_history: bool = False, json_output: bool = False) -> list[Mapping[str, object]]:
+def list_tickets(
+    *, status: str | None = None, include_history: bool = False, json_output: bool = False
+) -> list[Mapping[str, object]]:
     """List ticket records from the local JSONL store."""
 
     records = _load_ticket_records()
@@ -281,7 +289,7 @@ def list_tickets(*, status: str | None = None, include_history: bool = False, js
 
 
 # Alias maintained for Typer command registration parity.
-list = list_tickets  # type: ignore[assignment]
+list = list_tickets  # type: ignore[assignment]  # noqa: A001
 
 
 def _acquire_lock(ticket_id: str, *, owner: str, take_over: bool, reason: str) -> None:
@@ -324,7 +332,9 @@ def _build_audit_entry(
             or DEFAULT_DETERMINISM_HASH
         )
     if determinism_version is None:
-        determinism_version = (before.get("audit_refs") or {}).get("determinism_version", DEFAULT_DETERMINISM_VERSION)
+        determinism_version = (before.get("audit_refs") or {}).get(
+            "determinism_version", DEFAULT_DETERMINISM_VERSION
+        )
     patch = diff or []
     after = _build_after_payload(
         ticket_id=ticket_id,
@@ -468,7 +478,9 @@ def _read_risk_disclosure_flag_from_config() -> bool:
     return bool(profile_defaults.get("risk_disclosure_enforce", False))
 
 
-def _build_guardrails(guardrails: Mapping[str, object] | None, *, risk_status: str) -> Mapping[str, object]:
+def _build_guardrails(
+    guardrails: Mapping[str, object] | None, *, risk_status: str
+) -> Mapping[str, object]:
     merged = dict(DEFAULT_GUARDRAILS)
     if guardrails:
         merged.update(guardrails)
@@ -492,7 +504,9 @@ def _compute_auto_execute(board_mode: str, guardrails: Mapping[str, object]) -> 
     return bool(guardrails.get("auto_execute", True))
 
 
-def _extract_hashes(guardrails: Mapping[str, object], *, gate_state: GateState | None = None) -> tuple[str | None, str | None]:
+def _extract_hashes(
+    guardrails: Mapping[str, object], *, gate_state: GateState | None = None
+) -> tuple[str | None, str | None]:
     cfg_hash = guardrails.get("cfg_hash")
     data_hash = guardrails.get("data_hash")
     if gate_state is not None:
@@ -526,7 +540,9 @@ def _sha256_path(path: Path) -> str:
     return f"sha256:{h.hexdigest()}"
 
 
-def _apply_patch(before: Mapping[str, object], patch: Iterable[Mapping[str, object]]) -> Mapping[str, object]:
+def _apply_patch(
+    before: Mapping[str, object], patch: Iterable[Mapping[str, object]]
+) -> Mapping[str, object]:
     """Apply minimal replace-only patches to derive delta.after."""
 
     updated = dict(before)
@@ -609,14 +625,17 @@ def _build_after_payload(
     badges = merged.get("badges") or []
     if isinstance(badges, tuple):
         badges = builtins.list(badges)
-    merged["badges"] = [str(b) for b in badges] if isinstance(badges, (builtins.list, tuple)) else []
+    merged["badges"] = (
+        [str(b) for b in badges] if isinstance(badges, (builtins.list, tuple)) else []
+    )
     notes = merged.get("notes") or {}
     if not isinstance(notes, Mapping):
         notes = {}
     if note and not notes.get("manual_comment"):
         notes["manual_comment"] = note
     merged["notes"] = notes
-    # If existing checklist/badges/notes provided in diff, keep them; else, ensure serialisable types
+    # If existing checklist/badges/notes are in diff, keep them.
+    # Otherwise ensure serialisable types.
     merged["cfg_hash"] = cfg_hash
     merged["data_hash"] = data_hash
     return merged

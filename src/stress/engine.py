@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, Mapping
 
-from .datasets import ScenarioDatasetRegistry, ScenarioDataset
+from .datasets import ScenarioDataset, ScenarioDatasetRegistry
 
 
 @dataclass(slots=True)
@@ -39,18 +39,22 @@ class StressTestEngine:
         target_dir = export_dir or Path("reports") / "stress"
         target_dir.mkdir(parents=True, exist_ok=True)
         report_path = target_dir / f"{scenario}_report.md"
-        report_path.write_text(
-            f"# Stress Test Report: {dataset.name}\n\n- path: {dataset.path}\n- kind: {dataset.kind}\n",
-            encoding="utf-8",
+        report_content = (
+            f"# Stress Test Report: {dataset.name}\n\n"
+            f"- path: {dataset.path}\n"
+            f"- kind: {dataset.kind}\n"
         )
+        report_path.write_text(report_content, encoding="utf-8")
         artifacts.append(str(report_path))
         summary = f"Scenario '{dataset.name}' validated at {dataset.path}"
-        return StressTestResult(scenario=dataset.name, status="ok", summary=summary, artifacts=artifacts)
+        return StressTestResult(
+            scenario=dataset.name, status="ok", summary=summary, artifacts=artifacts
+        )
 
     def list_scenarios(self) -> list[ScenarioDataset]:
         return self._registry.list()
 
     @classmethod
-    def from_config(cls, payload: Iterable[Mapping[str, object]]) -> "StressTestEngine":
+    def from_config(cls, payload: Iterable[Mapping[str, object]]) -> StressTestEngine:
         registry = ScenarioDatasetRegistry.from_mapping(payload)
         return cls(registry=registry)

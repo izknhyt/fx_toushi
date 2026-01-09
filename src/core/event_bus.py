@@ -8,11 +8,12 @@ import json
 import logging
 import shutil
 import time
+from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
-from typing import Any, AsyncIterator, Callable, Literal, Optional
+from typing import Any, Literal
 
 BackpressurePolicy = Literal["block", "drop_oldest", "snapshot_replay"]
 ArchiveCompression = Literal["gz", "zstd"]
@@ -39,7 +40,7 @@ class EventBusConfig:
 class QueuePressureSample:
     """Runtime metric sample emitted when the queue nears exhaustion."""
 
-    event_type: Optional[str]
+    event_type: str | None
     queue_depth: int
     policy: BackpressurePolicy
     ts: datetime
@@ -88,8 +89,8 @@ class EventBus:
         self,
         event: Any,
         *,
-        event_type: Optional[str] = None,
-        context_metadata: Optional[dict[str, Any]] = None,
+        event_type: str | None = None,
+        context_metadata: dict[str, Any] | None = None,
         persist: bool = True,
     ) -> None:
         """Publish a domain event with optional persistence and backpressure handling."""
@@ -101,7 +102,9 @@ class EventBus:
             self._append_log(event, event_type=event_type, context_metadata=context_metadata or {})
 
         wait_started = time.monotonic()
-        await self._queue.put({"event": event, "event_type": event_type, "context": context_metadata or {}})
+        await self._queue.put(
+            {"event": event, "event_type": event_type, "context": context_metadata or {}}
+        )
         wait_ms = (time.monotonic() - wait_started) * 1000.0
         if wait_ms >= 100.0:
             self._emit_queue_metric(
@@ -118,7 +121,7 @@ class EventBus:
         self,
         event_type: str,
         *,
-        filter_fn: Optional[Callable[[Any], bool]] = None,
+        filter_fn: Callable[[Any], bool] | None = None,
         backlog_mode: Literal["live", "catchup", "snapshot"] = "live",
     ) -> AsyncIterator[Any]:
         """Return an async iterator for a given event stream (live queue only)."""
@@ -139,17 +142,21 @@ class EventBus:
 
         return iterator()
 
-    async def recover(self, state_path: Path | str = Path("snapshots/latest/event_bus_state.json")) -> None:
+    async def recover(
+        self, state_path: Path | str = Path("snapshots/latest/event_bus_state.json")
+    ) -> None:
         """Recover from persisted state after a crash (best-effort placeholder)."""
 
-        self._logger.info("EventBus recover placeholder invoked", extra={"state_path": str(state_path)})
+        self._logger.info(
+            "EventBus recover placeholder invoked", extra={"state_path": str(state_path)}
+        )
 
     def replay(
         self,
         from_ts: datetime,
         *,
-        to_ts: Optional[datetime] = None,
-        event_types: Optional[list[str]] = None,
+        to_ts: datetime | None = None,
+        event_types: list[str] | None = None,
         batch_size: int = 256,
     ) -> AsyncIterator[Any]:
         """Replay historic events from the JSONL log archive."""
@@ -157,7 +164,9 @@ class EventBus:
         _ = batch_size
         if event_types is not None:
             event_types = [et.lower() for et in event_types]
-        log_files = sorted(self._log_base.glob("*.jsonl")) + sorted(self._archive_dir.glob("*.jsonl.gz"))
+        log_files = sorted(self._log_base.glob("*.jsonl")) + sorted(
+            self._archive_dir.glob("*.jsonl.gz")
+        )
         from_ts_cmp = from_ts.replace(tzinfo=None)
         to_ts_cmp = to_ts.replace(tzinfo=None) if to_ts else None
         for path in log_files:
@@ -180,7 +189,9 @@ class EventBus:
                         event_type_val = str(record.get("event_type", "")).lower()
                         if event_types and event_type_val not in event_types:
                             event_payload = record.get("event") or {}
-                            nested_type = str(getattr(event_payload, "get", lambda k, d=None: d)("event", "")).lower()  # type: ignore[attr-defined]
+                            nested_type = str(
+                                getattr(event_payload, "get", lambda k, d=None: d)("event", "")
+                            ).lower()  # type: ignore[attr-defined]
                             if nested_type not in event_types:
                                 continue
                         yield record
@@ -190,7 +201,7 @@ class EventBus:
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
-    def _maybe_record_queue_pressure(self, queue_depth: int, event_type: Optional[str]) -> None:
+    def _maybe_record_queue_pressure(self, queue_depth: int, event_type: str | None) -> None:
         if queue_depth / self.config.queue_maxsize < 0.8:
             return
         sample = QueuePressureSample(
@@ -260,7 +271,9 @@ class EventBus:
         self._current_log_path = path
         return path
 
-    def _append_log(self, event: Any, *, event_type: Optional[str], context_metadata: dict[str, Any]) -> None:
+    def _append_log(
+        self, event: Any, *, event_type: str | None, context_metadata: dict[str, Any]
+    ) -> None:
         path = self._current_log()
         path.parent.mkdir(parents=True, exist_ok=True)
         record = {

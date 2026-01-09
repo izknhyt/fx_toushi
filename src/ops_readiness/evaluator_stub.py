@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime, timezone
-import json
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any
 
 import yaml
 
@@ -94,10 +94,7 @@ def _evaluate_evidence(
             evidence.append(entry)
             continue
         try:
-            if path.is_dir():
-                last_mtime = _most_recent_mtime(path)
-            else:
-                last_mtime = path.stat().st_mtime
+            last_mtime = _most_recent_mtime(path) if path.is_dir() else path.stat().st_mtime
         except OSError:
             entry["issue"] = "io_error"
             missing.append(entry)

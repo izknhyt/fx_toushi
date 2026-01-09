@@ -3,13 +3,12 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from pytest import MonkeyPatch
+from src.interfaces.cli import create_cli_app, tickets as tickets_actions
 from typer.testing import CliRunner
 
-from src.interfaces.cli import create_cli_app
-from src.interfaces.cli import tickets as tickets_actions
 
-
-def test_ticket_approve_cli_writes_json(monkeypatch: "MonkeyPatch", tmp_path: Path) -> None:
+def test_ticket_approve_cli_writes_json(monkeypatch: MonkeyPatch, tmp_path: Path) -> None:
     app = create_cli_app()
     runner = CliRunner()
     monkeypatch.setattr(tickets_actions, "METRICS_PATH", tmp_path / "metrics.jsonl")
@@ -38,7 +37,7 @@ def test_ticket_approve_cli_writes_json(monkeypatch: "MonkeyPatch", tmp_path: Pa
     assert worklog_entry["ticket_id"] == "T1"
 
 
-def test_ticket_edit_cli_writes_diff(monkeypatch: "MonkeyPatch", tmp_path: Path) -> None:
+def test_ticket_edit_cli_writes_diff(monkeypatch: MonkeyPatch, tmp_path: Path) -> None:
     app = create_cli_app()
     runner = CliRunner()
     monkeypatch.setattr(tickets_actions, "METRICS_PATH", tmp_path / "metrics.jsonl")
@@ -65,7 +64,7 @@ def test_ticket_edit_cli_writes_diff(monkeypatch: "MonkeyPatch", tmp_path: Path)
     assert patch[0]["path"] == "/size_lot"
 
 
-def test_ticket_reject_cli_records_audit(monkeypatch: "MonkeyPatch", tmp_path: Path) -> None:
+def test_ticket_reject_cli_records_audit(monkeypatch: MonkeyPatch, tmp_path: Path) -> None:
     app = create_cli_app()
     runner = CliRunner()
     monkeypatch.setattr(tickets_actions, "METRICS_PATH", tmp_path / "metrics.jsonl")
@@ -91,11 +90,13 @@ def test_ticket_reject_cli_records_audit(monkeypatch: "MonkeyPatch", tmp_path: P
     assert json.loads(records[0])["status"] == "rejected"
 
 
-def test_ticket_list_cli_reads_store(monkeypatch: "MonkeyPatch", tmp_path: Path) -> None:
+def test_ticket_list_cli_reads_store(monkeypatch: MonkeyPatch, tmp_path: Path) -> None:
     app = create_cli_app()
     runner = CliRunner()
     store_path = tmp_path / "tickets.jsonl"
-    store_path.write_text(json.dumps({"ticket_id": "T1", "status": "approved"}) + "\n", encoding="utf-8")
+    store_path.write_text(
+        json.dumps({"ticket_id": "T1", "status": "approved"}) + "\n", encoding="utf-8"
+    )
     monkeypatch.setattr(tickets_actions, "TICKET_STORE_PATH", store_path)
     result = runner.invoke(
         app,

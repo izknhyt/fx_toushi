@@ -5,7 +5,6 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-
 from src.core.session import DefaultSessionManager, SessionConfig, create_session_context
 from src.core.workflow import PipelineStep, PipelineWorkflow, WorkflowContext
 

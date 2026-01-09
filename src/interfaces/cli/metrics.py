@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Iterable, Mapping
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Iterable, Literal, Mapping
+from typing import Literal
 
 logger = logging.getLogger(__name__)
 
@@ -169,10 +170,7 @@ def _summarize_sla(entries: list[Mapping[str, object]]) -> Mapping[str, object]:
         if isinstance(status, str) and status:
             status_counts[status] = status_counts.get(status, 0) + 1
     summary = {
-        "by_phase": {
-            phase: _summary_stats(values)
-            for phase, values in sorted(by_phase.items())
-        },
+        "by_phase": {phase: _summary_stats(values) for phase, values in sorted(by_phase.items())},
         "bar_gap": {
             "max_minutes": max(bar_gaps) if bar_gaps else None,
             "p95_minutes": _percentile(bar_gaps, 0.95) if bar_gaps else None,
@@ -205,8 +203,14 @@ def _summarize_pipeline(entries: list[Mapping[str, object]]) -> Mapping[str, obj
 def _summarize_ops(entries: list[Mapping[str, object]]) -> Mapping[str, object]:
     if not entries:
         return {"latest": None, "score_mean": None}
-    scored = [entry.get("score") for entry in entries if isinstance(entry.get("score"), (int, float))]
-    latest = max(entries, key=lambda item: _parse_iso(item.get("generated_at") or item.get("ts") or "") or datetime.min)
+    scored = [
+        entry.get("score") for entry in entries if isinstance(entry.get("score"), (int, float))
+    ]
+    latest = max(
+        entries,
+        key=lambda item: _parse_iso(item.get("generated_at") or item.get("ts") or "")
+        or datetime.min,
+    )
     return {"latest": latest, "score_mean": _mean(scored)}
 
 
@@ -215,7 +219,7 @@ def _summarize_generic(entries: list[Mapping[str, object]]) -> Mapping[str, obje
     latest_ts: str | None = None
     latest_seen: datetime | None = None
     for entry in entries:
-        fields.update(str(key) for key in entry.keys())
+        fields.update(str(key) for key in entry)
         parsed = _parse_iso(entry.get("ts") or entry.get("timestamp"))
         if parsed and (latest_seen is None or parsed > latest_seen):
             latest_seen = parsed
@@ -223,7 +227,9 @@ def _summarize_generic(entries: list[Mapping[str, object]]) -> Mapping[str, obje
     return {"fields": sorted(fields), "latest_ts": latest_ts}
 
 
-def _extract_values(entries: Iterable[Mapping[str, object]], *, keys: tuple[str, ...]) -> list[float]:
+def _extract_values(
+    entries: Iterable[Mapping[str, object]], *, keys: tuple[str, ...]
+) -> list[float]:
     values: list[float] = []
     for entry in entries:
         for key in keys:

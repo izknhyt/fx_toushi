@@ -5,9 +5,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from typer.testing import CliRunner
-
 from src.interfaces.cli import create_cli_app
+from typer.testing import CliRunner
 
 runner = CliRunner()
 
@@ -23,7 +22,9 @@ def _write_jsonl(path: Path, entries: list[dict[str, object]]) -> None:
 def _read_jsonl(path: Path) -> list[dict[str, object]]:
     if not path.exists():
         return []
-    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    return [
+        json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()
+    ]
 
 
 def test_data_status_cli_logs_stage_eval_and_ingestion_samples(tmp_path: Path) -> None:

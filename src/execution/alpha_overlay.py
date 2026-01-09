@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Iterable
 
 from src.analytics.pnl_feedback import FeedbackVector, apply_dynamic_adjustment
 
@@ -24,9 +24,7 @@ def _meets(rule: LotLadderRule, *, pf: float, sharpe: float, maxdd: float, watch
         return False
     if rule.maxdd_max is not None and maxdd > rule.maxdd_max:
         return False
-    if rule.watchlist_max is not None and watchlist > rule.watchlist_max:
-        return False
-    return True
+    return not (rule.watchlist_max is not None and watchlist > rule.watchlist_max)
 
 
 def apply_lot_ladder(

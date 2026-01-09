@@ -4,11 +4,11 @@ import json
 from pathlib import Path
 
 import pytest
-from jsonschema import Draft202012Validator
-
 from src.core.gate import GateState
 from src.core.health import HealthMonitor
 from src.interfaces.cli.status import status
+
+from jsonschema import Draft202012Validator
 from tests.jsonschema.test_domain_schemas import _build_validator
 
 
@@ -76,5 +76,7 @@ def test_status_guardrails_metrics_conforms_to_schema(tmp_path: Path) -> None:
     )
 
     payload = _read_last_metrics(metrics_path)
-    validator: Draft202012Validator = _build_validator("docs/schemas/guardrails_metrics.schema.json")
+    validator: Draft202012Validator = _build_validator(
+        "docs/schemas/guardrails_metrics.schema.json"
+    )
     validator.validate(payload)

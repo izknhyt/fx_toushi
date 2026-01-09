@@ -10,11 +10,12 @@ and metrics under ``metrics/determinism_replay.jsonl``.
 
 from __future__ import annotations
 
-import json
 import hashlib
-from dataclasses import dataclass, asdict
+import json
+from collections.abc import Iterable, Mapping
+from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any, Iterable, Mapping
+from typing import Any
 
 from jsonschema import Draft202012Validator
 
@@ -28,7 +29,9 @@ class SignalRecord:
     latency_ms: float | None
 
 
-def _load_records(path: Path, *, allow_invalid: bool = False, validator: Draft202012Validator | None = None) -> list[SignalRecord]:
+def _load_records(
+    path: Path, *, allow_invalid: bool = False, validator: Draft202012Validator | None = None
+) -> list[SignalRecord]:
     records: list[SignalRecord] = []
     if not path or not path.exists():
         return records
@@ -49,13 +52,15 @@ def _load_records(path: Path, *, allow_invalid: bool = False, validator: Draft20
                         feature_hash=str(payload["feature_hash"]),
                         strategy_hash=str(payload["strategy_hash"]),
                         ticket_hash=str(payload["ticket_hash"]),
-                        latency_ms=float(payload.get("latency_ms")) if payload.get("latency_ms") is not None else None,
+                        latency_ms=float(payload.get("latency_ms"))
+                        if payload.get("latency_ms") is not None
+                        else None,
                     )
                 )
-            except (KeyError, TypeError, ValueError):
+            except (KeyError, TypeError, ValueError) as exc:
                 if allow_invalid:
                     continue
-                raise ValueError(f"SignalRecord missing required fields at {path}")
+                raise ValueError(f"SignalRecord missing required fields at {path}") from exc
     return records
 
 
@@ -121,11 +126,15 @@ def diff_signals(
 def _hash_blob(records: list[SignalRecord]) -> str | None:
     if not records:
         return None
-    serialized = json.dumps([asdict(r) for r in records], sort_keys=True, default=str).encode("utf-8")
+    serialized = json.dumps([asdict(r) for r in records], sort_keys=True, default=str).encode(
+        "utf-8"
+    )
     return hashlib.blake2b(serialized, digest_size=16).hexdigest()
 
 
-def _validate_record(payload: Mapping[str, Any], *, validator: Draft202012Validator | None = None) -> None:
+def _validate_record(
+    payload: Mapping[str, Any], *, validator: Draft202012Validator | None = None
+) -> None:
     if validator is not None:
         validator.validate(payload)
         return

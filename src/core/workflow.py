@@ -8,8 +8,10 @@ operate independently while sharing a common execution context.
 
 from __future__ import annotations
 
+import contextlib
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
-from typing import Callable, Iterable, Protocol, runtime_checkable
+from typing import Protocol, runtime_checkable
 
 from .session import SessionContext
 
@@ -108,18 +110,14 @@ class PipelineWorkflow:
         executed: list[str] = []
         planned = tuple(step.name for step in self._steps)
 
-        try:
+        with contextlib.suppress(AttributeError):
             if not context.planned_steps:
                 context.planned_steps = planned
-        except AttributeError:
-            pass
 
         for index, step in enumerate(self._steps):
             executed.append(step.name)
-            try:
+            with contextlib.suppress(AttributeError):
                 context.step_sequence = tuple(executed)
-            except AttributeError:
-                pass
 
             try:
                 context = step.execute(context)
@@ -127,9 +125,7 @@ class PipelineWorkflow:
                 remaining = planned[index + 1 :]
                 return WorkflowResult(completed=False, next_steps=remaining)
 
-        try:
+        with contextlib.suppress(AttributeError):
             context.step_sequence = tuple(executed)
-        except AttributeError:
-            pass
 
         return WorkflowResult(completed=True, next_steps=())

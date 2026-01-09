@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
-from types import SimpleNamespace
 from pathlib import Path
+from types import SimpleNamespace
 
 import yaml
-
-from src.execution.model import DeterministicExecutionModel, ExecutionRuleViolation
+from src.execution.model import DeterministicExecutionModel, ExecutionRuleViolationError
 
 
 def test_apply_uses_fallback_for_degraded_stats(project_root: Path) -> None:
@@ -24,8 +23,18 @@ def test_apply_uses_fallback_for_degraded_stats(project_root: Path) -> None:
     signal = SimpleNamespace(symbol="EURUSD", entry_mode=None, price=1.0942)
     market_snapshot = {"mid": 1.0942}
 
-    normal = model.apply(signal, market_snapshot, spread_state=SimpleNamespace(state="normal"), mode_context=SimpleNamespace(mode="live", deterministic_seed=123))
-    degraded = model.apply(signal, market_snapshot, spread_state=SimpleNamespace(state="normal"), mode_context=mode_context)
+    normal = model.apply(
+        signal,
+        market_snapshot,
+        spread_state=SimpleNamespace(state="normal"),
+        mode_context=SimpleNamespace(mode="live", deterministic_seed=123),
+    )
+    degraded = model.apply(
+        signal,
+        market_snapshot,
+        spread_state=SimpleNamespace(state="normal"),
+        mode_context=mode_context,
+    )
 
     assert degraded.ttl_seconds > normal.ttl_seconds
     assert degraded.expected_slippage is not None
@@ -41,10 +50,15 @@ def test_apply_rejects_spread_above_threshold(project_root: Path) -> None:
     market_snapshot = {"mid": 1.0, "spread_pips": 5.0}
 
     try:
-        model.apply(signal, market_snapshot, spread_state=SimpleNamespace(state="normal"), mode_context=SimpleNamespace(mode="live", deterministic_seed=1))
-    except ExecutionRuleViolation:
+        model.apply(
+            signal,
+            market_snapshot,
+            spread_state=SimpleNamespace(state="normal"),
+            mode_context=SimpleNamespace(mode="live", deterministic_seed=1),
+        )
+    except ExecutionRuleViolationError:
         return
-    assert False, "Expected ExecutionRuleViolation for high spread"
+    raise AssertionError("Expected ExecutionRuleViolationError for high spread")
 
 
 def test_apply_uses_observed_slippage_and_rollover(project_root: Path) -> None:
@@ -52,10 +66,17 @@ def test_apply_uses_observed_slippage_and_rollover(project_root: Path) -> None:
     config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
     model = DeterministicExecutionModel(config)
     signal = SimpleNamespace(symbol="USDJPY", entry_mode="market", price=150.0, spread_pips=0.2)
-    market_snapshot = {"mid": 150.0, "spread_pips": 0.2, "observed_slippage_pips": 1.5, "rollover_pips": 0.3}
+    market_snapshot = {
+        "mid": 150.0,
+        "spread_pips": 0.2,
+        "observed_slippage_pips": 1.5,
+        "rollover_pips": 0.3,
+    }
     mode_ctx = SimpleNamespace(mode="paper", deterministic_seed=7, slippage_samples=[1.2, 1.4])
 
-    adjustments = model.apply(signal, market_snapshot, spread_state=SimpleNamespace(state="normal"), mode_context=mode_ctx)
+    adjustments = model.apply(
+        signal, market_snapshot, spread_state=SimpleNamespace(state="normal"), mode_context=mode_ctx
+    )
 
     assert adjustments.expected_slippage is not None
     assert adjustments.expected_slippage >= 1.5
@@ -74,7 +95,9 @@ def test_apply_prefers_slippage_log_when_available(project_root: Path) -> None:
     }
     mode_ctx = SimpleNamespace(mode="live", deterministic_seed=4)
 
-    adjustments = model.apply(signal, market_snapshot, spread_state=SimpleNamespace(state="normal"), mode_context=mode_ctx)
+    adjustments = model.apply(
+        signal, market_snapshot, spread_state=SimpleNamespace(state="normal"), mode_context=mode_ctx
+    )
 
     assert adjustments.expected_slippage is not None
     assert adjustments.expected_slippage >= 2.4
@@ -92,7 +115,9 @@ def test_apply_uses_rollover_log_when_present(project_root: Path) -> None:
     }
     mode_ctx = SimpleNamespace(mode="paper", deterministic_seed=2)
 
-    adjustments = model.apply(signal, market_snapshot, spread_state=SimpleNamespace(state="normal"), mode_context=mode_ctx)
+    adjustments = model.apply(
+        signal, market_snapshot, spread_state=SimpleNamespace(state="normal"), mode_context=mode_ctx
+    )
 
     assert adjustments.expected_slippage is not None
     assert adjustments.expected_slippage >= 2.8

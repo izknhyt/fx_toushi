@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 import json
-import os
-from datetime import datetime, timezone
 from pathlib import Path
 
 from src.ticket.builder import DefaultTicketBuilder, GateState, TicketDraft
@@ -41,7 +39,15 @@ def test_hands_off_sizing_uses_fallback_bridge_metrics(tmp_path: Path, monkeypat
     if not builder._lot_ladder:
         from src.execution.alpha_overlay import LotLadderRule
 
-        builder._lot_ladder = [LotLadderRule(pf_min=1.2, sharpe_min=1.0, maxdd_max=8.0, watchlist_max=0, size_factor=1.1)]  # type: ignore[attr-defined]
+        builder._lot_ladder = [
+            LotLadderRule(
+                pf_min=1.2,
+                sharpe_min=1.0,
+                maxdd_max=8.0,
+                watchlist_max=0,
+                size_factor=1.1,
+            )
+        ]  # type: ignore[attr-defined]
 
     artifact = builder.build(_make_draft(), gate_state)
     meta = artifact.payload["metadata"]

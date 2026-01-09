@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from src.interfaces.cli.report import weekly, daily
+from src.interfaces.cli.report import daily, weekly
 
 
 def test_weekly_writes_summary(tmp_path: Path) -> None:

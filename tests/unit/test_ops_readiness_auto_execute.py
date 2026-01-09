@@ -1,10 +1,14 @@
 from __future__ import annotations
 
 import pytest
-
 from src.core.gate import GateAggregator, GateState
 from src.interfaces.cli import ops
-from src.ops.profit_readiness import EXIT_GUARDED, EXIT_OK, ProfitReadinessError, ProfitReadinessResult
+from src.ops.profit_readiness import (
+    EXIT_GUARDED,
+    EXIT_OK,
+    ProfitReadinessError,
+    ProfitReadinessResult,
+)
 
 
 def test_readiness_enables_auto_execute_on_success(monkeypatch, tmp_path) -> None:
@@ -42,7 +46,9 @@ def test_readiness_enables_auto_execute_on_success(monkeypatch, tmp_path) -> Non
 
 def test_readiness_disables_auto_execute_on_failure(monkeypatch, tmp_path) -> None:
     def _fail_verify(**kwargs):
-        raise ProfitReadinessError("Hands-off auto_execute criteria not satisfied", exit_code=EXIT_GUARDED)
+        raise ProfitReadinessError(
+            "Hands-off auto_execute criteria not satisfied", exit_code=EXIT_GUARDED
+        )
 
     monkeypatch.setattr(ops, "verify_profit_readiness", _fail_verify)
 

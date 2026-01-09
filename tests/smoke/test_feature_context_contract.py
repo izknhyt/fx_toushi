@@ -6,7 +6,6 @@ from pathlib import Path
 
 import pytest
 import yaml
-
 from src.core.gate import GateState
 from src.core.health import HealthMonitor
 from src.features import FeaturePipeline
@@ -36,15 +35,15 @@ def test_feature_context_available_keys_align_with_manifest() -> None:
     available = feature_ctx.available_keys
 
     missing = sorted(required_features - available)
-    assert not missing, (
-        "Manifest requires features that are absent from the feature pipeline: "
-        + ", ".join(missing)
-    )
+    assert (
+        not missing
+    ), "Manifest requires features that are absent from the feature pipeline: " + ", ".join(missing)
 
     orphaned = sorted(available - required_features)
-    assert not orphaned, (
-        "Feature pipeline exposes unused features not declared in the manifest: "
-        + ", ".join(orphaned)
+    assert (
+        not orphaned
+    ), "Feature pipeline exposes unused features not declared in the manifest: " + ", ".join(
+        orphaned
     )
 
 

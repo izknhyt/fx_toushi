@@ -4,9 +4,7 @@ import json
 from pathlib import Path
 
 import pytest
-
 from src.interfaces.cli.board import board
-
 
 SNAPSHOT_DIR = Path(__file__).parent / "board"
 

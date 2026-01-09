@@ -9,9 +9,9 @@ will not be overwritten unless ``--overwrite`` is specified.
 from __future__ import annotations
 
 import argparse
+import sys
 from pathlib import Path
 from textwrap import dedent
-
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -23,7 +23,8 @@ _TEMPLATES: dict[Path, str] = {
         # 実運用値に変更する際は detailed_design_fx_signal_tool_v1.md §3.7, §4.4.4 と
         # docs/runbooks/RUN-SCORE-01.md の承認手順を参照し、承認ログを残してください。
 
-        version: 1  # TODO: 係数セットをローリング運用する場合はバージョンを更新し、関連テストを同期する。
+        version: 1
+        # TODO: 係数セットをローリング運用する場合はバージョンを更新し、関連テストを同期する。
         weights:
           expected_r: 0.55       # TODO: バックテスト/ライブ乖離レビューで再調整する。
           pf_all: 0.35
@@ -91,8 +92,10 @@ _TEMPLATES: dict[Path, str] = {
     Path("config/ops_readiness.yaml"): dedent(
         """\
         # config/ops_readiness.yaml -- CONFIG-SCAFF-01 scaffold
-        # Ops Readiness レビュー用の重み・証跡パス・閾値。更新時は docs/runbooks/OPS-READINESS-01.md と
-        # detailed_design_fx_signal_tool_v1.md §4.4.6 を参照し、証跡を ops_worklog に記録してください。
+        # Ops Readiness レビュー用の重み・証跡パス・閾値。
+        # 更新時は docs/runbooks/OPS-READINESS-01.md と
+        # detailed_design_fx_signal_tool_v1.md §4.4.6 を参照してください。
+        # 証跡は ops_worklog に記録してください。
 
         version: 1
         weights:
@@ -163,7 +166,7 @@ def main() -> None:
 
     results = run(dry_run=args.dry_run, overwrite=args.overwrite)
     for message in results:
-        print(message)
+        sys.stdout.write(f"{message}\n")
 
 
 if __name__ == "__main__":

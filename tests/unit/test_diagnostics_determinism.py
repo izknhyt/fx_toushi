@@ -4,9 +4,8 @@ import json
 from pathlib import Path
 
 import pytest
-
-from src.interfaces.cli.diagnostics import DeterminismDiagnosticsError, load_determinism_events
 from src.interfaces.cli.determinism import determinism_replay
+from src.interfaces.cli.diagnostics import DeterminismDiagnosticsError, load_determinism_events
 
 
 def test_load_determinism_events_reads_tail(tmp_path: Path) -> None:
@@ -30,8 +29,18 @@ def test_load_determinism_events_missing_file(tmp_path: Path) -> None:
 def test_determinism_replay_summary_and_output(tmp_path: Path) -> None:
     log_path = tmp_path / "registry.log"
     records = [
-        {"event": "strategy.determinism", "strategy_id": "a", "determinism_hash": "h1", "ts": "2024-01-02T00:00:00Z"},
-        {"event": "strategy.determinism", "strategy_id": "a", "determinism_hash": "h2", "ts": "2024-01-02T01:00:00Z"},
+        {
+            "event": "strategy.determinism",
+            "strategy_id": "a",
+            "determinism_hash": "h1",
+            "ts": "2024-01-02T00:00:00Z",
+        },
+        {
+            "event": "strategy.determinism",
+            "strategy_id": "a",
+            "determinism_hash": "h2",
+            "ts": "2024-01-02T01:00:00Z",
+        },
     ]
     log_path.write_text("\n".join(json.dumps(r) for r in records), encoding="utf-8")
 
@@ -59,7 +68,10 @@ def test_determinism_replay_summary_and_output(tmp_path: Path) -> None:
         metrics_path=metrics_path,
         signals_expected=signals_expected,
         signals_actual=signals_actual,
-        signals_schema=Path(__file__).resolve().parents[2] / "docs" / "schemas" / "signal_record.schema.json",
+        signals_schema=Path(__file__).resolve().parents[2]
+        / "docs"
+        / "schemas"
+        / "signal_record.schema.json",
     )
     assert payload["summary"]["event_count"] == 2
     assert payload["summary"]["diff_count"] == 1

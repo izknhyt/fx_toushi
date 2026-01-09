@@ -1,12 +1,9 @@
 """Ops services package exposing worklog, automation, agenda, and drills scaffolds."""
 
-from .worklog import (
-    OPS_WORKLOG_FLUSH_FAILED_EVENT,
-    OPS_WORKLOG_JSONL_PATH,
-    OPS_WORKLOG_RECORDED_EVENT,
-    OpsWorklogEntry,
-    OpsWorklogService,
-    RecordResult,
+from .agenda import (
+    DAILY_AGENDA_OUTPUT_DIR,
+    DAILY_AGENDA_TEMPLATE_PATH,
+    OpsAgendaService,
 )
 from .automation import (
     AUTOMATION_EFFECT_ACHIEVED_EVENT,
@@ -14,11 +11,6 @@ from .automation import (
     AutomationEffectDelta,
     AutomationEffectEntry,
     AutomationEffectTracker,
-)
-from .agenda import (
-    DAILY_AGENDA_OUTPUT_DIR,
-    DAILY_AGENDA_TEMPLATE_PATH,
-    OpsAgendaService,
 )
 from .drills import (
     DRILL_EXECUTIONS_LOG_PATH,
@@ -34,6 +26,14 @@ from .drills import (
     DrillStep,
     OpsDrillService,
     SignOff,
+)
+from .worklog import (
+    OPS_WORKLOG_FLUSH_FAILED_EVENT,
+    OPS_WORKLOG_JSONL_PATH,
+    OPS_WORKLOG_RECORDED_EVENT,
+    OpsWorklogEntry,
+    OpsWorklogService,
+    RecordResult,
 )
 
 __all__ = [

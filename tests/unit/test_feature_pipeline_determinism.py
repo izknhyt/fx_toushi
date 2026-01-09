@@ -23,7 +23,9 @@ def test_feature_pipeline_exposes_determinism_metadata(project_root: Path) -> No
     determinism = pipeline.determinism
     assert isinstance(determinism, FeatureDeterminismMetadata)
     assert determinism.feature_version == "m1-core-2025-11-21"
-    assert determinism.data_manifest_hash == _sha256(project_root / "reports" / "data_manifest.json")
+    assert determinism.data_manifest_hash == _sha256(
+        project_root / "reports" / "data_manifest.json"
+    )
 
     ctx = pipeline.update(symbols=["USDJPY", "EURUSD"])
     assert ctx.determinism == determinism

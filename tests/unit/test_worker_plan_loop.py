@@ -43,7 +43,9 @@ def test_run_worker_plan_executes_default_task_when_no_queue() -> None:
     sleeps: list[float] = []
     plan = WorkerPlan(provider="secondary", stage="stage0", poll_interval_sec=0.2, max_workers=3)
 
-    result = run_worker_plan(plan=plan, task=job, iterations=2, sleep_fn=lambda sec: sleeps.append(sec))
+    result = run_worker_plan(
+        plan=plan, task=job, iterations=2, sleep_fn=lambda sec: sleeps.append(sec)
+    )
 
     assert calls == 6
     assert result["polls"] == 2

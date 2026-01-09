@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Mapping
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -83,7 +84,10 @@ def status(*, json_output: bool = False) -> dict[str, object]:
         "required_action": required_action,
         "path": str(DEFAULT_RISK_STATE),
     }
-    logger.info("cli.compliance.status", extra={"risk_disclosure": state.get("status"), "required_action": required_action})
+    logger.info(
+        "cli.compliance.status",
+        extra={"risk_disclosure": state.get("status"), "required_action": required_action},
+    )
     return payload
 
 
@@ -96,7 +100,9 @@ def ack(*, note: str, user: str | None = None, force: bool = False) -> dict[str,
         {
             "status": "accepted",
             "accepted_at": now,
-            "expires_at": (datetime.now(timezone.utc) + timedelta(days=365)).isoformat().replace("+00:00", "Z"),
+            "expires_at": (datetime.now(timezone.utc) + timedelta(days=365))
+            .isoformat()
+            .replace("+00:00", "Z"),
             "consent_reference_id": state.get("consent_reference_id") or f"consent-{now}",
         }
     )

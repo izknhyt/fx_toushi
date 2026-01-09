@@ -2,12 +2,10 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
-import json
-
 import pytest
-
 from src.interfaces.cli.data import update_latest
 
 
@@ -53,8 +51,8 @@ def test_data_update_gap_plan(tmp_path: Path) -> None:
     gap_report = tmp_path / "gaps.json"
     plan = tmp_path / "fetch.sh"
 
-    from subprocess import run
     import sys
+    from subprocess import run
 
     result = run(
         [

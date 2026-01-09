@@ -6,7 +6,6 @@ from pathlib import Path
 
 import pandas as pd
 import pytest
-
 from src.interfaces.cli.data import (
     export_rate_limit_env,
     failover,

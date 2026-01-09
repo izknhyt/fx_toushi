@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
+
 from jsonschema import Draft202012Validator
-import json
 
 pytestmark = pytest.mark.json_schema_validation
 

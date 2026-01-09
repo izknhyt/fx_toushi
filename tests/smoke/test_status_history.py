@@ -11,8 +11,14 @@ def test_drawdown_guard_history(tmp_path: Path) -> None:
     log_path.write_text(
         "\n".join(
             [
-                '{"ts": "2025-01-01T00:00:00Z", "event": "kill_switch.engaged", "reason": "daily_drawdown"}',
-                '{"ts": "2025-01-01T01:00:00Z", "event": "kill_switch.released", "reason": "ops_review"}',
+                (
+                    '{"ts": "2025-01-01T00:00:00Z", "event": "kill_switch.engaged", '
+                    '"reason": "daily_drawdown"}'
+                ),
+                (
+                    '{"ts": "2025-01-01T01:00:00Z", "event": "kill_switch.released", '
+                    '"reason": "ops_review"}'
+                ),
             ]
         ),
         encoding="utf-8",

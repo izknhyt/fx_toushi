@@ -1,6 +1,6 @@
 {
   "version": "m1-20260108",
-  "generated_at": "2026-01-08T11:37:10Z",
+  "generated_at": "2026-01-08T13:49:13Z",
   "tasks": [
     {
       "task_id": "risk_state_json_status_accepted_consent_reference_id_accepted_at_consent_reference_id_id",
@@ -35,8 +35,8 @@
     {
       "task_id": "lint_format_ruff_version_black_check_version",
       "label": "Lint/format: `ruff <version>` と `black --check <version>` の結果を記録",
-      "status": "fail",
-      "evidence_path": "reports/validation_log/ruff_black_20260108.log"
+      "status": "pass",
+      "evidence_path": "reports/validation_log/ruff_black_check_20260108.log"
     },
     {
       "task_id": "config_schema_validate_reports_validation_log_config_schema_date_json",
@@ -83,14 +83,14 @@
     {
       "task_id": "ruff_version",
       "label": "`ruff <version>` 実行（既存違反数と差分扱いを記録）",
-      "status": "fail",
-      "evidence_path": "reports/validation_log/ruff_black_20260108.log"
+      "status": "pass",
+      "evidence_path": "reports/validation_log/ruff_black_check_20260108.log"
     },
     {
       "task_id": "black_check_version",
       "label": "`black --check <version>` 実行（要整形ファイル数を記録）",
-      "status": "fail",
-      "evidence_path": "reports/validation_log/ruff_black_20260108.log"
+      "status": "pass",
+      "evidence_path": "reports/validation_log/ruff_black_check_20260108.log"
     },
     {
       "task_id": "product_owner_date",

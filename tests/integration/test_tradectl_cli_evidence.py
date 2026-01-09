@@ -7,9 +7,8 @@ from pathlib import Path
 
 import pytest
 import yaml
-from typer.testing import CliRunner
-
 from src.interfaces.cli import create_cli_app
+from typer.testing import CliRunner
 
 
 def _fixed_time() -> datetime:
@@ -48,7 +47,10 @@ def test_execution_recalibrate_generates_yaml(monkeypatch: pytest.MonkeyPatch) -
         assert document["metadata"]["generated_at"] == _fixed_time().isoformat()
         assert document["metadata"]["source"] == str(source)
         assert document["calibration"]["sample_count"] == 240
-        assert "Mock calibration generated for audit scaffolding." in document["calibration"]["notes"][0]
+        assert (
+            "Mock calibration generated for audit scaffolding."
+            in document["calibration"]["notes"][0]
+        )
 
 
 def test_scoring_diagnostics_emits_markdown(monkeypatch: pytest.MonkeyPatch) -> None:

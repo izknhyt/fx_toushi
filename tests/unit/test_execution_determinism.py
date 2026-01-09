@@ -36,10 +36,19 @@ def test_execution_apply_uses_seed_in_mode_context(project_root) -> None:
     model = _model(project_root / "config" / "execution_model.yaml")
     signal = _Signal(entry_mode="marketable_limit", price=150.0)
     market = {"mid": 150.1}
-    mode_ctx = {"mode": "paper", "deterministic_seed": 99, "latency_data_status": "ok", "slippage_data_status": "ok"}
+    mode_ctx = {
+        "mode": "paper",
+        "deterministic_seed": 99,
+        "latency_data_status": "ok",
+        "slippage_data_status": "ok",
+    }
 
-    adjustments_a = model.apply(signal, market, spread_state={"state": "normal"}, mode_context=mode_ctx)
-    adjustments_b = model.apply(signal, market, spread_state={"state": "normal"}, mode_context=copy.deepcopy(mode_ctx))
+    adjustments_a = model.apply(
+        signal, market, spread_state={"state": "normal"}, mode_context=mode_ctx
+    )
+    adjustments_b = model.apply(
+        signal, market, spread_state={"state": "normal"}, mode_context=copy.deepcopy(mode_ctx)
+    )
 
     assert adjustments_a.ttl_seconds == adjustments_b.ttl_seconds
     assert adjustments_a.expected_entry == 150.0 or adjustments_a.expected_entry == 150.1

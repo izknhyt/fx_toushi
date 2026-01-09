@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
-from typing import Iterable
+from collections.abc import Iterable
 
 import pytest
-
 from src.strategies import StrategyEngine, StrategyRegistrationError
 from src.strategies.base import StrategyContext, StrategyMetadata, StrategyPluginProtocol
 
@@ -63,4 +62,3 @@ def test_strategy_registry_requires_determinism_key() -> None:
         engine.register_plugin(plugin)
 
     assert "determinism_key" in str(excinfo.value)
-

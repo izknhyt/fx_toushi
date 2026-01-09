@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import copy
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-import copy
-from typing import TYPE_CHECKING, Any, Dict, Iterable
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:  # pragma: no cover - type hints only
     from src.core.gate import GateState
@@ -37,7 +38,7 @@ class HealthReason:
     recommended_action: str | None = None
     raised_at: datetime = field(default_factory=_now)
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "code": self.code,
             "level": self.level,
@@ -55,7 +56,7 @@ class KillSwitchSuggestion:
     reason: str
     runbook: str | None = None
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "state": self.state,
             "reason": self.reason,
@@ -73,7 +74,7 @@ class HealthState:
     board_mode_runbook: str | None = None
     kill_switch: KillSwitchSuggestion | None = None
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "status": self.status,
             "reasons": [reason.to_dict() for reason in self.reasons],
@@ -94,7 +95,7 @@ class HealthAction:
     expires_at: datetime | None = None
     queued_at: datetime = field(default_factory=_now)
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "id": self.id,
             "action": self.action,
@@ -122,7 +123,7 @@ class GuardrailSnapshot:
     spread_reason: str | None = None
     reduce_only_reason: str | None = None
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "health_status": self.health_status,
             "board_mode": self.board_mode,
@@ -168,7 +169,7 @@ class HealthMonitor:
 
         return copy.deepcopy(self._state)
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return self._state.to_dict()
 
     def reasons(self) -> Iterable[HealthReason]:
@@ -230,7 +231,7 @@ class HealthMonitor:
         self._actions.append(item)
         return item
 
-    def ack_action(self, action_id: str, *, actor: str = "cli") -> Dict[str, Any]:
+    def ack_action(self, action_id: str, *, actor: str = "cli") -> dict[str, Any]:
         """Acknowledge and remove a queued action if present."""
 
         remaining: list[HealthAction] = []
@@ -279,12 +280,15 @@ class HealthMonitor:
         *,
         reason: str,
         runbook: str | None = None,
-        gate_state: "GateState" | None = None,
+        gate_state: GateState | None = None,
         evidence: Iterable[str] | None = None,
         action_id: str | None = None,
         expires_at: datetime | None = None,
     ) -> None:
-        """Record a board mode suggestion for operators and enforce auto-execute guard if provided."""
+        """Record a board mode suggestion for operators.
+
+        Enforce auto-execute guard if provided.
+        """
 
         self._state.board_mode_suggestion = reason
         self._state.board_mode_runbook = runbook
@@ -304,7 +308,7 @@ class HealthMonitor:
         state: str,
         reason: str,
         runbook: str | None = None,
-        gate_state: "GateState" | None = None,
+        gate_state: GateState | None = None,
     ) -> None:
         """Record a kill switch recommendation and guard auto-execute if provided."""
 
@@ -355,7 +359,7 @@ class HealthMonitor:
             incoming_idx = 1
         return _SEVERITY_ORDER[max(current_idx, incoming_idx)]
 
-    def enforce_auto_execute_policy(self, gate_state: "GateState") -> None:
+    def enforce_auto_execute_policy(self, gate_state: GateState) -> None:
         """Apply board/health derived constraints to GateState.auto_execute."""
 
         if self._state.status in {"warn", "degraded", "soft_stop", "hard_stop"}:
@@ -386,13 +390,17 @@ class HealthMonitor:
             return 62
         if spread_status == "block":
             return 62
-        if spread_status == "cooldown" or reduce_only or health_status in {"warn", "degraded", "soft_stop"}:
+        if (
+            spread_status == "cooldown"
+            or reduce_only
+            or health_status in {"warn", "degraded", "soft_stop"}
+        ):
             return 21
         return 0
 
     def guardrail_snapshot(
         self,
-        gate_state: "GateState",
+        gate_state: GateState,
         *,
         kill_switch_state: str | None = None,
     ) -> GuardrailSnapshot:
@@ -420,7 +428,11 @@ class HealthMonitor:
         board_mode = "normal"
         if effective_kill_switch == "hard_stop" or health.status == "hard_stop":
             board_mode = "halted"
-        elif spread_state != "normal" or gate_state.risk.reduce_only or health.status in {"warn", "degraded", "soft_stop"}:
+        elif (
+            spread_state != "normal"
+            or gate_state.risk.reduce_only
+            or health.status in {"warn", "degraded", "soft_stop"}
+        ):
             board_mode = "guarded"
 
         banner = (

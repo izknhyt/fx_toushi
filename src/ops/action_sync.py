@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import dataclasses
 import re
+from collections.abc import Iterable
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Iterable, List
 
 
 class ActionSyncError(RuntimeError):
@@ -108,7 +108,9 @@ def _build_change_request(
         owner = item.owner or "n/a"
         due = item.due or "n/a"
         source = f"{review_rel}#{item.anchor}"
-        lines.append(f"| open | {item.description} | {owner} | {due} | [{item.heading}]({source}) |")
+        lines.append(
+            f"| open | {item.description} | {owner} | {due} | [{item.heading}]({source}) |"
+        )
     return "\n".join(lines) + "\n"
 
 

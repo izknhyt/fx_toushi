@@ -6,7 +6,12 @@ from src.data.rate_limit_guard import RateLimitGuard
 
 
 def test_rate_limit_guard_promotes_when_low_429() -> None:
-    guard = RateLimitGuard(tokens_per_minute=60, burst_tokens=90, poll_interval_sec=15, stages=["stage0", "stage1", "stage2"])
+    guard = RateLimitGuard(
+        tokens_per_minute=60,
+        burst_tokens=90,
+        poll_interval_sec=15,
+        stages=["stage0", "stage1", "stage2"],
+    )
 
     decision = guard.evaluate(provider="yfinance", rate_429=0.0, current_stage="stage0")
 
@@ -17,7 +22,12 @@ def test_rate_limit_guard_promotes_when_low_429() -> None:
 
 
 def test_rate_limit_guard_rolls_back_when_high_429() -> None:
-    guard = RateLimitGuard(tokens_per_minute=60, burst_tokens=90, poll_interval_sec=15, stages=["stage0", "stage1", "stage2"])
+    guard = RateLimitGuard(
+        tokens_per_minute=60,
+        burst_tokens=90,
+        poll_interval_sec=15,
+        stages=["stage0", "stage1", "stage2"],
+    )
 
     decision = guard.evaluate(provider="yfinance", rate_429=0.02, current_stage="stage2")
 

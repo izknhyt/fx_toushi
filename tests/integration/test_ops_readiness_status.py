@@ -1,11 +1,10 @@
 from __future__ import annotations
 
 import pytest
-
 from src.core.gate import GateAggregator, GateState
 from src.core.health import HealthMonitor
-from src.interfaces.cli.status import status
 from src.interfaces.cli import ops
+from src.interfaces.cli.status import status
 from src.ops.profit_readiness import EXIT_GUARDED, ProfitReadinessError
 
 
@@ -20,7 +19,9 @@ def test_ops_readiness_and_status_log_auto_execute_forced_off(monkeypatch, tmp_p
     agg.persist_latest(path=gate_path)
 
     def _fail_verify(**kwargs):
-        raise ProfitReadinessError("Hands-off auto_execute criteria not satisfied", exit_code=EXIT_GUARDED)
+        raise ProfitReadinessError(
+            "Hands-off auto_execute criteria not satisfied", exit_code=EXIT_GUARDED
+        )
 
     monkeypatch.setattr(ops, "verify_profit_readiness", _fail_verify)
 

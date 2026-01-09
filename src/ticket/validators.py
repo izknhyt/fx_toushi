@@ -2,10 +2,16 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from datetime import datetime
-from typing import Mapping
 
-from src.core.gate import CalendarGateState, GateBlockState, GateState, NewsGateState, SpreadGateState
+from src.core.gate import (
+    CalendarGateState,
+    GateBlockState,
+    GateState,
+    NewsGateState,
+    SpreadGateState,
+)
 
 from .exceptions import TicketBlockedError
 

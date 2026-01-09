@@ -5,9 +5,9 @@ from __future__ import annotations
 import json
 import logging
 import os
+from collections.abc import Iterable, Mapping, Sequence
 from datetime import datetime
 from pathlib import Path
-from typing import Iterable, Mapping, Sequence
 
 from rich.console import Console
 from rich.table import Table
@@ -21,7 +21,9 @@ DEFAULT_MANIFEST = Path("reports/data_manifest.json")
 __all__ = ["board", "_load_manifest_entry"]
 
 
-def _load_manifest_entry(manifest_path: Path, strategy: str = "m1_baseline_ma_rsi") -> dict[str, str]:
+def _load_manifest_entry(
+    manifest_path: Path, strategy: str = "m1_baseline_ma_rsi"
+) -> dict[str, str]:
     if not manifest_path.exists():
         raise FileNotFoundError(f"Manifest file not found: {manifest_path}")
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -154,7 +156,9 @@ def board(
 
     if save_snapshot:
         save_snapshot.parent.mkdir(parents=True, exist_ok=True)
-        save_snapshot.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        save_snapshot.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
         payload["snapshot_path"] = str(save_snapshot)
 
     logger.info("cli.board.rendered", extra={"view": view, "snapshot": str(save_snapshot or "")})
@@ -191,7 +195,9 @@ def _build_banner(
         banner["severity"] = "warn"
         banner["message"] = "Reduce-Only enforced"
         banner["runbook"] = "docs/runbooks/RUN-DATA-05.md"
-    elif risk_disclosure_status.lower() in {"pending", "warning", "expired"} and compat_mode != "v1":
+    elif (
+        risk_disclosure_status.lower() in {"pending", "warning", "expired"} and compat_mode != "v1"
+    ):
         banner["kind"] = "risk_disclosure"
         banner["severity"] = "warn"
         banner["message"] = f"RiskDisclosure {risk_disclosure_status}"
@@ -249,7 +255,11 @@ def _render_summary(
     summary = [
         f"mode={mode}",
         f"banner={banner_msg or 'normal'}",
-        f"ks={guardrails.get('kill_switch_state')}, spread={guardrails.get('spread_status')}, reduce_only={guardrails.get('reduce_only')}",
+        (
+            f"ks={guardrails.get('kill_switch_state')}, "
+            f"spread={guardrails.get('spread_status')}, "
+            f"reduce_only={guardrails.get('reduce_only')}"
+        ),
         f"risk_disclosure={rd}",
         f"badges: profit={badges.get('profit_readiness')}, latency={latency}, slippage={slippage}",
         f"tickets={ticket_count}",
@@ -273,7 +283,10 @@ def _render_ticket_table(tickets: Sequence[Mapping[str, object]], *, rich: bool)
         ("Guardrails", _summarize_guardrails),
         ("Badges", _summarize_badges),
         ("Checklist", _summarize_checklist),
-        ("RiskDisclosure", lambda t: (t.get("risk_summary") or {}).get("risk_disclosure") or "pending"),
+        (
+            "RiskDisclosure",
+            lambda t: (t.get("risk_summary") or {}).get("risk_disclosure") or "pending",
+        ),
         ("Spread", _extract_spread),
         ("Notes", _extract_notes),
         ("AuditRefs", _summarize_audit_refs),
@@ -324,9 +337,9 @@ def _render_rich_table(headers: Sequence[str], rows: Sequence[Sequence[str]]) ->
                 styled[9] = f"[green]{checklist}[/]"
         entry = row[5] if len(row) > 5 else ""
         if isinstance(entry, str):
-            if "[block]" in entry or "block" == entry.lower():
+            if "[block]" in entry or entry.lower() == "block":
                 styled[5] = f"[red]{entry}[/]"
-            elif "[cooldown]" in entry or "[watch]" in entry or "cooldown" == entry.lower():
+            elif "[cooldown]" in entry or "[watch]" in entry or entry.lower() == "cooldown":
                 styled[5] = f"[yellow]{entry}[/]"
         table.add_row(*styled)
     console.print(table)
@@ -334,10 +347,16 @@ def _render_rich_table(headers: Sequence[str], rows: Sequence[Sequence[str]]) ->
 
 
 def _render_ascii_table(headers: Sequence[str], rows: Sequence[Sequence[str]]) -> str:
-    widths = [max(len(str(cell)) for cell in column) for column in zip(headers, *rows)]
+    widths = [
+        max(len(str(cell)) for cell in column) for column in zip(headers, *rows, strict=False)
+    ]
 
     def fmt_row(cols: Sequence[str]) -> str:
-        return "| " + " | ".join(str(col).ljust(width) for col, width in zip(cols, widths)) + " |"
+        return (
+            "| "
+            + " | ".join(str(col).ljust(width) for col, width in zip(cols, widths, strict=False))
+            + " |"
+        )
 
     parts = [fmt_row(headers), "|-" + "-|-".join("-" * width for width in widths) + "-|"]
     for row in rows:
@@ -443,7 +462,9 @@ def _summarize_checklist(ticket: Mapping[str, object]) -> str:
     pending_ids: list[str] = []
     if isinstance(checklist, (list, tuple)):
         for item in checklist:
-            status = item.get("status") if isinstance(item, Mapping) else getattr(item, "status", None)
+            status = (
+                item.get("status") if isinstance(item, Mapping) else getattr(item, "status", None)
+            )
             if status in {"ok", "completed"}:
                 completed += 1
             elif status in {"pending", "warn"}:

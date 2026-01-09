@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import json
 import math
-from datetime import datetime, timezone, timedelta
+from collections.abc import Mapping
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any
 
 DEFAULT_EXECUTION_LOG = Path("metrics") / "execution_determinism.jsonl"
 DEFAULT_DASHBOARD_JSON = Path("reports") / "monitoring" / "execution_dashboard.json"
@@ -51,7 +52,9 @@ def execution_dashboard(
 
     if not dry_run:
         resolved_output.parent.mkdir(parents=True, exist_ok=True)
-        resolved_output.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        resolved_output.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
         resolved_markdown.parent.mkdir(parents=True, exist_ok=True)
         resolved_markdown.write_text(_render_markdown(summary), encoding="utf-8")
         _append_metrics(resolved_metrics, summary)
@@ -206,10 +209,11 @@ def _percentile(values: list[float], percentile: int) -> float:
 
 
 def _render_markdown(summary: Mapping[str, Any]) -> str:
+    window = summary.get("window", {})
     lines = [
         "# Execution Determinism Dashboard",
         "",
-        f"- Window: {summary.get('window', {}).get('since')} → {summary.get('window', {}).get('until')}",
+        f"- Window: {window.get('since')} → {window.get('until')}",
         f"- Unique strategies: {summary.get('unique_strategies')}",
         f"- Unique symbols: {summary.get('unique_symbols')}",
         f"- Degraded ratio: {summary.get('degraded_ratio')}",

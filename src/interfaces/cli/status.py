@@ -2,17 +2,18 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
-import hashlib
 import re
+from collections.abc import Mapping, MutableMapping
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Mapping, MutableMapping
+from typing import Any
 
-from src.core.gate import GateState
 from src.compliance import RiskDisclosureService
+from src.core.gate import GateState
 from src.core.health import (
     GuardrailSnapshot,
     HealthAction,
@@ -130,7 +131,7 @@ def _serialise_snapshot_restore(result: SnapshotRestoreResult) -> Mapping[str, A
 
     state = result.state
     serialised_state: Any
-    if hasattr(state, "to_dict") and callable(getattr(state, "to_dict")):
+    if hasattr(state, "to_dict") and callable(state.to_dict):
         try:
             serialised_state = state.to_dict()  # type: ignore[call-arg]
         except Exception:  # pragma: no cover - defensive against user objects
@@ -194,7 +195,11 @@ def _build_banner(
         reason_codes.append(guardrail.reduce_only_reason)
     if guardrail.kill_switch_reason:
         reason_codes.append(guardrail.kill_switch_reason)
-    banner_message = health.board_mode_suggestion or guardrail.banner or (reason_codes[0] if reason_codes else None)
+    banner_message = (
+        health.board_mode_suggestion
+        or guardrail.banner
+        or (reason_codes[0] if reason_codes else None)
+    )
     return {
         "kind": "acceptable_degradation",
         "severity": guardrail.health_status,
@@ -274,7 +279,11 @@ def status(
     guardrails: dict[str, object] = {}
     if metrics_path and metrics_path.exists():
         try:
-            last_line = [line for line in metrics_path.read_text(encoding="utf-8").splitlines() if line.strip()][-1]
+            last_line = [
+                line
+                for line in metrics_path.read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ][-1]
             guardrails = json.loads(last_line)
         except Exception:  # pragma: no cover - defensive
             guardrails = {}
@@ -309,15 +318,23 @@ def status(
                 except json.JSONDecodeError:
                     gate_state.data_hash = None
 
-    raw_kill_switch_state, kill_switch_reason = _load_kill_switch_state(kill_switch_state_path) if kill_switch_state_path else ("none", None)
-    kill_switch_override = None if raw_kill_switch_state in {None, "none"} else raw_kill_switch_state
+    raw_kill_switch_state, kill_switch_reason = (
+        _load_kill_switch_state(kill_switch_state_path)
+        if kill_switch_state_path
+        else ("none", None)
+    )
+    kill_switch_override = (
+        None if raw_kill_switch_state in {None, "none"} else raw_kill_switch_state
+    )
     previous_auto_execute = gate_state.auto_execute
     monitor.enforce_auto_execute_policy(gate_state)
     health_state = monitor.snapshot()
     risk_state = gate_state.risk
     guardrail = monitor.guardrail_snapshot(gate_state, kill_switch_state=kill_switch_override)
     kill_switch_state_value = kill_switch_override or guardrail.kill_switch_state
-    kill_switch_reason = kill_switch_reason or guardrail.kill_switch_reason or risk_state.kill_switch_reason
+    kill_switch_reason = (
+        kill_switch_reason or guardrail.kill_switch_reason or risk_state.kill_switch_reason
+    )
     gate_state.enforce_auto_execute_guards(
         board_mode=guardrail.board_mode,
         kill_switch_state=kill_switch_state_value or "none",
@@ -430,7 +447,10 @@ def status(
         "board_mode": guardrail.board_mode,
         "kill_switch": guardrail.kill_switch_state,
         "spread_status": guardrail.spread_status,
-        "reason": guardrail.banner or guardrail.spread_reason or guardrail.kill_switch_reason or "ok",
+        "reason": guardrail.banner
+        or guardrail.spread_reason
+        or guardrail.kill_switch_reason
+        or "ok",
         "suggested_action": guardrail.runbook,
         "reasons": guardrail.reasons,
         "exit_code": guardrail.exit_code,

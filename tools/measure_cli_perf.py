@@ -2,7 +2,8 @@
 
 Usage examples:
     poetry run python tools/measure_cli_perf.py --command board --iterations 50 --profile paper
-    poetry run python tools/measure_cli_perf.py --command tickets approve --input-log logs/events/sample.jsonl --warmup
+    poetry run python tools/measure_cli_perf.py --command tickets approve --input-log
+        logs/events/sample.jsonl --warmup
 
 Design references:
     - detailed_design_fx_signal_tool_v1.md §18.5

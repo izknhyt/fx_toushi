@@ -7,7 +7,9 @@ from src.journal import TradeJournalService
 
 def test_trade_journal_appends_and_lists(tmp_path: Path) -> None:
     service = TradeJournalService(path=tmp_path / "journal.jsonl")
-    entry = service.from_ticket_action(ticket_id="T1", user="alice", note="approved", week="2025-W12")
+    entry = service.from_ticket_action(
+        ticket_id="T1", user="alice", note="approved", week="2025-W12"
+    )
     service.append(entry)
 
     entries = service.list(week="2025-W12")

@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
-from typing import Iterable, Sequence
 
-from src.strategies.base import StrategyContext, StrategyMetadata, StrategyPluginProtocol
 from src.features.pipeline import FeatureLookupError
+from src.strategies.base import StrategyContext, StrategyMetadata, StrategyPluginProtocol
 
 
 @dataclass(frozen=True, slots=True)
@@ -46,7 +46,9 @@ class DonchianBreakoutStrategy(StrategyPluginProtocol):
     context: StrategyContext | None = None
 
     def __init__(self, *, default_watchlist: Sequence[str] | None = None) -> None:
-        self._default_watchlist = tuple(default_watchlist or ("USDJPY", "EURUSD", "GBPUSD", "EURJPY", "AUDUSD"))
+        self._default_watchlist = tuple(
+            default_watchlist or ("USDJPY", "EURUSD", "GBPUSD", "EURJPY", "AUDUSD")
+        )
 
     @staticmethod
     def _latest(value: object) -> float | None:
@@ -79,21 +81,33 @@ class DonchianBreakoutStrategy(StrategyPluginProtocol):
 
         symbols = sorted(context.watchlist or frozenset(self._default_watchlist))
         signals: list[BreakoutSignal] = []
-        for index, symbol in enumerate(symbols):
+        for _index, symbol in enumerate(symbols):
             if not self._session_allowed(context.clock.now):
                 continue
             try:
-                upper_h = context.features.lookup(symbol=symbol, feature="donchian_upper20_1h", timeframe="1h")
-                lower_h = context.features.lookup(symbol=symbol, feature="donchian_lower20_1h", timeframe="1h")
-                mid_h = context.features.lookup(symbol=symbol, feature="donchian_mid20_1h", timeframe="1h")
+                upper_h = context.features.lookup(
+                    symbol=symbol, feature="donchian_upper20_1h", timeframe="1h"
+                )
+                lower_h = context.features.lookup(
+                    symbol=symbol, feature="donchian_lower20_1h", timeframe="1h"
+                )
+                mid_h = context.features.lookup(
+                    symbol=symbol, feature="donchian_mid20_1h", timeframe="1h"
+                )
                 close = context.features.lookup(symbol=symbol, feature="close_5m", timeframe="5m")
                 atr = context.features.lookup(symbol=symbol, feature="atr_14_1h", timeframe="1h")
             except Exception:
                 continue
             try:
-                upper_d = context.features.lookup(symbol=symbol, feature="donchian_upper20_1d", timeframe="1d")
-                lower_d = context.features.lookup(symbol=symbol, feature="donchian_lower20_1d", timeframe="1d")
-                mid_d = context.features.lookup(symbol=symbol, feature="donchian_mid20_1d", timeframe="1d")
+                upper_d = context.features.lookup(
+                    symbol=symbol, feature="donchian_upper20_1d", timeframe="1d"
+                )
+                lower_d = context.features.lookup(
+                    symbol=symbol, feature="donchian_lower20_1d", timeframe="1d"
+                )
+                mid_d = context.features.lookup(
+                    symbol=symbol, feature="donchian_mid20_1d", timeframe="1d"
+                )
             except FeatureLookupError:
                 upper_d = lower_d = mid_d = None
 

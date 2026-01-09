@@ -7,7 +7,6 @@ from math import isclose
 from pathlib import Path
 
 import pandas as pd
-
 from src.interfaces.cli.backtest import run_backtest
 from src.reporter.kpi import compute_kpi_from_equity, compute_kpi_from_returns
 
@@ -30,7 +29,9 @@ def test_run_backtest_exports_returns_and_equity(tmp_path: Path) -> None:
     )
     dataset_path = tmp_path / "dataset.parquet"
     data.to_parquet(dataset_path)
-    manifest = {"strategies": {"demo": {"dataset_path": str(dataset_path), "dataset_sha256": "deadbeef"}}}
+    manifest = {
+        "strategies": {"demo": {"dataset_path": str(dataset_path), "dataset_sha256": "deadbeef"}}
+    }
     manifest_path = tmp_path / "manifest.json"
     manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
 
@@ -62,4 +63,9 @@ def test_run_backtest_exports_returns_and_equity(tmp_path: Path) -> None:
 
     assert kpi_from_returns["win_rate"] != "n/a"
     assert kpi_from_equity["win_rate"] != "n/a"
-    assert isclose(float(kpi_from_returns["cum_r"]), float(kpi_from_equity["cum_r"]), rel_tol=1e-6, abs_tol=1e-6)
+    assert isclose(
+        float(kpi_from_returns["cum_r"]),
+        float(kpi_from_equity["cum_r"]),
+        rel_tol=1e-6,
+        abs_tol=1e-6,
+    )

@@ -15,7 +15,7 @@ __all__ = [
     "ConfigLoaderStub",
     "ConfigError",
     "ConfigNotFoundError",
-    "ConfigFormatNotSupported",
+    "ConfigFormatNotSupportedError",
 ]
 
 
@@ -27,7 +27,7 @@ class ConfigNotFoundError(ConfigError, FileNotFoundError):
     """Raised when a config file is missing from the repository tree."""
 
 
-class ConfigFormatNotSupported(ConfigError):
+class ConfigFormatNotSupportedError(ConfigError):
     """Raised when the config fixture cannot parse the requested format."""
 
 
@@ -49,7 +49,7 @@ class ConfigLoaderStub:
 
         if suffix in {".yaml", ".yml"}:
             if yaml is None:
-                raise ConfigFormatNotSupported("PyYAML is required to load YAML config files")
+                raise ConfigFormatNotSupportedError("PyYAML is required to load YAML config files")
             with path.open("r", encoding="utf-8") as handle:
                 return yaml.safe_load(handle.read())
 

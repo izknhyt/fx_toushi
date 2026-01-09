@@ -2,13 +2,12 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+import json
 import os
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-import json
 import pytest
-
 from src.ops.profit_readiness import EXIT_GUARDED, EXIT_STALE, verify_profit_readiness
 
 
@@ -60,14 +59,36 @@ def test_verify_profit_readiness_ok(tmp_path: Path) -> None:
     )
 
     profit_entries = [
-        {"timestamp": (datetime.now(timezone.utc) - timedelta(days=1)).isoformat(), "mode": "live", "fill_rr": 0.6},
-        {"timestamp": (datetime.now(timezone.utc) - timedelta(days=2)).isoformat(), "mode": "live", "fill_rr": -0.05},
-        {"timestamp": (datetime.now(timezone.utc) - timedelta(days=3)).isoformat(), "mode": "live", "fill_rr": 0.7},
-        {"timestamp": (datetime.now(timezone.utc) - timedelta(days=4)).isoformat(), "mode": "live", "fill_rr": 0.4},
-        {"timestamp": (datetime.now(timezone.utc) - timedelta(days=5)).isoformat(), "mode": "live", "fill_rr": 0.2},
+        {
+            "timestamp": (datetime.now(timezone.utc) - timedelta(days=1)).isoformat(),
+            "mode": "live",
+            "fill_rr": 0.6,
+        },
+        {
+            "timestamp": (datetime.now(timezone.utc) - timedelta(days=2)).isoformat(),
+            "mode": "live",
+            "fill_rr": -0.05,
+        },
+        {
+            "timestamp": (datetime.now(timezone.utc) - timedelta(days=3)).isoformat(),
+            "mode": "live",
+            "fill_rr": 0.7,
+        },
+        {
+            "timestamp": (datetime.now(timezone.utc) - timedelta(days=4)).isoformat(),
+            "mode": "live",
+            "fill_rr": 0.4,
+        },
+        {
+            "timestamp": (datetime.now(timezone.utc) - timedelta(days=5)).isoformat(),
+            "mode": "live",
+            "fill_rr": 0.2,
+        },
     ]
     profit_loop.parent.mkdir(parents=True, exist_ok=True)
-    profit_loop.write_text("\n".join(json.dumps(entry) for entry in profit_entries), encoding="utf-8")
+    profit_loop.write_text(
+        "\n".join(json.dumps(entry) for entry in profit_entries), encoding="utf-8"
+    )
 
     result = verify_profit_readiness(
         window_days=30,

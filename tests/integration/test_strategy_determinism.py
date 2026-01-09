@@ -15,13 +15,12 @@ asserts:
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 import hashlib
+from collections.abc import Iterable
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable
 
 import pytest
-
 from src.features.pipeline import FeaturePipeline
 from src.strategies import StrategyEngine
 from src.strategies.base import StrategyContext, StrategyMetadata, StrategyPluginProtocol
@@ -37,10 +36,14 @@ class _FeatureContextStub:
     available_keys: frozenset[str]
     determinism: object | None = None
 
-    def lookup(self, *, symbol: str, feature: str, timeframe: str) -> None:  # pragma: no cover - unused
+    def lookup(
+        self, *, symbol: str, feature: str, timeframe: str
+    ) -> None:  # pragma: no cover - unused
         raise NotImplementedError
 
-    def get_latest(self, *, symbol: str, feature: str, timeframe: str) -> None:  # pragma: no cover - unused
+    def get_latest(
+        self, *, symbol: str, feature: str, timeframe: str
+    ) -> None:  # pragma: no cover - unused
         raise NotImplementedError
 
     def feature_frame(self, symbol: str) -> dict[str, dict[str, object]]:
@@ -75,7 +78,7 @@ class _DeterministicStrategy(StrategyPluginProtocol):
             (
                 f"{context.seed}|{'/'.join(sorted(context.watchlist))}"
                 f"|{len(context.features.available_keys)}"
-            ).encode("utf-8"),
+            ).encode(),
             digest_size=12,
         ).hexdigest()
         return (
@@ -171,7 +174,9 @@ def test_strategy_determinism_replay(project_root, tmp_path) -> None:
         outputs.append(signals)
 
     # All payloads must be identical when seeds and inputs match.
-    assert outputs[0] == outputs[1] == outputs[2], "Deterministic fingerprints diverged across modes"
+    assert (
+        outputs[0] == outputs[1] == outputs[2]
+    ), "Deterministic fingerprints diverged across modes"
 
     # Each captured StrategyContext must preserve the requested seed and watchlist.
     captured_watchlists = {tuple(sorted(ctx.watchlist)) for ctx in plugin.contexts}

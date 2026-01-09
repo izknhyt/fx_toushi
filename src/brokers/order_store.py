@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict
 
 
 @dataclass(slots=True)
@@ -14,7 +13,7 @@ class StoredOrder:
 
 class OrderStateStore:
     def __init__(self) -> None:
-        self._orders: Dict[str, StoredOrder] = {}
+        self._orders: dict[str, StoredOrder] = {}
 
     def upsert(self, order: StoredOrder) -> None:
         self._orders[order.order_id] = order

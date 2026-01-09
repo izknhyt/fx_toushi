@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
+import json
+import re
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime, timezone
-import json
 from pathlib import Path
-import re
-from typing import Iterable, Mapping
 
 from src.compliance import RiskDisclosureService
 
@@ -69,7 +69,9 @@ class ReleaseGateService:
         checklist_path = self._base_dir / f"{version}.md"
         state_path = self._base_dir / f"{version}.json"
         checklist_path.write_text(self._render_markdown(checklist), encoding="utf-8")
-        state_path.write_text(json.dumps(checklist.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8")
+        state_path.write_text(
+            json.dumps(checklist.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8"
+        )
         return checklist
 
     def record_result(
@@ -85,15 +87,33 @@ class ReleaseGateService:
         found = False
         for task in checklist.tasks:
             if task.task_id == task_id:
-                updated.append(ReleaseTask(task_id=task.task_id, label=task.label, status=status, evidence_path=evidence_path))
+                updated.append(
+                    ReleaseTask(
+                        task_id=task.task_id,
+                        label=task.label,
+                        status=status,
+                        evidence_path=evidence_path,
+                    )
+                )
                 found = True
             else:
                 updated.append(task)
         if not found:
-            updated.append(ReleaseTask(task_id=task_id, label=task_id.replace("_", " "), status=status, evidence_path=evidence_path))
-        next_state = ReleaseChecklist(version=version, generated_at=checklist.generated_at, tasks=tuple(updated))
+            updated.append(
+                ReleaseTask(
+                    task_id=task_id,
+                    label=task_id.replace("_", " "),
+                    status=status,
+                    evidence_path=evidence_path,
+                )
+            )
+        next_state = ReleaseChecklist(
+            version=version, generated_at=checklist.generated_at, tasks=tuple(updated)
+        )
         state_path = self._base_dir / f"{version}.json"
-        state_path.write_text(json.dumps(next_state.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8")
+        state_path.write_text(
+            json.dumps(next_state.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8"
+        )
         self._update_markdown(version=version, checklist=next_state)
         return next_state
 
@@ -142,7 +162,12 @@ class ReleaseGateService:
         checklist_path.write_text(self._render_markdown(checklist), encoding="utf-8")
 
     def _render_markdown(self, checklist: ReleaseChecklist) -> str:
-        lines = [f"# Release Checklist {checklist.version}", "", f"- generated_at: {checklist.generated_at}", ""]
+        lines = [
+            f"# Release Checklist {checklist.version}",
+            "",
+            f"- generated_at: {checklist.generated_at}",
+            "",
+        ]
         for task in checklist.tasks:
             mark = "x" if task.status in {"pass", "ok", "done"} else " "
             evidence = f" (evidence: {task.evidence_path})" if task.evidence_path else ""
@@ -172,7 +197,9 @@ class ReleaseGateService:
             ("risk_disclosure_review", "Risk disclosure wording review"),
             ("runbook_update", "Runbook update check"),
         ]
-        return [ReleaseTask(task_id=task_id, label=label, status="pending") for task_id, label in labels]
+        return [
+            ReleaseTask(task_id=task_id, label=label, status="pending") for task_id, label in labels
+        ]
 
     def _emit_guardrails_block(self, *, reason: str) -> None:
         risk_state = RiskDisclosureService().fetch_state().status

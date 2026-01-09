@@ -5,9 +5,10 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
+from collections.abc import Sequence
 from datetime import date, datetime, timezone
 from pathlib import Path
-from typing import Sequence
 
 DEFAULT_SPREAD_PATH = Path("metrics/spread_guard.jsonl")
 DEFAULT_CORRELATION_PATH = Path("metrics/correlation_guard.jsonl")
@@ -97,7 +98,9 @@ def _render_report(
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--week", help="ISO week format YYYY-Www", default=None)
-    parser.add_argument("--spread-path", type=Path, default=DEFAULT_SPREAD_PATH, help="metrics/spread_guard.jsonl")
+    parser.add_argument(
+        "--spread-path", type=Path, default=DEFAULT_SPREAD_PATH, help="metrics/spread_guard.jsonl"
+    )
     parser.add_argument(
         "--correlation-path",
         type=Path,
@@ -130,7 +133,7 @@ def main() -> None:
         correlation_entries=correlation_entries,
         output_dir=args.out_dir,
     )
-    print(f"Edge Watch report generated: {report}")
+    sys.stdout.write(f"Edge Watch report generated: {report}\n")
 
 
 if __name__ == "__main__":

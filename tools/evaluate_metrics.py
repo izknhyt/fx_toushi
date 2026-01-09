@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
-
 
 KEY_FIELDS = [
     ("metrics", "pf_all", "PF (All)"),
@@ -62,8 +62,12 @@ def _threshold_check(data: dict[str, Any]) -> tuple[bool, list[str]]:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Compare metrics JSON with a baseline and emit Markdown evidence.")
-    parser.add_argument("metrics_path", type=Path, help="Path to the freshly generated metrics JSON")
+    parser = argparse.ArgumentParser(
+        description="Compare metrics JSON with a baseline and emit Markdown evidence."
+    )
+    parser.add_argument(
+        "metrics_path", type=Path, help="Path to the freshly generated metrics JSON"
+    )
     parser.add_argument(
         "--baseline",
         type=Path,
@@ -113,7 +117,7 @@ def main() -> None:
     output = "\n".join(lines) + "\n"
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(output, encoding="utf-8")
-    print(f"Wrote validation summary to {args.out}")
+    sys.stdout.write(f"Wrote validation summary to {args.out}\n")
 
 
 if __name__ == "__main__":

@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-from typing import Callable, Dict
+from collections.abc import Callable
 
 
 class DependencyRegistry:
     def __init__(self) -> None:
-        self._factories: Dict[str, Callable[[], object]] = {}
+        self._factories: dict[str, Callable[[], object]] = {}
 
     def register(self, name: str, factory: Callable[[], object]) -> None:
         self._factories[name] = factory

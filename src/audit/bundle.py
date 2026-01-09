@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from datetime import datetime, timezone
 import hashlib
 import json
-from pathlib import Path
 import shutil
-from typing import Iterable, Mapping
+from collections.abc import Mapping
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
+from pathlib import Path
 
 __all__ = [
     "AuditBundleService",
@@ -71,7 +71,14 @@ class AuditBundleService:
         bundle_root = self._base_dir / period
         files, missing = self._collect_sources(period)
         materialized: list[AuditBundleFile] = []
-        counts: dict[str, int] = {"signals": 0, "tickets": 0, "fills": 0, "config": 0, "risk_disclosure": 0, "manifest": 0}
+        counts: dict[str, int] = {
+            "signals": 0,
+            "tickets": 0,
+            "fills": 0,
+            "config": 0,
+            "risk_disclosure": 0,
+            "manifest": 0,
+        }
 
         if not dry_run:
             bundle_root.mkdir(parents=True, exist_ok=True)
@@ -105,7 +112,9 @@ class AuditBundleService:
         manifest_path = bundle_root / "audit_manifest.json"
         signature_path = bundle_root / "audit_manifest.sig"
         if not dry_run:
-            manifest_path.write_text(json.dumps(manifest.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8")
+            manifest_path.write_text(
+                json.dumps(manifest.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8"
+            )
             _write_signature(manifest_path, signature_path, signer=signer)
         return AuditBundleResult(
             bundle_path=bundle_root,
@@ -136,7 +145,9 @@ class AuditBundleService:
             if expected and actual != expected:
                 mismatches.append({"path": rel_path, "expected": expected, "actual": actual})
         sig_status = _verify_signature(manifest_path, signature_path)
-        status = "ok" if not mismatches and not missing and sig_status["status"] == "ok" else "error"
+        status = (
+            "ok" if not mismatches and not missing and sig_status["status"] == "ok" else "error"
+        )
         return {
             "status": status,
             "bundle_path": str(bundle_path),
@@ -163,8 +174,12 @@ class AuditBundleService:
         sources.extend(_collect_glob("config", Path("config"), "**/*.yaml"))
         sources.extend(_collect_glob("config", Path("config"), "**/*.json"))
         sources.extend(_collect_glob("manifest", Path("reports"), "data_manifest.json"))
-        sources.extend(_collect_glob("risk_disclosure", Path("logs/audit"), f"risk_consent_{period}*.jsonl"))
-        sources.extend(_collect_glob("risk_disclosure", Path("data/compliance"), "risk_disclosure_state.json"))
+        sources.extend(
+            _collect_glob("risk_disclosure", Path("logs/audit"), f"risk_consent_{period}*.jsonl")
+        )
+        sources.extend(
+            _collect_glob("risk_disclosure", Path("data/compliance"), "risk_disclosure_state.json")
+        )
 
         required = {
             "signals",
@@ -205,7 +220,7 @@ def _utcnow_iso() -> str:
 
 def _write_signature(manifest_path: Path, signature_path: Path, *, signer: str) -> None:
     manifest_sha = _sha256_path(manifest_path)
-    signature_seed = f"{manifest_sha}:{signer}".encode("utf-8")
+    signature_seed = f"{manifest_sha}:{signer}".encode()
     signature = hashlib.sha256(signature_seed).hexdigest()
     payload = {
         "schema_version": "audit.manifest.sig.v1",
@@ -226,8 +241,12 @@ def _verify_signature(manifest_path: Path, signature_path: Path) -> Mapping[str,
         return {"status": "error", "error": str(exc), "path": str(signature_path)}
     signer = payload.get("signer", "local")
     manifest_sha = _sha256_path(manifest_path)
-    expected = hashlib.sha256(f"{manifest_sha}:{signer}".encode("utf-8")).hexdigest()
-    status = "ok" if payload.get("manifest_sha256") == manifest_sha and payload.get("signature") == expected else "error"
+    expected = hashlib.sha256(f"{manifest_sha}:{signer}".encode()).hexdigest()
+    status = (
+        "ok"
+        if payload.get("manifest_sha256") == manifest_sha and payload.get("signature") == expected
+        else "error"
+    )
     return {
         "status": status,
         "path": str(signature_path),

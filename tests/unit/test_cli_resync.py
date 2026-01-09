@@ -2,15 +2,16 @@
 
 from __future__ import annotations
 
-from typing import Any, Mapping, Sequence
-
-import pytest
+from collections.abc import Mapping, Sequence
+from typing import Any
 
 from src.interfaces.cli.resync import resync
 
 
 class _SessionStub:
-    def __init__(self, *, result: Mapping[str, Any] | None = None, error: Exception | None = None) -> None:
+    def __init__(
+        self, *, result: Mapping[str, Any] | None = None, error: Exception | None = None
+    ) -> None:
         self._result = result
         self._error = error
         self.calls: list[Mapping[str, Any]] = []

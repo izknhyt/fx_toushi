@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Literal, Optional
+from typing import Literal
 
 
 @dataclass(slots=True)
@@ -13,7 +13,7 @@ class OrderEvent:
     status: Literal["submitted", "filled", "cancelled", "error"]
     ts: datetime | None = None
     reason: str | None = None
-    error_class: Optional[str] = None  # retryable|fatal|circuit_breaker
+    error_class: str | None = None  # retryable|fatal|circuit_breaker
 
 
 class OrderLifecycleManager:
@@ -23,7 +23,9 @@ class OrderLifecycleManager:
     _FATAL = {"auth", "permission", "instrument_closed", "invalid_params"}
     _CIRCUIT_BREAKER = {"rate_limit_exceeded", "venue_halt"}
 
-    def __init__(self, *, max_retries: int = 2, backoff_sec: float = 1.0, jitter: float = 0.2) -> None:
+    def __init__(
+        self, *, max_retries: int = 2, backoff_sec: float = 1.0, jitter: float = 0.2
+    ) -> None:
         self._events: list[OrderEvent] = []
         self._max_retries = max_retries
         self._backoff_sec = backoff_sec
@@ -47,7 +49,9 @@ class OrderLifecycleManager:
             return "circuit_breaker"
         return "fatal" if code_lower in self._FATAL else "fatal"
 
-    def record_error_event(self, order_id: str, *, code: str, reason: str | None = None) -> OrderEvent:
+    def record_error_event(
+        self, order_id: str, *, code: str, reason: str | None = None
+    ) -> OrderEvent:
         """Record an error event with classification and return it."""
 
         classification = self.classify_error(code)

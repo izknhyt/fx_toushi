@@ -9,21 +9,21 @@ with the PoC templates under `reports/backtest/`.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, asdict
+import json
+from collections.abc import Iterable, Mapping
+from dataclasses import asdict, dataclass
 from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, Iterable, Mapping
-import numpy as np
+from typing import Any
 
-import json
-import math
+import numpy as np
 import pandas as pd
 import yaml
 
 from src.features.pipeline import FeaturePipeline
-from src.strategies.ma_rsi import MovingAverageRsiStrategy
 from src.strategies.donchian import DonchianBreakoutStrategy
+from src.strategies.ma_rsi import MovingAverageRsiStrategy
 from src.strategies.registry import StrategyEngine, StrategyManifest
 
 DEFAULT_DATA_MANIFEST = Path("reports") / "data_manifest.json"
@@ -156,12 +156,18 @@ def _load_risk_policy(risk_policy_path: Path, profile: str) -> RiskProfileSettin
     for strategy_id, raw in limits.get("per_strategy_limits", {}).items():
         per_strategy_limits[str(strategy_id)] = StrategyRiskLimits(
             per_trade_pct=float(raw.get("per_trade_risk_pct", base_pct)),
-            r_eff_soft=float(raw.get("exposure_r_eff_soft_stop", limits.get("exposure_r_eff_soft_stop", 2.0))),
-            r_eff_hard=float(raw.get("exposure_r_eff_hard_stop", limits.get("exposure_r_eff_hard_stop", 2.5))),
+            r_eff_soft=float(
+                raw.get("exposure_r_eff_soft_stop", limits.get("exposure_r_eff_soft_stop", 2.0))
+            ),
+            r_eff_hard=float(
+                raw.get("exposure_r_eff_hard_stop", limits.get("exposure_r_eff_hard_stop", 2.5))
+            ),
             max_concurrent_overall=int(raw.get("max_concurrent_positions", {}).get("overall", 1))
             if isinstance(raw.get("max_concurrent_positions"), dict)
             else None,
-            max_concurrent_bucket=int(raw.get("max_concurrent_positions", {}).get("per_currency_bucket", 1))
+            max_concurrent_bucket=int(
+                raw.get("max_concurrent_positions", {}).get("per_currency_bucket", 1)
+            )
             if isinstance(raw.get("max_concurrent_positions"), dict)
             else None,
         )
@@ -290,7 +296,9 @@ class RiskState:
     consecutive_wins: int = 0
     consecutive_losses: int = 0
 
-    def update_after_trade(self, r_multiple: float, streak: StreakRules, base_risk_pct: float) -> None:
+    def update_after_trade(
+        self, r_multiple: float, streak: StreakRules, base_risk_pct: float
+    ) -> None:
         """Apply streak rules to adjust risk for the next trade."""
 
         if r_multiple > 0:
@@ -360,8 +368,12 @@ def simulate_paper_poc(
     all_trades: list[TradeRecord] = []
     dd_curve: list[float] = [equity]
 
-    entry_params = manifest_entry.parameters.get("entry", {}) if hasattr(manifest_entry, "parameters") else {}
-    sizing_params = manifest_entry.parameters.get("sizing", {}) if hasattr(manifest_entry, "parameters") else {}
+    entry_params = (
+        manifest_entry.parameters.get("entry", {}) if hasattr(manifest_entry, "parameters") else {}
+    )
+    sizing_params = (
+        manifest_entry.parameters.get("sizing", {}) if hasattr(manifest_entry, "parameters") else {}
+    )
     entry_tf = str(entry_params.get("timeframe", "5m"))
     ttl_minutes = ttl_bars * _timeframe_to_minutes(entry_tf)
     tp_r_multiple = float(sizing_params.get("tp_r_multiple", target_r_multiple))
@@ -370,10 +382,22 @@ def simulate_paper_poc(
     engine = StrategyEngine()
     if strategy == "m1_baseline_ma_rsi":
         ma_plugin = MovingAverageRsiStrategy()
-        entry_params = manifest_entry.parameters.get("entry", {}) if hasattr(manifest_entry, "parameters") else {}
-        sizing_params = manifest_entry.parameters.get("sizing", {}) if hasattr(manifest_entry, "parameters") else {}
-        ma_plugin.rsi_long_threshold = float(entry_params.get("rsi_long_threshold", ma_plugin.rsi_long_threshold))
-        ma_plugin.rsi_short_threshold = float(entry_params.get("rsi_short_threshold", ma_plugin.rsi_short_threshold))
+        entry_params = (
+            manifest_entry.parameters.get("entry", {})
+            if hasattr(manifest_entry, "parameters")
+            else {}
+        )
+        sizing_params = (
+            manifest_entry.parameters.get("sizing", {})
+            if hasattr(manifest_entry, "parameters")
+            else {}
+        )
+        ma_plugin.rsi_long_threshold = float(
+            entry_params.get("rsi_long_threshold", ma_plugin.rsi_long_threshold)
+        )
+        ma_plugin.rsi_short_threshold = float(
+            entry_params.get("rsi_short_threshold", ma_plugin.rsi_short_threshold)
+        )
         ma_plugin.min_gap_pct = float(entry_params.get("min_gap_pct", ma_plugin.min_gap_pct))
         ma_plugin._cooldown_bars = int(entry_params.get("cooldown_bars", ma_plugin.cooldown_bars()))
         # TP/SL/TTL handled in sizing_params below
@@ -543,15 +567,25 @@ def simulate_paper_poc(
                 dd_curve.append(equity)
                 continue
             slip = _slippage_for(symbol, ts, slippage_pips, slippage_std)
-            entry_price = close_price + dyn_spread + slip if direction == "long" else close_price - dyn_spread - slip
-            stop_price = entry_price - stop_buffer if direction == "long" else entry_price + stop_buffer
+            entry_price = (
+                close_price + dyn_spread + slip
+                if direction == "long"
+                else close_price - dyn_spread - slip
+            )
+            stop_price = (
+                entry_price - stop_buffer if direction == "long" else entry_price + stop_buffer
+            )
         else:
             buffer = getattr(signal, "buffer", None)
             if buffer is None or buffer <= 0:
                 buffer = max(0.08, atr_value * 0.03)
             level = getattr(signal, "level", close_price)
             slip = _slippage_for(symbol, ts, slippage_pips, slippage_std)
-            entry_price = close_price + dyn_spread + slip if direction == "long" else close_price - dyn_spread - slip
+            entry_price = (
+                close_price + dyn_spread + slip
+                if direction == "long"
+                else close_price - dyn_spread - slip
+            )
             stop_price = (level - buffer) if direction == "long" else (level + buffer)
 
         risk_distance = abs(entry_price - stop_price)
@@ -560,16 +594,16 @@ def simulate_paper_poc(
             continue
 
         # open risk constraints
-        def _open_risk_pct_total() -> float:
-            return sum((pos["risk_amount"] / equity) * 100 for pos in open_positions.values())
+        def _open_risk_pct_total(equity_value: float = equity) -> float:
+            return sum((pos["risk_amount"] / equity_value) * 100 for pos in open_positions.values())
 
-        def _open_risk_pct_bucket(sym: str) -> float:
+        def _open_risk_pct_bucket(sym: str, equity_value: float = equity) -> float:
             base, quote = _currencies(sym)
             pct = 0.0
             for s, pos in open_positions.items():
                 b, q = _currencies(s)
                 if (base and (b == base or q == base)) or (quote and (b == quote or q == quote)):
-                    pct += (pos["risk_amount"] / equity) * 100
+                    pct += (pos["risk_amount"] / equity_value) * 100
             return pct
 
         new_risk_pct = risk_state.current_risk_pct
@@ -606,9 +640,15 @@ def simulate_paper_poc(
             continue
         if bucket_limit is not None:
             base, quote = _currencies(symbol)
-            def _overlaps(sym: str) -> bool:
+
+            def _overlaps(
+                sym: str, base_value: str | None = base, quote_value: str | None = quote
+            ) -> bool:
                 b, q = _currencies(sym)
-                return (base and (b == base or q == base)) or (quote and (b == quote or q == quote))
+                return (base_value and (b == base_value or q == base_value)) or (
+                    quote_value and (b == quote_value or q == quote_value)
+                )
+
             open_count_same_bucket = sum(1 for sym in open_positions if _overlaps(sym))
             if open_count_same_bucket >= bucket_limit:
                 dd_curve.append(equity)
@@ -641,7 +681,11 @@ def simulate_paper_poc(
             close = float(row["close"])
             dyn_spread = _spread_for(symbol, last_ts, spread_pips)
             slip = _slippage_for(symbol, last_ts, slippage_pips, slippage_std)
-            exit_price = close - dyn_spread - slip if pos["direction"] == "long" else close + dyn_spread + slip
+            exit_price = (
+                close - dyn_spread - slip
+                if pos["direction"] == "long"
+                else close + dyn_spread + slip
+            )
             risk_distance = pos["risk_distance"]
             if pos["direction"] == "long":
                 r_multiple = (exit_price - pos["entry"]) / risk_distance
@@ -672,7 +716,11 @@ def simulate_paper_poc(
 
     wins = [t for t in all_trades if t.r_multiple > 0]
     losses = [t for t in all_trades if t.r_multiple <= 0]
-    pf_all = (sum(t.pnl for t in wins) / abs(sum(t.pnl for t in losses)) if losses else 1.0) if all_trades else 1.0
+    pf_all = (
+        (sum(t.pnl for t in wins) / abs(sum(t.pnl for t in losses)) if losses else 1.0)
+        if all_trades
+        else 1.0
+    )
     win_rate = len(wins) / len(all_trades) if all_trades else 0.0
     avg_r = sum(t.r_multiple for t in all_trades) / len(all_trades) if all_trades else 0.0
     equity_series = pd.Series(dd_curve)

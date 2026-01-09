@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import argparse
 import sys
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable
 
 LEDGER_PATH = Path("logs/ops/review.log")
 
@@ -85,17 +85,17 @@ def main() -> None:
             f"[ops.review_log] missing at {path.as_posix()} – "
             "follow RUN-POST-03 to recreate and log an Ops issue."
         )
-        print(message, file=sys.stderr)
+        sys.stderr.write(message + "\n")
         sys.exit(1 if args.require else 0)
 
     try:
         entries = _parse_entries(path)
     except ValueError as exc:
-        print(f"[ops.review_log] format error: {exc}", file=sys.stderr)
+        sys.stderr.write(f"[ops.review_log] format error: {exc}\n")
         sys.exit(1)
 
     summary = _render_summary(entries)
-    print(f"[ops.review_log] {summary}")
+    sys.stdout.write(f"[ops.review_log] {summary}\n")
 
 
 if __name__ == "__main__":

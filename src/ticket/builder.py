@@ -2,21 +2,23 @@
 
 from __future__ import annotations
 
-import logging
-import yaml
-import os
 import json
+import logging
+import os
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Iterable, Mapping, Protocol, runtime_checkable
 from types import SimpleNamespace
+from typing import Protocol, runtime_checkable
 
-from src.execution import ExecutionAdjustments
-from src.execution.model import DeterministicExecutionModel, ExecutionError
-from src.execution.alpha_overlay import LotLadderRule, apply_hands_off_sizing
+import yaml
 
+from src.analytics.pnl_feedback import FeedbackVector
 from src.core.gate import GateState
+from src.execution import ExecutionAdjustments
+from src.execution.alpha_overlay import LotLadderRule, apply_hands_off_sizing
+from src.execution.model import DeterministicExecutionModel, ExecutionError
 
 from .checklist import ChecklistBuilder, ChecklistItem
 from .exceptions import TicketBlockedError
@@ -104,7 +106,9 @@ class DefaultTicketBuilder:
                 gate_state=gate_state,
                 model=self._execution_model,
             )
-        if "determinism_hash" not in draft.metadata or not isinstance(draft.metadata.get("determinism_hash"), str):
+        if "determinism_hash" not in draft.metadata or not isinstance(
+            draft.metadata.get("determinism_hash"), str
+        ):
             raise TicketBlockedError(
                 code="determinism_hash_missing",
                 message="determinism_hash required in draft metadata",
@@ -209,9 +213,7 @@ class DefaultTicketBuilder:
             ttl_seconds=payload["metadata"].get("ttl_seconds"),
         )
 
-        logger.info(
-            "TicketBuilder.build generated artifact for ticket_id=%s", ticket_id
-        )
+        logger.info("TicketBuilder.build generated artifact for ticket_id=%s", ticket_id)
         return TicketArtifact(
             ticket_id=ticket_id,
             payload=payload,
@@ -471,7 +473,9 @@ def _load_lot_ladder(path: Path) -> list[LotLadderRule]:
         data = yaml.safe_load(path.read_text(encoding="utf-8"))
     except Exception:
         return []
-    ladder_cfg = (data or {}).get("risk_policy", {}).get("lot_ladder") or data.get("lot_ladder") or []
+    ladder_cfg = (
+        (data or {}).get("risk_policy", {}).get("lot_ladder") or data.get("lot_ladder") or []
+    )
     rules: list[LotLadderRule] = []
     if not isinstance(ladder_cfg, Iterable):
         return rules
@@ -502,8 +506,14 @@ def _apply_hands_off_sizing(
     meta = draft.metadata
     pf = float(meta.get("pf_all")) if isinstance(meta.get("pf_all"), (int, float)) else None
     sharpe = float(meta.get("sharpe")) if isinstance(meta.get("sharpe"), (int, float)) else None
-    maxdd_pct = float(meta.get("maxdd_pct")) if isinstance(meta.get("maxdd_pct"), (int, float)) else None
-    watchlist = int(meta.get("watchlist_count")) if isinstance(meta.get("watchlist_count"), (int, float)) else 0
+    maxdd_pct = (
+        float(meta.get("maxdd_pct")) if isinstance(meta.get("maxdd_pct"), (int, float)) else None
+    )
+    watchlist = (
+        int(meta.get("watchlist_count"))
+        if isinstance(meta.get("watchlist_count"), (int, float))
+        else 0
+    )
     if pf is None or sharpe is None or maxdd_pct is None:
         fallback = _load_fallback_metrics()
         pf = pf if pf is not None else fallback.get("pf_all")
@@ -511,8 +521,12 @@ def _apply_hands_off_sizing(
         maxdd_pct = maxdd_pct if maxdd_pct is not None else fallback.get("maxdd_pct")
         watchlist = watchlist or fallback.get("watchlist_count", 0)
     feedback = None
-    if isinstance(meta.get("realized_rr"), (int, float)) and isinstance(meta.get("target_rr"), (int, float)):
-        feedback = FeedbackVector(realized_rr=float(meta["realized_rr"]), target_rr=float(meta["target_rr"]))
+    if isinstance(meta.get("realized_rr"), (int, float)) and isinstance(
+        meta.get("target_rr"), (int, float)
+    ):
+        feedback = FeedbackVector(
+            realized_rr=float(meta["realized_rr"]), target_rr=float(meta["target_rr"])
+        )
     if pf is None or sharpe is None or maxdd_pct is None:
         return draft.qty, 1.0, False
     adjusted_size, ladder_factor, dynamic_applied = apply_hands_off_sizing(
@@ -528,8 +542,12 @@ def _apply_hands_off_sizing(
         feedback=feedback,
         max_dynamic_adjust_pct=float(meta.get("max_dynamic_adjust_pct", 0.15)),
         dynamic_enabled=bool(meta.get("dynamic_enabled", True)),
-        spread_penalty=float(meta.get("spread_penalty", 0.0)) if isinstance(meta.get("spread_penalty"), (int, float)) else None,
-        latency_p95_ms=float(meta.get("latency_p95_ms", 0.0)) if isinstance(meta.get("latency_p95_ms"), (int, float)) else None,
+        spread_penalty=float(meta.get("spread_penalty", 0.0))
+        if isinstance(meta.get("spread_penalty"), (int, float))
+        else None,
+        latency_p95_ms=float(meta.get("latency_p95_ms", 0.0))
+        if isinstance(meta.get("latency_p95_ms"), (int, float))
+        else None,
     )
     return adjusted_size, ladder_factor, dynamic_applied
 

@@ -7,8 +7,8 @@ from .registry import (
     StrategyEngine,
     StrategyExecutionError,
     StrategyManifest,
-    StrategyRegistryError,
     StrategyRegistrationError,
+    StrategyRegistryError,
 )
 
 __all__ = [

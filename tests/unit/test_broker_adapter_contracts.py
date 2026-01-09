@@ -5,14 +5,13 @@ from dataclasses import is_dataclass
 from pathlib import Path
 
 import pytest
-
 from src.brokers.adapter import (
     CTRADER_ENDPOINTS,
     MT5_ENDPOINTS,
-    EndpointSpec,
-    FieldMapping,
     ORDER_FIELD_MAPPING,
     RATE_LIMIT_SLA,
+    EndpointSpec,
+    FieldMapping,
 )
 
 FIXTURE_PATH = Path(__file__).resolve().parent.parent / "fixtures" / "broker_adapter.json"
@@ -50,9 +49,9 @@ def test_field_mapping_contract() -> None:
     ), f"Field mappings differ from fixture: {observed_fields ^ required_fields}"
 
     for mapping in ORDER_FIELD_MAPPING:
-        assert mapping.direction in allowed_directions, (
-            f"Unexpected direction '{mapping.direction}' for {mapping.ticket_field}"
-        )
+        assert (
+            mapping.direction in allowed_directions
+        ), f"Unexpected direction '{mapping.direction}' for {mapping.ticket_field}"
 
 
 def test_rate_limit_sla_strings_match_design() -> None:
@@ -63,11 +62,12 @@ def test_rate_limit_sla_strings_match_design() -> None:
 
         actual_index = {entry["endpoint"]: entry for entry in RATE_LIMIT_SLA[adapter]}
         for endpoint, expected_values in expectations.items():
-            assert endpoint in actual_index, f"Missing endpoint '{endpoint}' for adapter '{adapter}'"
+            assert (
+                endpoint in actual_index
+            ), f"Missing endpoint '{endpoint}' for adapter '{adapter}'"
             for key in ("limit", "sla", "retry_policy"):
                 actual_value = actual_index[endpoint][key]
                 expected_value = expected_values[key]
                 assert (
                     actual_value == expected_value
                 ), f"{adapter}.{endpoint}.{key} mismatch: {actual_value!r} != {expected_value!r}"
-

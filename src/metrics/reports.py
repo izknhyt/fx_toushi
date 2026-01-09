@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from statistics import mean
-from typing import Iterable, Mapping, Sequence
 
 logger = logging.getLogger(__name__)
 

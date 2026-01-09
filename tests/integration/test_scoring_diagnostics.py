@@ -7,7 +7,6 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
-
 from src.interfaces.cli.scoring import run_diagnostics
 
 
@@ -16,7 +15,9 @@ def fixed_time() -> datetime:
     return datetime(2025, 3, 21, 2, 1, 30, tzinfo=timezone.utc)
 
 
-def test_run_diagnostics_generates_markdown(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fixed_time: datetime) -> None:
+def test_run_diagnostics_generates_markdown(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fixed_time: datetime
+) -> None:
     """Baseline strategy should produce Live Guard-aligned markdown evidence."""
 
     monkeypatch.setattr("src.interfaces.cli.scoring._current_time", lambda: fixed_time)
@@ -75,4 +76,3 @@ def test_run_diagnostics_flags_portfolio_drift_breach(
         "latency_window_exceeded",
     ]
     assert "Mock report for audit scaffolding." in document["notes"][0]
-

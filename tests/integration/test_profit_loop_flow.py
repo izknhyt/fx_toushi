@@ -1,7 +1,7 @@
 """Lightweight integration-style check for auto_execute on/off flow."""
 
-from src.execution.alpha_overlay import LotLadderRule, apply_lot_ladder
 from src.analytics.pnl_feedback import FeedbackVector, apply_dynamic_adjustment
+from src.execution.alpha_overlay import LotLadderRule, apply_lot_ladder
 
 
 def test_profit_loop_flow_auto_execute_on_and_off() -> None:
@@ -10,7 +10,11 @@ def test_profit_loop_flow_auto_execute_on_and_off() -> None:
         base_size=1.0,
         board_mode="normal",
         auto_execute=True,
-        lot_ladder=[LotLadderRule(pf_min=1.2, sharpe_min=1.0, maxdd_max=8.0, watchlist_max=0, size_factor=1.1)],
+        lot_ladder=[
+            LotLadderRule(
+                pf_min=1.2, sharpe_min=1.0, maxdd_max=8.0, watchlist_max=0, size_factor=1.1
+            )
+        ],
         pf_all=1.25,
         sharpe=1.05,
         maxdd_pct=7.5,

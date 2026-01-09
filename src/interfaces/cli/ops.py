@@ -4,29 +4,27 @@ from __future__ import annotations
 
 import json
 import logging
-
+from collections.abc import Iterable
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Iterable
-from datetime import datetime, date, timezone
 
+from src.core.gate import GateAggregator, GateState
 from src.ops import AutomationEffectTracker, OpsAgendaService, OpsDrillService, OpsWorklogService
-from src.ops.automation import AutomationEffectDelta
 from src.ops.action_sync import ActionSyncError, sync_action_items
+from src.ops.automation import AutomationEffectDelta
 from src.ops.profit_readiness import (
     DEFAULT_PROFIT_READINESS_PATH,
     EXIT_GUARDED,
     EXIT_HALT,
-    EXIT_OK,
     EXIT_STALE,
     EXIT_WARN,
     ProfitReadinessError,
     latest_by_lever,
     load_recent_readiness,
+    profit_status_from_exit,
     record_readiness,
     verify_profit_readiness,
-    profit_status_from_exit,
 )
-from src.core.gate import GateAggregator, GateState
 from src.ops_readiness import OpsReadinessEvaluatorStub
 
 logger = logging.getLogger(__name__)
@@ -208,8 +206,7 @@ def readiness(
         payload["recorded"] = recorded_entry.to_mapping() if recorded_entry else None
         latest_entries = latest_by_lever(path=profit_path, levers=profit_levers)
         payload["profit_readiness_summary"] = {
-            lever: entry.to_mapping()
-            for lever, entry in latest_entries.items()
+            lever: entry.to_mapping() for lever, entry in latest_entries.items()
         }
         if verify:
             try:
@@ -248,7 +245,9 @@ def readiness(
             if record_lever is None:
                 record_readiness(
                     lever="Profit Readiness Verify",
-                    status=result.status if result.status in {"ok", "warning", "alert"} else "warning",
+                    status=result.status
+                    if result.status in {"ok", "warning", "alert"}
+                    else "warning",
                     evidence=result.evidence,
                     notes=f"KPI check ({result.sample_count} samples)",
                     actor=record_actor,
@@ -266,10 +265,11 @@ def readiness(
                     actor=record_actor,
                 )
             if result.exit_code in {EXIT_WARN, EXIT_GUARDED, EXIT_HALT, EXIT_STALE}:
-                raise ProfitReadinessError(
-                    f"profit readiness verification returned {result.status} (exit {result.exit_code})",
-                    exit_code=result.exit_code,
+                message = (
+                    "profit readiness verification returned "
+                    f"{result.status} (exit {result.exit_code})"
                 )
+                raise ProfitReadinessError(message, exit_code=result.exit_code)
 
     logger.info("cli.ops.readiness.completed", extra={"include_profit": include_profit})
     payload["output"] = output

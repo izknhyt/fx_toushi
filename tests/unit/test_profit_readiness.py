@@ -5,7 +5,6 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-
 from src.ops.profit_readiness import (
     EXIT_HALT,
     EXIT_OK,

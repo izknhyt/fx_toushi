@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
 from copy import deepcopy
+from datetime import datetime, timezone
 
 import pytest
-
 from src.strategies.registry import ManifestValidationError, StrategyManifest
 
 pytestmark = pytest.mark.strategy_manifest

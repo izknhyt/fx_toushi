@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping, Sequence
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Mapping, Sequence
+from typing import Any
 
 from src.core.session import (
     DefaultSessionManager,
@@ -218,7 +219,9 @@ def stop_session(
     session_meta = log_payload.setdefault("session", {})
     mode = session_meta.get("mode")
     snapshot_path = session_meta.get("snapshot_path")
-    resolved_snapshot = Path(snapshot_path) if snapshot_path else snapshot_root / str(mode) / f"{session_id}.json"
+    resolved_snapshot = (
+        Path(snapshot_path) if snapshot_path else snapshot_root / str(mode) / f"{session_id}.json"
+    )
 
     events.append(
         {
@@ -247,6 +250,8 @@ def stop_session(
         "snapshot_path": str(resolved_snapshot),
         "stopped_at": timestamp,
     }
+
+
 def _normalise(value: Any) -> Any:
     if isinstance(value, Mapping):
         return {str(key): _normalise(val) for key, val in value.items()}

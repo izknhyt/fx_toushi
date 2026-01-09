@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Iterable
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Iterable
 
 logger = logging.getLogger(__name__)
 
@@ -90,10 +90,7 @@ def _resolve_sources(log_dir: Path, export_type: str) -> list[Path]:
     token = export_type.strip()
     if not token or token.lower() == "all":
         return sorted(log_dir.glob("*.jsonl"))
-    if token.endswith(".jsonl"):
-        path = log_dir / token
-    else:
-        path = log_dir / f"{token}.jsonl"
+    path = log_dir / token if token.endswith(".jsonl") else log_dir / f"{token}.jsonl"
     return [path] if path.exists() else []
 
 

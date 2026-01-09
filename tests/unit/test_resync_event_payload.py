@@ -8,7 +8,8 @@ from pathlib import Path
 def _load_resync_module():
     # Avoid importing the CLI package __init__ (which pulls tickets) by loading the module directly.
     spec = importlib.util.spec_from_file_location(
-        "src.interfaces.cli.resync", Path(__file__).parents[2] / "src" / "interfaces" / "cli" / "resync.py"
+        "src.interfaces.cli.resync",
+        Path(__file__).parents[2] / "src" / "interfaces" / "cli" / "resync.py",
     )
     module = importlib.util.module_from_spec(spec)  # type: ignore[arg-type]
     assert spec and spec.loader  # for mypy
@@ -32,7 +33,12 @@ def test_emit_resync_completed_event_includes_sla_fields(tmp_path: Path):
         "retry_count": 2,
         "latency_status": "warn",
     }
-    context = {"mode": "live", "board_mode": "guarded", "cfg_hash": "sha256:cfg", "data_hash": "sha256:data"}
+    context = {
+        "mode": "live",
+        "board_mode": "guarded",
+        "cfg_hash": "sha256:cfg",
+        "data_hash": "sha256:data",
+    }
 
     resync_cli._emit_resync_completed_event(
         log_path=log_path,
@@ -85,13 +91,17 @@ def test_enrich_summary_with_ingestion_metrics(tmp_path: Path):
     metrics_path.write_text(
         "\n".join(
             [
-                json.dumps({"ts": "2025-01-01T00:00:00Z", "phase": "processing", "p95_latency_sec": 5}),
-                json.dumps({
-                    "ts": "2025-01-01T00:05:00Z",
-                    "phase": "fetch",
-                    "p95_latency_sec": 1.5,
-                    "status": "degraded",
-                }),
+                json.dumps(
+                    {"ts": "2025-01-01T00:00:00Z", "phase": "processing", "p95_latency_sec": 5}
+                ),
+                json.dumps(
+                    {
+                        "ts": "2025-01-01T00:05:00Z",
+                        "phase": "fetch",
+                        "p95_latency_sec": 1.5,
+                        "status": "degraded",
+                    }
+                ),
             ]
         ),
         encoding="utf-8",

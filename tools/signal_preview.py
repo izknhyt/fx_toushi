@@ -9,22 +9,17 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from collections.abc import Iterable
 from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, Iterable
+from typing import TYPE_CHECKING, Any
 
 import pandas as pd
 import yaml
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
-if str(REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(REPO_ROOT))
-
-from src.features.pipeline import FeaturePipeline
-from src.strategies.donchian import DonchianBreakoutStrategy
-from src.strategies.ma_rsi import MovingAverageRsiStrategy
-from src.strategies.registry import StrategyEngine, StrategyManifest
+if TYPE_CHECKING:
+    from src.features.pipeline import FeaturePipeline
 
 
 def _utcnow_iso() -> str:
@@ -57,7 +52,9 @@ def _build_gate_state(symbols: Iterable[str]) -> SimpleNamespace:
     news = SimpleNamespace(blocked=False, reason=None, release_ts=None)
     calendar = SimpleNamespace(blocked=False, holiday_block=False, reason=None)
     spread = SimpleNamespace(state="normal", reason=None, cooldown_eta=None)
-    per_symbol = {symbol: SimpleNamespace(news=news, calendar=calendar, spread=spread) for symbol in symbols}
+    per_symbol = {
+        symbol: SimpleNamespace(news=news, calendar=calendar, spread=spread) for symbol in symbols
+    }
     market = SimpleNamespace(
         news=news,
         calendar=calendar,
@@ -183,13 +180,25 @@ def _format_signal_summary(signals: list[dict[str, Any]]) -> list[str]:
 
 
 def main() -> int:
+    repo_root = Path(__file__).resolve().parents[1]
+    if str(repo_root) not in sys.path:
+        sys.path.insert(0, str(repo_root))
+
     parser = argparse.ArgumentParser(description="Preview strategy signals from curated data.")
     parser.add_argument("--symbols", help="Comma-separated symbols (e.g., USDJPY,EURUSD).")
-    parser.add_argument("--profile", default="config/profiles/paper.yaml", help="Profile path for defaults.")
+    parser.add_argument(
+        "--profile", default="config/profiles/paper.yaml", help="Profile path for defaults."
+    )
     parser.add_argument("--data-dir", default="data/research/curated", help="Curated data root.")
-    parser.add_argument("--feature-config", default="config/feature_pipeline.yaml", help="Feature pipeline config.")
-    parser.add_argument("--strategy-manifest", default="config/strategy_manifest.yaml", help="Strategy manifest.")
-    parser.add_argument("--data-manifest", default="reports/data_manifest.json", help="Data manifest for fallbacks.")
+    parser.add_argument(
+        "--feature-config", default="config/feature_pipeline.yaml", help="Feature pipeline config."
+    )
+    parser.add_argument(
+        "--strategy-manifest", default="config/strategy_manifest.yaml", help="Strategy manifest."
+    )
+    parser.add_argument(
+        "--data-manifest", default="reports/data_manifest.json", help="Data manifest for fallbacks."
+    )
     parser.add_argument("--output", help="Optional output JSON path.")
     parser.add_argument("--verbose", action="store_true", help="Print detailed diagnostics")
     args = parser.parse_args()
@@ -202,6 +211,11 @@ def main() -> int:
         symbols = _load_symbols_from_profile(profile_path)
     if not symbols:
         raise SystemExit("No symbols provided. Use --symbols or configure data_ingestion.symbols.")
+
+    from src.features.pipeline import FeaturePipeline
+    from src.strategies.donchian import DonchianBreakoutStrategy
+    from src.strategies.ma_rsi import MovingAverageRsiStrategy
+    from src.strategies.registry import StrategyEngine
 
     pipeline = FeaturePipeline.from_config_file(Path(args.feature_config))
     engine = StrategyEngine()
@@ -253,7 +267,9 @@ def main() -> int:
         if row is None:
             results["warnings"].append(f"no usable row with required features: {symbol}")
             if args.verbose:
-                results["diagnostics"][symbol] = _diagnose_missing_features(combined, required_by_strategy)
+                results["diagnostics"][symbol] = _diagnose_missing_features(
+                    combined, required_by_strategy
+                )
             else:
                 results["diagnostics"][symbol] = diagnostics
             continue
@@ -277,18 +293,28 @@ def main() -> int:
         if not signals:
             results["warnings"].append(f"no signals emitted: {symbol}")
         if args.verbose:
-            results["diagnostics"][symbol] = _diagnose_missing_features(combined, required_by_strategy)
+            results["diagnostics"][symbol] = _diagnose_missing_features(
+                combined, required_by_strategy
+            )
         else:
             results["diagnostics"][symbol] = diagnostics
         results["signals"].extend([_collect_signal_payload(signal) for signal in signals])
 
-    output_path = Path(args.output) if args.output else Path("reports") / "signal_preview" / f"{_utcnow_iso()}.json"
+    output_path = (
+        Path(args.output)
+        if args.output
+        else Path("reports") / "signal_preview" / f"{_utcnow_iso()}.json"
+    )
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(json.dumps(results, ensure_ascii=False, indent=2), encoding="utf-8")
-    summary = {"output": str(output_path), "signals": len(results["signals"]), "warnings": results["warnings"]}
+    summary = {
+        "output": str(output_path),
+        "signals": len(results["signals"]),
+        "warnings": results["warnings"],
+    }
     if args.verbose:
         summary["signal_summary"] = _format_signal_summary(results["signals"])
-    print(json.dumps(summary, ensure_ascii=False))
+    sys.stdout.write(json.dumps(summary, ensure_ascii=False) + "\n")
     return 0
 
 

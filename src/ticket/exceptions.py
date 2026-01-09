@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Mapping
+from collections.abc import Mapping
 
 
 class TicketError(Exception):
@@ -12,7 +12,9 @@ class TicketError(Exception):
 class TicketBlockedError(TicketError):
     """Raised when the gate state prevents a ticket from being issued."""
 
-    def __init__(self, *, code: str, message: str, details: Mapping[str, object] | None = None) -> None:
+    def __init__(
+        self, *, code: str, message: str, details: Mapping[str, object] | None = None
+    ) -> None:
         super().__init__(message)
         self.code = code
         self.details = dict(details or {})

@@ -35,7 +35,9 @@ def test_catch_up_returns_hashes_and_mode(tmp_path: Path, monkeypatch):
 
     monkeypatch.setenv("TRADECTL_GATE_STATE_PATH", str(gate_path))
     monkeypatch.setenv("TRADECTL_DETERMINISM_LOG", str(det_log_path))
-    monkeypatch.setenv("TRADECTL_RESYNC_LOG_PATH", str(tmp_path / "logs" / "resync" / "resync_events.jsonl"))
+    monkeypatch.setenv(
+        "TRADECTL_RESYNC_LOG_PATH", str(tmp_path / "logs" / "resync" / "resync_events.jsonl")
+    )
     config = SessionConfig(mode="paper")
     manager = DefaultSessionManager(config=config, workflow=_WorkflowStub())
 
@@ -101,7 +103,9 @@ def test_catch_up_uses_ingestion_metrics(tmp_path: Path, monkeypatch):
     metrics_path.write_text(
         "\n".join(
             [
-                json.dumps({"ts": "2025-01-01T00:00:00Z", "phase": "processing", "p95_latency_sec": 4.0}),
+                json.dumps(
+                    {"ts": "2025-01-01T00:00:00Z", "phase": "processing", "p95_latency_sec": 4.0}
+                ),
                 json.dumps(
                     {
                         "ts": "2025-01-01T00:05:00Z",
@@ -118,7 +122,9 @@ def test_catch_up_uses_ingestion_metrics(tmp_path: Path, monkeypatch):
         encoding="utf-8",
     )
     monkeypatch.setenv("TRADECTL_INGESTION_METRICS_PATH", str(metrics_path))
-    monkeypatch.setenv("TRADECTL_RESYNC_LOG_PATH", str(tmp_path / "logs" / "resync" / "resync_events.jsonl"))
+    monkeypatch.setenv(
+        "TRADECTL_RESYNC_LOG_PATH", str(tmp_path / "logs" / "resync" / "resync_events.jsonl")
+    )
 
     manager = DefaultSessionManager(config=SessionConfig(mode="paper"), workflow=_WorkflowStub())
     summary = manager.catch_up(symbols=["GBPUSD"])
@@ -134,7 +140,9 @@ def test_catch_up_prefers_collector_snapshot(monkeypatch):
     collector = IngestionMetricsCollector(window_size=5, warn_ms=50.0, breach_ms=75.0)
     collector.observe(provider="p1", symbols=["USDJPY"], timeframe="M5", latency_ms=40.0, bars=1)
     collector.observe(provider="p1", symbols=["USDJPY"], timeframe="M5", latency_ms=60.0, bars=1)
-    collector.observe(provider="p1", symbols=["USDJPY"], timeframe="M5", latency_ms=80.0, bars=1, success=False)
+    collector.observe(
+        provider="p1", symbols=["USDJPY"], timeframe="M5", latency_ms=80.0, bars=1, success=False
+    )
 
     monkeypatch.setenv("TRADECTL_RESYNC_LOG_PATH", str(Path("logs/resync/resync_events.jsonl")))
     manager = DefaultSessionManager(config=SessionConfig(mode="paper"), workflow=_WorkflowStub())

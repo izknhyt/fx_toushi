@@ -4,6 +4,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 import pytest
+
 from jsonschema import Draft202012Validator
 
 pytestmark = pytest.mark.reduce_only_config

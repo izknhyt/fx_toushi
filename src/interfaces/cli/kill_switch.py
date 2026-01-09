@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Iterable, Mapping, MutableMapping
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Iterable, Mapping, MutableMapping
 
 logger = logging.getLogger(__name__)
 
@@ -21,11 +21,12 @@ __all__ = [
     "DEFAULT_KILL_SWITCH_STATE",
     "DEFAULT_KILL_SWITCH_METRICS",
     "KillSwitchEvidenceError",
-    "ResumeBlocked",
+    "ResumeBlockedError",
     "resume_blocked",
     "review",
     "set_state",
 ]
+
 
 def _utcnow_iso() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
@@ -58,6 +59,7 @@ def _persist_state(path: Path, *, state: str, reason: str | None, actor: str | N
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
     return path
 
+
 DEFAULT_OUTPUT_DIR = Path("reports/audit/kill_switch_review")
 
 
@@ -65,12 +67,12 @@ class KillSwitchEvidenceError(RuntimeError):
     """Raised when kill-switch review evidence cannot be produced."""
 
 
-class ResumeBlocked(RuntimeError):
+class ResumeBlockedError(RuntimeError):
     """Raised when resume is requested without meeting prerequisites."""
 
 
-def resume_blocked(message: str) -> ResumeBlocked:
-    return ResumeBlocked(message)
+def resume_blocked(message: str) -> ResumeBlockedError:
+    return ResumeBlockedError(message)
 
 
 def set_state(
@@ -156,16 +158,20 @@ def set_state(
     gate_state_snapshot: str | None = None
     if gate_state_path:
         try:
-            from src.core.gate import GateState, GateAggregator  # local import to avoid cycles
+            from src.core.gate import GateAggregator, GateState  # local import to avoid cycles
 
             if gate_state_path.exists():
                 gate_state = GateState.load(gate_state_path)
             else:
                 gate_state = GateState()
             aggregator = GateAggregator(initial_state=gate_state)
-            aggregator._state.risk.kill_switch_recommendation = None if state_value == "none" else state_value  # type: ignore[attr-defined]
+            aggregator._state.risk.kill_switch_recommendation = (
+                None if state_value == "none" else state_value
+            )  # type: ignore[attr-defined]
             aggregator._state.risk.kill_switch_reason = reason  # type: ignore[attr-defined]
-            aggregator._state.auto_execute = state_value == "none" and not aggregator._state.risk.reduce_only  # type: ignore[attr-defined]
+            aggregator._state.auto_execute = (
+                state_value == "none" and not aggregator._state.risk.reduce_only
+            )  # type: ignore[attr-defined]
             gate_state_snapshot = str(aggregator.persist_latest(path=gate_state_path))
         except Exception as exc:  # pragma: no cover - defensive
             logger.exception("kill_switch.gate_state_update_failed", exc_info=exc)
@@ -199,6 +205,8 @@ def _append_validation_log(payload: Mapping[str, object]) -> None:
         date_stamp = datetime.utcnow().strftime("%Y%m%d")
         log_path = Path("reports") / "validation_log" / f"AC-31_kill_switch_{date_stamp}.md"
         log_path.parent.mkdir(parents=True, exist_ok=True)
+        evidence = payload.get("evidence")
+        evidence_text = ", ".join(evidence) if isinstance(evidence, list) else ""
         lines = [
             f"## Kill Switch Action {payload.get('state')}",
             "",
@@ -210,7 +218,7 @@ def _append_validation_log(payload: Mapping[str, object]) -> None:
             f"| Actor | {payload.get('actor')} |",
             f"| Reason | {payload.get('reason')} |",
             f"| Runbook | {payload.get('runbook') or ''} |",
-            f"| Evidence | {', '.join(payload.get('evidence', [])) if isinstance(payload.get('evidence'), list) else ''} |",
+            f"| Evidence | {evidence_text} |",
             f"| GateState | {payload.get('gate_state_path') or ''} |",
             f"| Audit | {payload.get('audit_path')} |",
             f"| Metrics | {payload.get('metrics_path')} |",

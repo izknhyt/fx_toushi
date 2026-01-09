@@ -4,15 +4,16 @@ from __future__ import annotations
 
 import json
 import logging
-import yaml
+from collections.abc import Mapping, Sequence
 from datetime import date
 from pathlib import Path
-from typing import Mapping, Sequence
 
-from src.reporter.generator import ReportGenerator
-from src.reporter.kpi import compute_kpi_from_returns, compute_kpi_from_equity
-from src.journal import TradeJournalService
+import yaml
+
 from src.interfaces.cli import tickets as tickets_actions
+from src.journal import TradeJournalService
+from src.reporter.generator import ReportGenerator
+from src.reporter.kpi import compute_kpi_from_equity, compute_kpi_from_returns
 
 logger = logging.getLogger(__name__)
 
@@ -40,7 +41,9 @@ def _resolve_template(profile: str, template: Path | None) -> Path:
     return Path("src") / "reporter" / "templates" / "weekly_m1_core.md"
 
 
-def _read_feature_flag(flag: str, *, profile: str, path: Path = Path("config/feature_flags.yaml")) -> bool:
+def _read_feature_flag(
+    flag: str, *, profile: str, path: Path = Path("config/feature_flags.yaml")
+) -> bool:
     if not path.exists():
         return False
     try:
@@ -68,7 +71,9 @@ def _load_stress_runs(stress_dir: Path) -> list[Mapping[str, object]]:
         except OSError:
             summary = ""
         scenario = path.stem.replace("_report", "")
-        runs.append({"scenario": scenario, "status": "ok", "summary": summary, "artifacts": [str(path)]})
+        runs.append(
+            {"scenario": scenario, "status": "ok", "summary": summary, "artifacts": [str(path)]}
+        )
     return runs
 
 
@@ -84,7 +89,9 @@ def _format_kpi_value(value: object) -> str:
 def _load_latest_kpis(base_dir: Path = DEFAULT_KPI_BASE) -> tuple[dict[str, object], Path | None]:
     if not base_dir.exists():
         return {"sharpe": "n/a", "max_dd": "n/a", "win_rate": "n/a", "cum_r": "n/a"}, None
-    candidates = sorted(base_dir.glob("metrics_*.json"), key=lambda p: p.stat().st_mtime, reverse=True)
+    candidates = sorted(
+        base_dir.glob("metrics_*.json"), key=lambda p: p.stat().st_mtime, reverse=True
+    )
     if not candidates:
         return {"sharpe": "n/a", "max_dd": "n/a", "win_rate": "n/a", "cum_r": "n/a"}, None
     try:
@@ -122,20 +129,30 @@ def weekly(
 
     iso_week = week or date.today().strftime("%G-W%V")
     effective_template = _resolve_template(profile, template_path)
-    if template_path is None and _read_feature_flag("reporter.enable_extended_blocks", profile=profile):
+    if template_path is None and _read_feature_flag(
+        "reporter.enable_extended_blocks", profile=profile
+    ):
         extended_candidate = Path("src") / "reporter" / "templates" / "weekly_m1_core_extended.md"
         docs_extended = Path("docs") / "templates" / "reports" / "weekly_m1_core_extended.md"
         if extended_candidate.exists():
             effective_template = extended_candidate
         elif docs_extended.exists():
             effective_template = docs_extended
-    tickets_payload = list(tickets or tickets_actions.list_tickets(include_history=False, json_output=False))
+    tickets_payload = list(
+        tickets or tickets_actions.list_tickets(include_history=False, json_output=False)
+    )
     stress_payload = list(stress_runs) if stress_runs is not None else _load_stress_runs(stress_dir)
     journal_service = TradeJournalService(path=journal_path)
-    journal_payload = list(journal_entries) if journal_entries is not None else journal_service.list(week=iso_week)
+    journal_payload = (
+        list(journal_entries)
+        if journal_entries is not None
+        else journal_service.list(week=iso_week)
+    )
     journal_export: str | None = None
     if not dry_run:
-        export_path = journal_service.export_weekly(week=iso_week, output_dir=journal_export_dir or DEFAULT_JOURNAL_EXPORT_DIR)
+        export_path = journal_service.export_weekly(
+            week=iso_week, output_dir=journal_export_dir or DEFAULT_JOURNAL_EXPORT_DIR
+        )
         journal_export = str(export_path)
     kpi_source: Path | None = None
     kpi_payload = dict(kpi) if kpi is not None else _load_latest_kpis(kpi_base)[0]
@@ -186,7 +203,10 @@ def weekly(
         "kpi": kpi_payload,
         "kpi_source": str(kpi_source) if kpi_source else None,
     }
-    logger.info("cli.report.weekly.completed", extra={"week": iso_week, "output": str(output), "dry_run": dry_run})
+    logger.info(
+        "cli.report.weekly.completed",
+        extra={"week": iso_week, "output": str(output), "dry_run": dry_run},
+    )
     return payload
 
 
@@ -220,5 +240,8 @@ def daily(
         "path": str(output) if not dry_run else None,
         "content": content,
     }
-    logger.info("cli.report.daily.completed", extra={"date": date, "output": str(output), "dry_run": dry_run})
+    logger.info(
+        "cli.report.daily.completed",
+        extra={"date": date, "output": str(output), "dry_run": dry_run},
+    )
     return payload

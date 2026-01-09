@@ -15,13 +15,11 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import hashlib
-import io
-import os
 import struct
 import sys
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable
 from urllib.request import Request, urlopen
 
 import pandas as pd
@@ -87,7 +85,9 @@ class FetchResult:
     end: str
 
 
-def fetch_dukascopy(symbol: str, start: dt.datetime, end: dt.datetime, interval: str = "5min") -> FetchResult:
+def fetch_dukascopy(
+    symbol: str, start: dt.datetime, end: dt.datetime, interval: str = "5min"
+) -> FetchResult:
     frames = []
     for hour in _iter_hours(start, end):
         raw = _fetch_hour(symbol, hour)
@@ -109,7 +109,10 @@ def fetch_dukascopy(symbol: str, start: dt.datetime, end: dt.datetime, interval:
     out_dir.mkdir(parents=True, exist_ok=True)
     start_str = ohlcv["timestamp"].min().strftime("%Y%m%d")
     end_str = ohlcv["timestamp"].max().strftime("%Y%m%d")
-    out_path = out_dir / f"{symbol.lower()}_{interval.replace('min','m')}_{start_str}_{end_str}_dukascopy.parquet"
+    out_path = (
+        out_dir
+        / f"{symbol.lower()}_{interval.replace('min','m')}_{start_str}_{end_str}_dukascopy.parquet"
+    )
     ohlcv.to_parquet(out_path, index=False)
     h = hashlib.sha256()
     with open(out_path, "rb") as fh:
@@ -127,18 +130,25 @@ def fetch_dukascopy(symbol: str, start: dt.datetime, end: dt.datetime, interval:
 def main() -> None:
     parser = argparse.ArgumentParser(description="Fetch Dukascopy ticks and aggregate to OHLCV.")
     parser.add_argument("--symbol", default="USDJPY", help="Instrument symbol (e.g., USDJPY)")
-    parser.add_argument("--from", dest="date_from", required=True, help="Start date YYYY-MM-DD (UTC)")
-    parser.add_argument("--to", dest="date_to", required=True, help="End date YYYY-MM-DD (UTC, exclusive)")
-    parser.add_argument("--interval", default="5min", help="Aggregation interval (e.g., 5min, 15min)")
+    parser.add_argument(
+        "--from", dest="date_from", required=True, help="Start date YYYY-MM-DD (UTC)"
+    )
+    parser.add_argument(
+        "--to", dest="date_to", required=True, help="End date YYYY-MM-DD (UTC, exclusive)"
+    )
+    parser.add_argument(
+        "--interval", default="5min", help="Aggregation interval (e.g., 5min, 15min)"
+    )
     args = parser.parse_args()
 
     start = dt.datetime.fromisoformat(args.date_from)
     end = dt.datetime.fromisoformat(args.date_to)
     result = fetch_dukascopy(args.symbol, start, end, interval=args.interval)
-    print(
-        f"saved={result.path} rows={result.rows} window={result.start}-{result.end} sha256={result.sha256}",
-        file=sys.stderr,
+    message = (
+        f"saved={result.path} rows={result.rows} window={result.start}-{result.end} "
+        f"sha256={result.sha256}"
     )
+    sys.stderr.write(message + "\n")
 
 
 if __name__ == "__main__":  # pragma: no cover

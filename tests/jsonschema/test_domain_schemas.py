@@ -6,9 +6,9 @@ import json
 from pathlib import Path
 
 import pytest
-from jsonschema import Draft202012Validator, ValidationError
-
 from src.core.schema_registry import build_schema_registry
+
+from jsonschema import Draft202012Validator, ValidationError
 
 pytestmark = pytest.mark.json_schema_validation
 
@@ -82,8 +82,16 @@ def test_order_state_validates_recovery_plan() -> None:
             "plan_id": "RP-20250308-001",
             "trigger_reason": "rate_limit",
             "actions": [
-                {"code": "wait", "label": "Wait for 120 seconds before retry", "parameters": {"seconds": 120}},
-                {"code": "notify_ops", "label": "Notify ops to monitor queue", "requires_manual": True},
+                {
+                    "code": "wait",
+                    "label": "Wait for 120 seconds before retry",
+                    "parameters": {"seconds": 120},
+                },
+                {
+                    "code": "notify_ops",
+                    "label": "Notify ops to monitor queue",
+                    "requires_manual": True,
+                },
             ],
             "assigned_to": "ops_manager",
             "runbook_ref": "RUN-BROKER-API-02#RL-01",
@@ -209,6 +217,7 @@ def test_guardrails_metrics_schema_accepts_valid_payload() -> None:
     }
     validator.validate(payload)
 
+
 def test_audit_ticket_action_accepts_valid_record() -> None:
     validator = _build_validator("docs/schemas/audit_ticket_action.schema.json")
     record = {
@@ -231,7 +240,7 @@ def test_audit_ticket_action_accepts_valid_record() -> None:
             "spread_status": "cooldown",
             "health_state": "ok",
             "reduce_only": True,
-            "reason": "cooldown"
+            "reason": "cooldown",
         },
         "cfg_hash": "sha256:9c3dbe9b6f7a21c4d5e68f9a3c7d2e1f6b8c4d2a1e6f7c8b9d3a0e5f6b8c4d2a",
         "data_hash": "sha256:5f6b8c4d2a1e6f7c8b9d3a0e5f6b8c4d2a1e6f7c8b9d3a0e5f6b8c4d2a1e6f7c",
@@ -242,7 +251,9 @@ def test_audit_ticket_action_accepts_valid_record() -> None:
             "after": {"status": "approved"},
             "diff": {"status": "approved"},
             "decision": "approve",
-            "document_hash": "sha256:4d2a1e6f7c8b9d3a0e5f6b8c4d2a1e6f7c8b9d3a0e5f6b8c4d2a1e6f7c8b9d3a",
+            "document_hash": (
+                "sha256:4d2a1e6f7c8b9d3a0e5f6b8c4d2a1e6f7c8b9d3a0e5f6b8c4d2a1e6f7" "c8b9d3a"
+            ),
             "consent_version": "2.3.1",
             "expires_at": "2025-06-01T00:00:00Z",
             "ack_user": "risk_lead",

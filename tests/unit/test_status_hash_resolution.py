@@ -7,11 +7,14 @@ from typing import Any
 from src.interfaces.cli import status as status_fn
 
 
-def test_status_populates_gate_hashes_from_metrics_and_env(tmp_path: Path, monkeypatch: Any) -> None:
+def test_status_populates_gate_hashes_from_metrics_and_env(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
     # prepare guardrails metrics with manifest/data hashes
     metrics_path = tmp_path / "guardrails.jsonl"
     metrics_path.write_text(
-        json.dumps({"manifest_hash": "sha256:cfg-metric", "data_hash": "sha256:data-metric"}) + "\n",
+        json.dumps({"manifest_hash": "sha256:cfg-metric", "data_hash": "sha256:data-metric"})
+        + "\n",
         encoding="utf-8",
     )
     # env fallback for cfg_hash when not in metrics

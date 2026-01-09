@@ -6,7 +6,7 @@ import json
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 
 DEFAULT_METRICS_PATH = Path("metrics/execution_bridge.jsonl")
 DEFAULT_REPORT_DIR = Path("reports/execution")

@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import json
+from collections.abc import Mapping
 from dataclasses import dataclass, field
-from functools import lru_cache
+from functools import cache
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any
 
 try:  # pragma: no cover - dependency guard mirrors test fixture fallback
     import yaml
@@ -37,7 +39,7 @@ class AllowedTimeWindow:
     notes: tuple[str, ...] = ()
 
     @classmethod
-    def from_mapping(cls, data: Mapping[str, Any]) -> "AllowedTimeWindow":
+    def from_mapping(cls, data: Mapping[str, Any]) -> AllowedTimeWindow:
         try:
             label = str(data["label"])
             start = str(data["start"])
@@ -91,7 +93,7 @@ class SymbolRules:
     metadata: Mapping[str, Any] = field(default_factory=dict)
 
     @classmethod
-    def from_mapping(cls, symbol: str, data: Mapping[str, Any]) -> "SymbolRules":
+    def from_mapping(cls, symbol: str, data: Mapping[str, Any]) -> SymbolRules:
         try:
             description = str(data["description"])
             pip_size = float(data["pip_size"])
@@ -117,8 +119,7 @@ class SymbolRules:
 
         allowed_windows_raw = data.get("allowed_time_windows", ())
         allowed_time_windows = tuple(
-            AllowedTimeWindow.from_mapping(window)
-            for window in allowed_windows_raw
+            AllowedTimeWindow.from_mapping(window) for window in allowed_windows_raw
         )
 
         runbook_links = tuple(str(link) for link in runbook_links_raw)
@@ -193,7 +194,7 @@ def _resolve_rules_path(path: str | Path | None = None) -> Path:
     return candidate
 
 
-@lru_cache(maxsize=None)
+@cache
 def _load_rules_cached(path: str) -> BrokerRules:
     if yaml is None:  # pragma: no cover - defensive fallback for optional dependency
         msg = "PyYAML is required to load broker rules"

@@ -23,7 +23,9 @@ def _seed_sources(root: Path, period: str) -> None:
     _write_text(root / "config" / "settings.yaml", "version: 1\n")
     _write_text(root / "reports" / "data_manifest.json", json.dumps({"version": 1}))
     _write_text(root / "logs/audit" / f"risk_consent_{period}.jsonl")
-    _write_text(root / "data/compliance" / "risk_disclosure_state.json", json.dumps({"status": "pending"}))
+    _write_text(
+        root / "data/compliance" / "risk_disclosure_state.json", json.dumps({"status": "pending"})
+    )
 
 
 def test_audit_bundle_generate_and_verify(tmp_path: Path, monkeypatch: object) -> None:

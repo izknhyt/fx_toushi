@@ -2,14 +2,13 @@
 
 from __future__ import annotations
 
+import copy
+from collections.abc import Iterable, Mapping, MutableMapping
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
-import copy
-from typing import Any, Iterable, Mapping, MutableMapping, Protocol, runtime_checkable
+from typing import Any, Literal, Protocol, runtime_checkable
 from warnings import warn
-
-from typing_extensions import Literal
 
 SpreadCooldownState = Literal["normal", "watch", "cooldown", "halt", "block"]
 """Spread guard state shared between execution, risk, and strategy layers."""
@@ -43,7 +42,7 @@ class SpreadSnapshot:
         return self.spread_state.state
 
 
-class SpreadDataDegraded(RuntimeError):
+class SpreadDataDegradedError(RuntimeError):
     """Raised when spread data quality is insufficient for guard decisions."""
 
 
@@ -58,9 +57,7 @@ class SpreadMonitorProtocol(Protocol):
     def update(self, spread_frame: Any) -> SpreadCooldownState:
         """Ingest the latest spread metrics and update the cooldown state."""
 
-    def current_state(
-        self, *, symbols: Iterable[str] | None = None
-    ) -> dict[str, SpreadState]:
+    def current_state(self, *, symbols: Iterable[str] | None = None) -> dict[str, SpreadState]:
         """Return the canonical spread state mapping used by gate/audit flows."""
 
     def current_snapshot(self) -> SpreadSnapshot:
@@ -75,7 +72,7 @@ class SpreadMonitorProtocol(Protocol):
         state = self.current_state()
         if not state:
             msg = "SpreadMonitorProtocol.current_state() returned an empty mapping"
-            raise SpreadDataDegraded(msg)
+            raise SpreadDataDegradedError(msg)
 
         symbol, spread_state = next(iter(state.items()))
         return SpreadSnapshot(symbol=symbol, spread_state=spread_state)
@@ -205,11 +202,13 @@ class SimpleSpreadMonitor(SpreadMonitorProtocol):
         p95_value = spread_frame.get("p95", spread_frame.get("spread_p95"))
         p99_value = spread_frame.get("p99", spread_frame.get("spread_p99", p95_value))
         if p95_value is None or p99_value is None:
-            raise SpreadDataDegraded("spread metrics missing (p95/p99)")
+            raise SpreadDataDegradedError("spread metrics missing (p95/p99)")
 
         ntp_drift_ms = spread_frame.get("ntp_drift_ms")
         news_id = spread_frame.get("news_id") or spread_frame.get("news_event")
-        window_seconds = _parse_window_seconds(spread_frame.get("window")) or self._lookback_window_sec
+        window_seconds = (
+            _parse_window_seconds(spread_frame.get("window")) or self._lookback_window_sec
+        )
 
         evaluation = evaluate_spread_guard(
             p95=float(p95_value),
@@ -222,8 +221,12 @@ class SimpleSpreadMonitor(SpreadMonitorProtocol):
             cooldown_minutes=self._cooldown_minutes,
         )
 
-        state_label: SpreadCooldownState = "block" if evaluation.status == "block" else evaluation.status
-        threshold = self._block_threshold if evaluation.status == "block" else self._cooldown_threshold
+        state_label: SpreadCooldownState = (
+            "block" if evaluation.status == "block" else evaluation.status
+        )
+        threshold = (
+            self._block_threshold if evaluation.status == "block" else self._cooldown_threshold
+        )
         now = datetime.now(timezone.utc)
         self._state[symbol] = SpreadState(
             state=state_label,
@@ -241,9 +244,7 @@ class SimpleSpreadMonitor(SpreadMonitorProtocol):
 
         return self.cooldown_state
 
-    def current_state(
-        self, *, symbols: Iterable[str] | None = None
-    ) -> dict[str, SpreadState]:
+    def current_state(self, *, symbols: Iterable[str] | None = None) -> dict[str, SpreadState]:
         """Return a copy of the latest spread state."""
 
         subset = self._state
@@ -257,13 +258,16 @@ class SimpleSpreadMonitor(SpreadMonitorProtocol):
 
         state = self.current_state()
         if not state:
-            raise SpreadDataDegraded("SpreadMonitorProtocol.current_state() returned an empty mapping")
+            raise SpreadDataDegradedError(
+                "SpreadMonitorProtocol.current_state() returned an empty mapping"
+            )
         symbol, spread_state = next(iter(state.items()))
         return SpreadSnapshot(symbol=symbol, spread_state=spread_state)
 
+
 __all__ = [
     "SpreadCooldownState",
-    "SpreadDataDegraded",
+    "SpreadDataDegradedError",
     "SpreadEvaluation",
     "SimpleSpreadMonitor",
     "evaluate_spread_guard",

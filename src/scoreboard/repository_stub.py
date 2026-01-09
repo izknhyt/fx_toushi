@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Iterable
 
 
 @dataclass(slots=True)
@@ -17,8 +17,18 @@ class ScoreRecord:
 class ScoreboardRepositoryStub:
     def list_scores(self) -> Iterable[ScoreRecord]:
         return [
-            ScoreRecord(strategy_id="m1_baseline_ma_rsi", alpha_score=78.5, decay_score=32.1, status="active"),
-            ScoreRecord(strategy_id="m1_baseline_donchian", alpha_score=71.0, decay_score=29.4, status="draft"),
+            ScoreRecord(
+                strategy_id="m1_baseline_ma_rsi",
+                alpha_score=78.5,
+                decay_score=32.1,
+                status="active",
+            ),
+            ScoreRecord(
+                strategy_id="m1_baseline_donchian",
+                alpha_score=71.0,
+                decay_score=29.4,
+                status="draft",
+            ),
         ]
 
 

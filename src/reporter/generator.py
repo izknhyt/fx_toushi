@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, Mapping, Sequence
 from types import SimpleNamespace
 
 TICKET_SUMMARY_TEMPLATE = Path("src/reporter/templates/weekly_m1_core.md")
@@ -24,7 +24,11 @@ class ReportGenerator:
         return path
 
     def render_ticket_summary(
-        self, *, tickets: Sequence[Mapping[str, object]], template_path: Path | None = None, extra_context: Mapping[str, object] | None = None
+        self,
+        *,
+        tickets: Sequence[Mapping[str, object]],
+        template_path: Path | None = None,
+        extra_context: Mapping[str, object] | None = None,
     ) -> str:
         template = template_path or TICKET_SUMMARY_TEMPLATE
         tpl = template.read_text(encoding="utf-8")
@@ -35,7 +39,9 @@ class ReportGenerator:
             context.update(extra_context)
         return tpl.format(**context)
 
-    def render_journal_summary(self, entries: Sequence[Mapping[str, object]], *, with_header: bool = True) -> str:
+    def render_journal_summary(
+        self, entries: Sequence[Mapping[str, object]], *, with_header: bool = True
+    ) -> str:
         """Render a simple journal summary block for reports."""
 
         lines: list[str] = []
@@ -52,7 +58,9 @@ class ReportGenerator:
             lines.append(f"- {ts} [{ticket}] {user}: {note}")
         return "\n".join(lines)
 
-    def render_stress_runs(self, runs: Sequence[Mapping[str, object]], *, with_header: bool = False) -> str:
+    def render_stress_runs(
+        self, runs: Sequence[Mapping[str, object]], *, with_header: bool = False
+    ) -> str:
         """Render Stress Test summaries for weekly/ops reports."""
 
         lines: list[str] = []
@@ -116,7 +124,9 @@ def _summarise_guardrails(tickets: Iterable[Mapping[str, object]]) -> dict[str, 
 
 def _build_ticket_context(tickets: Sequence[Mapping[str, object]]) -> dict[str, object]:
     guardrails = _summarise_guardrails(tickets)
-    risk_pending = sum(1 for t in tickets if (t.get("risk_summary") or {}).get("risk_disclosure") == "pending")
+    risk_pending = sum(
+        1 for t in tickets if (t.get("risk_summary") or {}).get("risk_disclosure") == "pending"
+    )
     determinism_hashes = ", ".join(
         {
             str((t.get("audit_refs") or {}).get("determinism_hash", ""))
@@ -131,12 +141,12 @@ def _build_ticket_context(tickets: Sequence[Mapping[str, object]]) -> dict[str, 
         "tickets_overview": tickets_overview,
         "determinism_hashes": determinism_hashes,
     }
-    advisor_count = sum(
-        1 for t in tickets if "reduce_only_advisor" in (t.get("badges") or [])
-    )
+    advisor_count = sum(1 for t in tickets if "reduce_only_advisor" in (t.get("badges") or []))
     context.update(
         {
-            "reduce_only_advisor_summary": f"{advisor_count} tickets flagged" if advisor_count else "0",
+            "reduce_only_advisor_summary": f"{advisor_count} tickets flagged"
+            if advisor_count
+            else "0",
             "kill_switch_history": "n/a",
             "spread_cooldown_summary": "n/a",
             "data_quality_summary": "n/a",

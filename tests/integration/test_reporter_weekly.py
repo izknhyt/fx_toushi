@@ -28,10 +28,25 @@ def test_weekly_template_live_guard_section(project_root: Path) -> None:
         [
             "| Metric | Value | Threshold | State | Notes |",
             "| --- | --- | --- | --- | --- |",
-            "| PF trailing | {{live_guard.pf_trailing.value}} | {{live_guard.pf_trailing.threshold}} | {{live_guard.pf_trailing.state}} | {{live_guard.pf_trailing.note}} |",
-            "| Sharpe trailing | {{live_guard.sharpe_trailing.value}} | {{live_guard.sharpe_trailing.threshold}} | {{live_guard.sharpe_trailing.state}} | {{live_guard.sharpe_trailing.note}} |",
-            "| Latency p75 | {{live_guard.latency_p75.value}} | {{live_guard.latency_p75.threshold}} | {{live_guard.latency_p75.state}} | {{live_guard.latency_p75.note}} |",
-            "| Alerts | {{live_guard.alerts}} | - | {{live_guard.status}} | {{live_guard.recommended_action}} |",
+            (
+                "| PF trailing | {{live_guard.pf_trailing.value}} | "
+                "{{live_guard.pf_trailing.threshold}} | "
+                "{{live_guard.pf_trailing.state}} | {{live_guard.pf_trailing.note}} |"
+            ),
+            (
+                "| Sharpe trailing | {{live_guard.sharpe_trailing.value}} | "
+                "{{live_guard.sharpe_trailing.threshold}} | "
+                "{{live_guard.sharpe_trailing.state}} | {{live_guard.sharpe_trailing.note}} |"
+            ),
+            (
+                "| Latency p75 | {{live_guard.latency_p75.value}} | "
+                "{{live_guard.latency_p75.threshold}} | "
+                "{{live_guard.latency_p75.state}} | {{live_guard.latency_p75.note}} |"
+            ),
+            (
+                "| Alerts | {{live_guard.alerts}} | - | {{live_guard.status}} | "
+                "{{live_guard.recommended_action}} |"
+            ),
         ]
     )
 
@@ -66,4 +81,3 @@ def test_weekly_template_hitl_sections_present(project_root: Path) -> None:
     manual_commentary = _extract_section(content, "Manual Commentary")
     assert "### A/Bテスト結果（担当: Quant Lead / 締切: 日曜 18:00 JST）" in manual_commentary
     assert "### 次週ToDo（担当: Ops Manager / 締切: 月曜 08:30 JST）" in manual_commentary
-

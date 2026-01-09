@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from typing import Iterable, Protocol, runtime_checkable
+from collections.abc import Iterable
+from typing import Protocol, runtime_checkable
 
 from ..service import MarketFrame, MarketRequest
 
@@ -17,4 +18,3 @@ class ProviderAdapter(Protocol):
 
     def fetch_bars(self, request: MarketRequest) -> Iterable[MarketFrame]:
         """Return an iterable of market frames for the supplied request."""
-

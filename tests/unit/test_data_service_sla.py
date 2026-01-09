@@ -1,18 +1,26 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 from functools import partial
+from pathlib import Path
 
-from src.data.service import MarketFrame, ProviderError, ProviderResult, fetch_latest, load_provider_sla_thresholds
-from src.data.providers.local_parquet import parquet_provider
 import pandas as pd
+from src.data.providers.local_parquet import parquet_provider
+from src.data.service import (
+    MarketFrame,
+    ProviderError,
+    ProviderResult,
+    fetch_latest,
+    load_provider_sla_thresholds,
+)
 
 
 def _read_jsonl(path: Path) -> list[dict[str, object]]:
     if not path.exists():
         return []
-    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    return [
+        json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()
+    ]
 
 
 def test_fetch_latest_logs_retry_and_fallback(tmp_path: Path) -> None:
@@ -22,7 +30,9 @@ def test_fetch_latest_logs_retry_and_fallback(tmp_path: Path) -> None:
         raise ProviderError("rate_limited")
 
     def slow_ok(symbols: list[str], tf: str) -> ProviderResult:
-        frame = MarketFrame(symbol=symbols[0], timeframe=tf, bars=[{"timestamp": "2025-01-01T00:00:00Z"}])
+        frame = MarketFrame(
+            symbol=symbols[0], timeframe=tf, bars=[{"timestamp": "2025-01-01T00:00:00Z"}]
+        )
         return ProviderResult(frames=[frame], p95_ms=1200.0, p99_ms=1500.0, rate_limit_ratio=0.5)
 
     frames = fetch_latest(
@@ -69,7 +79,9 @@ def test_fetch_latest_applies_provider_specific_threshold(tmp_path: Path) -> Non
     metrics_path = tmp_path / "metrics" / "data_ingestion_sla.jsonl"
 
     def provider_ok(symbols: list[str], tf: str) -> ProviderResult:
-        frame = MarketFrame(symbol=symbols[0], timeframe=tf, bars=[{"timestamp": "2025-01-01T00:00:00Z"}])
+        frame = MarketFrame(
+            symbol=symbols[0], timeframe=tf, bars=[{"timestamp": "2025-01-01T00:00:00Z"}]
+        )
         return ProviderResult(frames=[frame], p95_ms=55.0, p99_ms=60.0, rate_limit_ratio=0.0)
 
     frames = fetch_latest(
@@ -89,7 +101,9 @@ def test_parquet_provider_integration(tmp_path: Path) -> None:
     metrics_path = tmp_path / "metrics" / "data_ingestion_sla.jsonl"
     data_dir = tmp_path / "data"
     data_dir.mkdir(parents=True, exist_ok=True)
-    df = pd.DataFrame([{"timestamp": "2025-01-01T00:00:00Z", "open": 1, "high": 2, "low": 0, "close": 1.5}])
+    df = pd.DataFrame(
+        [{"timestamp": "2025-01-01T00:00:00Z", "open": 1, "high": 2, "low": 0, "close": 1.5}]
+    )
     csv_path = data_dir / "EURUSD_M5.csv"
     df.to_csv(csv_path, index=False)
 
@@ -114,5 +128,3 @@ def test_load_provider_sla_thresholds(tmp_path: Path) -> None:
     config.write_text('{"foo": {"warn_ms": 100, "breach_ms": 200}}', encoding="utf-8")
     thresholds = load_provider_sla_thresholds(config)
     assert thresholds["foo"] == (100.0, 200.0)
-from pathlib import Path
-from functools import partial

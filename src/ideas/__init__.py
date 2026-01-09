@@ -1,5 +1,6 @@
 """Idea Pipeline scaffolds for the M1 release."""
 
+from .checklist_stub import IdeaChecklistGeneratorStub, StageChecklist
 from .manager_stub import (
     IdeaEvidenceStatus,
     IdeaManifestStub,
@@ -7,7 +8,6 @@ from .manager_stub import (
     IdeaStageResult,
 )
 from .schema_stub import IdeaChecklistValidatorStub, IdeaManifestValidatorStub
-from .checklist_stub import IdeaChecklistGeneratorStub, StageChecklist
 
 __all__ = [
     "IdeaEvidenceStatus",

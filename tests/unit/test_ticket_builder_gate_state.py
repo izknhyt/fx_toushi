@@ -5,8 +5,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 import pytest
-
-from src.core.gate import GateState, GateBlockState, NewsGateState, SpreadGateState
+from src.core.gate import GateBlockState, GateState, NewsGateState, SpreadGateState
 from src.ticket import DefaultTicketBuilder, TicketBlockedError, TicketDraft
 
 
@@ -95,10 +94,14 @@ def test_manual_comment_badge_and_metadata() -> None:
     assert badge_map["double_entry_confirmed"].severity == "warn"
     assert badge_map["spread_state"].severity == "warn"
 
-    double_entry = next(item for item in artifact.checklist if item.field == "double_entry_confirmed")
+    double_entry = next(
+        item for item in artifact.checklist if item.field == "double_entry_confirmed"
+    )
     assert double_entry.metadata["ack_deadline"] == deadline.isoformat()
 
-    manual_comment = next(item for item in artifact.checklist if item.field == "manual_comment_logged")
+    manual_comment = next(
+        item for item in artifact.checklist if item.field == "manual_comment_logged"
+    )
     assert manual_comment.metadata["comment_min_length"] == 48
 
 

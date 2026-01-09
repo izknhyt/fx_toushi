@@ -4,7 +4,6 @@ from datetime import datetime
 from pathlib import Path
 
 import pytest
-
 from src.ops.action_sync import ActionSyncError, collect_action_items, sync_action_items
 
 

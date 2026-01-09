@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
 import json
+from datetime import datetime, timedelta, timezone
 
 from src.core.gate import (
     CalendarGateState,
@@ -20,7 +20,9 @@ def test_spread_monitor_update_creates_symbol_override(tmp_path) -> None:
 
     aggregator.update_spread(global_state=SpreadGateState(state="normal"))
     aggregator.update_calendar(
-        per_symbol={"USDJPY": CalendarGateState(blocked=True, holiday_block=False, reason="tokyo_holiday")}
+        per_symbol={
+            "USDJPY": CalendarGateState(blocked=True, holiday_block=False, reason="tokyo_holiday")
+        }
     )
     aggregator.update_spread(
         per_symbol={
@@ -106,7 +108,10 @@ def test_news_service_updates_symbol_and_global_state() -> None:
 
     aggregator.update_news(per_symbol={"GBPUSD": None})
     cleared = aggregator.snapshot()
-    assert "GBPUSD" not in cleared.market.per_symbol or cleared.market.per_symbol["GBPUSD"].news is None
+    assert (
+        "GBPUSD" not in cleared.market.per_symbol
+        or cleared.market.per_symbol["GBPUSD"].news is None
+    )
 
 
 def test_risk_manager_reduce_only_merges_into_gate_state() -> None:

@@ -8,8 +8,9 @@ real API responses or mock fixtures.
 """
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import Final, Literal, Mapping, Sequence
+from typing import Final, Literal
 
 
 @dataclass(frozen=True)
@@ -228,7 +229,10 @@ ORDER_FIELD_MAPPING: Final[Sequence[FieldMapping]] = (
         mt5_field="volume",
         ctrader_field="volume",
         direction="bidirectional",
-        notes="Represented in standard lots (100k units). Rounding rules defined in BROKER_ORDER_CONSTRAINTS.",
+        notes=(
+            "Represented in standard lots (100k units). "
+            "Rounding rules defined in BROKER_ORDER_CONSTRAINTS."
+        ),
     ),
     FieldMapping(
         ticket_field="price",
@@ -266,7 +270,9 @@ BROKER_ORDER_CONSTRAINTS: Final[Mapping[str, Mapping[str, str]]] = {
         "lot_min": "0.10 lots",
         "price_precision": "Instrument digits; adapters enforce via SymbolInfo.digits",
         "timezone": "Europe/Helsinki (server time); convert from UTC before TTL/expiration",
-        "ttl_policy": "Supports GTC, DAY and SPECIFIED; SPECIFIED requires expiration >= server_time + 60s",
+        "ttl_policy": (
+            "Supports GTC, DAY and SPECIFIED; SPECIFIED requires expiration " ">= server_time + 60s"
+        ),
     },
     "ctrader": {
         "lot_step": "0.01 lots",
@@ -342,13 +348,26 @@ class BrokerAdapter:
 class Mt5Adapter(BrokerAdapter):
     """MetaTrader 5 bridge adapter metadata and connection guidance.
 
-    | フェーズ | メソッド | エンドポイント | プロトコル | 必須ヘッダ | 認証ステップ | 備考 |
-    | --- | --- | --- | --- | --- | --- | --- |
-    | セッション確立 | POST | /api/auth/start | REST | Content-Type, X-MT5-Client | session_establish | ログイン資格情報→`session_id`払い出し |
-    | トークン更新 | POST | /api/auth/refresh | REST | Content-Type, X-MT5-Session | token_refresh | `refresh_token`を用いたセッション更新 |
-    | 注文送信 | POST | /api/trade/order | SOAP | Content-Type, SOAPAction, X-MT5-Session | request | `OrderSend`コール。Market/Limit/Stop対応 |
-    | 注文変更 | POST | /api/trade/order/modify | SOAP | Content-Type, SOAPAction, X-MT5-Session | request | 価格/TTL更新。`order`キー必須 |
-    | ポジション照会 | GET | /api/account/positions | REST | Accept, X-MT5-Session | request | オープンポジション/証拠金照会 |
+    - セッション確立: POST /api/auth/start (REST)
+      - headers: Content-Type, X-MT5-Client
+      - step: session_establish
+      - notes: ログイン資格情報→`session_id`払い出し
+    - トークン更新: POST /api/auth/refresh (REST)
+      - headers: Content-Type, X-MT5-Session
+      - step: token_refresh
+      - notes: `refresh_token`を用いたセッション更新
+    - 注文送信: POST /api/trade/order (SOAP)
+      - headers: Content-Type, SOAPAction, X-MT5-Session
+      - step: request
+      - notes: `OrderSend`コール。Market/Limit/Stop対応
+    - 注文変更: POST /api/trade/order/modify (SOAP)
+      - headers: Content-Type, SOAPAction, X-MT5-Session
+      - step: request
+      - notes: 価格/TTL更新。`order`キー必須
+    - ポジション照会: GET /api/account/positions (REST)
+      - headers: Accept, X-MT5-Session
+      - step: request
+      - notes: オープンポジション/証拠金照会
 
     - セッション有効期限は30分。25分で自動更新し、401/5403は即時再ログイン。
     - SOAP呼び出しは`request_id`に`ticket_id`を指定し、応答の`retcode`が`0`で成功。
@@ -359,13 +378,26 @@ class Mt5Adapter(BrokerAdapter):
 class CTraderAdapter(BrokerAdapter):
     """cTrader Open API adapter metadata and connection guidance.
 
-    | フェーズ | メソッド | エンドポイント | プロトコル | 必須ヘッダ | 認証ステップ | 備考 |
-    | --- | --- | --- | --- | --- | --- | --- |
-    | セッション確立 | POST | /connect/token | REST | Content-Type, Authorization | session_establish | OAuth2 password/refresh グラント |
-    | トークン更新 | POST | /connect/token | REST | Content-Type, Authorization | token_refresh | `refresh_token`を使用。`scope=trading` |
-    | 注文送信 | POST | /openapi/trade/v1/orders | REST | Content-Type, Authorization, X-Spotware-Trading-Account | request | Market/Limit/Stop対応 |
-    | 注文変更 | PATCH | /openapi/trade/v1/orders/{order_id} | REST | Content-Type, Authorization, X-Spotware-Trading-Account | request | 価格/数量修正 |
-    | ポジション照会 | GET | /openapi/trade/v1/positions | REST | Accept, Authorization, X-Spotware-Trading-Account | request | オープンポジション照会 |
+    - セッション確立: POST /connect/token (REST)
+      - headers: Content-Type, Authorization
+      - step: session_establish
+      - notes: OAuth2 password/refresh グラント
+    - トークン更新: POST /connect/token (REST)
+      - headers: Content-Type, Authorization
+      - step: token_refresh
+      - notes: `refresh_token`を使用。`scope=trading`
+    - 注文送信: POST /openapi/trade/v1/orders (REST)
+      - headers: Content-Type, Authorization, X-Spotware-Trading-Account
+      - step: request
+      - notes: Market/Limit/Stop対応
+    - 注文変更: PATCH /openapi/trade/v1/orders/{order_id} (REST)
+      - headers: Content-Type, Authorization, X-Spotware-Trading-Account
+      - step: request
+      - notes: 価格/数量修正
+    - ポジション照会: GET /openapi/trade/v1/positions (REST)
+      - headers: Accept, Authorization, X-Spotware-Trading-Account
+      - step: request
+      - notes: オープンポジション照会
 
     - アクセストークンは30分有効。残り5分で`oauth_refresh`を行う。
     - 429応答は`Retry-After`ヘッダを尊重し、RateLimitウィンドウへ反映。

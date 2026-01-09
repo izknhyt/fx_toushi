@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Mapping
 
 logger = logging.getLogger(__name__)
 

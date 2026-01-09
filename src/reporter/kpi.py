@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import math
+from collections.abc import Mapping
 from pathlib import Path
-from typing import Mapping
 
 import pandas as pd
 
@@ -60,10 +60,7 @@ def compute_kpi_from_equity(path: Path) -> Mapping[str, object]:
 
 def _load_frame(path: Path) -> pd.DataFrame:
     suffix = path.suffix.lower()
-    if suffix == ".parquet":
-        frame = pd.read_parquet(path)
-    else:
-        frame = pd.read_csv(path)
+    frame = pd.read_parquet(path) if suffix == ".parquet" else pd.read_csv(path)
     if "r" not in frame.columns and "return" in frame.columns:
         frame = frame.rename(columns={"return": "r"})
     if "r" not in frame.columns:

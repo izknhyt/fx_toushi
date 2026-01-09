@@ -1,7 +1,9 @@
 from __future__ import annotations
 
-from src.interfaces.cli.broker_fault import simulate_fault, simulate_list
+from pathlib import Path
+
 from src.brokers.order_lifecycle import OrderLifecycleManager
+from src.interfaces.cli.broker_fault import simulate_fault, simulate_list
 
 
 def test_simulate_fault_handles_retryable_and_circuit_breaker() -> None:
@@ -45,7 +47,7 @@ def test_auth_failure_returns_runbook() -> None:
 
 def test_simulate_fault_writes_metrics(tmp_path: Path) -> None:
     metrics_path = tmp_path / "metrics" / "broker_faults.jsonl"
-    resp = simulate_fault(scenario="429", dry_run=True, metrics_path=metrics_path)
+    simulate_fault(scenario="429", dry_run=True, metrics_path=metrics_path)
     assert metrics_path.exists()
     content = metrics_path.read_text(encoding="utf-8").splitlines()
     assert len(content) == 1

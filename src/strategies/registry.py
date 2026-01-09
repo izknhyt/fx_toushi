@@ -14,15 +14,16 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+from collections.abc import Iterable, Iterator, Mapping, MutableMapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Iterable, Iterator, Literal, Mapping, MutableMapping, Sequence
+from typing import Any, Literal
 
 import yaml
 from pydantic import BaseModel, Field, ValidationError, field_validator, model_validator
 
-from src.features.pipeline import FeatureContext
+from src.features.pipeline import FeatureContext, FeaturePipeline
 from src.strategies.base import StrategyContext, StrategyMetadata, StrategyPluginProtocol
 
 __all__ = [
@@ -163,13 +164,15 @@ class StrategyLifecycle(BaseModel):
     runbook_ref: str | None = None
 
     @model_validator(mode="after")
-    def _normalise_timestamps(self) -> "StrategyLifecycle":
+    def _normalise_timestamps(self) -> StrategyLifecycle:
         self.last_validated_at = _as_utc(self.last_validated_at)
         if self.expires_at is not None:
             self.expires_at = _as_utc(self.expires_at)
         return self
 
-    def effective_status(self, *, now: datetime | None = None) -> Literal["draft", "active", "deprecated", "blocked"]:
+    def effective_status(
+        self, *, now: datetime | None = None
+    ) -> Literal["draft", "active", "deprecated", "blocked"]:
         """Return the effective status considering expiry/validation age."""
 
         reference = _as_utc(now)
@@ -288,11 +291,11 @@ class StrategyEntry(BaseModel):
     def enabled_feature_flags(self) -> frozenset[str]:
         """Return the subset of feature flags that are enabled."""
 
-        return frozenset(
-            key for key, enabled in self.feature_flags.items() if bool(enabled)
-        )
+        return frozenset(key for key, enabled in self.feature_flags.items() if bool(enabled))
 
-    def effective_status(self, *, now: datetime | None = None) -> Literal["draft", "active", "deprecated", "blocked"]:
+    def effective_status(
+        self, *, now: datetime | None = None
+    ) -> Literal["draft", "active", "deprecated", "blocked"]:
         """Return the lifecycle status resolved against validation cadence."""
 
         if self.lifecycle is None:
@@ -312,7 +315,9 @@ class StrategyManifest(BaseModel):
 
     @field_validator("strategies")
     @classmethod
-    def _ensure_strategies(cls, value: Mapping[str, StrategyEntry]) -> MutableMapping[str, StrategyEntry]:
+    def _ensure_strategies(
+        cls, value: Mapping[str, StrategyEntry]
+    ) -> MutableMapping[str, StrategyEntry]:
         if not value:
             msg = "Manifest must declare at least one strategy entry"
             raise ValueError(msg)
@@ -326,10 +331,8 @@ class StrategyManifest(BaseModel):
         return normalised
 
     @model_validator(mode="after")
-    def _validate_weights(self) -> "StrategyManifest":
-        total_weight = sum(
-            entry.weight for entry in self.strategies.values() if entry.enabled
-        )
+    def _validate_weights(self) -> StrategyManifest:
+        total_weight = sum(entry.weight for entry in self.strategies.values() if entry.enabled)
         if total_weight > 1.0 + 1e-9:
             msg = "Sum of enabled strategy weights must not exceed 1.0"
             raise ValueError(msg)
@@ -339,16 +342,18 @@ class StrategyManifest(BaseModel):
     # Construction helpers
     # ------------------------------------------------------------------
     @classmethod
-    def from_dict(cls, payload: Mapping[str, Any]) -> "StrategyManifest":
+    def from_dict(cls, payload: Mapping[str, Any]) -> StrategyManifest:
         """Validate and construct a manifest from an in-memory mapping."""
 
         try:
             return cls.model_validate(payload)
         except ValidationError as exc:  # pragma: no cover - defensive
-            raise ManifestValidationError("Strategy manifest validation failed", errors=exc.errors()) from exc
+            raise ManifestValidationError(
+                "Strategy manifest validation failed", errors=exc.errors()
+            ) from exc
 
     @classmethod
-    def load(cls, path: str | Path) -> "StrategyManifest":
+    def load(cls, path: str | Path) -> StrategyManifest:
         """Load a manifest from a YAML file and validate the payload."""
 
         manifest_path = Path(path)
@@ -388,8 +393,7 @@ class StrategyManifest(BaseModel):
                 missing_map[strategy_id] = missing
         if missing_map:
             details = {
-                strategy_id: sorted(features)
-                for strategy_id, features in missing_map.items()
+                strategy_id: sorted(features) for strategy_id, features in missing_map.items()
             }
             msg = "Strategy manifest references unavailable features"
             raise ManifestValidationError(f"{msg}: {details}")
@@ -447,7 +451,9 @@ class StrategyManifest(BaseModel):
 
         if stale:
             details = ", ".join(f"{strategy_id}: {reason}" for strategy_id, reason in stale.items())
-            raise ManifestValidationError(f"Enabled strategies have lapsed lifecycle status: {details}")
+            raise ManifestValidationError(
+                f"Enabled strategies have lapsed lifecycle status: {details}"
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -477,7 +483,9 @@ class StrategyEngine:
         self._manifest: StrategyManifest | None = None
         self._last_determinism_events: list[Mapping[str, Any]] = []
         self._determinism_log_path = (
-            Path("logs") / "strategy" / "registry.log" if determinism_log_path is None else Path(determinism_log_path)
+            Path("logs") / "strategy" / "registry.log"
+            if determinism_log_path is None
+            else Path(determinism_log_path)
         )
 
     # ------------------------------------------------------------------
@@ -553,13 +561,17 @@ class StrategyEngine:
         try:
             entry = self._manifest.strategies[strategy_id]
         except KeyError as exc:  # pragma: no cover - defensive
-            raise StrategyRegistrationError(f"Strategy '{strategy_id}' is not defined in the manifest") from exc
+            raise StrategyRegistrationError(
+                f"Strategy '{strategy_id}' is not defined in the manifest"
+            ) from exc
         return entry.parameters
 
     # ------------------------------------------------------------------
     # Execution
     # ------------------------------------------------------------------
-    def _build_context(self, *, evaluation: StrategyEvaluationContext, plugin_metadata: StrategyMetadata) -> StrategyContext:
+    def _build_context(
+        self, *, evaluation: StrategyEvaluationContext, plugin_metadata: StrategyMetadata
+    ) -> StrategyContext:
         watchlist = frozenset(evaluation.watchlist)
         return StrategyContext(
             features=evaluation.features,
@@ -647,17 +659,14 @@ class StrategyEngine:
 
             missing = plugin_metadata.required_features - features.available_keys
             if missing:
-                msg = (
-                    f"Strategy '{strategy_id}' missing required features: "
-                    f"{sorted(missing)}"
-                )
+                msg = f"Strategy '{strategy_id}' missing required features: " f"{sorted(missing)}"
                 raise ManifestValidationError(msg)
 
             context = self._build_context(
                 evaluation=evaluation,
                 plugin_metadata=plugin_metadata,
             )
-            setattr(plugin, "context", context)
+            plugin.context = context
 
             try:
                 signals = plugin.generate_signals(context)

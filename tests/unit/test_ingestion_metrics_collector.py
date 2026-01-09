@@ -3,7 +3,6 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-
 from src.data.service import IngestionMetricsCollector
 
 
@@ -18,7 +17,9 @@ def test_collector_snapshot_and_raw_log(tmp_path: Path):
 
     collector.observe(provider="p1", symbols=["EURUSD"], timeframe="M5", latency_ms=100.0, bars=1)
     collector.observe(provider="p1", symbols=["EURUSD"], timeframe="M5", latency_ms=200.0, bars=1)
-    collector.observe(provider="p1", symbols=["EURUSD"], timeframe="M5", latency_ms=300.0, bars=1, success=False)
+    collector.observe(
+        provider="p1", symbols=["EURUSD"], timeframe="M5", latency_ms=300.0, bars=1, success=False
+    )
 
     snap = collector.snapshot()
     assert snap["retry_count"] == 1
@@ -35,7 +36,9 @@ def test_collector_snapshot_and_raw_log(tmp_path: Path):
 def test_collector_rotates_raw_logs(tmp_path: Path):
     collector = IngestionMetricsCollector(raw_log_dir=tmp_path, max_raw_lines=2)
     for i in range(5):
-        collector.observe(provider="p2", symbols=["USDJPY"], timeframe="H1", latency_ms=10.0 + i, bars=1)
+        collector.observe(
+            provider="p2", symbols=["USDJPY"], timeframe="H1", latency_ms=10.0 + i, bars=1
+        )
 
     parts = sorted(tmp_path.glob("data_ingestion_raw_*.jsonl"))
     assert len(parts) >= 2

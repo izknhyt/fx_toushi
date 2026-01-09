@@ -32,7 +32,9 @@ def test_status_returns_health_and_kill_switch_snapshot() -> None:
     gate_state.risk.kill_switch_recommendation = "soft_stop"
     gate_state.risk.kill_switch_reason = "weekly_drawdown"
 
-    payload = status(monitor=monitor, gate_state=gate_state, snapshot_manager=_SnapshotManagerStub())
+    payload = status(
+        monitor=monitor, gate_state=gate_state, snapshot_manager=_SnapshotManagerStub()
+    )
 
     assert payload["exit_code"] == 62
     guardrails = payload["guardrails"]

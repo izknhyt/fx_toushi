@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Iterable, List
 
 
 @dataclass(frozen=True, slots=True)
@@ -31,7 +31,7 @@ def _score(entry: RankingInput) -> float:
     return pf_component + sharpe_component - drawdown_penalty - latency_penalty
 
 
-def rank_strategies(entries: Iterable[RankingInput]) -> List[RankingResult]:
+def rank_strategies(entries: Iterable[RankingInput]) -> list[RankingResult]:
     scored = [(entry, _score(entry)) for entry in entries]
     scored.sort(key=lambda item: item[1], reverse=True)
     results: list[RankingResult] = []

@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
-from typing import Iterable, Sequence
 
 from src.strategies.base import StrategyContext, StrategyMetadata, StrategyPluginProtocol
 
@@ -72,7 +72,15 @@ class MovingAverageRsiStrategy(StrategyPluginProtocol):
 
     def _extract_features(
         self, context: StrategyContext, symbol: str
-    ) -> tuple[float | None, float | None, float | None, float | None, float | None, float | None, float | None]:
+    ) -> tuple[
+        float | None,
+        float | None,
+        float | None,
+        float | None,
+        float | None,
+        float | None,
+        float | None,
+    ]:
         features = context.features
         try:
             fast = features.lookup(symbol=symbol, feature="ema_fast_5m", timeframe="5m")
@@ -110,9 +118,16 @@ class MovingAverageRsiStrategy(StrategyPluginProtocol):
 
         symbols = sorted(context.watchlist or frozenset(self._default_watchlist))
         signals: list[StrategySignal] = []
-        for index, symbol in enumerate(symbols):
+        for _index, symbol in enumerate(symbols):
             fast, slow, rsi, atr, slope, close, regime = self._extract_features(context, symbol)
-            if fast is None or slow is None or rsi is None or atr is None or close is None or regime is None:
+            if (
+                fast is None
+                or slow is None
+                or rsi is None
+                or atr is None
+                or close is None
+                or regime is None
+            ):
                 continue
             if not self._session_allowed(context.clock.now):
                 continue
@@ -120,9 +135,19 @@ class MovingAverageRsiStrategy(StrategyPluginProtocol):
             min_gap = abs(close) * self.min_gap_pct
             direction: str | None = None
             slope_v = slope or 0.0
-            if rsi <= self.rsi_short_threshold and trend_bias < -min_gap and slope_v < -self.slope_min and regime < 0:
+            if (
+                rsi <= self.rsi_short_threshold
+                and trend_bias < -min_gap
+                and slope_v < -self.slope_min
+                and regime < 0
+            ):
                 direction = "short"
-            elif rsi >= self.rsi_long_threshold and trend_bias > min_gap and slope_v > self.slope_min and regime > 0:
+            elif (
+                rsi >= self.rsi_long_threshold
+                and trend_bias > min_gap
+                and slope_v > self.slope_min
+                and regime > 0
+            ):
                 direction = "long"
             else:
                 continue

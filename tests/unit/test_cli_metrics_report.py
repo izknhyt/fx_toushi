@@ -42,7 +42,13 @@ def test_metrics_report_sla_summary(tmp_path: Path) -> None:
     entries = [
         {"ts": now, "phase": "fetch", "fetch_p95_ms": 120, "bar_gap_minutes": 5, "status": "ok"},
         {"ts": now, "phase": "fetch", "fetch_p95_ms": 140, "bar_gap_minutes": 7, "status": "ok"},
-        {"ts": now, "phase": "processing", "fetch_p95_ms": 30, "bar_gap_minutes": 2, "status": "ok"},
+        {
+            "ts": now,
+            "phase": "processing",
+            "fetch_p95_ms": 30,
+            "bar_gap_minutes": 2,
+            "status": "ok",
+        },
     ]
     source = tmp_path / "data_ingestion_sla.jsonl"
     _write_jsonl(source, entries)

@@ -1,8 +1,8 @@
 """Account services package."""
 
-from .service import AccountService, AccountSnapshot
-from .fx_rates import FxRateService, FxRate
 from .exposure import ExposureBreakdown
+from .fx_rates import FxRate, FxRateService
+from .service import AccountService, AccountSnapshot
 
 __all__ = [
     "AccountService",

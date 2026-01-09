@@ -2,17 +2,19 @@
 
 from __future__ import annotations
 
-import json
 import hashlib
+import json
 import uuid
-from dataclasses import dataclass, asdict
+from collections.abc import Mapping
+from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any
 
-from src.interfaces.cli.diagnostics import DEFAULT_DETERMINISM_LOG, load_determinism_events
 from tools.replay_signals import diff_signals
+
 from src.audit.trace import trace_order
+from src.interfaces.cli.diagnostics import DEFAULT_DETERMINISM_LOG, load_determinism_events
 
 __all__ = ["DeterminismReplayRequest", "determinism_replay"]
 
@@ -76,7 +78,9 @@ def determinism_replay(
     filtered_events: list[Mapping[str, Any]] = []
     try:
         events_payload = load_determinism_events(resolved_log)
-        filtered_events = _filter_events(events_payload.get("events", ()), strategy=strategy, since=since, until=until)
+        filtered_events = _filter_events(
+            events_payload.get("events", ()), strategy=strategy, since=since, until=until
+        )
     except Exception:
         events_payload = None
         filtered_events = []
@@ -85,14 +89,18 @@ def determinism_replay(
     signals_summary = None
     signals_markdown = None
     if signals_expected or signals_actual:
-        if not signals_expected or not signals_actual:
-            if not allow_missing_signals:
-                raise FileNotFoundError("Both --signals-expected and --signals-actual are required")
+        if not (signals_expected and signals_actual) and not allow_missing_signals:
+            raise FileNotFoundError("Both --signals-expected and --signals-actual are required")
         default_schema = Path("docs") / "schemas" / "signal_record.schema.json"
         schema_to_use = signals_schema if signals_schema is not None else default_schema
         if schema_to_use and not schema_to_use.exists() and not allow_signals_invalid:
             raise FileNotFoundError(f"Signals schema not found: {schema_to_use}")
-        if signals_expected and signals_actual and signals_expected.exists() and signals_actual.exists():
+        if (
+            signals_expected
+            and signals_actual
+            and signals_expected.exists()
+            and signals_actual.exists()
+        ):
             signal_diff = diff_signals(
                 signals_expected,
                 signals_actual,
@@ -101,10 +109,12 @@ def determinism_replay(
             )
             signals_summary = signal_diff.get("summary")
             signals_markdown = signal_diff.get("markdown_table")
-    
+
     summary = {
         "event_count": len(filtered_events),
-        "strategy_count": len({evt.get("strategy_id") for evt in filtered_events if "strategy_id" in evt}),
+        "strategy_count": len(
+            {evt.get("strategy_id") for evt in filtered_events if "strategy_id" in evt}
+        ),
         "diff_count": diff_count,
         "log_path": str(resolved_log),
         "signals": signals_summary,
@@ -167,8 +177,16 @@ def determinism_replay(
     return payload
 
 
-def _should_exit(signals_expected: Path | None, signals_actual: Path | None, allow_missing: bool, allow_diff: bool, diff_count: int) -> int | None:
-    if (signals_expected and not signals_expected.exists()) or (signals_actual and not signals_actual.exists()):
+def _should_exit(
+    signals_expected: Path | None,
+    signals_actual: Path | None,
+    allow_missing: bool,
+    allow_diff: bool,
+    diff_count: int,
+) -> int | None:
+    if (signals_expected and not signals_expected.exists()) or (
+        signals_actual and not signals_actual.exists()
+    ):
         return None if allow_missing else 75
     if diff_count > 0 and not allow_diff:
         return 76
@@ -193,7 +211,9 @@ def _parse_ts(value: Any) -> datetime | None:
         return None
 
 
-def _filter_events(events: list[Mapping[str, Any]] | Any, *, strategy: str | None, since: str, until: str | None) -> list[Mapping[str, Any]]:
+def _filter_events(
+    events: list[Mapping[str, Any]] | Any, *, strategy: str | None, since: str, until: str | None
+) -> list[Mapping[str, Any]]:
     parsed_events: list[Mapping[str, Any]] = []
     start_ts = _parse_ts(since)
     end_ts = _parse_ts(until) if until else None
@@ -264,9 +284,17 @@ def _append_validation_log(payload: Mapping[str, Any]) -> None:
     try:
         job = payload.get("job", {})
         summary = payload.get("summary", {})
+        signals = summary.get("signals")
+        expected_count = signals.get("expected_count") if signals else "n/a"
+        actual_count = signals.get("actual_count") if signals else "n/a"
+        diff_count = signals.get("diff_count") if signals else "n/a"
         date_stamp = datetime.utcnow().strftime("%Y%m%d")
         log_path = Path("reports") / "validation_log" / f"AC-07_determinism_{date_stamp}.md"
         log_path.parent.mkdir(parents=True, exist_ok=True)
+        signals_line = (
+            f"| Signals (expected/actual/diff) | {expected_count} / "
+            f"{actual_count} / {diff_count} |"
+        )
         lines = [
             f"## Determinism Replay {job.get('job_id')}",
             "",
@@ -278,9 +306,9 @@ def _append_validation_log(payload: Mapping[str, Any]) -> None:
             f"| Since → Until | {job.get('since')} → {job.get('until')} |",
             f"| Events | {summary.get('event_count')} |",
             f"| Diff Count | {summary.get('diff_count')} |",
-            f"| Signals (expected/actual/diff) | {summary.get('signals', {}).get('expected_count') if summary.get('signals') else 'n/a'} / {summary.get('signals', {}).get('actual_count') if summary.get('signals') else 'n/a'} / {summary.get('signals', {}).get('diff_count') if summary.get('signals') else 'n/a'} |",
+            signals_line,
             f"| Reports | {', '.join(payload.get('reports') or [])} |",
-            f"| Runbook | docs/runbooks/RUN-DET-01.md |",
+            "| Runbook | docs/runbooks/RUN-DET-01.md |",
             "",
         ]
         with log_path.open("a", encoding="utf-8") as handle:
@@ -319,7 +347,12 @@ def _write_reports(
             "job_id": job_id,
             "strategy_id": strategy_id,
             "event_count": len(strategy_events),
-            "hashes": sorted({evt.get("determinism_hash") or evt.get("deterministic_hash") for evt in strategy_events}),
+            "hashes": sorted(
+                {
+                    evt.get("determinism_hash") or evt.get("deterministic_hash")
+                    for evt in strategy_events
+                }
+            ),
             "first_ts": strategy_events[0].get("ts"),
             "last_ts": strategy_events[-1].get("ts"),
             "signals": signals,
@@ -330,7 +363,9 @@ def _write_reports(
             "events": strategy_events,
             "signals_markdown": signals_markdown,
         }
-        json_path.write_text(json.dumps(json_payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        json_path.write_text(
+            json.dumps(json_payload, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
 
         hashes = summary["hashes"]
         md_lines = [

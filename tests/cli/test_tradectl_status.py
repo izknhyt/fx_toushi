@@ -5,11 +5,10 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from typer.testing import CliRunner
-
 from src.core.gate import GateState
 from src.interfaces.cli import create_cli_app
 from src.interfaces.cli.kill_switch import set_state as set_kill_switch_state
+from typer.testing import CliRunner
 
 runner = CliRunner()
 

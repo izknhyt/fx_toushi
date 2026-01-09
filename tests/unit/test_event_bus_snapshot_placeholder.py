@@ -3,7 +3,6 @@ from datetime import datetime
 from pathlib import Path
 
 import pytest
-
 from src.core import EventBus, EventBusConfig, HashComparisonReport, SnapshotManager
 
 
@@ -41,7 +40,7 @@ def test_event_bus_replay_iterates() -> None:
     bus = EventBus(EventBusConfig())
 
     def run_replay() -> list[object]:
-        return [item for item in bus.replay(from_ts=datetime.utcnow())]
+        return list(bus.replay(from_ts=datetime.utcnow()))
 
     assert run_replay() == []
 

@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable, Iterator, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, Iterator, Sequence
-
-from .base import ProviderAdapter
-from ..service import MarketFrame, MarketRequest
 
 import pandas as pd
+
+from ..service import MarketFrame, MarketRequest
+from .base import ProviderAdapter
 
 __all__ = ["CsvLoaderProvider", "FakeCsvLoader"]
 
@@ -66,9 +66,11 @@ def _parse_time(raw: str | None) -> pd.Timestamp | None:
     return ts
 
 
-def _load_symbol_rows(root: Path, symbol: str, *, start: pd.Timestamp | None, end: pd.Timestamp | None) -> list[dict[str, object]]:
+def _load_symbol_rows(
+    root: Path, symbol: str, *, start: pd.Timestamp | None, end: pd.Timestamp | None
+) -> list[dict[str, object]]:
     symbol_name = symbol.upper()
-    provider_dirs = [path for path in root.iterdir()] if root.exists() else []
+    provider_dirs = list(root.iterdir()) if root.exists() else []
     op_files: list[Path] = []
     for provider_dir in provider_dirs:
         if not provider_dir.is_dir():
@@ -98,7 +100,9 @@ def _load_symbol_rows(root: Path, symbol: str, *, start: pd.Timestamp | None, en
 
 def _load_csv(path: Path) -> pd.DataFrame:
     frame = pd.read_csv(path)
-    ts_col = "ts" if "ts" in frame.columns else "timestamp" if "timestamp" in frame.columns else None
+    ts_col = (
+        "ts" if "ts" in frame.columns else "timestamp" if "timestamp" in frame.columns else None
+    )
     if ts_col is None:
         return pd.DataFrame()
     frame["timestamp"] = pd.to_datetime(frame[ts_col], utc=True, errors="coerce")
@@ -113,7 +117,11 @@ def _frame_to_rows(frame: pd.DataFrame) -> list[dict[str, object]]:
         if pd.isna(ts):
             continue
         payload = {
-            "timestamp": pd.Timestamp(ts).to_pydatetime().replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+            "timestamp": pd.Timestamp(ts)
+            .to_pydatetime()
+            .replace(microsecond=0)
+            .isoformat()
+            .replace("+00:00", "Z"),
             "open": float(row.get("open", 0.0)),
             "high": float(row.get("high", 0.0)),
             "low": float(row.get("low", 0.0)),

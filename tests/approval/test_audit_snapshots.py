@@ -5,7 +5,6 @@ from pathlib import Path
 
 import pytest
 
-
 SNAPSHOT_DIR = Path(__file__).parent
 
 
@@ -16,7 +15,9 @@ SNAPSHOT_DIR = Path(__file__).parent
         ("audit_ticket_action_reduce_only.json", True, False),
     ],
 )
-def test_audit_ticket_action_snapshots(name: str, reduce_only_expected: bool, auto_execute_expected: bool) -> None:
+def test_audit_ticket_action_snapshots(
+    name: str, reduce_only_expected: bool, auto_execute_expected: bool
+) -> None:
     """Validate audit ticket action snapshots stay consistent."""
 
     path = SNAPSHOT_DIR / name

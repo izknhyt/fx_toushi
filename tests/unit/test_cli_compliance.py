@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from src.interfaces.cli.compliance import status, ack, refresh, DEFAULT_RISK_STATE
+from src.interfaces.cli.compliance import DEFAULT_RISK_STATE, ack, refresh, status
 
 
 def test_compliance_status_defaults_to_pending(tmp_path: Path, monkeypatch) -> None:

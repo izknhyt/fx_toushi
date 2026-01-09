@@ -7,17 +7,18 @@ import json
 import logging
 import os
 import re
+from collections.abc import Mapping, Sequence
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Iterable, Mapping, Sequence
 
 import pandas as pd
 
-from .board import _load_manifest_entry
 from src.core.health import HealthMonitor
 from src.data.quality import DataQualityGuard
 from src.data.rate_limit_guard import RateLimitGuard
 from src.data.service import spawn_provider_workers
+
+from .board import _load_manifest_entry
 
 logger = logging.getLogger(__name__)
 
@@ -117,7 +118,12 @@ def status(
     now = _utcnow_iso()
     logged_providers: list[str] = []
     stage_evaluations: list[dict[str, object]] = []
-    guard = RateLimitGuard(tokens_per_minute=60.0, burst_tokens=90.0, poll_interval_sec=15.0, stages=["stage0", "stage1", "stage2"])
+    guard = RateLimitGuard(
+        tokens_per_minute=60.0,
+        burst_tokens=90.0,
+        poll_interval_sec=15.0,
+        stages=["stage0", "stage1", "stage2"],
+    )
     worker_plans: list[dict[str, object]] = []
 
     if log_stage_eval:
@@ -166,7 +172,11 @@ def status(
             "cli.data.status.stage_logged",
             extra={"providers": logged_providers, "rate_limit_path": str(rate_limit_path)},
         )
-        plans = spawn_provider_workers(providers=provider_list, rate_limit_guard=guard, rate_limit_state={p["provider"]: p["stage"] for p in stage_evaluations})
+        plans = spawn_provider_workers(
+            providers=provider_list,
+            rate_limit_guard=guard,
+            rate_limit_state={p["provider"]: p["stage"] for p in stage_evaluations},
+        )
         worker_plans = [
             {
                 "provider": plan.provider,
@@ -222,7 +232,9 @@ def rate_limit_snapshot(
             poll_interval_sec=poll_interval_sec,
             stages=stages,
         )
-    plans = spawn_provider_workers(providers=provider_list, rate_limit_guard=guard, rate_limit_state={})
+    plans = spawn_provider_workers(
+        providers=provider_list, rate_limit_guard=guard, rate_limit_state={}
+    )
     worker_plans = [
         {
             "provider": plan.provider,
@@ -283,7 +295,15 @@ def failover(
         log_entry = {"event": "data.failover", **payload}
         _append_jsonl(DEFAULT_RATE_LIMIT_FILE, log_entry)
         _append_jsonl(DEFAULT_STAGE_CHANGE_LOG, log_entry)
-    _append_ops_worklog("data_failover", {"target": target, "mode": mode, "status": payload["status"], "manual_source": payload["manual_source"]})
+    _append_ops_worklog(
+        "data_failover",
+        {
+            "target": target,
+            "mode": mode,
+            "status": payload["status"],
+            "manual_source": payload["manual_source"],
+        },
+    )
     logger.info("cli.data.failover.completed", extra=payload)
     return payload
 
@@ -297,7 +317,17 @@ def manual_template(provider: str, symbol: str, date: str, *, timeframe: str) ->
         base_dir / f"fallback_{provider}_{symbol}_{timeframe}_{date}_op.csv",
         base_dir / f"fallback_{provider}_{symbol}_{timeframe}_{date}_review.csv",
     ]
-    headers = ["ts", "timestamp_jst", "open", "high", "low", "close", "volume", "spread", "session_tag"]
+    headers = [
+        "ts",
+        "timestamp_jst",
+        "open",
+        "high",
+        "low",
+        "close",
+        "volume",
+        "spread",
+        "session_tag",
+    ]
     rows = _build_template_rows(date, timeframe=timeframe)
     for path in filenames:
         if not path.exists():
@@ -307,11 +337,23 @@ def manual_template(provider: str, symbol: str, date: str, *, timeframe: str) ->
                 path.write_text(",".join(headers) + "\n", encoding="utf-8")
     logger.info(
         "cli.data.manual_template.generated",
-        extra={"provider": provider, "symbol": symbol, "date": date, "timeframe": timeframe, "files": [str(p) for p in filenames]},
+        extra={
+            "provider": provider,
+            "symbol": symbol,
+            "date": date,
+            "timeframe": timeframe,
+            "files": [str(p) for p in filenames],
+        },
     )
     _append_ops_worklog(
         "manual_csv_template",
-        {"provider": provider, "symbol": symbol, "date": date, "timeframe": timeframe, "path": str(base_dir)},
+        {
+            "provider": provider,
+            "symbol": symbol,
+            "date": date,
+            "timeframe": timeframe,
+            "path": str(base_dir),
+        },
     )
     _append_jsonl(
         DEFAULT_RATE_LIMIT_FILE,
@@ -414,7 +456,9 @@ def _validate_csv_pair(path: Path) -> None:
         if expected_step and len(timestamps) >= 2:
             diffs = (timestamps.sort_values().diff().dropna().dt.total_seconds()).unique()
             if any(d != expected_step for d in diffs):
-                raise ValueError(f"Timestamp gap detected in {label} file: {path} (expected {expected_step}s)")
+                raise ValueError(
+                    f"Timestamp gap detected in {label} file: {path} (expected {expected_step}s)"
+                )
         if "timestamp_jst" in frame.columns:
             ts_jst = pd.to_datetime(frame["timestamp_jst"], utc=True)
             if not ((ts_jst - timestamps).dt.total_seconds() == 9 * 3600).all():
@@ -669,7 +713,9 @@ def _normalize_timeframe_label(timeframe: str) -> str:
     return tf.replace(" ", "")
 
 
-def _latest_429_rate(rate_limit_path: Path, provider: str, *, ingestion_path: Path | None = None) -> float:
+def _latest_429_rate(
+    rate_limit_path: Path, provider: str, *, ingestion_path: Path | None = None
+) -> float:
     """Extract latest 429 rate for provider from rate_limit_window or ingestion metrics."""
 
     if not rate_limit_path.exists():
@@ -748,7 +794,9 @@ def _suggest_guarded_from_metrics(ingestion_path: Path) -> dict[str, object]:
     monitor.suggest_guarded(reason=reason, runbook=runbook, evidence=[str(ingestion_path)])
     snapshot = monitor.snapshot().to_dict()
     DEFAULT_HEALTH_STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
-    DEFAULT_HEALTH_STATE_PATH.write_text(json.dumps(snapshot, ensure_ascii=False, indent=2), encoding="utf-8")
+    DEFAULT_HEALTH_STATE_PATH.write_text(
+        json.dumps(snapshot, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
     event = {
         "ts": _utcnow_iso(),
         "event": "health.suggest_guarded",
@@ -806,8 +854,12 @@ def jobs(*, pending: bool = False, export_json: bool = False) -> list[dict[str, 
         entries.append(entry)
     if export_json:
         snapshot_path = base / "jobs_snapshot.json"
-        snapshot_path.write_text(json.dumps(entries, ensure_ascii=False, indent=2), encoding="utf-8")
-        logger.info("cli.data.jobs.exported", extra={"path": str(snapshot_path), "count": len(entries)})
+        snapshot_path.write_text(
+            json.dumps(entries, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+        logger.info(
+            "cli.data.jobs.exported", extra={"path": str(snapshot_path), "count": len(entries)}
+        )
     logger.info("cli.data.jobs.completed", extra={"pending": pending, "count": len(entries)})
     return entries
 
@@ -844,7 +896,9 @@ def enqueue_manual_csv_job(
     return payload
 
 
-def run_manual_csv_jobs(*, job_ids: Sequence[str] | None = None, dry_run: bool = False) -> list[dict[str, object]]:
+def run_manual_csv_jobs(
+    *, job_ids: Sequence[str] | None = None, dry_run: bool = False
+) -> list[dict[str, object]]:
     """Process queued manual CSV jobs into curated parquet files."""
 
     snapshots = _load_manual_csv_jobs()
@@ -890,7 +944,10 @@ def manual_report(
                 overall_status = "warn"
         else:
             overall_status = "warn"
-        rows.append(f"- {op_path.name}: {status} (op={op_path}, review={review_path if review_exists else 'missing'})")
+        rows.append(
+            f"- {op_path.name}: {status} "
+            f"(op={op_path}, review={review_path if review_exists else 'missing'})"
+        )
 
     lines = [
         f"# Manual CSV Validation Report {date}",
@@ -920,7 +977,13 @@ def manual_report(
     )
     logger.info(
         "cli.data.manual_report.generated",
-        extra={"date": date, "provider": provider, "symbol": symbol, "path": str(filename), "status": overall_status},
+        extra={
+            "date": date,
+            "provider": provider,
+            "symbol": symbol,
+            "path": str(filename),
+            "status": overall_status,
+        },
     )
     return str(filename)
 

@@ -9,13 +9,13 @@ manifest hash, the recomputed hash, and the comparison status.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
+import sys
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
-
-import hashlib
 
 
 @dataclass(frozen=True)
@@ -83,7 +83,9 @@ def _write_markdown(write_path: Path, content: str, append: bool) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Validate dataset hashes against the manifest.")
-    parser.add_argument("--manifest", type=Path, required=True, help="Path to reports/data_manifest.json")
+    parser.add_argument(
+        "--manifest", type=Path, required=True, help="Path to reports/data_manifest.json"
+    )
     parser.add_argument("--strategy", required=True, help="Strategy identifier inside the manifest")
     parser.add_argument(
         "--write",
@@ -117,7 +119,7 @@ def main() -> None:
         "status": status,
     }
 
-    print(json.dumps(payload, ensure_ascii=False, indent=2))
+    sys.stdout.write(json.dumps(payload, ensure_ascii=False, indent=2) + "\n")
 
     if args.write:
         snippet = (

@@ -2,20 +2,22 @@
 
 from __future__ import annotations
 
-import logging
+import contextlib
 import json
+import logging
 import os
 import uuid
+from collections.abc import Iterable, Mapping, MutableMapping, Sequence
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Iterable, Mapping, MutableMapping, Sequence
+from typing import Any
 
 from rich.console import Console
 from rich.panel import Panel
 from rich.progress import Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
 
-from src.core.session import SessionManager
 from src.core.gate import GateState
+from src.core.session import SessionManager
 from src.data.service import IngestionMetricsCollector
 
 logger = logging.getLogger(__name__)
@@ -67,7 +69,13 @@ def resync(
     """Trigger a session catch-up run while reporting progress."""
 
     if evidence_path is None and log_path == DEFAULT_RESYNC_LOG_PATH:
-        timestamp = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z").replace(":", "").replace("-", "")
+        timestamp = (
+            datetime.now(timezone.utc)
+            .isoformat()
+            .replace("+00:00", "Z")
+            .replace(":", "")
+            .replace("-", "")
+        )
         evidence_path = Path("reports") / "ops" / "resync" / f"{timestamp}.md"
 
     payload: MutableMapping[str, Any] = {
@@ -323,7 +331,9 @@ def _emit_resync_completed_event(
         handle.write("\n")
 
 
-def _enrich_summary_with_metrics(summary: Mapping[str, Any], metrics_path: Path | None) -> Mapping[str, Any]:
+def _enrich_summary_with_metrics(
+    summary: Mapping[str, Any], metrics_path: Path | None
+) -> Mapping[str, Any]:
     """Populate SLA fields when the session manager did not include them."""
 
     merged: dict[str, Any] = dict(summary)
@@ -331,7 +341,9 @@ def _enrich_summary_with_metrics(summary: Mapping[str, Any], metrics_path: Path 
     env_fetch_p99 = _coerce_float(os.getenv("TRADECTL_RESYNC_FETCH_P99_MS"))
     env_retry = _coerce_int(os.getenv("TRADECTL_RESYNC_RETRY_COUNT"))
     env_latency = os.getenv("TRADECTL_RESYNC_LATENCY_STATUS")
-    if metrics_path is None and all(value is None for value in (env_fetch_p95, env_fetch_p99, env_retry, env_latency)):
+    if metrics_path is None and all(
+        value is None for value in (env_fetch_p95, env_fetch_p99, env_retry, env_latency)
+    ):
         return merged
 
     metrics = _load_latest_ingestion_metrics(metrics_path)
@@ -362,7 +374,12 @@ def _maybe_write_ingestion_metrics(summary: Mapping[str, Any], metrics_path: Pat
     latency_status = summary.get("latency_status")
     retry_count = summary.get("retry_count")
     catch_up_lag_minutes = summary.get("catch_up_lag_minutes")
-    if fetch_p95_ms is None and fetch_p99_ms is None and latency_status is None and catch_up_lag_minutes is None:
+    if (
+        fetch_p95_ms is None
+        and fetch_p99_ms is None
+        and latency_status is None
+        and catch_up_lag_minutes is None
+    ):
         return
     path = metrics_path or Path("metrics/data_ingestion_sla.jsonl")
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -412,10 +429,8 @@ def _load_latest_ingestion_metrics(path: Path | None) -> Mapping[str, Any]:
         status = record.get("status")
         payload: dict[str, Any] = {"fetch_p95_ms": fetch_p95_ms, "latency_status": status}
         if "p99_latency_sec" in record:
-            try:
+            with contextlib.suppress(TypeError, ValueError):
                 payload["fetch_p99_ms"] = float(record["p99_latency_sec"]) * 1000
-            except (TypeError, ValueError):
-                pass
         return payload
     return {}
 
@@ -472,7 +487,11 @@ def _load_latest_guardrails(path: Path = Path("metrics/guardrails.jsonl")) -> Ma
 
 
 def _load_latest_gate_state(path: Path | None = None) -> Mapping[str, Any]:
-    resolved = Path(path) if path else Path(os.getenv("TRADECTL_GATE_STATE_PATH", "snapshots/latest/gate_state.json"))
+    resolved = (
+        Path(path)
+        if path
+        else Path(os.getenv("TRADECTL_GATE_STATE_PATH", "snapshots/latest/gate_state.json"))
+    )
     if not resolved.exists():
         return {}
     try:
@@ -484,12 +503,14 @@ def _load_latest_gate_state(path: Path | None = None) -> Mapping[str, Any]:
         return {}
 
 
-def _write_markdown_evidence(path: Path, summary: Mapping[str, Any], *, context: Mapping[str, Any]) -> None:
+def _write_markdown_evidence(
+    path: Path, summary: Mapping[str, Any], *, context: Mapping[str, Any]
+) -> None:
     """Persist a simple Markdown summary for ops evidence."""
 
     path.parent.mkdir(parents=True, exist_ok=True)
     lines = [
-        f"# Resync Summary",
+        "# Resync Summary",
         f"- generated_at: {datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')}",
         f"- status: {summary.get('status', 'unknown')}",
         f"- catch_up_lag_minutes: {summary.get('catch_up_lag_minutes')}",

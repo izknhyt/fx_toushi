@@ -5,7 +5,6 @@ from __future__ import annotations
 import argparse
 import subprocess
 import sys
-from pathlib import Path
 
 DOC_PATHS = (
     "detailed_design_fx_signal_tool_v1.md",
@@ -75,7 +74,10 @@ def main() -> None:
         "--compare-ref",
         type=str,
         default=None,
-        help="Git ref to diff against (e.g. origin/main). When provided, git diff --name-only <ref>...HEAD is used.",
+        help=(
+            "Git ref to diff against (e.g. origin/main). When provided, "
+            "git diff --name-only <ref>...HEAD is used."
+        ),
     )
     args = parser.parse_args()
 
@@ -88,7 +90,7 @@ def main() -> None:
 
     if not entries:
         if args.verbose:
-            print("[doc-sync] clean working tree")
+            sys.stdout.write("[doc-sync] clean working tree\n")
         sys.exit(0)
 
     code_paths: list[str] = []
@@ -101,15 +103,14 @@ def main() -> None:
             code_paths.append(path)
 
     if args.verbose:
-        print(f"[doc-sync] code paths: {code_paths or 'n/a'}")
-        print(f"[doc-sync] doc paths: {doc_paths or 'n/a'}")
+        sys.stdout.write(f"[doc-sync] code paths: {code_paths or 'n/a'}\n")
+        sys.stdout.write(f"[doc-sync] doc paths: {doc_paths or 'n/a'}\n")
 
     if code_paths and not doc_paths:
-        print(
+        sys.stderr.write(
             "Detected source changes without any Runbook/design/CR updates.\n"
             "Update `detailed_design_fx_signal_tool_v1.md`, `docs/runbooks/`, or "
-            "`docs/change_requests/` (or record a TODO per RUN-POST-03) before opening a PR.",
-            file=sys.stderr,
+            "`docs/change_requests/` (or record a TODO per RUN-POST-03) before opening a PR.\n"
         )
         sys.exit(1)
 

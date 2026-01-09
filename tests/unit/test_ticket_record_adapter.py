@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 
 from src.ticket import ChecklistItem, TicketRecordAdapter
 
@@ -33,7 +33,9 @@ def test_adapter_maps_guardrails_and_defaults_from_v1_payload() -> None:
         "determinism_hash": "deadbeef",
     }
     checklist = [
-        ChecklistItem(field="double_entry_confirmed", label="double", mandatory=True, status="pending"),
+        ChecklistItem(
+            field="double_entry_confirmed", label="double", mandatory=True, status="pending"
+        ),
     ]
 
     record = TicketRecordAdapter.from_v1(payload, issued_at=issued_at, checklist=checklist)
@@ -74,7 +76,10 @@ def test_adapter_handles_watch_state_as_cooldown_and_ack_by_passthrough() -> Non
         "strategy_id": "mean_rev",
         "action": "sell",
         "quantity": 1.0,
-        "gate_context": {"spread": {"state": "watch", "reason": "calendar"}, "risk_reduce_only": False},
+        "gate_context": {
+            "spread": {"state": "watch", "reason": "calendar"},
+            "risk_reduce_only": False,
+        },
     }
 
     record = TicketRecordAdapter.from_v1(payload, issued_at=now, checklist=checklist)

@@ -10,12 +10,13 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import subprocess
+import sys
+from collections.abc import Iterable
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Iterable
 
 import pandas as pd
-import subprocess
 
 
 def _utcnow_iso() -> str:
@@ -91,24 +92,26 @@ def _gap_report(
     ts = df["timestamp"].sort_values().to_list()
     gaps: list[dict[str, str | int]] = []
     expected = timedelta(minutes=minutes)
-    for prev, curr in zip(ts, ts[1:]):
+    for prev, curr in zip(ts, ts[1:], strict=False):
         delta = curr - prev
-        if delta > expected:
-            if weekend_exclude:
-                # Skip gaps fully inside weekend (Sat/Sun UTC).
-                if prev.weekday() >= 5 and curr.weekday() >= 5:
-                    continue
-            gaps.append(
-                {
-                    "from": prev.isoformat(),
-                    "to": curr.isoformat(),
-                    "gap_minutes": int(delta.total_seconds() // 60),
-                }
-            )
+        if delta <= expected:
+            continue
+        if weekend_exclude and prev.weekday() >= 5 and curr.weekday() >= 5:
+            # Skip gaps fully inside weekend (Sat/Sun UTC).
+            continue
+        gaps.append(
+            {
+                "from": prev.isoformat(),
+                "to": curr.isoformat(),
+                "gap_minutes": int(delta.total_seconds() // 60),
+            }
+        )
     return gaps
 
 
-def _chunk_range(start: datetime, end: datetime, *, hours: int) -> Iterable[tuple[datetime, datetime]]:
+def _chunk_range(
+    start: datetime, end: datetime, *, hours: int
+) -> Iterable[tuple[datetime, datetime]]:
     cursor = start
     step = timedelta(hours=hours)
     while cursor < end:
@@ -129,7 +132,10 @@ def _build_fetch_plan(
         start = datetime.fromisoformat(str(gap["from"]))
         end = datetime.fromisoformat(str(gap["to"]))
         for chunk_start, chunk_end in _chunk_range(start, end, hours=chunk_hours):
-            out_path = out_dir / f"{symbol.lower()}_m5_{chunk_start:%Y%m%d}_{chunk_end:%Y%m%d}_dukascopy.parquet"
+            out_path = (
+                out_dir
+                / f"{symbol.lower()}_m5_{chunk_start:%Y%m%d}_{chunk_end:%Y%m%d}_dukascopy.parquet"
+            )
             commands.append(
                 "poetry run python tools/dukascopy_fetch.py "
                 f"--pair {symbol} --from {chunk_start:%Y-%m-%d} --to {chunk_end:%Y-%m-%d} "
@@ -165,21 +171,31 @@ def _update_manifest(
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Merge market data and update manifests/latest files.")
+    parser = argparse.ArgumentParser(
+        description="Merge market data and update manifests/latest files."
+    )
     parser.add_argument("--symbol", required=True, help="Symbol, e.g. USDJPY")
     parser.add_argument("--source-dir", help="Directory holding per-symbol parquet files")
     parser.add_argument("--merged", help="Use an existing merged parquet instead of rebuilding")
-    parser.add_argument("--extra-csv", action="append", default=[], help="Extra CSV inputs (repeatable)")
+    parser.add_argument(
+        "--extra-csv", action="append", default=[], help="Extra CSV inputs (repeatable)"
+    )
     parser.add_argument("--latest-days", type=int, default=30, help="Latest window length in days")
     parser.add_argument("--write-latest", action="store_true", help="Write *_m5_latest.parquet")
-    parser.add_argument("--update-manifest", action="store_true", help="Update reports/data_manifest.json")
+    parser.add_argument(
+        "--update-manifest", action="store_true", help="Update reports/data_manifest.json"
+    )
     parser.add_argument("--manifest", default="reports/data_manifest.json", help="Manifest path")
     parser.add_argument("--gap-report", help="Optional JSON gap report path")
     parser.add_argument("--gap-minutes", type=int, default=5, help="Gap threshold in minutes")
     parser.add_argument("--gap-exclude-weekend", action="store_true", help="Exclude weekend gaps")
-    parser.add_argument("--emit-fetch-plan", help="Optional shell script path for backfill commands")
+    parser.add_argument(
+        "--emit-fetch-plan", help="Optional shell script path for backfill commands"
+    )
     parser.add_argument("--chunk-hours", type=int, default=6, help="Backfill chunk size in hours")
-    parser.add_argument("--run-fetch-plan", action="store_true", help="Execute backfill commands sequentially")
+    parser.add_argument(
+        "--run-fetch-plan", action="store_true", help="Execute backfill commands sequentially"
+    )
     args = parser.parse_args()
 
     symbol = args.symbol.upper()
@@ -194,7 +210,11 @@ def main() -> int:
         merged = _load_sources(source_dir, extra_csv)
         window_from = merged["timestamp"].min().strftime("%Y-%m-%d")
         window_to = merged["timestamp"].max().strftime("%Y-%m-%d")
-        merged_path = source_dir / f"{symbol.lower()}_m5_{window_from.replace('-','')}_{window_to.replace('-','')}_merged.parquet"
+        merged_name = (
+            f"{symbol.lower()}_m5_{window_from.replace('-', '')}_"
+            f"{window_to.replace('-', '')}_merged.parquet"
+        )
+        merged_path = source_dir / merged_name
         merged.to_parquet(merged_path, index=False)
     else:
         merged = _normalize_frame(pd.read_parquet(merged_path))
@@ -266,7 +286,9 @@ def main() -> int:
         for cmd in commands:
             subprocess.run(cmd, shell=True, check=True)
 
-    print(json.dumps({"symbol": symbol, "merged": str(merged_path), "sha256": dataset_sha}))
+    sys.stdout.write(
+        json.dumps({"symbol": symbol, "merged": str(merged_path), "sha256": dataset_sha}) + "\n"
+    )
     return 0
 
 

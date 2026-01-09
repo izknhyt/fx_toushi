@@ -9,13 +9,13 @@ import shutil
 import smtplib
 import subprocess
 import sys
-from datetime import datetime, timezone, timedelta
+from collections.abc import Callable, Mapping, Sequence
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Callable, Iterable, Mapping, Sequence
 
 import yaml
-from jsonschema import Draft202012Validator, ValidationError
 
+from jsonschema import Draft202012Validator, ValidationError
 from src.core.health import HealthMonitor
 from src.core.schema_registry import build_schema_registry
 
@@ -51,8 +51,13 @@ def _append_jsonl(path: Path, payload: Mapping[str, object]) -> None:
         handle.write("\n")
 
 
-def _run_command(command: Sequence[str], runner: Callable[[Sequence[str]], subprocess.CompletedProcess[str]] | None = None) -> subprocess.CompletedProcess[str]:
-    runner = runner or (lambda args: subprocess.run(args, capture_output=True, text=True, check=False))
+def _run_command(
+    command: Sequence[str],
+    runner: Callable[[Sequence[str]], subprocess.CompletedProcess[str]] | None = None,
+) -> subprocess.CompletedProcess[str]:
+    runner = runner or (
+        lambda args: subprocess.run(args, capture_output=True, text=True, check=False)
+    )
     return runner(command)
 
 
@@ -66,7 +71,9 @@ def _check_python_poetry(
     detail: list[str] = []
     if version_info < _MIN_PYTHON:
         status = "fail"
-        detail.append(f"python_version_expected>={'.'.join(map(str, _MIN_PYTHON))},found={'.'.join(map(str, version_info))}")
+        expected = ".".join(map(str, _MIN_PYTHON))
+        found = ".".join(map(str, version_info))
+        detail.append(f"python_version_expected>={expected},found={found}")
     poetry = _run_command(["poetry", "--version"], runner=runner)
     poetry_version = poetry.stdout.strip() or poetry.stderr.strip()
     if poetry.returncode != 0:
@@ -81,9 +88,11 @@ def _check_python_poetry(
     }
 
 
-def _check_disk_and_permissions(*, workspace_root: Path, preflight_log: Path, threshold_gb: float = 5.0) -> dict[str, object]:
+def _check_disk_and_permissions(
+    *, workspace_root: Path, preflight_log: Path, threshold_gb: float = 5.0
+) -> dict[str, object]:
     usage = shutil.disk_usage(workspace_root)
-    free_gb = usage.free / (1024 ** 3)
+    free_gb = usage.free / (1024**3)
     status = "ok" if free_gb >= threshold_gb else "fail"
     detail = f"free_gb={free_gb:.2f},threshold_gb={threshold_gb:.2f}"
     write_ok = True
@@ -173,7 +182,9 @@ def _parse_sntp_offset_ms(output: str) -> float | None:
     return None
 
 
-def _check_smtp(*, enabled: bool, host: str | None, port: int, timeout: float = 5.0) -> dict[str, object]:
+def _check_smtp(
+    *, enabled: bool, host: str | None, port: int, timeout: float = 5.0
+) -> dict[str, object]:
     if not enabled:
         return {"id": "smtp", "status": "skipped", "detail": "smtp_check_disabled"}
     status = "fail"
@@ -187,7 +198,13 @@ def _check_smtp(*, enabled: bool, host: str | None, port: int, timeout: float = 
                 detail = f"noop_failed_code={code}"
     except Exception as exc:  # pragma: no cover - network variability
         detail = str(exc)
-    return {"id": "smtp", "status": status, "host": host or "localhost", "port": port, "detail": detail}
+    return {
+        "id": "smtp",
+        "status": status,
+        "host": host or "localhost",
+        "port": port,
+        "detail": detail,
+    }
 
 
 def _build_validator(schema_path: Path) -> Draft202012Validator:
@@ -197,19 +214,35 @@ def _build_validator(schema_path: Path) -> Draft202012Validator:
     return Draft202012Validator(schema_data, registry=registry)
 
 
-def _check_profile_schema(*, profile: str, profile_root: Path, schema_path: Path) -> dict[str, object]:
+def _check_profile_schema(
+    *, profile: str, profile_root: Path, schema_path: Path
+) -> dict[str, object]:
     profile_path = profile_root / f"{profile}.yaml"
     if not profile_path.exists():
-        return {"id": "config_profile", "status": "fail", "detail": f"missing_profile:{profile_path}"}
+        return {
+            "id": "config_profile",
+            "status": "fail",
+            "detail": f"missing_profile:{profile_path}",
+        }
     try:
         validator = _build_validator(schema_path)
         payload = yaml.safe_load(profile_path.read_text(encoding="utf-8"))
         validator.validate(payload)
         return {"id": "config_profile", "status": "ok", "profile_path": str(profile_path)}
     except ValidationError as exc:
-        return {"id": "config_profile", "status": "fail", "profile_path": str(profile_path), "detail": exc.message}
+        return {
+            "id": "config_profile",
+            "status": "fail",
+            "profile_path": str(profile_path),
+            "detail": exc.message,
+        }
     except Exception as exc:  # pragma: no cover - defensive
-        return {"id": "config_profile", "status": "fail", "profile_path": str(profile_path), "detail": str(exc)}
+        return {
+            "id": "config_profile",
+            "status": "fail",
+            "profile_path": str(profile_path),
+            "detail": str(exc),
+        }
 
 
 def _check_backup_log(*, backup_log: Path, warn_after_days: int = 7) -> dict[str, object]:
@@ -246,14 +279,25 @@ def preflight(
 
     results: list[dict[str, object]] = []
     results.append(_check_python_poetry(python_version=python_version, runner=command_runner))
-    results.append(_check_disk_and_permissions(workspace_root=workspace, preflight_log=preflight_log))
     results.append(
-        _check_ntp(enabled=ntp_check, runner=command_runner, metrics_path=time_sync_metrics, preferred_server=os.getenv("NTP_SERVER"))
+        _check_disk_and_permissions(workspace_root=workspace, preflight_log=preflight_log)
+    )
+    results.append(
+        _check_ntp(
+            enabled=ntp_check,
+            runner=command_runner,
+            metrics_path=time_sync_metrics,
+            preferred_server=os.getenv("NTP_SERVER"),
+        )
     )
     smtp_host = os.getenv(_SMTP_HOST_ENV)
     smtp_port = int(os.getenv(_SMTP_PORT_ENV, "25"))
     results.append(_check_smtp(enabled=smtp_check, host=smtp_host, port=smtp_port))
-    results.append(_check_profile_schema(profile=profile, profile_root=profile_root, schema_path=cfg_schema_path))
+    results.append(
+        _check_profile_schema(
+            profile=profile, profile_root=profile_root, schema_path=cfg_schema_path
+        )
+    )
     results.append(_check_backup_log(backup_log=backup_log))
 
     has_failures = any(item.get("status") == "fail" for item in results)

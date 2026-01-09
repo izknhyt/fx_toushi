@@ -1,5 +1,4 @@
 import pytest
-
 from src.analytics.pnl_feedback import FeedbackVector, apply_dynamic_adjustment
 
 

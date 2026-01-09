@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Any, Iterable, List, Sequence, Tuple
+from typing import Any
 
 
 @dataclass
@@ -41,8 +42,8 @@ def _strip_comment(line: str) -> str:
     return "".join(result).rstrip()
 
 
-def _tokenise(text: str) -> List[_Line]:
-    tokens: List[_Line] = []
+def _tokenise(text: str) -> list[_Line]:
+    tokens: list[_Line] = []
     for raw_line in text.splitlines():
         line = _strip_comment(raw_line).rstrip()
         if not line:
