@@ -1,4 +1,4 @@
-# M1.2 Roadmap (Draft)
+# M1.2 Roadmap
 
 - generated_at: 2026-01-09T10:40:00Z
 - scope: M1.2 prep for `reports.performance.enable` and `data.paid_feed`.
@@ -26,9 +26,9 @@
    - Template: `reports/validation_log/AC-45_storage_cost_20260109.md`.
 
 4. Paid feed simulator stub.
-   - Status: in progress (stub created and provider wired).
+   - Status: done (stub created, provider wired, CLI test passes).
    - Evidence: `tools/paid_feed_stub.py`, `src/data/providers/paid_feed_stub.py`,
-     `data/paid_feed_stub.csv`.
+     `data/paid_feed_stub.csv`, `reports/validation_log/evidence/20260109/pytest_data_status_cli.log`.
    - Required: integrate into backtest/paper flow and validate with `pytest -k data_status_cli`.
 
 5. Paid feed paper verification.
@@ -44,3 +44,4 @@
 
 - Runbook: `docs/runbooks/RUN-FEATURE-FLAG-01.md` §§5.5–5.6.
 - Paid feed paper/live steps waived because this installation is for personal use only.
+- reports.performance.enable is kept disabled by default; enable only when running performance snapshots manually.
