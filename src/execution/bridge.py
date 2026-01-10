@@ -8,8 +8,13 @@ from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from src.core.health import HealthMonitor
+
 DEFAULT_METRICS_PATH = Path("metrics/execution_bridge.jsonl")
 DEFAULT_REPORT_DIR = Path("reports/execution")
+OPS_WORKLOG_PATH = Path("ops_worklog.jsonl")
+LATENCY_WARN_THRESHOLD_MS = 350.0
+ERROR_RATE_WARN_THRESHOLD = 0.01
 
 
 class ExecutionBridgeLogError(RuntimeError):
@@ -67,6 +72,8 @@ def log_execution_bridge(
     """Append execution bridge metrics and render a Markdown report."""
 
     timestamp = _utcnow()
+    latency_breach = latency_ms > LATENCY_WARN_THRESHOLD_MS
+    error_breach = error_rate > ERROR_RATE_WARN_THRESHOLD
     metrics_entry = {
         "timestamp": timestamp,
         "mode": mode,
@@ -77,6 +84,9 @@ def log_execution_bridge(
         "error_rate": error_rate,
         "decision": decision,
         "notes": notes,
+        "latency_warn_threshold_ms": LATENCY_WARN_THRESHOLD_MS,
+        "error_rate_warn_threshold": ERROR_RATE_WARN_THRESHOLD,
+        "breach": latency_breach or error_breach,
     }
     try:
         metrics_path.parent.mkdir(parents=True, exist_ok=True)
@@ -94,6 +104,18 @@ def log_execution_bridge(
     except OSError as exc:
         raise ExecutionBridgeLogError(f"Unable to write report into {report_dir}") from exc
 
+    if latency_breach or error_breach:
+        _raise_execution_bridge_warning(
+            timestamp=timestamp,
+            mode=mode,
+            broker=broker,
+            stage=stage,
+            session_id=session_id,
+            latency_ms=latency_ms,
+            error_rate=error_rate,
+            decision=decision,
+        )
+
     return ExecutionBridgeRecord(
         timestamp=timestamp,
         mode=mode,
@@ -107,6 +129,46 @@ def log_execution_bridge(
         metrics_path=str(metrics_path),
         report_path=str(report_path),
     )
+
+
+def _raise_execution_bridge_warning(
+    *,
+    timestamp: str,
+    mode: str,
+    broker: str,
+    stage: str,
+    session_id: str,
+    latency_ms: float,
+    error_rate: float,
+    decision: str,
+) -> None:
+    monitor = HealthMonitor()
+    monitor.raise_condition(
+        "warn",
+        "execution_bridge_latency",
+        detail=f"latency_ms={latency_ms},error_rate={error_rate}",
+        recommended_action="runbook:RUN-BROKER-01#bridge_latency",
+    )
+    payload = {
+        "timestamp": timestamp,
+        "task": "execution_bridge_latency",
+        "mode": mode,
+        "broker": broker,
+        "stage": stage,
+        "session_id": session_id,
+        "latency_ms": latency_ms,
+        "error_rate": error_rate,
+        "decision": decision,
+        "runbook_ref": "RUN-BROKER-01",
+    }
+    _append_jsonl(OPS_WORKLOG_PATH, payload)
+
+
+def _append_jsonl(path: Path, payload: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(payload, ensure_ascii=False))
+        handle.write("\n")
 
 
 def _render_report(
