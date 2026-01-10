@@ -25,7 +25,7 @@ from src.ops.profit_readiness import (
     record_readiness,
     verify_profit_readiness,
 )
-from src.ops_readiness import OpsReadinessEvaluatorStub
+from src.ops_readiness import OpsReadinessEvaluator
 
 logger = logging.getLogger(__name__)
 
@@ -164,7 +164,7 @@ def readiness(
     }
 
     if include_ops:
-        evaluator = OpsReadinessEvaluatorStub(
+        evaluator = OpsReadinessEvaluator(
             config_path=ops_config_path,
             max_age_days=ops_max_age_days,
         )

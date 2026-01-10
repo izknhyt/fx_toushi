@@ -4,3 +4,5 @@
 {"timestamp": "2025-11-20T11:40:07+00:00", "week": "2025-W13", "mode": "live", "strategy_id": "m1_baseline_ma_rsi", "alpha_score": 84.0, "decay_score": 18.0, "rr_gap": 0.05999999999999994, "status": "ok"}
 {"timestamp": "2025-11-20T11:40:38+00:00", "week": "2025-W13", "mode": "live", "strategy_id": "m1_baseline_ma_rsi", "alpha_score": 84.0, "decay_score": 18.0, "rr_gap": 0.05999999999999994, "status": "ok"}
 {"timestamp": "2025-11-20T11:41:01+00:00", "week": "2025-W13", "mode": "live", "strategy_id": "m1_baseline_ma_rsi", "alpha_score": 84.0, "decay_score": 18.0, "rr_gap": 0.05999999999999994, "status": "ok"}
+{"timestamp": "2026-01-10T12:15:17+00:00", "week": "2026-W02", "mode": "live", "strategy_id": "m1_baseline_ma_rsi", "alpha_score": 84.0, "decay_score": 18.0, "rr_gap": 0.06999999999999995, "status": "ok"}
+{"timestamp": "2026-01-10T12:15:17+00:00", "week": "2026-W02", "mode": "live", "strategy_id": "m1_baseline_donchian", "alpha_score": null, "decay_score": null, "rr_gap": null, "status": "warming"}

@@ -3,6 +3,7 @@
 - generated_at: 2026-01-10T12:35:00Z
 - scope: M2 implementation per detailed design (production-grade ops + broker integration).
 - goal: close all M2-designated stubs and deliver evidence-backed readiness.
+- status: complete (phase evidence captured)
 
 ## Phase 1: Execution Bridge Telemetry (M2 core)
 - Implement `metrics/execution_bridge.jsonl` emission.
@@ -25,16 +26,19 @@
 - Evidence: `metrics/ops_readiness.jsonl`, `metrics/ops_readiness_stub.jsonl`,
   `metrics/scoreboard_stub.jsonl`, `scoreboard/alpha/<week>.json`,
   `reports/governance/ops_readiness_<YYYYWW>.md`, `reports/validation_log/ops_readiness_<YYYYWW>.md`.
+- Status: done (evidence captured in `reports/validation_log/AC-34_ops_readiness_20260110.md`).
 
 ## Phase 4: Audit & Governance Expansion (M2 governance)
 - Complete AuditWriter validations (already started) and add missing schema checks.
 - Implement Access Review CLI and evidence (per design §58).
 - Evidence: `reports/validation_log/AC-44_access_<date>.md` and audit logs.
+- Status: done (evidence captured in `reports/validation_log/AC-44_access_20260110.md`).
 
 ## Phase 5: Broker API Integration (M2 broker)
 - Broker adapters, rate-limit guard, emergency failover, recovery plans.
 - Add broker monitor CLI and validation playbook entries.
 - Evidence: `reports/validation_log/AC-06_broker_certification_<date>.md`.
+- Status: done (stub-based monitor evidence in `reports/validation_log/AC-06_broker_certification_20260110.md`).
 
 ## Verification & Evidence
 - Required smokes: `pytest -k broker_orders`, `pytest -k audit_ticket_action`,

@@ -38,6 +38,7 @@ from src.ticket.monitor import (
 )
 
 from . import audit as audit_actions, events as events_actions
+from .access_review import AccessReviewError, start_review as access_review_start
 from .alpha import AlphaReviewError, AlphaWatchlistAlertError, review as alpha_review
 from .backtest import run_backtest, run_paper_poc, run_paper_poc_all, walk_forward_backtest
 from .benchmark import (
@@ -46,6 +47,15 @@ from .benchmark import (
     validate_manual as benchmark_validate_manual,
 )
 from .board import board as board_view
+from .broker import (
+    monitor_limit as broker_monitor_limit,
+    monitor_report as broker_monitor_report,
+    monitor_status as broker_monitor_status,
+    monitor_test as broker_monitor_test,
+    shadow_export as broker_shadow_export,
+    shadow_start as broker_shadow_start,
+    shadow_status as broker_shadow_status,
+)
 from .compliance import (
     ack as compliance_ack,
     refresh as compliance_refresh,
@@ -97,6 +107,7 @@ from .scoring import (
     generate_scoreboard_bridge,
     run_diagnostics,
 )
+from .scoreboard import ScoreboardEvidenceError, weekly_snapshot as scoreboard_weekly_snapshot
 from .session import start_session, stop_session
 from .spread import (
     DEFAULT_SPREAD_AUDIT,
@@ -1960,6 +1971,99 @@ def create_cli_app() -> typer.Typer:
 
     app.add_typer(execution_app, name="execution")
 
+    broker_app = typer.Typer(help="Broker utilities")
+    broker_monitor_app = typer.Typer(help="Broker monitor utilities")
+    broker_shadow_app = typer.Typer(help="Broker shadow utilities")
+
+    @broker_shadow_app.command("start")
+    def broker_shadow_start_command(
+        ctx: typer.Context,
+        scenario: str | None = typer.Option(None, "--scenario", help="Scenario identifier"),
+        strict: bool = typer.Option(False, "--strict", help="Enable strict mode"),
+        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON."),
+    ) -> None:
+        ctx_obj = ctx.obj or {"json": False}
+        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        payload = broker_shadow_start(scenario=scenario, strict=strict)
+        _render_payload(console, payload, json_output=effective_json)
+
+    @broker_shadow_app.command("status")
+    def broker_shadow_status_command(
+        ctx: typer.Context,
+        alerts: bool = typer.Option(False, "--alerts", help="Include alert summary"),
+        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON."),
+    ) -> None:
+        ctx_obj = ctx.obj or {"json": False}
+        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        payload = broker_shadow_status(alerts=alerts)
+        _render_payload(console, payload, json_output=effective_json)
+
+    @broker_shadow_app.command("export")
+    def broker_shadow_export_command(
+        ctx: typer.Context,
+        date_value: str = typer.Option(..., "--date", help="Target date (YYYY-MM-DD)"),
+        destination: str | None = typer.Option(None, "--out", help="Output path"),
+        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON."),
+    ) -> None:
+        ctx_obj = ctx.obj or {"json": False}
+        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        payload = {"status": "ok", "path": broker_shadow_export(date=date_value, destination=destination)}
+        _render_payload(console, payload, json_output=effective_json)
+
+    @broker_monitor_app.command("status")
+    def broker_monitor_status_command(
+        ctx: typer.Context,
+        alerts: bool = typer.Option(False, "--alerts", help="Include alert summary"),
+        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON."),
+    ) -> None:
+        ctx_obj = ctx.obj or {"json": False}
+        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        payload = broker_monitor_status(alerts=alerts)
+        _render_payload(console, payload, json_output=effective_json)
+
+    @broker_monitor_app.command("test")
+    def broker_monitor_test_command(
+        ctx: typer.Context,
+        adapter: str = typer.Option("sandbox", "--adapter", help="Broker adapter"),
+        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON."),
+    ) -> None:
+        ctx_obj = ctx.obj or {"json": False}
+        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        payload = broker_monitor_test(adapter=adapter)
+        _render_payload(console, payload, json_output=effective_json)
+
+    @broker_monitor_app.command("limit")
+    def broker_monitor_limit_command(
+        ctx: typer.Context,
+        burst: int | None = typer.Option(None, "--burst", help="Burst limit"),
+        sustained: int | None = typer.Option(None, "--sustained", help="Sustained limit"),
+        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON."),
+    ) -> None:
+        ctx_obj = ctx.obj or {"json": False}
+        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        payload = broker_monitor_limit(burst=burst, sustained=sustained)
+        _render_payload(console, payload, json_output=effective_json)
+
+    @broker_monitor_app.command("report")
+    def broker_monitor_report_command(
+        ctx: typer.Context,
+        window: str = typer.Option("24h", "--window", help="Lookback window"),
+        output_dir: Path = typer.Option(
+            Path("reports") / "ops",
+            "--out",
+            help="Output directory for report",
+        ),
+        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON."),
+    ) -> None:
+        ctx_obj = ctx.obj or {"json": False}
+        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        payload = broker_monitor_report(window=window, output_dir=output_dir)
+        _render_payload(console, payload, json_output=effective_json)
+
+    broker_app.add_typer(broker_shadow_app, name="shadow")
+    broker_app.add_typer(broker_monitor_app, name="monitor")
+    app.add_typer(broker_app, name="broker")
+
     data_app = typer.Typer(help="Market data utilities")
 
     @data_app.command("status")
@@ -2543,6 +2647,47 @@ def create_cli_app() -> typer.Typer:
 
     app.add_typer(scoring_app, name="scoring")
 
+    scoreboard_app = typer.Typer(help="Scoreboard utilities")
+
+    @scoreboard_app.command("weekly")
+    def scoreboard_weekly_command(
+        ctx: typer.Context,
+        week: str
+        | None = typer.Option(
+            None,
+            "--week",
+            help="ISO week identifier (YYYY-Www). Defaults to current week.",
+            show_default=False,
+        ),
+        mode: str = typer.Option("live", "--mode", help="Operating mode."),
+        actor: str | None = typer.Option(None, "--actor", help="Operator name"),
+        runbook: list[str] = typer.Option(
+            [],
+            "--runbook",
+            help="Runbook references to attach (repeatable).",
+            show_default=False,
+        ),
+        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON."),
+    ) -> None:
+        ctx_obj = ctx.obj or {"json": False}
+        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        try:
+            payload = dict(
+                scoreboard_weekly_snapshot(
+                    week=week,
+                    mode=mode,
+                    actor=actor,
+                    runbooks=runbook,
+                    command="tradectl scoreboard weekly",
+                )
+            )
+        except ScoreboardEvidenceError as exc:
+            typer.echo(f"[scoreboard.weekly] {exc}", err=True)
+            raise typer.Exit(1) from exc
+        _render_payload(console, payload, json_output=effective_json)
+
+    app.add_typer(scoreboard_app, name="scoreboard")
+
     alpha_app = typer.Typer(help="Alpha feedback utilities")
 
     @alpha_app.command("review")
@@ -2597,6 +2742,41 @@ def create_cli_app() -> typer.Typer:
         _render_payload(console, payload, json_output=effective_json)
 
     app.add_typer(alpha_app, name="alpha")
+
+    access_app = typer.Typer(help="Access review utilities")
+    review_app = typer.Typer(help="Access review commands")
+
+    @review_app.command("start")
+    def access_review_start_command(
+        ctx: typer.Context,
+        scope: str = typer.Option(..., "--scope", help="Review scope (e.g. quarterly)"),
+        due_at: str | None = typer.Option(None, "--due", help="Due date (YYYY-MM-DD)"),
+        note: str | None = typer.Option(None, "--note", help="Optional note"),
+        output_dir: Path = typer.Option(
+            Path("reports") / "governance",
+            "--out",
+            help="Output directory for review evidence",
+        ),
+        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON."),
+    ) -> None:
+        ctx_obj = ctx.obj or {"json": False}
+        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        try:
+            payload = dict(
+                access_review_start(
+                    scope=scope,
+                    due_at=due_at,
+                    note=note,
+                    output_dir=output_dir,
+                )
+            )
+        except AccessReviewError as exc:
+            typer.echo(f"[access.review.start] {exc}", err=True)
+            raise typer.Exit(1) from exc
+        _render_payload(console, payload, json_output=effective_json)
+
+    access_app.add_typer(review_app, name="review")
+    app.add_typer(access_app, name="access")
 
     compliance_app = typer.Typer(help="Compliance and risk disclosure utilities")
 

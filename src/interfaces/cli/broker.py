@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import json
 import logging
+from datetime import datetime, timezone
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -14,7 +16,10 @@ __all__ = [
     "monitor_status",
     "monitor_test",
     "monitor_limit",
+    "monitor_report",
 ]
+
+DEFAULT_BROKER_METRICS = Path("metrics/broker_api.jsonl")
 
 
 def shadow_start(*, scenario: str | None = None, strict: bool = False) -> None:
@@ -60,3 +65,44 @@ def monitor_limit(*, burst: int | None = None, sustained: int | None = None) -> 
 
     logger.info("cli.broker.monitor_limit", extra={"burst": burst, "sustained": sustained})
     return {"status": "ok", "burst": burst, "sustained": sustained}
+
+
+def monitor_report(
+    *,
+    window: str = "24h",
+    output_dir: Path = Path("reports") / "ops",
+    metrics_path: Path = DEFAULT_BROKER_METRICS,
+) -> dict[str, object]:
+    """Generate a stub broker monitor report and append metrics."""
+
+    timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    report_path = output_dir / f"broker_monitor_{datetime.now(timezone.utc):%Y%m%d}.md"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    content = "\n".join(
+        [
+            f"# Broker Monitor Report ({window})",
+            "",
+            f"- Generated At: {timestamp}",
+            "- Status: ok",
+            "- SLO: n/a (stub)",
+            "",
+            "## Notes",
+            "- Stub report for M2 evidence. Replace with live broker telemetry.",
+            "",
+        ]
+    )
+    report_path.write_text(content, encoding="utf-8")
+
+    metrics_entry = {
+        "timestamp": timestamp,
+        "window": window,
+        "status": "ok",
+        "slo_ok": True,
+        "report_path": str(report_path),
+    }
+    metrics_path.parent.mkdir(parents=True, exist_ok=True)
+    with metrics_path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(metrics_entry, ensure_ascii=False) + "\n")
+
+    logger.info("cli.broker.monitor_report", extra={"window": window, "report": str(report_path)})
+    return {"status": "ok", "window": window, "report_path": str(report_path)}

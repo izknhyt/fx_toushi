@@ -1,0 +1,40 @@
+{
+  "week": "2026-W02",
+  "mode": "live",
+  "generated_at": "2026-01-10T12:15:17+00:00",
+  "strategies": [
+    {
+      "id": "m1_baseline_ma_rsi",
+      "alpha_score": 84.0,
+      "decay_score": 18.0,
+      "conviction_drift": 0.06999999999999995,
+      "rr_gap": 0.06999999999999995,
+      "spread_penalty": 0.02,
+      "status": "ok",
+      "watchlist_reasons": [],
+      "evidence": [
+        "reports/performance/profit_loop_daily.md#m1_baseline_ma_rsi",
+        "reports/execution/live_bridge_20260110.md"
+      ]
+    },
+    {
+      "id": "m1_baseline_donchian",
+      "alpha_score": null,
+      "decay_score": null,
+      "conviction_drift": null,
+      "rr_gap": null,
+      "spread_penalty": null,
+      "status": "warming",
+      "watchlist_reasons": [],
+      "evidence": [
+        "reports/performance/profit_loop_daily.md#m1_baseline_donchian",
+        "reports/execution/live_bridge_20260110.md"
+      ]
+    }
+  ],
+  "meta": {
+    "schema_version": "bridge.v1",
+    "cfg_hash": "1f6a17fab9f2e8d5a139445b2f6acbcea2985f155f8a590cfdd65a83416ec8f8",
+    "manifest_path": "config/strategy_manifest.yaml"
+  }
+}
