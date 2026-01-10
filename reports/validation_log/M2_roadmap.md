@@ -4,6 +4,7 @@
 - scope: M2 implementation per detailed design (production-grade ops + broker integration).
 - goal: close all M2-designated stubs and deliver evidence-backed readiness.
 - status: complete (phase evidence captured)
+- completed_at: 2026-01-10
 
 ## Phase 1: Execution Bridge Telemetry (M2 core)
 - Implement `metrics/execution_bridge.jsonl` emission.
