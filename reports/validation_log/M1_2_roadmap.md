@@ -2,6 +2,7 @@
 
 - generated_at: 2026-01-09T10:40:00Z
 - scope: M1.2 prep for `reports.performance.enable` and `data.paid_feed`.
+- status: complete (personal use; paid feed paper/live steps waived)
 
 ## Ordered Tasks
 
