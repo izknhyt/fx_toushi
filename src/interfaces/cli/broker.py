@@ -13,6 +13,8 @@ __all__ = [
     "shadow_start",
     "shadow_status",
     "shadow_export",
+    "order_submit",
+    "emergency_stop",
     "monitor_status",
     "monitor_test",
     "monitor_limit",
@@ -20,6 +22,14 @@ __all__ = [
 ]
 
 DEFAULT_BROKER_METRICS = Path("metrics/broker_api.jsonl")
+DEFAULT_BROKER_AUDIT = Path("logs/audit/broker_orders.jsonl")
+DEFAULT_KILL_SWITCH_STATE = Path("snapshots/latest/kill_switch_state.json")
+DEFAULT_MANUAL_UNWIND_DIR = Path("reports/audit")
+OPS_WORKLOG_PATH = Path("ops_worklog.jsonl")
+
+
+class BrokerOrderError(RuntimeError):
+    """Raised when a broker order cannot be submitted."""
 
 
 def shadow_start(*, scenario: str | None = None, strict: bool = False) -> None:
@@ -106,3 +116,106 @@ def monitor_report(
 
     logger.info("cli.broker.monitor_report", extra={"window": window, "report": str(report_path)})
     return {"status": "ok", "window": window, "report_path": str(report_path)}
+
+
+def order_submit(
+    *,
+    symbol: str,
+    side: str,
+    quantity: float,
+    mode: str = "paper",
+    price: float | None = None,
+    reason: str | None = None,
+    audit_path: Path = DEFAULT_BROKER_AUDIT,
+    kill_switch_path: Path = DEFAULT_KILL_SWITCH_STATE,
+    ops_worklog_path: Path = OPS_WORKLOG_PATH,
+) -> dict[str, object]:
+    """Submit a manual order and enforce kill switch guard."""
+
+    state = _load_kill_switch_state(kill_switch_path)
+    if state != "none":
+        payload = {
+            "status": "rejected",
+            "reason": "kill_switch_active",
+            "kill_switch_state": state,
+            "symbol": symbol,
+            "side": side,
+            "quantity": quantity,
+            "mode": mode,
+            "price": price,
+        }
+        _append_jsonl(audit_path, {"event": "broker.order.rejected", **payload})
+        _append_jsonl(ops_worklog_path, {"task": "broker_order_rejected", **payload})
+        raise BrokerOrderError(f"kill switch active: {state}")
+
+    payload = {
+        "status": "submitted",
+        "symbol": symbol,
+        "side": side,
+        "quantity": quantity,
+        "mode": mode,
+        "price": price,
+        "reason": reason,
+    }
+    _append_jsonl(audit_path, {"event": "broker.order.submitted", **payload})
+    _append_jsonl(ops_worklog_path, {"task": "broker_order_submitted", **payload})
+    logger.info("cli.broker.order_submitted", extra=payload)
+    return payload
+
+
+def emergency_stop(
+    *,
+    reason: str,
+    mode: str = "manual",
+    output_dir: Path = DEFAULT_MANUAL_UNWIND_DIR,
+    ops_worklog_path: Path = OPS_WORKLOG_PATH,
+) -> dict[str, object]:
+    """Record an emergency stop action and emit manual unwind evidence."""
+
+    timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    output_dir.mkdir(parents=True, exist_ok=True)
+    report_path = output_dir / f"manual_unwind_{datetime.now(timezone.utc):%Y%m%d}.md"
+    content = "\n".join(
+        [
+            "# Manual Unwind Record",
+            "",
+            f"- Timestamp: {timestamp}",
+            f"- Mode: {mode}",
+            f"- Reason: {reason}",
+            "",
+            "## Checklist",
+            "- [ ] Kill switch engaged",
+            "- [ ] Orders cancelled",
+            "- [ ] Positions flattened",
+            "- [ ] Ops review complete",
+            "",
+        ]
+    )
+    report_path.write_text(content, encoding="utf-8")
+    payload = {
+        "status": "ok",
+        "timestamp": timestamp,
+        "mode": mode,
+        "reason": reason,
+        "report_path": str(report_path),
+    }
+    _append_jsonl(ops_worklog_path, {"task": "emergency_unwind", **payload})
+    logger.info("cli.broker.emergency_stop", extra=payload)
+    return payload
+
+
+def _append_jsonl(path: Path, payload: dict[str, object]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(payload, ensure_ascii=False))
+        handle.write("\n")
+
+
+def _load_kill_switch_state(path: Path) -> str:
+    if not path.exists():
+        return "none"
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return "none"
+    return str(payload.get("state") or "none")

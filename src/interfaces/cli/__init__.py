@@ -48,10 +48,12 @@ from .benchmark import (
 )
 from .board import board as board_view
 from .broker import (
+    emergency_stop as broker_emergency_stop,
     monitor_limit as broker_monitor_limit,
     monitor_report as broker_monitor_report,
     monitor_status as broker_monitor_status,
     monitor_test as broker_monitor_test,
+    order_submit as broker_order_submit,
     shadow_export as broker_shadow_export,
     shadow_start as broker_shadow_start,
     shadow_status as broker_shadow_status,
@@ -1974,6 +1976,7 @@ def create_cli_app() -> typer.Typer:
     broker_app = typer.Typer(help="Broker utilities")
     broker_monitor_app = typer.Typer(help="Broker monitor utilities")
     broker_shadow_app = typer.Typer(help="Broker shadow utilities")
+    broker_order_app = typer.Typer(help="Broker order utilities")
 
     @broker_shadow_app.command("start")
     def broker_shadow_start_command(
@@ -2060,6 +2063,46 @@ def create_cli_app() -> typer.Typer:
         payload = broker_monitor_report(window=window, output_dir=output_dir)
         _render_payload(console, payload, json_output=effective_json)
 
+    @broker_order_app.command("submit")
+    def broker_order_submit_command(
+        ctx: typer.Context,
+        symbol: str = typer.Option(..., "--symbol", help="Symbol"),
+        side: str = typer.Option(..., "--side", help="Side (buy/sell)"),
+        quantity: float = typer.Option(..., "--qty", help="Quantity"),
+        mode: str = typer.Option("paper", "--mode", help="Mode (paper/live)"),
+        price: float | None = typer.Option(None, "--price", help="Optional limit price"),
+        reason: str | None = typer.Option(None, "--reason", help="Reason for submission"),
+        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON."),
+    ) -> None:
+        ctx_obj = ctx.obj or {"json": False}
+        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        try:
+            payload = broker_order_submit(
+                symbol=symbol,
+                side=side,
+                quantity=quantity,
+                mode=mode,
+                price=price,
+                reason=reason,
+            )
+        except Exception as exc:
+            typer.echo(f"[broker.order.submit] {exc}", err=True)
+            raise typer.Exit(1) from exc
+        _render_payload(console, payload, json_output=effective_json)
+
+    @broker_app.command("emergency-stop")
+    def broker_emergency_stop_command(
+        ctx: typer.Context,
+        reason: str = typer.Option(..., "--reason", help="Reason for emergency stop"),
+        mode: str = typer.Option("manual", "--mode", help="Mode (manual/auto)"),
+        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON."),
+    ) -> None:
+        ctx_obj = ctx.obj or {"json": False}
+        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        payload = broker_emergency_stop(reason=reason, mode=mode)
+        _render_payload(console, payload, json_output=effective_json)
+
+    broker_app.add_typer(broker_order_app, name="order")
     broker_app.add_typer(broker_shadow_app, name="shadow")
     broker_app.add_typer(broker_monitor_app, name="monitor")
     app.add_typer(broker_app, name="broker")

@@ -1,0 +1,1 @@
+{"status": "ok", "state": "hard_stop", "previous_state": "none", "reason": "M3 test", "actor": "cli", "audit_path": "logs/audit/kill_switch.jsonl", "state_path": "snapshots/latest/kill_switch_state.json", "log_path": "logs/events/risk.kill_switch.jsonl", "metrics_path": "metrics/kill_switch.jsonl", "exit_code": 0, "message": "Kill Switch set to hard_stop"}
