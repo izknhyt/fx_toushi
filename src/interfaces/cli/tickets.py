@@ -40,6 +40,7 @@ DEFAULT_GUARDRAILS = {
     "risk_disclosure": "pending",
     "profit_readiness_status": "ok",
     "auto_execute": False,
+    "auto_execute_forced_off": False,
     "determinism_hash": DEFAULT_DETERMINISM_HASH,
     "determinism_version": DEFAULT_DETERMINISM_VERSION,
 }

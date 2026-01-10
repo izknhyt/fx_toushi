@@ -392,10 +392,12 @@ def status(
     }
 
     guardrail_payload = guardrail.to_dict()
+    guardrail_payload["health_state"] = guardrail.health_status
+    guardrail_payload["kill_switch"] = guardrail.kill_switch_state
     guardrail_payload["risk_disclosure"] = risk_disclosure_state
+    guardrail_payload["auto_execute_forced_off"] = auto_execute_forced_off
     if auto_execute_forced_off:
         guardrail_payload["reasons"].append("auto_execute_forced_off")
-        guardrail_payload["auto_execute_forced_off"] = True
     guardrail_payload["pending_actions"] = ops_actions["pending"]
     result: MutableMapping[str, object] = {
         "health": health_state.to_dict(),

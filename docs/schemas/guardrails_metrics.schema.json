@@ -7,12 +7,7 @@
     "health_state",
     "board_mode",
     "kill_switch",
-    "spread_status",
-    "reason",
-    "risk_disclosure",
-    "profit_readiness_status",
-    "auto_execute",
-    "auto_execute_forced_off"
+    "reason"
   ],
   "properties": {
     "timestamp": { "type": "string", "format": "date-time" },

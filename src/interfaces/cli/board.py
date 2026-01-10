@@ -256,7 +256,7 @@ def _render_summary(
         f"mode={mode}",
         f"banner={banner_msg or 'normal'}",
         (
-            f"ks={guardrails.get('kill_switch_state')}, "
+            f"ks={guardrails.get('kill_switch') or guardrails.get('kill_switch_state')}, "
             f"spread={guardrails.get('spread_status')}, "
             f"reduce_only={guardrails.get('reduce_only')}"
         ),

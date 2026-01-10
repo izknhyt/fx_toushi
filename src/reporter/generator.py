@@ -112,13 +112,22 @@ class ReportGenerator:
 
 
 def _summarise_guardrails(tickets: Iterable[Mapping[str, object]]) -> dict[str, object]:
-    guard = {"kill_switch": None, "spread_status": None, "reduce_only": False, "board_mode": None}
+    guard = {
+        "kill_switch": None,
+        "spread_status": None,
+        "reduce_only": False,
+        "board_mode": None,
+        "auto_execute_forced_off": False,
+    }
     for ticket in tickets:
         g = ticket.get("guardrails") or {}
         guard["kill_switch"] = guard["kill_switch"] or g.get("kill_switch")
         guard["spread_status"] = guard["spread_status"] or g.get("spread_status")
         guard["reduce_only"] = guard["reduce_only"] or bool(g.get("reduce_only"))
         guard["board_mode"] = guard["board_mode"] or ticket.get("board_mode")
+        guard["auto_execute_forced_off"] = guard["auto_execute_forced_off"] or bool(
+            g.get("auto_execute_forced_off")
+        )
     return guard
 
 
@@ -158,11 +167,13 @@ def _build_ticket_context(tickets: Sequence[Mapping[str, object]]) -> dict[str, 
         kill_switch=guardrails.get("kill_switch"),
         spread_status=guardrails.get("spread_status"),
         reduce_only=guardrails.get("reduce_only"),
+        auto_execute_forced_off=guardrails.get("auto_execute_forced_off", False),
     )
     context["guardrails"] = guardrails_obj
     context["guardrails.kill_switch"] = guardrails_obj.kill_switch
     context["guardrails.spread_status"] = guardrails_obj.spread_status
     context["guardrails.reduce_only"] = guardrails_obj.reduce_only
+    context["guardrails.auto_execute_forced_off"] = guardrails_obj.auto_execute_forced_off
     return context
 
 
