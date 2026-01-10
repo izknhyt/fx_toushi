@@ -16,6 +16,8 @@
 - Paper verification: SLA thresholds via `tradectl data status --profile paper`.
 - Live gating: PO/Compliance sign-off + Runbook `RUN-DATA-05`/`RUN-DATA-06`.
 - Rollback rehearsal and evidence bundle.
+ - Status: done (stub-based paper verification for personal use).
+ - Evidence: `reports/validation_log/AC-45_paid_feed_paper_20260110.md`.
 
 ## Phase 3: Ops Readiness & Scoreboard (M2 ops hardening)
 - Implement OpsReadiness evaluator (replace stub) and evidence digest checks.
