@@ -4,6 +4,8 @@ import hashlib
 import json
 from pathlib import Path
 
+import pandas as pd
+
 from src.features import FeatureCacheStore, FeatureDeterminismMetadata, FeaturePipeline
 
 
@@ -64,3 +66,68 @@ def test_feature_pipeline_loads_pipeline_steps(project_root: Path) -> None:
     steps = pipeline.pipeline_steps
     assert steps
     assert steps[0]["id"] == "resample"
+
+
+def test_feature_pipeline_cache_records_hits(tmp_path: Path, project_root: Path) -> None:
+    cache_path = tmp_path / "feature_cache.jsonl"
+    pipeline = FeaturePipeline.from_config_file(
+        project_root / "config" / "feature_pipeline.yaml",
+        feature_version="v1",
+        data_manifest_hash="hash",
+        seed=7,
+        cache_store=FeatureCacheStore(metrics_path=cache_path),
+    )
+    df = pd.DataFrame(
+        [
+            {
+                "timestamp": "2025-01-01T00:00:00Z",
+                "open": 1.0,
+                "high": 1.2,
+                "low": 0.9,
+                "close": 1.1,
+                "volume": 1000,
+            }
+        ]
+    )
+
+    pipeline.compute_feature_matrix(symbol="USDJPY", price_df=df)
+    pipeline.compute_feature_matrix(symbol="USDJPY", price_df=df)
+
+    statuses = [json.loads(line)["status"] for line in cache_path.read_text().splitlines()]
+    assert statuses == ["miss", "store", "hit"]
+
+
+def test_feature_pipeline_deterministic_fill(tmp_path: Path, project_root: Path) -> None:
+    df = pd.DataFrame(
+        [
+            {
+                "timestamp": "2025-01-01T00:00:00Z",
+                "open": 1.0,
+                "high": 1.2,
+                "low": 0.9,
+                "close": 1.1,
+                "volume": 1000,
+            }
+        ]
+    )
+    pipeline_a = FeaturePipeline.from_config_file(
+        project_root / "config" / "feature_pipeline.yaml",
+        feature_version="v1",
+        data_manifest_hash="hash",
+        seed=11,
+        cache_store=FeatureCacheStore(metrics_path=tmp_path / "cache_a.jsonl"),
+    )
+    pipeline_b = FeaturePipeline.from_config_file(
+        project_root / "config" / "feature_pipeline.yaml",
+        feature_version="v1",
+        data_manifest_hash="hash",
+        seed=11,
+        cache_store=FeatureCacheStore(metrics_path=tmp_path / "cache_b.jsonl"),
+    )
+
+    matrix_a = pipeline_a.compute_feature_matrix(symbol="USDJPY", price_df=df)
+    matrix_b = pipeline_b.compute_feature_matrix(symbol="USDJPY", price_df=df)
+
+    value_a = matrix_a["sma_20_5m"].iloc[0]
+    value_b = matrix_b["sma_20_5m"].iloc[0]
+    assert value_a == value_b

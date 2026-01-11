@@ -5,7 +5,7 @@ diff report with the minimal fields described in the detailed design
 §91.5: bar_ts, feature_hash, strategy_hash, ticket_hash, latency_ms.
 The tool is intentionally lightweight and used by ``tradectl
 determinism replay`` to generate reports under ``reports/determinism``
-and metrics under ``metrics/determinism_replay.jsonl``.
+and metrics under ``metrics/replay_jobs.jsonl``.
 """
 
 from __future__ import annotations

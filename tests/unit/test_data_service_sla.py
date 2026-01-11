@@ -45,7 +45,7 @@ def test_fetch_latest_logs_retry_and_fallback(tmp_path: Path) -> None:
     )
 
     assert len(frames) == 1
-    entries = _read_jsonl(metrics_path)
+    entries = [entry for entry in _read_jsonl(metrics_path) if entry.get("phase") == "fetch"]
     assert len(entries) == 3  # primary fails twice (retry), secondary succeeds
     assert entries[0]["latency_status"] == "error"
     assert entries[1]["latency_status"] == "error"
@@ -70,7 +70,7 @@ def test_fetch_latest_all_providers_fail_logs_error(tmp_path: Path) -> None:
     )
 
     assert frames == []
-    entries = _read_jsonl(metrics_path)
+    entries = [entry for entry in _read_jsonl(metrics_path) if entry.get("phase") == "fetch"]
     assert len(entries) == 3  # two attempts (initial + retry) plus final error entry
     assert all(entry["latency_status"] == "error" for entry in entries)
 
@@ -93,7 +93,7 @@ def test_fetch_latest_applies_provider_specific_threshold(tmp_path: Path) -> Non
         provider_sla_thresholds={"fast": (50.0, 60.0)},
     )
     assert len(frames) == 1
-    entries = _read_jsonl(metrics_path)
+    entries = [entry for entry in _read_jsonl(metrics_path) if entry.get("phase") == "fetch"]
     assert entries[-1]["latency_status"] == "watch"
 
 
@@ -118,7 +118,7 @@ def test_parquet_provider_integration(tmp_path: Path) -> None:
     )
     assert len(frames) == 1
     assert frames[0].bars[0]["open"] == 1
-    metrics_entries = _read_jsonl(metrics_path)
+    metrics_entries = [entry for entry in _read_jsonl(metrics_path) if entry.get("phase") == "fetch"]
     assert metrics_entries
     assert metrics_entries[-1]["provider"] == "local"
 

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from src.interfaces.cli.report import daily, weekly
+from src.interfaces.cli.report import daily, performance, weekly
 
 
 def test_weekly_writes_summary(tmp_path: Path) -> None:
@@ -51,3 +51,57 @@ def test_daily_writes_markdown(tmp_path: Path) -> None:
     content = Path(payload["path"]).read_text(encoding="utf-8")
     assert "2025-03-21" in content
     assert "paper" in content
+
+
+def _write_feature_flags(base: Path, *, profile: str, enabled: bool) -> None:
+    config_dir = base / "config"
+    config_dir.mkdir(parents=True, exist_ok=True)
+    value = "true" if enabled else "false"
+    content = "\n".join(
+        [
+            'schema_version: "feature_flags.v1"',
+            "defaults:",
+            f"  {profile}:",
+            f"    reports.performance.enable: {value}",
+        ]
+    )
+    (config_dir / "feature_flags.yaml").write_text(content + "\n", encoding="utf-8")
+
+
+def test_performance_disabled_when_flag_off(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    _write_feature_flags(tmp_path, profile="paper", enabled=False)
+    output_path = tmp_path / "performance.md"
+    metrics_path = tmp_path / "performance.jsonl"
+
+    payload = performance(
+        profile="paper",
+        output_path=output_path,
+        metrics_path=metrics_path,
+        kpi={"sharpe": 1.0, "max_dd": 0.1, "win_rate": 0.5, "cum_r": 1.2},
+    )
+
+    assert payload["status"] == "disabled"
+    assert not output_path.exists()
+    assert not metrics_path.exists()
+
+
+def test_performance_enabled_writes_report(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    _write_feature_flags(tmp_path, profile="paper", enabled=True)
+    output_path = tmp_path / "performance.md"
+    metrics_path = tmp_path / "performance.jsonl"
+
+    payload = performance(
+        profile="paper",
+        output_path=output_path,
+        metrics_path=metrics_path,
+        kpi={"sharpe": 1.0, "max_dd": 0.1, "win_rate": 0.5, "cum_r": 1.2},
+        dry_run=False,
+    )
+
+    assert payload["status"] == "ok"
+    assert output_path.exists()
+    assert metrics_path.exists()
+    content = output_path.read_text(encoding="utf-8")
+    assert "Performance Snapshot" in content

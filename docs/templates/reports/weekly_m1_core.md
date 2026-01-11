@@ -52,6 +52,19 @@
 - Kill Switch Reviews: `reports/audit/kill_switch_review/`
 - Outstanding Tickets: {{open_tickets}}
 
+## Kill Switch & Spread
+- Kill Switch history: {{kill_switch.history}}
+- Spread cooldown summary: {{spread.cooldown_summary}}
+
+## Manual CSV & Data Quality
+- Manual CSV summary: {{manual_csv.summary}}
+- Data quality summary: {{data_quality.summary}}
+- Resync summary: {{resync.summary}}
+<!-- deferred: M1.1 -->
+
+## Ops Worklog Excerpt
+{{ops_worklog_excerpt}}
+
 ## Manual Commentary
 
 ### A/Bテスト結果（担当: Quant Lead / 締切: 日曜 18:00 JST）
@@ -76,5 +89,10 @@
 - Ops Readiness: `reports/validation_log/ops_readiness_{{report_week}}.md`
 - Ops Worklog Snapshot: `metrics/ops_workload.json`
 - Feature Flags: `config/profile_{{profile}}.yaml`
+
+## Sign-off
+- Prepared by:
+- Reviewed by:
+- Approved by:
 
 > コメント欄は締切後の修正を禁止し、差分は`docs/review_log.md`に追記すること。

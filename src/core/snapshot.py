@@ -2,15 +2,19 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 import logging
 import os
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
 from typing import Any
+
+from src.persistence.events import EventWriter
+from src.utils.hashing import sha256_path
+
+DEFAULT_DATA_MISMATCH_LOG = Path("logs/events/snapshot.data_mismatch.jsonl")
 
 
 class SnapshotError(Enum):
@@ -104,7 +108,7 @@ class SnapshotManager:
                 handle.flush()
                 os.fsync(handle.fileno())
             tmp_path.replace(target)
-            checksum = _sha256_path(target)
+            checksum = sha256_path(target)
         except OSError as exc:
             self._logger.error("snapshot.persist_failed", extra={"error": str(exc)})
             raise RuntimeError(SnapshotError.SNAPSHOT_PERSIST_ERROR.value) from exc
@@ -144,15 +148,23 @@ class SnapshotManager:
     def _emit_data_mismatch(self, *, data_hash: str, expected_hash: str) -> None:
         """Placeholder hook for raising the DataMismatch event."""
 
+        payload = {
+            "event": "snapshot.data_mismatch",
+            "ts": datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace(
+                "+00:00", "Z"
+            ),
+            "source": "snapshot",
+            "expected_hash": expected_hash,
+            "actual_hash": data_hash,
+        }
+        try:
+            EventWriter(DEFAULT_DATA_MISMATCH_LOG).append(payload)
+        except Exception as exc:  # pragma: no cover - best effort event logging
+            self._logger.error(
+                "snapshot.data_mismatch_event_failed", extra={"error": str(exc)}
+            )
         self._logger.error(
             "Data mismatch detected: expected=%s actual=%s", expected_hash, data_hash
         )
         raise RuntimeError(SnapshotError.DATA_MISMATCH_DETECTED.value)
 
-
-def _sha256_path(path: Path) -> str:
-    h = hashlib.sha256()
-    with path.open("rb") as fp:
-        for chunk in iter(lambda: fp.read(8192), b""):
-            h.update(chunk)
-    return f"sha256:{h.hexdigest()}"

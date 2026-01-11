@@ -4,8 +4,9 @@
     "kill_switch_state": "none",
     "spread_status": "normal",
     "reduce_only": true,
-    "risk_disclosure": "signed",
-    "risk_disclosure_consent_id": null
+    "risk_disclosure": "accepted",
+    "risk_disclosure_consent_id": null,
+    "auto_execute": false
   },
   "tickets": [
     {
@@ -86,6 +87,6 @@
     "severity": "warn",
     "runbook": "docs/runbooks/RUN-DATA-05.md"
   },
-  "render_summary": "mode=guarded | banner=Reduce-Only enforced | ks=none, spread=normal, reduce_only=True | risk_disclosure=signed | badges: profit=ok, latency=ok, slippage=ok | tickets=1",
-  "rendered_table": "                                                                                                Tickets                                                                                                 \n┏━━━━━━━━━━┳━━━━━━━━┳━━━━━━━━┳━━━━━━━┳━━━━━━━━┳━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━┳━━━━━━━━┳━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━┓\n┃Ticket ID ┃ Symbol ┃ Action ┃ Qty   ┃ TTL(s) ┃ Entry           ┃ SL/TP           ┃ Guardrails      ┃ Badges          ┃ Checklist       ┃ RiskDisclosure ┃ Spread ┃ Notes           ┃ AuditRefs        ┃\n┡━━━━━━━━━━╇━━━━━━━━╇━━━━━━━━╇━━━━━━━╇━━━━━━━━╇━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━╇━━━━━━━━╇━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━┩\n│TK-LAT-RO │ AUDUSD │ sell   │ 50000 │ 480    │ market @0.6588  │ SL=0.662        │ ks=none(latenc… │ latency_warn,r… │ 1/2 (pending:   │ signed         │ normal │ Reduce-only due │ cfg=sha256:cfg-l…│\n│          │        │        │       │        │                 │ TP=0.653        │ spread=normal,  │                 │ latency_ack)    │                │        │ to latency      │ data=sha256:data…│\n│          │        │        │       │        │                 │ TTL=480         │ ro=True         │                 │                 │                │        │                 │ det=deadbeef14   │\n└──────────┴────────┴────────┴───────┴────────┴─────────────────┴─────────────────┴─────────────────┴─────────────────┴─────────────────┴────────────────┴────────┴─────────────────┴──────────────────┘\n"
+  "render_summary": "mode=guarded | banner=Reduce-Only enforced | ks=none, spread=normal, reduce_only=True | risk_disclosure=accepted | badges: profit=ok, latency=ok, slippage=ok | tickets=1",
+  "rendered_table": "                                                                                     Tickets | Reduce-Only enforced                                                                                     \n┏━━━━━━━━━━┳━━━━━━━━┳━━━━━━━━┳━━━━━━━┳━━━━━━━━┳━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━┳━━━━━━━━┳━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━┓\n┃Ticket ID ┃ Symbol ┃ Action ┃ Qty   ┃ TTL(s) ┃ Entry           ┃ SL/TP           ┃ Guardrails      ┃ Badges          ┃ Checklist       ┃ RiskDisclosure ┃ Spread ┃ Notes           ┃ AuditRefs        ┃\n┡━━━━━━━━━━╇━━━━━━━━╇━━━━━━━━╇━━━━━━━╇━━━━━━━━╇━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━╇━━━━━━━━╇━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━┩\n│TK-LAT-RO │ AUDUSD │ sell   │ 50000 │ 480    │ market @0.6588  │ SL=0.662        │ ks=none(latenc… │ latency_warn,r… │ 1/2 (pending:   │ signed         │ normal │ Reduce-only due │ cfg=sha256:cfg-l…│\n│          │        │        │       │        │                 │ TP=0.653        │ spread=normal,  │                 │ latency_ack)    │                │        │ to latency      │ data=sha256:data…│\n│          │        │        │       │        │                 │ TTL=480         │ ro=True         │                 │                 │                │        │                 │ det=deadbeef14   │\n└──────────┴────────┴────────┴───────┴────────┴─────────────────┴─────────────────┴─────────────────┴─────────────────┴─────────────────┴────────────────┴────────┴─────────────────┴──────────────────┘\n"
 }

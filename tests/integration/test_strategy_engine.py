@@ -43,6 +43,7 @@ class DeterministicStrategy(StrategyPluginProtocol):
                 "ema_fast_5m",
                 "ema_slow_5m",
                 "rsi_14_5m",
+                "sma_20_5m",
                 "atr_14_1h",
                 "ema55_slope_1h",
                 "close_5m",

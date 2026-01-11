@@ -8,21 +8,26 @@ while the public API and metrics format remain stable per the detailed design
 
 from __future__ import annotations
 
+import asyncio
+import inspect
 import json
 import logging
+import os
 import time
 from collections import deque
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import yaml
 
 from src.data.rate_limit_guard import RateLimitGuard, StageDecision
+from src.data.fallback import DEFAULT_FALLBACK_LOG, FallbackRetryTask, record_fallback_event
 
 if TYPE_CHECKING:
+    from src.core.health import HealthMonitor
     from src.data.quality import DataQualityGuard
 
 
@@ -37,6 +42,7 @@ class WorkerPlan:
 __all__ = [
     "MarketRequest",
     "MarketFrame",
+    "BackfillResult",
     "ProviderResult",
     "ProviderError",
     "DataSourceDownError",
@@ -46,6 +52,7 @@ __all__ = [
     "CacheWarmupError",
     "WorkerSpawnError",
     "BufferDrainError",
+    "BufferCoordinator",
     "fetch_latest",
     "backfill",
     "warm_cache",
@@ -59,6 +66,7 @@ __all__ = [
     "build_provider_handlers",
     "IngestionMetricsCollector",
     "WorkerPlan",
+    "log_processing_delay",
     "run_worker_plan",
     "run_fetch_workers",
 ]
@@ -95,8 +103,9 @@ def resolve_provider_priority(
     config = load_provider_priority(config_path)
     per_symbol = config.get("per_symbol") or {}
     default_order = config.get("default_order") or []
-    if symbols and len(set(symbols)) == 1:
-        override = per_symbol.get(symbols[0])
+    if symbols:
+        primary_symbol = str(symbols[0])
+        override = per_symbol.get(primary_symbol) or per_symbol.get(primary_symbol.upper())
         if override:
             return list(override)
     if default_order:
@@ -117,6 +126,26 @@ def load_ingestion_priorities(
     symbol_weight = payload.get("symbol_weight") or {}
     timeframe_weight = payload.get("timeframe_weight") or {}
     return {"symbol_weight": symbol_weight, "timeframe_weight": timeframe_weight}
+
+
+def _read_feature_flag(
+    flag: str,
+    *,
+    profile: str | None = None,
+    path: Path = Path("config/feature_flags.yaml"),
+) -> bool:
+    profile = profile or os.getenv("TRADECTL_PROFILE")
+    if not profile or not path.exists():
+        return False
+    try:
+        payload = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    except Exception:
+        return False
+    defaults = payload.get("defaults") or {}
+    profile_defaults = defaults.get(profile)
+    if not isinstance(profile_defaults, dict):
+        return False
+    return bool(profile_defaults.get(flag, False))
 
 
 def order_symbols_by_priority(
@@ -193,18 +222,19 @@ def build_provider_handlers(
         handlers["manual_csv"] = _manual_handler
     except Exception:
         pass
-    try:
-        from src.data.providers.paid_feed_stub import PaidFeedStubProvider
+    if _read_feature_flag("data.paid_feed"):
+        try:
+            from src.data.providers.paid_feed_stub import PaidFeedStubProvider
 
-        paid_feed = PaidFeedStubProvider()
+            paid_feed = PaidFeedStubProvider()
 
-        def _paid_feed_handler(symbols: Sequence[str], timeframe: str) -> list[MarketFrame]:
-            request = MarketRequest(symbols=symbols, timeframe=timeframe, start=start, end=end)
-            return list(paid_feed.fetch_bars(request))
+            def _paid_feed_handler(symbols: Sequence[str], timeframe: str) -> list[MarketFrame]:
+                request = MarketRequest(symbols=symbols, timeframe=timeframe, start=start, end=end)
+                return list(paid_feed.fetch_bars(request))
 
-        handlers["paid_feed_stub"] = _paid_feed_handler
-    except Exception:
-        pass
+            handlers["paid_feed_stub"] = _paid_feed_handler
+        except Exception:
+            pass
     return handlers
 
 
@@ -235,6 +265,16 @@ class MarketFrame:
 
 
 @dataclass(slots=True)
+class BackfillResult:
+    """Backfill result envelope used by resync orchestration."""
+
+    frames: list[MarketFrame]
+    provider_used: str | None
+    retry_count: int
+    status: str
+
+
+@dataclass(slots=True)
 class ProviderResult:
     """Provider response envelope used for SLA logging."""
 
@@ -242,6 +282,74 @@ class ProviderResult:
     p95_ms: float
     p99_ms: float
     rate_limit_ratio: float = 0.0
+
+
+@dataclass(slots=True)
+class BufferItem:
+    """Queued provider payload awaiting processing."""
+
+    provider: str
+    symbols: list[str]
+    timeframe: str
+    request_ts: datetime
+    enqueue_ts: datetime
+    frames: list[MarketFrame]
+
+
+class BufferCoordinator:
+    """Minimal queue wrapper to separate fetch and processing timing."""
+
+    def __init__(
+        self,
+        *,
+        maxsize: int = 256,
+        fetch_timeout_sec: float = 18.0,
+        processing_timeout_sec: float = 12.0,
+    ) -> None:
+        self._queue: deque[BufferItem] = deque()
+        self._maxsize = maxsize
+        self.fetch_timeout_sec = fetch_timeout_sec
+        self.processing_timeout_sec = processing_timeout_sec
+        self._dropped = 0
+
+    def enqueue(
+        self,
+        *,
+        provider: str,
+        symbols: Sequence[str],
+        timeframe: str,
+        request_ts: datetime,
+        frames: list[MarketFrame],
+    ) -> BufferItem:
+        if len(self._queue) >= self._maxsize:
+            self._queue.popleft()
+            self._dropped += 1
+        item = BufferItem(
+            provider=provider,
+            symbols=list(symbols),
+            timeframe=timeframe,
+            request_ts=request_ts,
+            enqueue_ts=datetime.now(timezone.utc),
+            frames=frames,
+        )
+        self._queue.append(item)
+        return item
+
+    def pop(self) -> BufferItem | None:
+        if not self._queue:
+            return None
+        return self._queue.popleft()
+
+    def drain(self, *, force: bool = False) -> dict[str, int]:
+        flushed = len(self._queue)
+        self._queue.clear()
+        return {"flushed": flushed, "dropped": self._dropped, "forced": int(force)}
+
+    def __len__(self) -> int:
+        return len(self._queue)
+
+
+DEFAULT_BUFFER_COORDINATOR = BufferCoordinator()
 
 
 # ---------------------------------------------------------------------------
@@ -462,11 +570,119 @@ def _percentile(values: Iterable[float], percentile: float) -> float | None:
     return data[f] * (c - k) + data[c] * (k - f)
 
 
+def _parse_bar_timestamp(value: object) -> datetime | None:
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value
+    text = str(value).strip()
+    if not text:
+        return None
+    if text.endswith("Z"):
+        text = text[:-1] + "+00:00"
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed
+
+
+def _extract_last_bar_timestamp(frames: Sequence[MarketFrame]) -> datetime | None:
+    latest: datetime | None = None
+    for frame in frames:
+        if not frame.bars:
+            continue
+        candidate = frame.bars[-1].get("timestamp") or frame.bars[-1].get("ts")
+        parsed = _parse_bar_timestamp(candidate)
+        if parsed is None:
+            continue
+        if latest is None or parsed > latest:
+            latest = parsed
+    return latest
+
+
+def _compute_bar_gap_minutes(anchor: datetime, last_bar: datetime | None) -> int | None:
+    if last_bar is None:
+        return None
+    gap = int((anchor - last_bar).total_seconds() // 60)
+    return max(gap, 0)
+
+
+def _chunk_backfill_ranges(
+    start: datetime, end: datetime, *, chunk_hours: int
+) -> Iterable[tuple[datetime, datetime]]:
+    if chunk_hours <= 0:
+        yield start, end
+        return
+    cursor = start
+    step = chunk_hours * 3600
+    while cursor < end:
+        chunk_end = min(end, cursor + timedelta(seconds=step))
+        if chunk_end <= cursor:
+            break
+        yield cursor, chunk_end
+        cursor = chunk_end
+
+
+def _maybe_raise_data_latency(
+    monitor: HealthMonitor | None,
+    *,
+    delay_sec: float | None,
+    bar_gap_minutes: int | None,
+    provider: str,
+    symbols: Sequence[str],
+    fetch_delay_warn_sec: float,
+    bar_gap_warn_minutes: int,
+) -> None:
+    if monitor is None:
+        return
+    reasons: list[str] = []
+    if delay_sec is not None and delay_sec > fetch_delay_warn_sec:
+        reasons.append(f"fetch_delay_sec={delay_sec:.2f}")
+    if bar_gap_minutes is not None and bar_gap_minutes > bar_gap_warn_minutes:
+        reasons.append(f"bar_gap_minutes={bar_gap_minutes}")
+    if not reasons:
+        return
+    detail = ";".join(reasons)
+    monitor.raise_condition(
+        "degraded",
+        "data_latency_fetch",
+        detail=f"{detail};provider={provider};symbols={','.join(symbols)}",
+        recommended_action="runbook:RUN-DATA-05#enter_guarded",
+    )
+
+
+def _maybe_raise_processing_latency(
+    monitor: HealthMonitor | None,
+    *,
+    delay_sec: float | None,
+    provider: str,
+    symbols: Sequence[str],
+    processing_delay_warn_sec: float,
+) -> None:
+    if monitor is None or delay_sec is None:
+        return
+    if delay_sec <= processing_delay_warn_sec:
+        return
+    monitor.raise_condition(
+        "degraded",
+        "data_latency_processing",
+        detail=(
+            f"processing_delay_sec={delay_sec:.2f};provider={provider};"
+            f"symbols={','.join(symbols)}"
+        ),
+        recommended_action="runbook:RUN-DATA-05#processing_fallback",
+    )
+
+
 def _log_sla_entry(
     *,
     provider: str,
     timeframe: str,
     symbols: Sequence[str],
+    symbol: str | None = None,
     stage: str,
     p95_ms: float,
     p99_ms: float,
@@ -474,15 +690,21 @@ def _log_sla_entry(
     status: str | None,
     rate_limit_ratio: float = 0.0,
     latency_status: str | None = None,
+    quality_flag: int | None = None,
+    last_bar_ts: str | None = None,
+    bar_gap_minutes: int | None = None,
+    delay_sec: float | None = None,
     metrics_path: Path = DEFAULT_METRICS_PATH,
+    timestamp: str | None = None,
 ) -> None:
     metrics_path.parent.mkdir(parents=True, exist_ok=True)
     status = status or _compute_latency_status(p95_ms)
     latency_status = latency_status or status
     payload = {
-        "ts": _utcnow_iso(),
+        "ts": timestamp or _utcnow_iso(),
         "provider": provider,
         "stage": stage,
+        "phase": stage,
         "timeframe": timeframe,
         "symbols": list(symbols),
         "fetch_p95_ms": float(p95_ms),
@@ -491,12 +713,73 @@ def _log_sla_entry(
         "429_rate": float(rate_limit_ratio),
         "latency_status": latency_status,
     }
+    if status is not None:
+        payload["status"] = status
+    if symbol is not None:
+        payload["symbol"] = symbol
+    if quality_flag is not None:
+        payload["quality_flag"] = int(quality_flag)
+    if last_bar_ts is not None:
+        payload["last_bar_ts"] = last_bar_ts
+    if bar_gap_minutes is not None:
+        payload["bar_gap_minutes"] = int(bar_gap_minutes)
+    if delay_sec is not None:
+        payload["delay_sec"] = float(delay_sec)
+        if stage == "fetch":
+            payload["fetch_delay_sec"] = float(delay_sec)
+        elif stage == "processing":
+            payload["processing_delay_sec"] = float(delay_sec)
     try:
         with metrics_path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(payload, ensure_ascii=False))
             handle.write("\n")
     except OSError:
         pass
+
+
+def log_processing_delay(
+    *,
+    provider: str,
+    timeframe: str,
+    symbol: str,
+    bars: int,
+    processing_ms: float,
+    metrics_path: Path = DEFAULT_METRICS_PATH,
+    health_monitor: HealthMonitor | None = None,
+    processing_delay_warn_sec: float = 12.0,
+    processing_delay_breach_sec: float | None = None,
+    timestamp: str | None = None,
+) -> None:
+    delay_sec = max(float(processing_ms) / 1000.0, 0.0)
+    _maybe_raise_processing_latency(
+        health_monitor,
+        delay_sec=delay_sec,
+        provider=provider,
+        symbols=[symbol],
+        processing_delay_warn_sec=processing_delay_warn_sec,
+    )
+    warn_ms = processing_delay_warn_sec * 1000.0
+    breach_sec = (
+        processing_delay_breach_sec
+        if processing_delay_breach_sec is not None
+        else processing_delay_warn_sec * 1.5
+    )
+    status = _compute_latency_status(processing_ms, warn_ms=warn_ms, breach_ms=breach_sec * 1000.0)
+    _log_sla_entry(
+        provider=provider,
+        timeframe=timeframe,
+        symbols=[symbol],
+        symbol=symbol,
+        stage="processing",
+        p95_ms=processing_ms,
+        p99_ms=processing_ms,
+        bars=bars,
+        status=status,
+        rate_limit_ratio=0.0,
+        metrics_path=metrics_path,
+        delay_sec=delay_sec,
+        timestamp=timestamp,
+    )
 
 
 def _log_stage_eval(decision: StageDecision, *, log_path: Path | None) -> None:
@@ -668,6 +951,14 @@ def fetch_latest(
     rate_limit_runbook_ref: str | None = None,
     worker_plan: WorkerPlan | None = None,
     apply_worker_plan: bool = False,
+    health_monitor: HealthMonitor | None = None,
+    buffer_coordinator: BufferCoordinator | None = None,
+    fetch_delay_warn_sec: float = 18.0,
+    bar_gap_warn_minutes: int = 10,
+    processing_delay_warn_sec: float = 12.0,
+    processing_delay_breach_sec: float | None = None,
+    fallback_log_path: Path | None = None,
+    fallback_queue: Any | None = None,
 ) -> list[MarketFrame]:
     """Fetch the most recent bars for the requested symbols and log SLA metrics."""
 
@@ -675,6 +966,7 @@ def fetch_latest(
     priorities = load_ingestion_priorities()
     symbols = order_symbols_by_priority(symbols, timeframe=timeframe, priorities=priorities)
     providers = resolve_provider_priority(symbols, provider_priority=provider_priority)
+    primary_provider = providers[0] if providers else "primary"
     frames: list[MarketFrame] = []
     handler_map = provider_handlers or build_provider_handlers(
         timeframe=timeframe, start=start, end=end
@@ -685,6 +977,8 @@ def fetch_latest(
         if rate_limit_state is not None
         else _load_rate_limit_state(rate_limit_state_path)
     )
+    buffer_coordinator = buffer_coordinator or DEFAULT_BUFFER_COORDINATOR
+    fallback_log_path = DEFAULT_FALLBACK_LOG if fallback_log_path is None else fallback_log_path
     provider_plans: Mapping[str, WorkerPlan] = {}
     if rate_limit_guard:
         for provider in providers:
@@ -698,6 +992,30 @@ def fetch_latest(
                 max_workers=int(plan["max_workers"]),
             )
 
+    def _enqueue_fallback_task(task: FallbackRetryTask) -> None:
+        if fallback_queue is None:
+            return
+        enqueue = getattr(fallback_queue, "enqueue", None)
+        if not callable(enqueue):
+            return
+        try:
+            result = enqueue(task)
+        except Exception as exc:
+            logger.debug("data.fetch_latest.enqueue_failed", extra={"error": str(exc)})
+            return
+        if inspect.isawaitable(result):
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                asyncio.run(result)
+            else:
+                loop.create_task(result)
+
+    def _emit_fallback_state(**kwargs: Any) -> None:
+        if fallback_log_path is not None:
+            record_fallback_event(path=fallback_log_path, **kwargs)
+        _enqueue_fallback_task(FallbackRetryTask(**kwargs))
+
     def _fetch_provider_once(
         provider: str, current_plan: WorkerPlan | None = None
     ) -> tuple[list[MarketFrame], float]:
@@ -707,8 +1025,11 @@ def fetch_latest(
         warn = provider_sla_thresholds.get(provider, (warn_ms, breach_ms))[0]
         breach = provider_sla_thresholds.get(provider, (warn_ms, breach_ms))[1]
         rate_limit_ratio = 0.0
+        quality_flag = 0
         while retry_budget >= 0:
+            buffer_item: BufferItem | None = None
             try:
+                request_ts = datetime.now(timezone.utc)
                 start = time.perf_counter()
                 result = _invoke_provider(
                     provider=provider,
@@ -718,14 +1039,41 @@ def fetch_latest(
                 )
                 elapsed_ms = (time.perf_counter() - start) * 1000
                 local_frames = result.frames
+                buffer_item = buffer_coordinator.enqueue(
+                    provider=provider,
+                    symbols=symbols,
+                    timeframe=timeframe,
+                    request_ts=request_ts,
+                    frames=local_frames,
+                )
+                delay_sec = max(
+                    (buffer_item.enqueue_ts - buffer_item.request_ts).total_seconds(), 0.0
+                )
+                processing_start = time.perf_counter()
                 if data_quality_guard:
                     for frame in local_frames:
                         quality = data_quality_guard.validate(frame)
+                        quality_flag = max(quality_flag, quality.quality_flag)
                         if quality.status in {"fail", "error"}:
                             raise DataQualityError(
                                 f"data_quality_failed: {quality.issues}",
-                                details={"issues": quality.issues, "status": quality.status},
+                                details={
+                                    "issues": quality.issues,
+                                    "status": quality.status,
+                                    "quality_flag": quality.quality_flag,
+                                    "clock_drift_ms": quality.clock_drift_ms,
+                                    "missing_ratio": quality.missing_ratio,
+                                    "provider": provider,
+                                    "manual_csv_required": provider == primary_provider,
+                                },
                             )
+                processing_ms = (time.perf_counter() - processing_start) * 1000
+                processing_delay_ms = max(
+                    (datetime.now(timezone.utc) - buffer_item.enqueue_ts).total_seconds()
+                    * 1000.0,
+                    0.0,
+                )
+                buffer_coordinator.pop()
                 rate_limit_ratio = result.rate_limit_ratio
                 p95_ms = result.p95_ms
                 p99_ms = result.p99_ms
@@ -743,6 +1091,23 @@ def fetch_latest(
                     snapshot = metrics_collector.snapshot()
                     p95_ms = snapshot.get("fetch_p95_ms") or p95_ms
                     p99_ms = snapshot.get("fetch_p99_ms") or p99_ms
+                anchor = _parse_bar_timestamp(end) or datetime.now(timezone.utc)
+                last_ts = _extract_last_bar_timestamp(local_frames)
+                last_bar_ts = (
+                    last_ts.replace(microsecond=0).isoformat().replace("+00:00", "Z")
+                    if last_ts
+                    else None
+                )
+                bar_gap_minutes = _compute_bar_gap_minutes(anchor, last_ts)
+                _maybe_raise_data_latency(
+                    health_monitor,
+                    delay_sec=delay_sec,
+                    bar_gap_minutes=bar_gap_minutes,
+                    provider=provider,
+                    symbols=symbols,
+                    fetch_delay_warn_sec=fetch_delay_warn_sec,
+                    bar_gap_warn_minutes=bar_gap_warn_minutes,
+                )
                 _log_sla_entry(
                     provider=provider,
                     timeframe=timeframe,
@@ -754,11 +1119,43 @@ def fetch_latest(
                     status=_compute_latency_status(p95_ms, warn_ms=warn, breach_ms=breach),
                     rate_limit_ratio=rate_limit_ratio,
                     metrics_path=metrics_path,
+                    quality_flag=quality_flag,
+                    last_bar_ts=last_bar_ts,
+                    bar_gap_minutes=bar_gap_minutes,
+                    delay_sec=delay_sec,
                 )
+                logger.info(
+                    "data.fetch",
+                    extra={
+                        "provider": provider,
+                        "symbols": list(symbols),
+                        "timeframe": timeframe,
+                        "attempt": attempt,
+                        "latency_ms": round(float(elapsed_ms), 3),
+                        "bars": len(local_frames),
+                        "rate_limit_ratio": rate_limit_ratio,
+                        "status": "ok",
+                    },
+                )
+                if local_frames:
+                    for frame in local_frames:
+                        log_processing_delay(
+                            provider=provider,
+                            timeframe=timeframe,
+                            symbol=frame.symbol,
+                            bars=len(frame.bars),
+                            processing_ms=processing_delay_ms,
+                            metrics_path=metrics_path,
+                            health_monitor=health_monitor,
+                            processing_delay_warn_sec=processing_delay_warn_sec,
+                            processing_delay_breach_sec=processing_delay_breach_sec,
+                        )
                 break
             except (ProviderError, DataQualityError) as exc:
                 elapsed_ms = (time.perf_counter() - start) * 1000 if "start" in locals() else 0.0
                 local_frames = []
+                if buffer_item is not None:
+                    buffer_coordinator.pop()
                 if metrics_collector:
                     metrics_collector.observe(
                         provider=provider,
@@ -770,6 +1167,21 @@ def fetch_latest(
                         rate_limit_ratio=getattr(exc, "rate_limit_ratio", 0.0),
                         success=False,
                     )
+                if isinstance(exc, DataQualityError):
+                    quality_flag = max(
+                        quality_flag, int(exc.details.get("quality_flag", 0) or 0)
+                    )
+                logger.info(
+                    "data.fetch_failed",
+                    extra={
+                        "provider": provider,
+                        "symbols": list(symbols),
+                        "timeframe": timeframe,
+                        "attempt": attempt,
+                        "error": str(exc),
+                        "status": "error",
+                    },
+                )
                 logger.warning(
                     "data.fetch_latest.retry provider=%s error=%s attempt=%s",
                     provider,
@@ -787,9 +1199,21 @@ def fetch_latest(
                     status="error",
                     rate_limit_ratio=getattr(exc, "rate_limit_ratio", 0.0),
                     metrics_path=metrics_path,
+                    quality_flag=quality_flag,
                 )
                 retry_budget -= 1
                 attempt += 1
+                if retry_budget >= 0 and fallback_log_path is not None:
+                    _emit_fallback_state(
+                        provider=provider,
+                        symbols=symbols,
+                        timeframe=timeframe,
+                        attempt=attempt,
+                        max_attempts=retries + 1,
+                        state="retry_scheduled",
+                        reason=str(exc),
+                        stage="fetch_latest",
+                    )
                 if retry_budget < 0:
                     break
                 current_plan_for_backoff = current_plan or provider_plans.get(provider)
@@ -799,12 +1223,38 @@ def fetch_latest(
                     else backoff_ms
                 )
                 delay_ms = backoff_base if attempt == 1 else backoff_base * 2
+                if fallback_log_path is not None:
+                    _emit_fallback_state(
+                        provider=provider,
+                        symbols=symbols,
+                        timeframe=timeframe,
+                        attempt=attempt,
+                        max_attempts=retries + 1,
+                        state="retry_backoff",
+                        backoff_sec=delay_ms / 1000.0,
+                        reason=str(exc),
+                        stage="fetch_latest",
+                    )
                 logger.info(
                     "data.fetch_latest.backoff", extra={"delay_ms": delay_ms, "provider": provider}
                 )
+                time.sleep(max(delay_ms / 1000.0, 0.0))
             except Exception as exc:  # pragma: no cover - defensive
+                if buffer_item is not None:
+                    buffer_coordinator.pop()
                 logger.error("data.fetch_latest.unexpected", extra={"error": str(exc)})
                 break
+        if not local_frames and fallback_log_path is not None:
+            _emit_fallback_state(
+                provider=provider,
+                symbols=symbols,
+                timeframe=timeframe,
+                attempt=attempt,
+                max_attempts=retries + 1,
+                state="retry_exhausted",
+                reason="no_frames",
+                stage="fetch_latest",
+            )
         return local_frames, rate_limit_ratio
 
     if apply_worker_plan:
@@ -857,13 +1307,17 @@ def fetch_latest(
                 return frames
         return []
 
-    for provider in providers:
+    quality_flag = 0
+    for index, provider in enumerate(providers):
         retry_budget = retries
         attempt = 0
         warn = provider_sla_thresholds.get(provider, (warn_ms, breach_ms))[0]
         breach = provider_sla_thresholds.get(provider, (warn_ms, breach_ms))[1]
+        quality_flag = 0
         while retry_budget >= 0:
             try:
+                buffer_item: BufferItem | None = None
+                request_ts = datetime.now(timezone.utc)
                 start = time.perf_counter()
                 result = _invoke_provider(
                     provider=provider,
@@ -873,14 +1327,43 @@ def fetch_latest(
                 )
                 elapsed_ms = (time.perf_counter() - start) * 1000
                 frames = result.frames
+                buffer_item = buffer_coordinator.enqueue(
+                    provider=provider,
+                    symbols=symbols,
+                    timeframe=timeframe,
+                    request_ts=request_ts,
+                    frames=frames,
+                )
+                delay_sec = max(
+                    (buffer_item.enqueue_ts - buffer_item.request_ts).total_seconds(), 0.0
+                )
+                processing_start = time.perf_counter()
                 if data_quality_guard:
                     for frame in frames:
                         quality = data_quality_guard.validate(frame)
+                        quality_flag = max(quality_flag, quality.quality_flag)
                         if quality.status in {"fail", "error"}:
                             raise DataQualityError(
                                 f"data_quality_failed: {quality.issues}",
-                                details={"issues": quality.issues, "status": quality.status},
+                                details={
+                                    "issues": quality.issues,
+                                    "status": quality.status,
+                                    "quality_flag": quality.quality_flag,
+                                    "clock_drift_ms": quality.clock_drift_ms,
+                                    "missing_ratio": quality.missing_ratio,
+                                    "provider": provider,
+                                    "manual_csv_required": provider == primary_provider,
+                                },
                             )
+                processing_ms = (time.perf_counter() - processing_start) * 1000
+                processing_delay_ms = processing_ms
+                if buffer_item is not None:
+                    processing_delay_ms = max(
+                        (datetime.now(timezone.utc) - buffer_item.enqueue_ts).total_seconds()
+                        * 1000.0,
+                        0.0,
+                    )
+                    buffer_coordinator.pop()
                 p95_ms = result.p95_ms
                 p99_ms = result.p99_ms
                 if metrics_collector:
@@ -897,6 +1380,23 @@ def fetch_latest(
                     snapshot = metrics_collector.snapshot()
                     p95_ms = snapshot.get("fetch_p95_ms") or p95_ms
                     p99_ms = snapshot.get("fetch_p99_ms") or p99_ms
+                anchor = _parse_bar_timestamp(end) or datetime.now(timezone.utc)
+                last_ts = _extract_last_bar_timestamp(frames)
+                last_bar_ts = (
+                    last_ts.replace(microsecond=0).isoformat().replace("+00:00", "Z")
+                    if last_ts
+                    else None
+                )
+                bar_gap_minutes = _compute_bar_gap_minutes(anchor, last_ts)
+                _maybe_raise_data_latency(
+                    health_monitor,
+                    delay_sec=delay_sec,
+                    bar_gap_minutes=bar_gap_minutes,
+                    provider=provider,
+                    symbols=symbols,
+                    fetch_delay_warn_sec=fetch_delay_warn_sec,
+                    bar_gap_warn_minutes=bar_gap_warn_minutes,
+                )
                 _log_sla_entry(
                     provider=provider,
                     timeframe=timeframe,
@@ -908,11 +1408,43 @@ def fetch_latest(
                     status=_compute_latency_status(p95_ms, warn_ms=warn, breach_ms=breach),
                     rate_limit_ratio=result.rate_limit_ratio,
                     metrics_path=metrics_path,
+                    quality_flag=quality_flag,
+                    last_bar_ts=last_bar_ts,
+                    bar_gap_minutes=bar_gap_minutes,
+                    delay_sec=delay_sec,
                 )
+                logger.info(
+                    "data.fetch",
+                    extra={
+                        "provider": provider,
+                        "symbols": list(symbols),
+                        "timeframe": timeframe,
+                        "attempt": attempt,
+                        "latency_ms": round(float(elapsed_ms), 3),
+                        "bars": len(frames),
+                        "rate_limit_ratio": result.rate_limit_ratio,
+                        "status": "ok",
+                    },
+                )
+                if frames:
+                    for frame in frames:
+                        log_processing_delay(
+                            provider=provider,
+                            timeframe=timeframe,
+                            symbol=frame.symbol,
+                            bars=len(frame.bars),
+                            processing_ms=processing_delay_ms,
+                            metrics_path=metrics_path,
+                            health_monitor=health_monitor,
+                            processing_delay_warn_sec=processing_delay_warn_sec,
+                            processing_delay_breach_sec=processing_delay_breach_sec,
+                        )
                 break
             except (ProviderError, DataQualityError) as exc:
                 elapsed_ms = (time.perf_counter() - start) * 1000 if "start" in locals() else 0.0
                 frames = []
+                if buffer_item is not None:
+                    buffer_coordinator.pop()
                 if metrics_collector:
                     metrics_collector.observe(
                         provider=provider,
@@ -924,6 +1456,21 @@ def fetch_latest(
                         rate_limit_ratio=getattr(exc, "rate_limit_ratio", 0.0),
                         success=False,
                     )
+                if isinstance(exc, DataQualityError):
+                    quality_flag = max(
+                        quality_flag, int(exc.details.get("quality_flag", 0) or 0)
+                    )
+                logger.info(
+                    "data.fetch_failed",
+                    extra={
+                        "provider": provider,
+                        "symbols": list(symbols),
+                        "timeframe": timeframe,
+                        "attempt": attempt,
+                        "error": str(exc),
+                        "status": "error",
+                    },
+                )
                 logger.warning(
                     "data.fetch_latest.retry provider=%s error=%s attempt=%s",
                     provider,
@@ -941,19 +1488,46 @@ def fetch_latest(
                     status="error",
                     rate_limit_ratio=getattr(exc, "rate_limit_ratio", 0.0),
                     metrics_path=metrics_path,
+                    quality_flag=quality_flag,
                 )
                 retry_budget -= 1
                 attempt += 1
+                if retry_budget >= 0 and fallback_log_path is not None:
+                    _emit_fallback_state(
+                        provider=provider,
+                        symbols=symbols,
+                        timeframe=timeframe,
+                        attempt=attempt,
+                        max_attempts=retries + 1,
+                        state="retry_scheduled",
+                        reason=str(exc),
+                        stage="fetch_latest",
+                    )
                 if retry_budget < 0:
                     break
                 current_plan = provider_plans.get(provider) if provider_plans else worker_plan
                 backoff_base = current_plan.poll_interval_sec * 1000 if current_plan else backoff_ms
                 delay_ms = backoff_base if attempt == 1 else backoff_base * 2
+                if fallback_log_path is not None:
+                    _emit_fallback_state(
+                        provider=provider,
+                        symbols=symbols,
+                        timeframe=timeframe,
+                        attempt=attempt,
+                        max_attempts=retries + 1,
+                        state="retry_backoff",
+                        backoff_sec=delay_ms / 1000.0,
+                        reason=str(exc),
+                        stage="fetch_latest",
+                    )
                 logger.info(
                     "data.fetch_latest.backoff", extra={"delay_ms": delay_ms, "provider": provider}
                 )
+                time.sleep(max(delay_ms / 1000.0, 0.0))
                 # placeholder: in async/real mode use asyncio.sleep(delay_ms/1000)
             except Exception as exc:  # pragma: no cover - defensive
+                if buffer_item is not None:
+                    buffer_coordinator.pop()
                 logger.error("data.fetch_latest.unexpected", extra={"error": str(exc)})
                 break
         # evaluate rate limit guard for this provider
@@ -975,7 +1549,33 @@ def fetch_latest(
                     "data.fetch_latest.failover_rate_limit",
                     extra={"from": provider, "reason": "rate_limit_high"},
                 )
+                if fallback_log_path is not None:
+                    _emit_fallback_state(
+                        provider=provider,
+                        symbols=symbols,
+                        timeframe=timeframe,
+                        attempt=attempt,
+                        max_attempts=retries + 1,
+                        state="failover_to",
+                        reason="rate_limit_high",
+                        failover_to=providers[index + 1],
+                        stage="fetch_latest",
+                    )
                 continue
+        if not frames and fallback_log_path is not None:
+            failover_to = providers[index + 1] if index + 1 < len(providers) else None
+            state = "failover_to" if failover_to else "failed"
+            _emit_fallback_state(
+                provider=provider,
+                symbols=symbols,
+                timeframe=timeframe,
+                attempt=attempt,
+                max_attempts=retries + 1,
+                state=state,
+                reason="no_frames",
+                failover_to=failover_to,
+                stage="fetch_latest",
+            )
         if frames:
             break
     if not frames:
@@ -990,6 +1590,7 @@ def fetch_latest(
             status="error",
             rate_limit_ratio=1.0,
             metrics_path=metrics_path,
+            quality_flag=quality_flag if providers else None,
         )
     if auto_apply_rate_limit_stage:
         _persist_rate_limit_state(rate_limit_state_path, rate_limit_state)
@@ -1003,6 +1604,9 @@ def backfill(
     end: str,
     *,
     priority: str | None = None,
+    provider_priority: Sequence[str] | None = None,
+    provider_handlers: Mapping[str, Callable[[Sequence[str], str], ProviderResult | list[MarketFrame]]]
+    | None = None,
     context: object | None = None,
     retries: int = 2,
     backoff_ms: float = 500.0,
@@ -1010,44 +1614,244 @@ def backfill(
     warn_ms: float = 1_000.0,
     breach_ms: float = 1_500.0,
     provider_sla_thresholds: Mapping[str, tuple[float, float]] | None = None,
-) -> list[MarketFrame]:
+    data_quality_guard: DataQualityGuard | None = None,
+    metrics_collector: IngestionMetricsCollector | None = None,
+    health_monitor: HealthMonitor | None = None,
+    buffer_coordinator: BufferCoordinator | None = None,
+    fetch_delay_warn_sec: float = 18.0,
+    bar_gap_warn_minutes: int = 10,
+    processing_delay_warn_sec: float = 12.0,
+    processing_delay_breach_sec: float | None = None,
+    chunk_hours: int = 6,
+) -> BackfillResult:
     """Backfill the requested window for the given symbols."""
 
     _ = context
+    start_dt = _parse_bar_timestamp(start)
+    end_dt = _parse_bar_timestamp(end)
+    if start_dt is None or end_dt is None:
+        raise BackfillRangeError("backfill range must be valid ISO timestamps")
+    if end_dt <= start_dt:
+        raise BackfillRangeError("backfill end must be after start")
+
+    provider_sla_thresholds = provider_sla_thresholds or {}
+    buffer_coordinator = buffer_coordinator or DEFAULT_BUFFER_COORDINATOR
+    priorities = load_ingestion_priorities()
+    ordered_symbols = order_symbols_by_priority(symbols, timeframe=timeframe, priorities=priorities)
+    providers = resolve_provider_priority(ordered_symbols, provider_priority=provider_priority)
+    frames_by_symbol: dict[str, list[dict[str, object]]] = {}
+    quality_flags: dict[str, int] = {}
+    provider_used: str | None = None
+    total_retries = 0
+
+    for chunk_start, chunk_end in _chunk_backfill_ranges(start_dt, end_dt, chunk_hours=chunk_hours):
+        handler_map = provider_handlers or build_provider_handlers(
+            timeframe=timeframe,
+            start=chunk_start.replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+            end=chunk_end.replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+        )
+        success = False
+        for provider in providers:
+            warn, breach = provider_sla_thresholds.get(provider, (warn_ms, breach_ms))
+            retry_budget = retries
+            attempt = 0
+            while retry_budget >= 0:
+                try:
+                    buffer_item: BufferItem | None = None
+                    request_ts = datetime.now(timezone.utc)
+                    fetch_start = time.perf_counter()
+                    result = _invoke_provider(
+                        provider=provider,
+                        symbols=ordered_symbols,
+                        timeframe=timeframe,
+                        handler=handler_map.get(provider),
+                    )
+                    fetch_elapsed_ms = (time.perf_counter() - fetch_start) * 1000
+                    frames = result.frames
+                    buffer_item = buffer_coordinator.enqueue(
+                        provider=provider,
+                        symbols=ordered_symbols,
+                        timeframe=timeframe,
+                        request_ts=request_ts,
+                        frames=frames,
+                    )
+                    delay_sec = max(
+                        (buffer_item.enqueue_ts - buffer_item.request_ts).total_seconds(), 0.0
+                    )
+                    processing_start = time.perf_counter()
+                    if data_quality_guard:
+                        for frame in frames:
+                            quality = data_quality_guard.validate(frame)
+                            quality_flags[frame.symbol] = max(
+                                quality_flags.get(frame.symbol, 0),
+                                quality.quality_flag,
+                            )
+                            if quality.status in {"fail", "error"}:
+                                raise DataQualityError(
+                                    f"data_quality_failed: {quality.issues}",
+                                    details={
+                                        "issues": quality.issues,
+                                        "status": quality.status,
+                                        "quality_flag": quality.quality_flag,
+                                },
+                            )
+                    processing_ms = (time.perf_counter() - processing_start) * 1000
+                    processing_delay_ms = processing_ms
+                    if buffer_item is not None:
+                        processing_delay_ms = max(
+                            (datetime.now(timezone.utc) - buffer_item.enqueue_ts).total_seconds()
+                            * 1000.0,
+                            0.0,
+                        )
+                        buffer_coordinator.pop()
+                    p95_ms = result.p95_ms
+                    p99_ms = result.p99_ms
+                    if metrics_collector:
+                        metrics_collector.observe(
+                            provider=provider,
+                            symbols=ordered_symbols,
+                            timeframe=timeframe,
+                            latency_ms=fetch_elapsed_ms,
+                            bars=sum(len(frame.bars) for frame in frames),
+                            stage="backfill",
+                            rate_limit_ratio=result.rate_limit_ratio,
+                            success=True,
+                        )
+                        snapshot = metrics_collector.snapshot()
+                        p95_ms = snapshot.get("fetch_p95_ms") or p95_ms
+                        p99_ms = snapshot.get("fetch_p99_ms") or p99_ms
+                    last_ts = _extract_last_bar_timestamp(frames)
+                    last_bar_ts = (
+                        last_ts.replace(microsecond=0).isoformat().replace("+00:00", "Z")
+                        if last_ts
+                        else None
+                    )
+                    bar_gap_minutes = _compute_bar_gap_minutes(chunk_end, last_ts)
+                    _maybe_raise_data_latency(
+                        health_monitor,
+                        delay_sec=delay_sec,
+                        bar_gap_minutes=bar_gap_minutes,
+                        provider=provider,
+                        symbols=ordered_symbols,
+                        fetch_delay_warn_sec=fetch_delay_warn_sec,
+                        bar_gap_warn_minutes=bar_gap_warn_minutes,
+                    )
+                    _log_sla_entry(
+                        provider=provider,
+                        timeframe=timeframe,
+                        symbols=ordered_symbols,
+                        stage="backfill",
+                        p95_ms=p95_ms,
+                        p99_ms=p99_ms,
+                        bars=sum(len(frame.bars) for frame in frames),
+                        status=_compute_latency_status(p95_ms, warn_ms=warn, breach_ms=breach),
+                        rate_limit_ratio=result.rate_limit_ratio,
+                        metrics_path=metrics_path,
+                        quality_flag=max(quality_flags.values(), default=0),
+                        last_bar_ts=last_bar_ts,
+                        bar_gap_minutes=bar_gap_minutes,
+                        delay_sec=delay_sec,
+                    )
+                    if frames:
+                        for frame in frames:
+                            log_processing_delay(
+                                provider=provider,
+                                timeframe=timeframe,
+                                symbol=frame.symbol,
+                                bars=len(frame.bars),
+                                processing_ms=processing_delay_ms,
+                                metrics_path=metrics_path,
+                                health_monitor=health_monitor,
+                                processing_delay_warn_sec=processing_delay_warn_sec,
+                                processing_delay_breach_sec=processing_delay_breach_sec,
+                            )
+                    for frame in frames:
+                        frames_by_symbol.setdefault(frame.symbol, []).extend(frame.bars)
+                        quality_flags[frame.symbol] = max(
+                            quality_flags.get(frame.symbol, 0),
+                            frame.quality_flag,
+                        )
+                    provider_used = provider
+                    success = True
+                    break
+                except (ProviderError, DataQualityError) as exc:
+                    total_retries += 1
+                    fetch_elapsed_ms = (
+                        (time.perf_counter() - fetch_start) * 1000 if "fetch_start" in locals() else 0
+                    )
+                    if buffer_item is not None:
+                        buffer_coordinator.pop()
+                    if metrics_collector:
+                        metrics_collector.observe(
+                            provider=provider,
+                            symbols=ordered_symbols,
+                            timeframe=timeframe,
+                            latency_ms=fetch_elapsed_ms,
+                            bars=0,
+                            stage="backfill",
+                            rate_limit_ratio=getattr(exc, "rate_limit_ratio", 0.0),
+                            success=False,
+                        )
+                    if isinstance(exc, DataQualityError):
+                        for symbol in ordered_symbols:
+                            quality_flags[symbol] = max(
+                                quality_flags.get(symbol, 0),
+                                int(exc.details.get("quality_flag", 0) or 0),
+                            )
+                    logger.warning(
+                        "data.backfill.retry provider=%s error=%s attempt=%s",
+                        provider,
+                        str(exc),
+                        attempt,
+                    )
+                    _log_sla_entry(
+                        provider=provider,
+                        timeframe=timeframe,
+                        symbols=ordered_symbols,
+                        stage="backfill",
+                        p95_ms=0.0,
+                        p99_ms=0.0,
+                        bars=0,
+                        status="error",
+                        rate_limit_ratio=getattr(exc, "rate_limit_ratio", 0.0),
+                        metrics_path=metrics_path,
+                        quality_flag=max(quality_flags.values(), default=0),
+                    )
+                    retry_budget -= 1
+                    attempt += 1
+                    if retry_budget < 0:
+                        break
+                    delay_ms = backoff_ms if attempt == 1 else backoff_ms * 2
+                    time.sleep(max(delay_ms / 1000.0, 0.0))
+                except Exception as exc:  # pragma: no cover - defensive
+                    if buffer_item is not None:
+                        buffer_coordinator.pop()
+                    logger.error("data.backfill.unexpected", extra={"error": str(exc)})
+                    retry_budget = -1
+            if success:
+                break
+        if not success:
+            raise BackfillFailedError(
+                f"backfill failed for {chunk_start.isoformat()}..{chunk_end.isoformat()}"
+            )
+
     frames: list[MarketFrame] = []
-    for symbol in symbols:
+    for symbol in ordered_symbols:
+        bars = frames_by_symbol.get(symbol, [])
         frames.append(
             MarketFrame(
                 symbol=symbol,
                 timeframe=timeframe,
-                bars=[
-                    {"timestamp": start, "open": 0.0, "high": 0.0, "low": 0.0, "close": 0.0},
-                    {"timestamp": end, "open": 0.0, "high": 0.0, "low": 0.0, "close": 0.0},
-                ],
-                quality_flag=0,
+                bars=bars,
+                quality_flag=quality_flags.get(symbol, 0),
             )
         )
-    _log_sla_entry(
-        provider=str(priority or "backfill"),
-        timeframe=timeframe,
-        symbols=symbols,
-        stage="backfill",
-        p95_ms=150.0,
-        p99_ms=180.0,
-        bars=len(frames) * 2,
-        status=_compute_latency_status(
-            150.0,
-            warn_ms=provider_sla_thresholds.get(priority, (warn_ms, breach_ms))[0]
-            if provider_sla_thresholds
-            else warn_ms,
-            breach_ms=provider_sla_thresholds.get(priority, (warn_ms, breach_ms))[1]
-            if provider_sla_thresholds
-            else breach_ms,
-        ),
-        rate_limit_ratio=0.0,
-        metrics_path=metrics_path,
+    return BackfillResult(
+        frames=frames,
+        provider_used=provider_used or priority,
+        retry_count=total_retries,
+        status="ok",
     )
-    return frames
 
 
 def warm_cache(*, context: object | None = None) -> None:
@@ -1180,4 +1984,8 @@ def run_fetch_workers(
 def drain_buffers(*, force: bool = False) -> dict[str, int]:
     """Flush in-flight buffers and return statistics for observability."""
 
-    return {"flushed": 0, "dropped": 0, "forced": int(force)}
+    try:
+        return DEFAULT_BUFFER_COORDINATOR.drain(force=force)
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.error("data.buffer.drain_failed", extra={"error": str(exc)})
+        raise BufferDrainError("buffer drain failed") from exc

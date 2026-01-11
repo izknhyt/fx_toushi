@@ -41,19 +41,39 @@ def _append_jsonl(path: Path, payload: Mapping[str, object]) -> None:
 
 def _load_state(path: Path) -> dict[str, object]:
     if not path.exists():
-        return {"state": "none", "reason": None, "updated_at": None, "actor": None}
+        return {
+            "state": "none",
+            "reason": None,
+            "updated_at": None,
+            "actor": None,
+            "auto_ack_required": False,
+        }
     try:
         return json.loads(path.read_text(encoding="utf-8"))
     except json.JSONDecodeError:
-        return {"state": "none", "reason": None, "updated_at": None, "actor": None}
+        return {
+            "state": "none",
+            "reason": None,
+            "updated_at": None,
+            "actor": None,
+            "auto_ack_required": False,
+        }
 
 
-def _persist_state(path: Path, *, state: str, reason: str | None, actor: str | None) -> Path:
+def _persist_state(
+    path: Path,
+    *,
+    state: str,
+    reason: str | None,
+    actor: str | None,
+    auto_ack_required: bool = False,
+) -> Path:
     payload = {
         "state": state,
         "reason": reason,
         "actor": actor,
         "updated_at": _utcnow_iso(),
+        "auto_ack_required": bool(auto_ack_required),
     }
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -82,6 +102,7 @@ def set_state(
     actor: str = "cli",
     runbook: str | None = None,
     evidence: Iterable[Path] | None = None,
+    auto_ack_required: bool | None = None,
     state_path: Path = DEFAULT_KILL_SWITCH_STATE,
     audit_path: Path = DEFAULT_KILL_SWITCH_AUDIT,
     log_path: Path = DEFAULT_KILL_SWITCH_LOG,
@@ -125,7 +146,15 @@ def set_state(
             "exit_code": exit_code,
         }
 
-    _persist_state(state_path, state=state_value, reason=reason, actor=actor)
+    if auto_ack_required is None:
+        auto_ack_required = state_value in {"soft_stop", "hard_stop"}
+    _persist_state(
+        state_path,
+        state=state_value,
+        reason=reason,
+        actor=actor,
+        auto_ack_required=bool(auto_ack_required),
+    )
     try:
         _append_jsonl(audit_path, audit_payload)
     except OSError as exc:  # pragma: no cover - defensive

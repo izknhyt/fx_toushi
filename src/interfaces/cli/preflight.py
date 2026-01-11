@@ -17,6 +17,13 @@ import yaml
 
 from jsonschema import Draft202012Validator, ValidationError
 from src.core.health import HealthMonitor
+from src.core.time_sync import (
+    DEFAULT_HEALTH_ACTION_AUDIT,
+    DEFAULT_HEALTH_STATE_PATH,
+    DEFAULT_HEALTH_SUGGEST_LOG,
+    DEFAULT_OPS_WORKLOG,
+    TimeSyncGuard,
+)
 from src.core.schema_registry import build_schema_registry
 
 logger = logging.getLogger(__name__)
@@ -267,6 +274,7 @@ def preflight(
     profile_root: Path = DEFAULT_PROFILE_ROOT,
     time_sync_metrics: Path = DEFAULT_TIME_SYNC_METRICS,
     health_monitor: HealthMonitor | None = None,
+    health_state_path: Path = DEFAULT_HEALTH_STATE_PATH,
     workspace_root: Path | None = None,
     command_runner: Callable[[Sequence[str]], subprocess.CompletedProcess[str]] | None = None,
     python_version: tuple[int, int, int] | None = None,
@@ -289,6 +297,16 @@ def preflight(
             metrics_path=time_sync_metrics,
             preferred_server=os.getenv("NTP_SERVER"),
         )
+    )
+    time_sync = TimeSyncGuard().evaluate(
+        metrics_path=time_sync_metrics,
+        monitor=monitor,
+        health_state_path=health_state_path,
+        suggest_log_path=DEFAULT_HEALTH_SUGGEST_LOG,
+        audit_path=DEFAULT_HEALTH_ACTION_AUDIT,
+        ops_worklog_path=DEFAULT_OPS_WORKLOG,
+        persist_health_state=True,
+        log_events=True,
     )
     smtp_host = os.getenv(_SMTP_HOST_ENV)
     smtp_port = int(os.getenv(_SMTP_PORT_ENV, "25"))
@@ -319,6 +337,7 @@ def preflight(
         "profile": profile,
         "status": status,
         "checks": results,
+        "time_sync": time_sync.to_dict(),
         "exit_code": exit_code,
         "logged_to": str(preflight_log),
         "health": monitor.to_dict(),

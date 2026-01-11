@@ -1,0 +1,3 @@
+{"ts": "2026-01-11T12:52:58Z", "broker_id": "demo", "match_rate": 1.0, "balance_diff": 9999.8, "swap_diff": 0.0, "commission_diff": 1.2}
+{"ts": "2026-01-11T13:13:07Z", "broker_id": "demo", "match_rate": 1.0, "balance_diff": 9999.8, "swap_diff": 0.0, "commission_diff": 1.2}
+{"ts": "2026-01-11T13:16:02Z", "broker_id": "demo", "match_rate": 1.0, "balance_diff": 9999.8, "swap_diff": 0.0, "commission_diff": 1.2}

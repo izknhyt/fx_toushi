@@ -139,6 +139,42 @@ def test_fetch_latest_uses_provider_priority_config(monkeypatch, tmp_path: Path)
     assert frames[0].bars[0]["open"] == 2  # secondary picked via config
 
 
+def test_fetch_latest_uses_per_symbol_override(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.chdir(tmp_path)
+    config_dir = tmp_path / "config"
+    config_dir.mkdir(parents=True)
+    (config_dir / "provider_priority.yaml").write_text(
+        "schema_version: provider_priority.v1\n"
+        "default_order:\n"
+        "  - secondary\n"
+        "  - primary\n"
+        "per_symbol:\n"
+        "  USDJPY:\n"
+        "    - override\n"
+        "    - secondary\n",
+        encoding="utf-8",
+    )
+
+    def _override_handler(symbols, timeframe):
+        bars = [{"timestamp": "2025-01-01T00:00:00Z", "open": 3, "high": 3, "low": 3, "close": 3}]
+        return ProviderResult(
+            frames=[MarketFrame(symbol=symbols[0], timeframe=timeframe, bars=bars)],
+            p95_ms=40.0,
+            p99_ms=55.0,
+            rate_limit_ratio=0.0,
+        )
+
+    frames = fetch_latest(
+        symbols=["USDJPY"],
+        timeframe="5m",
+        provider_handlers={"override": _override_handler, "secondary": _secondary_handler},
+        metrics_path=tmp_path / "metrics" / "data_ingestion_sla.jsonl",
+    )
+
+    assert frames
+    assert frames[0].bars[0]["open"] == 3
+
+
 def test_order_symbols_by_priority() -> None:
     priorities = {
         "symbol_weight": {"EURUSD": 2.0, "USDJPY": 1.0},

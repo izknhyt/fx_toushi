@@ -29,6 +29,7 @@ import hashlib
 import json
 import os
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from collections.abc import Iterable, Mapping, MutableMapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -39,6 +40,8 @@ import numpy as np
 import pandas as pd
 import yaml
 
+from .cache import FeatureCacheStore
+
 _TIMEFRAME_RULES: Mapping[str, str] = {
     "5m": "5t",
     "15m": "15t",
@@ -47,6 +50,8 @@ _TIMEFRAME_RULES: Mapping[str, str] = {
     "4h": "4h",
     "1d": "1d",
 }
+
+DEFAULT_FEATURE_CACHE_METRICS = Path("metrics") / "feature_cache.jsonl"
 
 __all__ = [
     "FeatureContext",
@@ -166,6 +171,8 @@ class FeaturePipeline:
         data_manifest_hash: str | None = None,
         seed: int = 0,
         pipeline_steps: Sequence[Mapping[str, Any]] | None = None,
+        cache_store: FeatureCacheStore | None = None,
+        cache_metrics_path: Path | None = None,
     ):
         self._config = config
         self._feature_version = feature_version or self._load_feature_set_version(
@@ -179,6 +186,16 @@ class FeaturePipeline:
             data_manifest_hash=self._data_manifest_hash,
             seed=seed,
         )
+        cache_metrics_env = os.getenv("FEATURE_CACHE_METRICS_PATH")
+        resolved_cache_metrics = cache_metrics_path
+        if resolved_cache_metrics is None and cache_metrics_env:
+            resolved_cache_metrics = Path(cache_metrics_env)
+        if resolved_cache_metrics is None:
+            resolved_cache_metrics = DEFAULT_FEATURE_CACHE_METRICS
+        self._cache_store = cache_store or FeatureCacheStore(
+            metrics_path=resolved_cache_metrics
+        )
+        self._rng = np.random.default_rng(self._determinism.seed)
         self._pipeline_steps = tuple(pipeline_steps or ())
         self._indicators: MutableMapping[str, IndicatorDefinition] = {}
         self._available_keys: set[str] = set()
@@ -191,6 +208,11 @@ class FeaturePipeline:
         default_tf_minutes = pipeline_cfg.get("default_timeframe_minutes", 5)
         self._default_timeframe = f"{default_tf_minutes}m"
         self._timeframes = frozenset(timeframes)
+        self._lookback_bars = int(pipeline_cfg.get("lookback_bars", 0) or 0)
+        self._resample_enabled = bool(resample_cfg.get("enabled", True))
+        self._max_workers = int(pipeline_cfg.get("max_workers", 4) or 4)
+        if self._max_workers < 1:
+            self._max_workers = 1
         base_price_keys = {
             f"open_{self._default_timeframe}",
             f"high_{self._default_timeframe}",
@@ -244,6 +266,8 @@ class FeaturePipeline:
     def _resample(self, df: pd.DataFrame, timeframe: str) -> pd.DataFrame:
         """Return OHLCV frame resampled to the requested timeframe."""
 
+        if not self._resample_enabled or timeframe == self._default_timeframe:
+            return df
         rule = _TIMEFRAME_RULES.get(timeframe, timeframe)
         aggregated = (
             df.resample(rule)
@@ -355,6 +379,30 @@ class FeaturePipeline:
 
         return outputs
 
+    def _deterministic_fill_value(self, *, column: str) -> float:
+        seed_source = f"{self._determinism.seed}:{column}".encode("utf-8")
+        digest = hashlib.sha256(seed_source).digest()
+        seed = int.from_bytes(digest[:8], "big")
+        rng = np.random.default_rng(seed)
+        return float(rng.normal(loc=0.0, scale=0.01))
+
+    def _fill_missing_series(self, series: pd.Series, *, column: str) -> pd.Series:
+        if series.empty or not series.isna().any():
+            return series
+        filled = series.ffill()
+        if filled.isna().any():
+            fill_value = self._deterministic_fill_value(column=column)
+            filled = filled.fillna(fill_value)
+        return filled
+
+    def _fill_missing_matrix(self, matrix: pd.DataFrame) -> pd.DataFrame:
+        if matrix.empty:
+            return matrix
+        filled = matrix.copy()
+        for column in filled.columns:
+            filled[column] = self._fill_missing_series(filled[column], column=column)
+        return filled
+
     def compute_feature_matrix(self, *, symbol: str, price_df: pd.DataFrame) -> pd.DataFrame:
         """Return a feature matrix aligned to the base timeframe index.
 
@@ -367,25 +415,37 @@ class FeaturePipeline:
         if price_df.empty:
             return pd.DataFrame()
 
+        symbol_key = str(symbol).upper()
+        cache_key = self._cache_store.build_key(
+            symbol=symbol_key,
+            timeframe=self._default_timeframe,
+            feature_version=self._feature_version,
+            data_manifest_hash=self._data_manifest_hash,
+        )
+        cached = self._cache_store.get(cache_key)
+        if cached is not None:
+            return cached.copy() if hasattr(cached, "copy") else cached
+
         frame = price_df.copy()
         frame["timestamp"] = pd.to_datetime(frame["timestamp"])
         frame = frame.set_index("timestamp").sort_index()
 
+        frames = {self._default_timeframe: frame}
+        for tf in self._timeframes:
+            if tf == self._default_timeframe:
+                continue
+            resampled = self._resample(frame, tf)
+            if not resampled.empty:
+                frames[tf] = resampled
+
         feature_columns: dict[str, pd.Series] = {}
-        for indicator in self._indicators.values():
-            for timeframe in indicator.timeframes:
-                resampled = (
-                    self._resample(frame, timeframe)
-                    if timeframe != self._default_timeframe
-                    else frame
-                )
-                computed = self._compute_indicator(indicator, resampled)
-                for alias, series in computed.items():
-                    column_name = f"{alias}_{timeframe}"
-                    aligned = series.rename(column_name)
-                    if timeframe != self._default_timeframe:
-                        aligned = aligned.reindex(frame.index, method="ffill")
-                    feature_columns[column_name] = aligned
+        for timeframe, computed in self._compute_indicator_batches(frames):
+            for alias, series in computed.items():
+                column_name = f"{alias}_{timeframe}"
+                aligned = series.rename(column_name)
+                if timeframe != self._default_timeframe:
+                    aligned = aligned.reindex(frame.index, method="ffill")
+                feature_columns[column_name] = aligned
 
         matrix = pd.DataFrame(feature_columns, index=frame.index)
         # add base OHLCV columns for strategy use
@@ -394,6 +454,17 @@ class FeaturePipeline:
         matrix[f"low_{self._default_timeframe}"] = frame["low"]
         matrix[f"close_{self._default_timeframe}"] = frame["close"]
         matrix[f"volume_{self._default_timeframe}"] = frame["volume"]
+        matrix = self._fill_missing_matrix(matrix)
+        cached_matrix = matrix.copy()
+        self._cache_store.set(
+            cache_key,
+            cached_matrix,
+            metadata={
+                "feature_version": self._feature_version,
+                "seed": self._determinism.seed,
+                "rows": len(matrix),
+            },
+        )
         # refresh context so manifest validation can see the symbol set
         self._context = FeatureContext(
             symbols=frozenset({symbol}),
@@ -416,6 +487,8 @@ class FeaturePipeline:
         data_manifest_hash: str | None = None,
         seed: int = 0,
         pipeline_steps_path: str | Path | None = None,
+        cache_store: FeatureCacheStore | None = None,
+        cache_metrics_path: Path | None = None,
     ) -> FeaturePipeline:
         """Instantiate the pipeline from a YAML configuration file."""
 
@@ -431,6 +504,8 @@ class FeaturePipeline:
             data_manifest_hash=data_manifest_hash,
             seed=seed,
             pipeline_steps=pipeline_steps,
+            cache_store=cache_store,
+            cache_metrics_path=cache_metrics_path,
         )
 
     @classmethod
@@ -442,6 +517,8 @@ class FeaturePipeline:
         feature_version: str | None = None,
         data_manifest_hash: str | None = None,
         seed: int = 0,
+        cache_store: FeatureCacheStore | None = None,
+        cache_metrics_path: Path | None = None,
     ) -> FeaturePipeline:
         """Instantiate the pipeline from standard config paths."""
 
@@ -451,6 +528,8 @@ class FeaturePipeline:
             data_manifest_hash=data_manifest_hash,
             seed=seed,
             pipeline_steps_path=pipeline_steps_path,
+            cache_store=cache_store,
+            cache_metrics_path=cache_metrics_path,
         )
 
     @staticmethod
@@ -632,15 +711,13 @@ class FeaturePipeline:
                         f"volume_{tf}": float(latest.get("volume", 0.0)),
                     }
                 )
-            for indicator in self._indicators.values():
-                if tf not in indicator.timeframes:
+
+        for timeframe, outputs in self._compute_indicator_batches(frames):
+            for output_key, series in outputs.items():
+                value = self._last_valid(series)
+                if value is None:
                     continue
-                outputs = self._compute_indicator(indicator, frame_df)
-                for output_key, series in outputs.items():
-                    value = self._last_valid(series)
-                    if value is None:
-                        continue
-                    self._store[symbol][tf][f"{output_key}_{tf}"] = value
+                self._store[symbol][timeframe][f"{output_key}_{timeframe}"] = value
 
     def _bars_to_frame(self, bars: Iterable[Mapping[str, Any]]) -> pd.DataFrame:
         frame = pd.DataFrame(list(bars))
@@ -661,10 +738,14 @@ class FeaturePipeline:
         if "volume" not in frame.columns:
             frame["volume"] = 0.0
         frame = frame.set_index("timestamp")
+        if self._lookback_bars > 0 and len(frame) > self._lookback_bars:
+            frame = frame.iloc[-self._lookback_bars :]
         return frame
 
     def _resample_frames(self, df: pd.DataFrame) -> dict[str, pd.DataFrame]:
         frames: dict[str, pd.DataFrame] = {}
+        if not self._resample_enabled:
+            return frames
         for tf in self._timeframes:
             if tf == self._default_timeframe:
                 continue
@@ -684,6 +765,37 @@ class FeaturePipeline:
             if not resampled.empty:
                 frames[tf] = resampled
         return frames
+
+    def _compute_indicator_batches(
+        self, frames: Mapping[str, pd.DataFrame]
+    ) -> list[tuple[str, Mapping[str, pd.Series]]]:
+        """Compute indicator outputs for each timeframe, optionally in parallel."""
+
+        batches: list[tuple[str, Mapping[str, pd.Series]]] = []
+        if not self._indicators or not frames:
+            return batches
+
+        if self._max_workers <= 1 or len(self._indicators) == 1:
+            for indicator in self._indicators.values():
+                for timeframe, frame in frames.items():
+                    if timeframe not in indicator.timeframes:
+                        continue
+                    batches.append((timeframe, self._compute_indicator(indicator, frame)))
+            return batches
+
+        with ThreadPoolExecutor(max_workers=self._max_workers) as executor:
+            future_map = {}
+            for indicator in self._indicators.values():
+                for timeframe, frame in frames.items():
+                    if timeframe not in indicator.timeframes:
+                        continue
+                    future = executor.submit(self._compute_indicator, indicator, frame)
+                    future_map[future] = timeframe
+            for future in as_completed(future_map):
+                timeframe = future_map[future]
+                outputs = future.result()
+                batches.append((timeframe, outputs))
+        return batches
 
     @staticmethod
     def _last_valid(series: pd.Series) -> object | None:

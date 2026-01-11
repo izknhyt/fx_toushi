@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
@@ -34,6 +35,11 @@ class RiskAssessment:
             "kill_switch_suggestion": self.kill_switch_suggestion,
             "kill_switch_reason": self.kill_switch_reason,
         }
+
+
+ReduceOnlyAdvisor = Callable[
+    [GateState, RiskAssessment | None, str, str], tuple[bool, str | None]
+]
 
 
 @dataclass(slots=True)
@@ -71,12 +77,14 @@ class RiskManager:
         r_eff_soft_stop: float = 2.0,
         r_eff_hard_stop: float = 2.5,
         capital_floor_pct: float = 80.0,
+        reduce_only_advisor: ReduceOnlyAdvisor | None = None,
     ) -> None:
         self._daily_stop_pct = daily_stop_pct
         self._weekly_stop_pct = weekly_stop_pct
         self._r_eff_soft_stop = r_eff_soft_stop
         self._r_eff_hard_stop = r_eff_hard_stop
         self._capital_floor_pct = capital_floor_pct
+        self._reduce_only_advisor = reduce_only_advisor
 
     def evaluate(self, snapshot: RiskSnapshot) -> RiskAssessment:
         """Evaluate the latest metrics and recommend guard rails."""
@@ -154,10 +162,25 @@ class RiskManager:
         reduce_only = gate.risk.reduce_only or (
             assessment.risk_state.reduce_only if assessment else False
         )
+        reduce_only_reason = gate.risk.reduce_only_reason
+        if assessment and assessment.risk_state.reduce_only_reason:
+            reduce_only_reason = assessment.risk_state.reduce_only_reason
+        advisor_reduce_only, advisor_reason = self._evaluate_reduce_only_advisor(
+            gate_state=gate,
+            assessment=assessment,
+            spread_status=effective_spread,
+            kill_switch_state=kill_switch_effective,
+        )
+        if advisor_reduce_only:
+            reduce_only = True
+            if reduce_only_reason is None:
+                reduce_only_reason = advisor_reason or "reduce_only_advisor"
+
         reason = (
             gate.market.spread.reason
             or gate.risk.kill_switch_reason
             or (assessment.kill_switch_reason if assessment else None)
+            or reduce_only_reason
         )
 
         board_mode = "normal"
@@ -196,3 +219,20 @@ class RiskManager:
             reason=reason,
             exit_code=exit_code,
         )
+
+    def _evaluate_reduce_only_advisor(
+        self,
+        *,
+        gate_state: GateState,
+        assessment: RiskAssessment | None,
+        spread_status: str,
+        kill_switch_state: str,
+    ) -> tuple[bool, str | None]:
+        if self._reduce_only_advisor is None:
+            return False, None
+        result = self._reduce_only_advisor(
+            gate_state, assessment, spread_status, kill_switch_state
+        )
+        if isinstance(result, tuple) and len(result) == 2:
+            return bool(result[0]), result[1]
+        return bool(result), None

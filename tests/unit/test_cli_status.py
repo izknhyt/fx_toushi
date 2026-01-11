@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -33,7 +34,10 @@ def test_status_returns_health_and_kill_switch_snapshot() -> None:
     gate_state.risk.kill_switch_reason = "weekly_drawdown"
 
     payload = status(
-        monitor=monitor, gate_state=gate_state, snapshot_manager=_SnapshotManagerStub()
+        monitor=monitor,
+        gate_state=gate_state,
+        snapshot_manager=_SnapshotManagerStub(),
+        kill_switch_state_path=None,
     )
 
     assert payload["exit_code"] == 62
@@ -56,6 +60,24 @@ def test_status_returns_health_and_kill_switch_snapshot() -> None:
     assert actions["ack"]["status"] == "idle"
     assert actions["kill_switch"]["status"] == "idle"
     assert actions["board"]["status"] == "idle"
+
+
+def test_status_includes_auto_ack_required(tmp_path: Path) -> None:
+    monitor = HealthMonitor()
+    gate_state = GateState()
+    kill_switch_state_path = tmp_path / "kill_switch_state.json"
+    kill_switch_state_path.write_text(
+        json.dumps({"state": "soft_stop", "reason": "drawdown", "auto_ack_required": True}),
+        encoding="utf-8",
+    )
+
+    payload = status(
+        monitor=monitor,
+        gate_state=gate_state,
+        kill_switch_state_path=kill_switch_state_path,
+    )
+
+    assert payload["kill_switch"]["auto_ack_required"] is True
 
 
 def test_status_banner_shown_when_reduce_only_active() -> None:
@@ -118,3 +140,29 @@ def test_status_marks_auto_execute_forced_off(tmp_path: Path) -> None:
     assert payload["gate"]["auto_execute"] is False
     content = metrics_path.read_text(encoding="utf-8")
     assert "auto_execute_forced_off" in content
+
+
+def test_status_includes_time_sync_payload(tmp_path: Path) -> None:
+    monitor = HealthMonitor()
+    gate_state = GateState()
+    metrics_path = tmp_path / "guardrails.jsonl"
+    time_sync_metrics = tmp_path / "time_sync.jsonl"
+    payload = {
+        "ts": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "clock_drift_ms": 700,
+        "status": "ok",
+    }
+    time_sync_metrics.write_text(json.dumps(payload) + "\n", encoding="utf-8")
+
+    result = status(
+        monitor=monitor,
+        gate_state=gate_state,
+        metrics_path=metrics_path,
+        time_sync_check=True,
+        time_sync_metrics_path=time_sync_metrics,
+    )
+
+    assert result["time_sync"]["status"] == "warn"
+    assert result["guardrails"]["time_sync"]["status"] == "warn"
+    content = metrics_path.read_text(encoding="utf-8")
+    assert "time_sync_status" in content

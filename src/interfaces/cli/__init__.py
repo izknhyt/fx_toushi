@@ -42,11 +42,13 @@ from .access_review import AccessReviewError, start_review as access_review_star
 from .alpha import AlphaReviewError, AlphaWatchlistAlertError, review as alpha_review
 from .backtest import run_backtest, run_paper_poc, run_paper_poc_all, walk_forward_backtest
 from .benchmark import (
+    BenchmarkGapError,
     compare as benchmark_compare,
     ingest as benchmark_ingest,
     validate_manual as benchmark_validate_manual,
 )
 from .board import board as board_view
+from .board_diagnostics import board_diagnostics
 from .broker import (
     emergency_stop as broker_emergency_stop,
     monitor_limit as broker_monitor_limit,
@@ -63,6 +65,7 @@ from .compliance import (
     refresh as compliance_refresh,
     status as compliance_status,
 )
+from .config import validate as config_validate
 from .data import (
     acknowledge_degradation,
     enqueue_manual_csv_job,
@@ -78,6 +81,11 @@ from .data import (
     status as data_status,
     update_latest as data_update_latest,
     validate_csv,
+)
+from .data_manifest import (
+    diff_manifest as data_manifest_diff,
+    record_manifest as data_manifest_record,
+    verify_manifest as data_manifest_verify,
 )
 from .determinism import _should_exit, determinism_replay
 from .diagnostics import DeterminismDiagnosticsError, load_determinism_events
@@ -102,6 +110,11 @@ from .report import (
     performance as generate_performance_report,
     weekly as generate_weekly_report,
 )
+from .reconcile import (
+    preview_statement as reconcile_preview,
+    reconcile_statements as reconcile_statements_cli,
+    scaffold_config as reconcile_scaffold,
+)
 from .resync import resync
 from .scoring import (
     DiagnosticsEvidenceError,
@@ -122,6 +135,7 @@ from .status import (
     DEFAULT_KILL_SWITCH_STATE_PATH,
     status,
 )
+from .validation import playbook_sync as validation_playbook_sync
 
 logger = logging.getLogger(__name__)
 
@@ -211,6 +225,7 @@ def create_cli_app() -> typer.Typer:
         filters: list[str] = typer.Option([], "--filter", help="Filter tokens", show_default=False),
         guarded: bool = typer.Option(False, "--guarded", help="Render guarded state snapshot"),
         normal: bool = typer.Option(False, "--normal", help="Force normal state snapshot"),
+        yes: bool = typer.Option(False, "--yes", help="Skip confirmation prompts"),
         include: list[str] = typer.Option(
             [], "--include", help="Additional payload sections", show_default=False
         ),
@@ -258,6 +273,26 @@ def create_cli_app() -> typer.Typer:
             hidden=False,
             show_default=False,
         ),
+        determinism_log: Path
+        | None = typer.Option(
+            None,
+            "--determinism-log",
+            help="Override determinism log for diagnostics view.",
+            hidden=True,
+        ),
+        diagnostics_limit: int = typer.Option(
+            50,
+            "--diagnostics-limit",
+            help="Number of determinism events to inspect in diagnostics view.",
+            hidden=True,
+        ),
+        diagnostics_strategy: str
+        | None = typer.Option(
+            None,
+            "--diagnostics-strategy",
+            help="Restrict diagnostics view to a single strategy id.",
+            hidden=True,
+        ),
         compat: str
         | None = typer.Option(
             None,
@@ -275,6 +310,7 @@ def create_cli_app() -> typer.Typer:
         ctx_obj = ctx.obj or {"json": False}
         effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
         compat_mode = compat or os.getenv("TRADECTL_COMPAT")
+        _ = yes
         payload = board_view(
             filters=filters,
             view=view,
@@ -292,18 +328,24 @@ def create_cli_app() -> typer.Typer:
             slippage_data_status=slippage_status,
             risk_disclosure_status=risk_disclosure,
             compat_mode=compat_mode,
+            diagnostics_log=determinism_log,
+            diagnostics_limit=diagnostics_limit,
+            diagnostics_strategy=diagnostics_strategy,
         )
         _render_payload(console, payload, json_output=effective_json)
-        rd_status = payload.get("guardrails", {}).get(
-            "risk_disclosure", risk_disclosure or "accepted"
-        )
-        exit_code = _determine_board_exit_code(
-            kill_switch=kill_switch,
-            spread_status=spread_status,
-            reduce_only=reduce_only,
-            risk_disclosure=str(rd_status),
-            compat=compat_mode,
-        )
+        if view == "diagnostics":
+            exit_code = int(payload.get("exit_code", 0))
+        else:
+            rd_status = payload.get("guardrails", {}).get(
+                "risk_disclosure", risk_disclosure or "accepted"
+            )
+            exit_code = _determine_board_exit_code(
+                kill_switch=kill_switch,
+                spread_status=spread_status,
+                reduce_only=reduce_only,
+                risk_disclosure=str(rd_status),
+                compat=compat_mode,
+            )
         raise typer.Exit(code=exit_code)
 
     backtest_app = typer.Typer(help="Backtest utilities")
@@ -397,6 +439,35 @@ def create_cli_app() -> typer.Typer:
             raise typer.Exit(code=1) from exc
         _render_payload(console, payload, json_output=effective_json)
 
+    @diagnostics_app.command("board")
+    def diagnostics_board_command(
+        ctx: typer.Context,
+        log_path: Path
+        | None = typer.Option(
+            None,
+            "--log",
+            help="Path to strategy determinism log",
+            show_default=False,
+        ),
+        limit: int = typer.Option(50, "--limit", help="Number of recent events to inspect"),
+        strategy: str | None = typer.Option(
+            None, "--strategy", help="Filter by strategy id", show_default=False
+        ),
+        output: Path | None = typer.Option(
+            None, "--output", help="Optional output JSON path", show_default=False
+        ),
+        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
+    ) -> None:
+        ctx_obj = ctx.obj or {"json": False}
+        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        payload = board_diagnostics(
+            log_path=log_path, limit=limit, strategy=strategy, output=output
+        )
+        _render_payload(console, payload, json_output=effective_json)
+        exit_code = int(payload.get("exit_code", 0) or 0)
+        if exit_code:
+            raise typer.Exit(code=exit_code)
+
     @diagnostics_app.command("execution-dashboard")
     def diagnostics_execution_dashboard_command(
         ctx: typer.Context,
@@ -470,6 +541,85 @@ def create_cli_app() -> typer.Typer:
         _render_payload(console, payload, json_output=effective_json)
 
     determinism_app = typer.Typer(help="Determinism replay utilities")
+
+    config_app = typer.Typer(help="Config validation utilities")
+
+    @config_app.command("validate")
+    def config_validate_command(
+        ctx: typer.Context,
+        bundle: bool = typer.Option(
+            False, "--bundle", help="Validate the full config/ bundle"
+        ),
+        file: Path | None = typer.Option(
+            None,
+            "--file",
+            help="Config file to validate",
+            exists=True,
+            resolve_path=True,
+        ),
+        target: Path | None = typer.Option(
+            None,
+            "--target",
+            help="Config directory to validate",
+            exists=True,
+            resolve_path=True,
+            hidden=True,
+        ),
+        schema_id: str | None = typer.Option(
+            None, "--schema-id", help="Schema id under docs/schemas (without suffix)"
+        ),
+        schema: Path | None = typer.Option(
+            None,
+            "--schema",
+            help="Schema file path",
+            exists=True,
+            resolve_path=True,
+        ),
+        out: Path | None = typer.Option(None, "--out", help="Report output path"),
+        dry_run: bool = typer.Option(False, "--dry-run", help="Validate without writing report"),
+        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
+    ) -> None:
+        ctx_obj = ctx.obj or {"json": False}
+        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        payload = config_validate(
+            bundle=bundle,
+            target=target,
+            file=file,
+            schema=schema,
+            schema_id=schema_id,
+            report_path=out,
+            dry_run=dry_run,
+        )
+        _render_payload(console, payload, json_output=effective_json)
+        if payload.get("exit_code", 0):
+            raise typer.Exit(code=int(payload.get("exit_code", 1)))
+
+    @config_app.command("ls")
+    def config_list_command(
+        ctx: typer.Context,
+        target: Path = typer.Option(
+            Path("config"),
+            "--target",
+            help="Config directory to list",
+            show_default=True,
+        ),
+        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
+    ) -> None:
+        ctx_obj = ctx.obj or {"json": False}
+        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        if not target.exists():
+            payload = {"status": "missing", "target": str(target), "files": [], "count": 0}
+            _render_payload(console, payload, json_output=effective_json)
+            raise typer.Exit(code=1)
+
+        files = [str(path) for path in sorted(target.rglob("*")) if path.is_file()]
+        payload = {
+            "status": "ok",
+            "target": str(target),
+            "files": files,
+            "count": len(files),
+        }
+        _render_payload(console, payload, json_output=effective_json)
 
     @determinism_app.command("replay")
     def determinism_replay_command(
@@ -720,6 +870,7 @@ def create_cli_app() -> typer.Typer:
     app.add_typer(backtest_app, name="backtest")
     app.add_typer(diagnostics_app, name="diagnostics")
     app.add_typer(determinism_app, name="determinism")
+    app.add_typer(config_app, name="config")
     gate_app = typer.Typer(help="Gate state utilities")
 
     @gate_app.command("persist")
@@ -853,6 +1004,7 @@ def create_cli_app() -> typer.Typer:
         ticket_id: str = typer.Option(..., "--id", help="Ticket identifier"),
         note: str | None = typer.Option(None, "--note", help="Optional approval note"),
         user: str | None = typer.Option(None, "--user", help="Actor"),
+        yes: bool = typer.Option(False, "--yes", help="Skip confirmation prompt"),
         force_consent: bool = typer.Option(
             False, "--force-consent", help="Bypass RiskDisclosure pending"
         ),
@@ -875,6 +1027,13 @@ def create_cli_app() -> typer.Typer:
         ctx_obj = ctx.obj or {"json": False}
         effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
         gate_state = GateState.load(gate_state_path) if gate_state_path else None
+        if not yes:
+            prompt = f"Approve ticket {ticket_id}?"
+            if force_consent:
+                prompt = f"{prompt} (force consent)"
+            if not typer.confirm(prompt, default=False):
+                typer.echo("Approval cancelled.", err=True)
+                raise typer.Exit(code=1)
         try:
             result = tickets_actions.approve(
                 ticket_id,
@@ -1203,29 +1362,36 @@ def create_cli_app() -> typer.Typer:
     ) -> None:
         ctx_obj = ctx.obj or {"json": False}
         effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        exit_code = 0
         try:
-            result_path = benchmark_compare(
+            result = benchmark_compare(
                 window=window,
                 mode=mode,
                 providers=list(provider) or None,
                 export=str(export) if export else None,
                 fail_on_gap=fail_on_gap,
             )
+        except BenchmarkGapError as exc:
+            result = exc.result
+            if fail_on_gap:
+                exit_code = 21
         except NotImplementedError as exc:
             typer.echo(str(exc), err=True)
             raise typer.Exit(code=1) from exc
         _render_payload(
             console,
             {
-                "status": "ok",
+                "status": result.status if hasattr(result, "status") else "ok",
                 "window": window,
                 "mode": mode,
                 "providers": list(provider),
-                "export": str(export) if export else None,
-                "result": result_path,
+                "export": getattr(result, "export_path", str(export) if export else None),
+                "result": result.to_dict() if hasattr(result, "to_dict") else result,
             },
             json_output=effective_json,
         )
+        if exit_code:
+            raise typer.Exit(code=exit_code)
 
     @benchmark_app.command("validate-manual")
     def benchmark_validate_manual_command(
@@ -1455,13 +1621,13 @@ def create_cli_app() -> typer.Typer:
             "--news-event",
             help="Upcoming or active high-impact news identifier",
         ),
-        cooldown_threshold: float = typer.Option(
-            1.8,
+        cooldown_threshold: float | None = typer.Option(
+            None,
             "--cooldown-threshold",
             help="Cooldown threshold in pips",
         ),
-        block_threshold: float = typer.Option(
-            2.5,
+        block_threshold: float | None = typer.Option(
+            None,
             "--block-threshold",
             help="Block threshold in pips",
         ),
@@ -1470,10 +1636,19 @@ def create_cli_app() -> typer.Typer:
             "--ntp-max-ms",
             help="Maximum tolerated NTP drift (ms)",
         ),
-        cooldown_minutes: int = typer.Option(
-            5,
+        cooldown_minutes: int | None = typer.Option(
+            None,
             "--cooldown-minutes",
             help="Cooldown duration in minutes",
+        ),
+        profile: str | None = typer.Option(
+            None, "--profile", help="Profile name for spread defaults"
+        ),
+        strategy_manifest_path: Path = typer.Option(
+            Path("config") / "strategy_manifest.yaml",
+            "--strategy-manifest",
+            help="Strategy manifest path for news/spread defaults",
+            hidden=True,
         ),
         metrics_path: Path = typer.Option(
             DEFAULT_SPREAD_METRICS,
@@ -1485,6 +1660,12 @@ def create_cli_app() -> typer.Typer:
             DEFAULT_SPREAD_AUDIT,
             "--audit-path",
             help="Spread audit jsonl output path",
+            hidden=True,
+        ),
+        network_metrics_path: Path = typer.Option(
+            Path("metrics") / "network.jsonl",
+            "--network-metrics",
+            help="Network metrics jsonl path for spread events",
             hidden=True,
         ),
         gate_state_path: Path
@@ -1512,8 +1693,11 @@ def create_cli_app() -> typer.Typer:
                 block_threshold=block_threshold,
                 ntp_max_ms=ntp_max_ms,
                 cooldown_minutes=cooldown_minutes,
+                profile=profile,
+                strategy_manifest_path=strategy_manifest_path,
                 metrics_path=metrics_path,
                 audit_path=audit_path,
+                network_metrics_path=network_metrics_path,
                 gate_state_path=gate_state_path,
             )
         except ValueError as exc:
@@ -1540,6 +1724,27 @@ def create_cli_app() -> typer.Typer:
             console, {"status": "ok", "entry": saved.to_dict()}, json_output=effective_json
         )
 
+    @journal_app.command("add")
+    def journal_add_command(
+        ctx: typer.Context,
+        ticket_id: str = typer.Option(..., "--ticket-id", help="Ticket identifier"),
+        user: str = typer.Option(..., "--user", help="User or role"),
+        note: str = typer.Option(..., "--note", help="Journal note"),
+        week: str | None = typer.Option(None, "--week", help="Week label (e.g. 2025-W12)"),
+        path: Path = typer.Option(
+            Path("logs/journal/entries.jsonl"), "--path", help="Journal file path"
+        ),
+        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
+    ) -> None:
+        ctx_obj = ctx.obj or {"json": False}
+        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        service = TradeJournalService(path=path)
+        entry = service.from_ticket_action(ticket_id=ticket_id, user=user, note=note, week=week)
+        saved = service.append(entry)
+        _render_payload(
+            console, {"status": "ok", "entry": saved.to_dict()}, json_output=effective_json
+        )
+
     @journal_app.command("list")
     def journal_list_command(
         ctx: typer.Context,
@@ -1553,7 +1758,11 @@ def create_cli_app() -> typer.Typer:
         effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
         service = TradeJournalService(path=path)
         entries = service.list(week=week)
-        _render_payload(console, {"status": "ok", "entries": entries}, json_output=effective_json)
+        _render_payload(
+            console,
+            {"status": "ok", "entries": entries, "count": len(entries)},
+            json_output=effective_json,
+        )
 
     @journal_app.command("export-weekly")
     def journal_export_weekly_command(
@@ -1615,6 +1824,18 @@ def create_cli_app() -> typer.Typer:
             help="Optional HealthState JSON path",
             hidden=True,
         ),
+        time_sync_check: bool = typer.Option(
+            False,
+            "--time-sync-check/--no-time-sync-check",
+            help="Evaluate NTP drift for status output",
+            hidden=True,
+        ),
+        time_sync_metrics_path: Path = typer.Option(
+            Path("metrics") / "time_sync.jsonl",
+            "--time-sync-metrics",
+            help="Time sync metrics jsonl path",
+            hidden=True,
+        ),
         kill_switch_state_path: Path
         | None = typer.Option(
             DEFAULT_KILL_SWITCH_STATE_PATH,
@@ -1645,6 +1866,8 @@ def create_cli_app() -> typer.Typer:
             gate_state_path=gate_state_path,
             health_state_path=health_state_path,
             kill_switch_state_path=kill_switch_state_path,
+            time_sync_check=time_sync_check or effective_verbose,
+            time_sync_metrics_path=time_sync_metrics_path,
             actor=actor,
         )
         _render_payload(console, payload, json_output=effective_json)
@@ -2136,6 +2359,9 @@ def create_cli_app() -> typer.Typer:
             "--suggest-guarded",
             help="Suggest guarded mode based on ingestion metrics",
         ),
+        profile: str | None = typer.Option(
+            None, "--profile", help="Feature flag profile (backtest/paper/live)"
+        ),
         metrics_root: Path = typer.Option(
             Path("metrics"),
             "--metrics-root",
@@ -2152,6 +2378,7 @@ def create_cli_app() -> typer.Typer:
             log_stage_eval=log_stage_eval,
             auto_apply=auto_apply,
             suggest_guarded=suggest_guarded,
+            profile=profile,
             metrics_root=metrics_root,
         )
         _render_payload(console, payload, json_output=effective_json)
@@ -2334,18 +2561,27 @@ def create_cli_app() -> typer.Typer:
     def data_validate_csv_command(
         ctx: typer.Context,
         path: Path = typer.Option(..., "--path", help="CSV file or directory to validate"),
+        approve: bool = typer.Option(
+            False, "--approve", help="Record audit.manual_csv on successful validation"
+        ),
+        approver: str | None = typer.Option(
+            None,
+            "--approver",
+            help="Approver name for audit.manual_csv",
+            show_default=False,
+        ),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
         ctx_obj = ctx.obj or {"json": False}
         effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
         try:
-            validate_csv(str(path))
+            payload = validate_csv(str(path), approve=approve, approver=approver)
         except SystemExit as exc:
             raise typer.Exit(code=int(exc.code or 120)) from exc
         except Exception as exc:  # noqa: BLE001
             typer.echo(f"[data.validate-csv] {exc}", err=True)
             raise typer.Exit(code=1) from exc
-        _render_payload(console, {"status": "ok", "path": str(path)}, json_output=effective_json)
+        _render_payload(console, payload, json_output=effective_json)
 
     jobs_app = typer.Typer(help="Manage manual ingestion jobs.")
 
@@ -2556,7 +2792,110 @@ def create_cli_app() -> typer.Typer:
         payload = {"command": " ".join(cmd), "stdout": proc.stdout.strip()}
         _render_payload(console, payload, json_output=effective_json)
 
+    manifest_app = typer.Typer(help="Data manifest utilities")
+
+    @manifest_app.command("record")
+    def data_manifest_record_command(
+        ctx: typer.Context,
+        path: Path = typer.Option(..., "--path", help="Target file path"),
+        kind: str = typer.Option(..., "--kind", help="Manifest kind (market/manual/benchmark/etc)"),
+        owner: str | None = typer.Option(None, "--owner", help="Owner name"),
+        playbook_id: str | None = typer.Option(
+            None, "--playbook-id", help="Validation playbook id"
+        ),
+        tags: str | None = typer.Option(None, "--tags", help="Comma-separated tags"),
+        force: bool = typer.Option(False, "--force", help="Force new entry"),
+        manifest_path: Path = typer.Option(
+            Path("reports") / "data_manifest.json",
+            "--manifest",
+            help="Manifest path",
+        ),
+        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
+    ) -> None:
+        ctx_obj = ctx.obj or {"json": False}
+        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        tag_list = [t.strip() for t in (tags or "").split(",") if t.strip()]
+        payload = data_manifest_record(
+            path=path,
+            kind=kind,
+            owner=owner,
+            playbook_id=playbook_id,
+            tags=tag_list,
+            force=force,
+            manifest_path=manifest_path,
+        )
+        _render_payload(console, payload, json_output=effective_json)
+
+    @manifest_app.command("verify")
+    def data_manifest_verify_command(
+        ctx: typer.Context,
+        path: Path | None = typer.Option(None, "--path", help="Target file path"),
+        entry_id: str | None = typer.Option(None, "--entry", help="Manifest entry id"),
+        strict: bool = typer.Option(True, "--strict/--warn-only", help="Fail on mismatch"),
+        manifest_path: Path = typer.Option(
+            Path("reports") / "data_manifest.json",
+            "--manifest",
+            help="Manifest path",
+        ),
+        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
+    ) -> None:
+        ctx_obj = ctx.obj or {"json": False}
+        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        try:
+            payload = data_manifest_verify(
+                path=path,
+                entry_id=entry_id,
+                strict=strict,
+                manifest_path=manifest_path,
+            )
+        except ValueError as exc:
+            typer.echo(f"[data.manifest.verify] {exc}", err=True)
+            raise typer.Exit(code=74) from exc
+        _render_payload(console, payload, json_output=effective_json)
+
+    @manifest_app.command("diff")
+    def data_manifest_diff_command(
+        ctx: typer.Context,
+        base: Path = typer.Option(..., "--base", help="Base manifest path"),
+        target: Path = typer.Option(..., "--target", help="Target manifest path"),
+        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
+    ) -> None:
+        ctx_obj = ctx.obj or {"json": False}
+        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        payload = data_manifest_diff(base=base, target=target)
+        _render_payload(console, payload, json_output=effective_json)
+
+    data_app.add_typer(manifest_app, name="manifest")
+
     app.add_typer(data_app, name="data")
+
+    validation_app = typer.Typer(help="Validation playbook utilities")
+    playbook_app = typer.Typer(help="Validation playbook sync")
+
+    @playbook_app.command("sync")
+    def validation_playbook_sync_command(
+        ctx: typer.Context,
+        manifest_path: Path = typer.Option(
+            Path("reports") / "data_manifest.json",
+            "--manifest",
+            help="Manifest path",
+        ),
+        output_dir: Path = typer.Option(
+            Path("docs") / "validation_playbook",
+            "--output-dir",
+            help="Output directory for playbook markdown",
+        ),
+        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
+    ) -> None:
+        ctx_obj = ctx.obj or {"json": False}
+        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        payload = validation_playbook_sync(
+            manifest_path=manifest_path, output_dir=output_dir
+        )
+        _render_payload(console, payload, json_output=effective_json)
+
+    validation_app.add_typer(playbook_app, name="playbook")
+    app.add_typer(validation_app, name="validation")
 
     scoring_app = typer.Typer(help="Scoring diagnostics utilities")
 
@@ -2838,12 +3177,18 @@ def create_cli_app() -> typer.Typer:
         ctx: typer.Context,
         note: str = typer.Option(..., "--note", help="Acknowledgement note"),
         user: str | None = typer.Option(None, "--user", help="User acknowledging"),
+        decision: str = typer.Option(
+            "accept",
+            "--decision",
+            help="Decision to record (accept|reject|ack_warn)",
+            show_default=True,
+        ),
         force: bool = typer.Option(False, "--force", help="Force override warning"),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
         ctx_obj = ctx.obj or {"json": False}
         effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
-        payload = compliance_ack(note=note, user=user, force=force)
+        payload = compliance_ack(note=note, user=user, force=force, decision=decision)
         _render_payload(console, payload, json_output=effective_json)
 
     @compliance_app.command("refresh")
@@ -2857,6 +3202,84 @@ def create_cli_app() -> typer.Typer:
         _render_payload(console, payload, json_output=effective_json)
 
     app.add_typer(compliance_app, name="compliance")
+
+    reconcile_app = typer.Typer(help="Statement reconciliation utilities")
+
+    @reconcile_app.command("statements")
+    def reconcile_statements_command(
+        ctx: typer.Context,
+        statement: Path = typer.Option(..., "--statement", help="Statement CSV path"),
+        fills: Path = typer.Option(..., "--fills", help="Fills JSONL path"),
+        config: Path = typer.Option(..., "--config", help="Statement config YAML path"),
+        threshold_match: float = typer.Option(
+            0.99, "--threshold-match", help="Minimum acceptable match rate"
+        ),
+        threshold_balance: float = typer.Option(
+            0.0, "--threshold-balance", help="Balance diff threshold"
+        ),
+        export_md: bool = typer.Option(False, "--export-md", help="Export markdown report"),
+        report_dir: Path = typer.Option(
+            Path("reports") / "audit" / "reconciliation",
+            "--report-dir",
+            help="Report output directory",
+        ),
+        metrics_path: Path = typer.Option(
+            Path("metrics") / "reconciliation.jsonl",
+            "--metrics",
+            help="Metrics JSONL path",
+        ),
+        audit_dir: Path = typer.Option(
+            Path("logs") / "audit",
+            "--audit-dir",
+            help="Audit log directory",
+        ),
+        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
+    ) -> None:
+        ctx_obj = ctx.obj or {"json": False}
+        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        payload = reconcile_statements_cli(
+            statement_path=statement,
+            fills_path=fills,
+            config_path=config,
+            threshold_match=threshold_match,
+            threshold_balance=threshold_balance,
+            export_md=export_md,
+            report_dir=report_dir,
+            metrics_path=metrics_path,
+            audit_dir=audit_dir,
+        )
+        _render_payload(console, payload, json_output=effective_json)
+
+    @reconcile_app.command("preview")
+    def reconcile_preview_command(
+        ctx: typer.Context,
+        statement: Path = typer.Option(..., "--statement", help="Statement CSV path"),
+        config: Path = typer.Option(..., "--config", help="Statement config YAML path"),
+        limit: int = typer.Option(5, "--limit", help="Number of rows to preview"),
+        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
+    ) -> None:
+        ctx_obj = ctx.obj or {"json": False}
+        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        payload = reconcile_preview(statement_path=statement, config_path=config, limit=limit)
+        _render_payload(console, payload, json_output=effective_json)
+
+    @reconcile_app.command("scaffold")
+    def reconcile_scaffold_command(
+        ctx: typer.Context,
+        broker_id: str = typer.Option(..., "--broker", help="Broker identifier"),
+        output: Path = typer.Option(
+            Path("config") / "statement_reconciliation.yaml",
+            "--output",
+            help="Output config path",
+        ),
+        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
+    ) -> None:
+        ctx_obj = ctx.obj or {"json": False}
+        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        payload = reconcile_scaffold(broker_id=broker_id, output=output)
+        _render_payload(console, payload, json_output=effective_json)
+
+    app.add_typer(reconcile_app, name="reconcile")
 
     kill_switch_app = typer.Typer(help="Kill switch review utilities")
 

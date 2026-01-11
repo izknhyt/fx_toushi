@@ -4,8 +4,9 @@
     "kill_switch_state": "hard_stop",
     "spread_status": "normal",
     "reduce_only": true,
-    "risk_disclosure": "signed",
-    "risk_disclosure_consent_id": null
+    "risk_disclosure": "accepted",
+    "risk_disclosure_consent_id": null,
+    "auto_execute": false
   },
   "tickets": [
     {
@@ -86,6 +87,6 @@
     "severity": "hard",
     "runbook": "docs/runbooks/RUN-RISK-01.md"
   },
-  "render_summary": "mode=guarded | banner=Kill Switch HARD_STOP | ks=hard_stop, spread=normal, reduce_only=True | risk_disclosure=signed | badges: profit=ok, latency=ok, slippage=ok | tickets=1",
-  "rendered_table": "                                                                                                Tickets                                                                                                 \n┏━━━━━━━━━━┳━━━━━━━━┳━━━━━━━━┳━━━━━━━━┳━━━━━━━━┳━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━┳━━━━━━━━┳━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━┓\n┃Ticket ID ┃ Symbol ┃ Action ┃ Qty    ┃ TTL(s) ┃ Entry          ┃ SL/TP           ┃ Guardrails      ┃ Badges          ┃ Checklist       ┃ RiskDisclosure ┃ Spread ┃ Notes           ┃ AuditRefs        ┃\n┡━━━━━━━━━━╇━━━━━━━━╇━━━━━━━━╇━━━━━━━━╇━━━━━━━━╇━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━╇━━━━━━━━╇━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━┩\n│TK-KILL-1 │ AUDJPY │ sell   │ 120000 │ 300    │ market @92.15  │ SL=92.6 TP=91.2 │ ks=hard_stop(h… │ kill_switch_ha… │ 1/2 (pending:   │ signed         │ normal │ Manual halt -   │ cfg=sha256:cfg-h…│\n│          │        │        │        │        │                │ TTL=300         │ spread=normal,  │                 │ kill_switch_ac… │                │        │ liquidity       │ data=sha256:data…│\n│          │        │        │        │        │                │                 │ ro=True         │                 │                 │                │        │ stress          │ det=deadbeef04   │\n└──────────┴────────┴────────┴────────┴────────┴────────────────┴─────────────────┴─────────────────┴─────────────────┴─────────────────┴────────────────┴────────┴─────────────────┴──────────────────┘\n"
+  "render_summary": "mode=guarded | banner=Kill Switch HARD_STOP | ks=hard_stop, spread=normal, reduce_only=True | risk_disclosure=accepted | badges: profit=ok, latency=ok, slippage=ok | tickets=1",
+  "rendered_table": "                                                                                    Tickets | Kill Switch HARD_STOP                                                                                     \n┏━━━━━━━━━━┳━━━━━━━━┳━━━━━━━━┳━━━━━━━━┳━━━━━━━━┳━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━┳━━━━━━━━┳━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━┓\n┃Ticket ID ┃ Symbol ┃ Action ┃ Qty    ┃ TTL(s) ┃ Entry          ┃ SL/TP           ┃ Guardrails      ┃ Badges          ┃ Checklist       ┃ RiskDisclosure ┃ Spread ┃ Notes           ┃ AuditRefs        ┃\n┡━━━━━━━━━━╇━━━━━━━━╇━━━━━━━━╇━━━━━━━━╇━━━━━━━━╇━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━╇━━━━━━━━╇━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━┩\n│TK-KILL-1 │ AUDJPY │ sell   │ 120000 │ 300    │ market @92.15  │ SL=92.6 TP=91.2 │ ks=hard_stop(h… │ kill_switch_ha… │ 1/2 (pending:   │ signed         │ normal │ Manual halt -   │ cfg=sha256:cfg-h…│\n│          │        │        │        │        │                │ TTL=300         │ spread=normal,  │                 │ kill_switch_ac… │                │        │ liquidity       │ data=sha256:data…│\n│          │        │        │        │        │                │                 │ ro=True         │                 │                 │                │        │ stress          │ det=deadbeef04   │\n└──────────┴────────┴────────┴────────┴────────┴────────────────┴─────────────────┴─────────────────┴─────────────────┴─────────────────┴────────────────┴────────┴─────────────────┴──────────────────┘\n"
 }

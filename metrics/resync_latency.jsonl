@@ -1,0 +1,3 @@
+{"ts": "2026-01-11T03:52:53.964524Z", "resync_job_id": "5a859a9f-20cd-443c-884c-bfec2143c261", "resync_latency_sec": 64036373, "timeframe": "M5", "resync_latency_ratio": 213454.57666666666}
+{"ts": "2026-01-11T13:13:13.897254Z", "resync_job_id": "420392c5-3554-4f7b-b3a8-b8173985d1d1", "resync_latency_sec": 64069993, "timeframe": "M5", "resync_latency_ratio": 213566.64333333334}
+{"ts": "2026-01-11T13:16:08.468739Z", "resync_job_id": "0aa06aeb-8310-4ccf-9029-7a5c1936ec13", "resync_latency_sec": 64070167, "timeframe": "M5", "resync_latency_ratio": 213567.22333333333}

@@ -2,6 +2,7 @@
 
 from .quality import DataQualityGuard, QualityResult
 from .service import (
+    BufferCoordinator,
     MarketFrame,
     MarketRequest,
     ProviderError,
@@ -15,6 +16,7 @@ from .service import (
 __all__ = [
     "DataQualityGuard",
     "QualityResult",
+    "BufferCoordinator",
     "MarketFrame",
     "MarketRequest",
     "ProviderError",

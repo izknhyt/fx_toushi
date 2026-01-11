@@ -6,6 +6,7 @@ schema_version: 0  # TODO: FeaturePipeline モデル整備後に更新
 pipeline:
   default_timeframe_minutes: 5
   lookback_bars: 512
+  max_workers: 4
   resample:
     enabled: true
     timeframes:
@@ -14,7 +15,7 @@ pipeline:
       - 1d
 indicators:
   sma_20:
-    enabled: false
+    enabled: true
     window: 20
     timeframes:
       - 5m

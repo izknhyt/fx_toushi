@@ -13,6 +13,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pandas as pd
+from src.core.time_sync import DEFAULT_TIME_SYNC_METRICS, TimeSyncGuard
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 if str(ROOT_DIR) not in sys.path:
@@ -177,17 +178,21 @@ def run_once(
     raw_dir: Path,
     curated_dir: Path,
     metrics_path: Path,
+    processing_delay_warn_sec: float = 12.0,
 ) -> list[IngestionResult]:
+    from src.core.health import HealthMonitor
     from src.data.quality import DataQualityGuard
     from src.data.service import (
         build_provider_handlers,
         fetch_latest,
         load_provider_sla_thresholds,
+        log_processing_delay,
     )
 
     anchor = as_of or _utcnow()
     results: list[IngestionResult] = []
     guard = DataQualityGuard(expected_timeframe_minutes=5, max_gap_minutes=10)
+    health_monitor = HealthMonitor()
     provider_sla = load_provider_sla_thresholds(Path("config") / "provider_sla.yaml")
     start = anchor - timedelta(hours=lookback_hours)
     handlers = build_provider_handlers(timeframe=timeframe, start=_iso(start), end=_iso(anchor))
@@ -203,6 +208,7 @@ def run_once(
         metrics_path=metrics_path,
         provider_sla_thresholds=provider_sla,
         data_quality_guard=guard,
+        health_monitor=health_monitor,
     )
     elapsed_ms = int((time.perf_counter() - fetch_start) * 1000)
 
@@ -272,23 +278,32 @@ def run_once(
             "timeframe": timeframe,
             "fetch_p95_ms": elapsed_ms,
             "fetch_p99_ms": elapsed_ms,
+            "delay_sec": round(elapsed_ms / 1000.0, 3),
+            "fetch_delay_sec": round(elapsed_ms / 1000.0, 3),
             "status": "ok" if not bars_df.empty else "unknown",
             "last_bar_ts": result.last_bar_ts,
             "bar_gap_minutes": result.bar_gap_minutes,
         }
         _write_metrics(metrics_path, metrics_payload)
-        processing_payload = {
-            "ts": _iso(anchor),
-            "provider": provider,
-            "phase": "processing",
-            "symbol": symbol.upper(),
-            "timeframe": timeframe,
-            "fetch_p95_ms": processing_ms,
-            "fetch_p99_ms": processing_ms,
-            "status": "ok" if not bars_df.empty else "unknown",
-            "bars": len(bars_df),
-        }
-        _write_metrics(metrics_path, processing_payload)
+        log_processing_delay(
+            provider=provider,
+            timeframe=timeframe,
+            symbol=symbol.upper(),
+            bars=len(bars_df),
+            processing_ms=processing_ms,
+            metrics_path=metrics_path,
+            health_monitor=health_monitor,
+            processing_delay_warn_sec=processing_delay_warn_sec,
+            timestamp=_iso(anchor),
+        )
+
+    if list(health_monitor.reasons()):
+        health_path = Path("snapshots/latest/health_state.json")
+        health_path.parent.mkdir(parents=True, exist_ok=True)
+        health_path.write_text(
+            json.dumps(health_monitor.snapshot().to_dict(), ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
 
     return results
 
@@ -306,8 +321,12 @@ def run_loop(
     interval_sec: int,
     jitter_sec: int,
     max_iterations: int | None,
+    time_sync_interval_sec: int | None,
+    time_sync_metrics_path: Path,
 ) -> None:
     iteration = 0
+    last_time_sync = 0.0
+    time_sync_guard = TimeSyncGuard() if time_sync_interval_sec else None
     while True:
         results = run_once(
             symbols=symbols,
@@ -322,6 +341,15 @@ def run_loop(
         sys.stdout.write(
             json.dumps({"results": [r.as_dict() for r in results]}, ensure_ascii=False) + "\n"
         )
+        if time_sync_guard and time_sync_interval_sec:
+            now = time.time()
+            if now - last_time_sync >= time_sync_interval_sec:
+                time_sync_guard.evaluate(
+                    metrics_path=time_sync_metrics_path,
+                    persist_health_state=True,
+                    log_events=True,
+                )
+                last_time_sync = now
         iteration += 1
         if max_iterations is not None and iteration >= max_iterations:
             break
@@ -351,6 +379,17 @@ def main() -> int:
     parser.add_argument("--jitter-sec", type=int, default=3, help="Sleep jitter seconds")
     parser.add_argument("--once", action="store_true", help="Run once and exit")
     parser.add_argument("--max-iterations", type=int, default=None, help="Loop iterations cap")
+    parser.add_argument(
+        "--time-sync-interval-sec",
+        type=int,
+        default=600,
+        help="Run time sync guard every N seconds (0 to disable)",
+    )
+    parser.add_argument(
+        "--time-sync-metrics-path",
+        default=str(DEFAULT_TIME_SYNC_METRICS),
+        help="Time sync metrics jsonl path",
+    )
     args = parser.parse_args()
 
     symbols = [s.strip().upper() for s in args.symbols.split(",") if s.strip()]
@@ -387,6 +426,8 @@ def main() -> int:
         interval_sec=args.interval_sec,
         jitter_sec=args.jitter_sec,
         max_iterations=args.max_iterations,
+        time_sync_interval_sec=args.time_sync_interval_sec or None,
+        time_sync_metrics_path=Path(args.time_sync_metrics_path),
     )
     return 0
 

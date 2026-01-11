@@ -43,6 +43,7 @@ def test_validate_csv_accepts_matching_twin_files(tmp_path: Path) -> None:
     frame = pd.DataFrame(
         {
             "ts": ["2025-03-20T00:00:00Z", "2025-03-20T00:05:00Z"],
+            "timestamp_jst": ["2025-03-20T09:00:00", "2025-03-20T09:05:00"],
             "open": [1.0, 1.1],
             "high": [1.2, 1.2],
             "low": [0.9, 1.0],
@@ -65,6 +66,7 @@ def test_validate_csv_rejects_hash_mismatch(tmp_path: Path) -> None:
     frame_op = pd.DataFrame(
         {
             "ts": ["2025-03-20T00:00:00Z"],
+            "timestamp_jst": ["2025-03-20T09:00:00"],
             "open": [1.0],
             "high": [1.0],
             "low": [1.0],

@@ -16,8 +16,10 @@ import hashlib
 import json
 import os
 import time
+import uuid
 from collections.abc import Mapping, MutableMapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
+from datetime import datetime, timedelta, timezone
 from functools import lru_cache
 from pathlib import Path
 from types import MappingProxyType
@@ -53,6 +55,10 @@ __all__ = [
 ]
 
 _DEFAULT_HASH = "sha256:" + ("0" * 64)
+_DEFAULT_RESYNC_JOBS_PATH = Path("metrics/resync_jobs.jsonl")
+_DEFAULT_RESYNC_QUEUE_PATH = Path("metrics/resync_queue.jsonl")
+_DEFAULT_RESYNC_LATENCY_PATH = Path("metrics/resync_latency.jsonl")
+_MAJOR_SYMBOLS = {"USDJPY", "EURUSD", "GBPUSD", "AUDUSD"}
 
 ProfileMode = Literal["backtest", "paper", "live"]
 
@@ -69,6 +75,25 @@ def _freeze(value: Any) -> Any:
     if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
         return tuple(_freeze(item) for item in value)
     return value
+
+
+def _timeframe_to_seconds(value: str | None) -> int | None:
+    if not value:
+        return None
+    token = value.strip().lower()
+    if not token:
+        return None
+    if token.endswith("m") and token[:-1].isdigit():
+        return int(token[:-1]) * 60
+    if token.endswith("h") and token[:-1].isdigit():
+        return int(token[:-1]) * 3600
+    if token.startswith("m") and token[1:].isdigit():
+        return int(token[1:]) * 60
+    if token.startswith("h") and token[1:].isdigit():
+        return int(token[1:]) * 3600
+    if token.isdigit():
+        return int(token)
+    return None
 
 
 @dataclass(slots=True, frozen=True)
@@ -203,6 +228,7 @@ class ModeContext:
     execution_profile: ExecutionProfile
     account_gateway: AccountGateway
     audit_channel: AuditChannel
+    catch_up_state: str = "idle"
 
 
 class ModeContextFactory:
@@ -564,6 +590,16 @@ class DefaultSessionManager:
         """
 
         start = time.perf_counter()
+        now = datetime.now(timezone.utc)
+        if not dry_run and self._active_context and self._active_context.mode_context:
+            self._active_context.mode_context = replace(
+                self._active_context.mode_context,
+                catch_up_state="resyncing",
+            )
+        resync_job_id = str(uuid.uuid4())
+        parsed_since = self._parse_since(since)
+        range_minutes = self._compute_range_minutes(parsed_since, now)
+        timeframe_seconds = _timeframe_to_seconds(timeframe or "M5")
         effective_mode = self.config.mode
         cfg_hash = os.getenv("TRADECTL_CFG_HASH") or _DEFAULT_HASH
         data_hash = os.getenv("TRADECTL_DATA_HASH") or _DEFAULT_HASH
@@ -645,6 +681,12 @@ class DefaultSessionManager:
             os.getenv("TRADECTL_RESYNC_RETRY_COUNT"),
             default=0,
         )
+        quality_flag = _coalesce_int(
+            measured.get("quality_flag"),
+            ingestion_metrics.get("quality_flag"),
+            os.getenv("TRADECTL_RESYNC_QUALITY_FLAG"),
+            default=0,
+        )
         latency_status = (
             collector_snapshot.get("latency_status")
             or measured.get("latency_status")
@@ -656,6 +698,86 @@ class DefaultSessionManager:
             and ingestion_metrics.get("catch_up_lag_minutes") is not None
         ):
             catch_up_lag_minutes = int(ingestion_metrics["catch_up_lag_minutes"])
+        if (
+            range_minutes is not None
+            and not measured.get("catch_up_lag_minutes")
+            and ingestion_metrics.get("catch_up_lag_minutes") is None
+            and catch_up_lag_minutes == 0
+        ):
+            catch_up_lag_minutes = range_minutes
+        resync_latency_sec = None
+        resync_latency_ratio = None
+        if parsed_since is not None:
+            resync_latency_sec = int((now - parsed_since).total_seconds())
+            if timeframe_seconds:
+                resync_latency_ratio = resync_latency_sec / float(timeframe_seconds)
+        if range_minutes is None and catch_up_lag_minutes > 0:
+            range_minutes = catch_up_lag_minutes
+        priority = self._compute_catch_up_priority(catch_up_lag_minutes, symbols or ())
+        failover_plan = list(provider_priority or ())
+        if priority == "critical" and not failover_plan:
+            failover_plan = ["cache", "dukascopy", "yfinance"]
+        if retry_count >= 3 and not manual_csv_required:
+            manual_csv_required = True
+        job_start = parsed_since
+        if job_start is None and catch_up_lag_minutes > 0:
+            job_start = now - timedelta(minutes=catch_up_lag_minutes)
+        backfill_jobs, queue_path = self._enqueue_backfill_jobs(
+            resync_job_id=resync_job_id,
+            start=job_start,
+            end=now,
+            symbols=list(symbols or ()),
+            timeframe=timeframe or "M5",
+            priority=priority,
+            failover_plan=failover_plan,
+            manual_csv_required=manual_csv_required,
+            retry_count=retry_count,
+            dry_run=dry_run,
+        )
+        resync_processing: Mapping[str, Any] | None = None
+        if backfill_jobs and not dry_run:
+            try:
+                from src.core.resync import ResyncCoordinator
+                from src.data.quality import DataQualityGuard
+
+                tf_label = (timeframe or "M5").strip().lower()
+                expected_minutes = 5
+                if tf_label.endswith("m") and tf_label[:-1].isdigit():
+                    expected_minutes = int(tf_label[:-1])
+                elif tf_label.endswith("h") and tf_label[:-1].isdigit():
+                    expected_minutes = int(tf_label[:-1]) * 60
+                elif tf_label.startswith("m") and tf_label[1:].isdigit():
+                    expected_minutes = int(tf_label[1:])
+                elif tf_label.startswith("h") and tf_label[1:].isdigit():
+                    expected_minutes = int(tf_label[1:]) * 60
+                quality_guard = DataQualityGuard(
+                    expected_timeframe_minutes=expected_minutes,
+                    max_gap_minutes=max(expected_minutes * 2, 10),
+                )
+                coordinator = ResyncCoordinator(queue_path=queue_path or _DEFAULT_RESYNC_QUEUE_PATH)
+                resync_processing = coordinator.process_jobs(
+                    jobs=backfill_jobs,
+                    provider_handlers=provider_handlers,
+                    provider_sla_thresholds=None,
+                    data_quality_guard=quality_guard,
+                    metrics_path=Path(
+                        os.getenv(
+                            "TRADECTL_INGESTION_METRICS_PATH",
+                            "metrics/data_ingestion_sla.jsonl",
+                        )
+                    ),
+                )
+            except Exception:
+                resync_processing = None
+        if resync_processing:
+            failover_used = list(
+                dict.fromkeys(failover_used + list(resync_processing.get("failover_used") or ()))
+            )
+            retry_count = max(retry_count, int(resync_processing.get("retry_count") or 0))
+            manual_csv_required = manual_csv_required or bool(
+                resync_processing.get("manual_csv_enqueued")
+            )
+            backfill_jobs = list(resync_processing.get("jobs") or backfill_jobs)
         if metrics_collector and not dry_run and provider_handlers is not None:
             try:
                 from src.data.rate_limit_guard import RateLimitGuard
@@ -698,6 +820,8 @@ class DefaultSessionManager:
                 )
             except Exception:
                 pass
+        if not measured.get("catch_up_elapsed_sec"):
+            catch_up_elapsed_sec = max(0, int(time.perf_counter() - start))
         result = {
             "catch_up_elapsed_sec": max(0, catch_up_elapsed_sec),
             "catch_up_lag_minutes": catch_up_lag_minutes,
@@ -718,13 +842,44 @@ class DefaultSessionManager:
             "fetch_p99_ms": fetch_p99_ms,
             "retry_count": retry_count,
             "latency_status": latency_status,
+            "quality_flag": quality_flag,
+            "resync_job_id": resync_job_id,
+            "range_minutes": range_minutes,
+            "priority": priority,
+            "failover_plan": failover_plan,
+            "resync_latency_sec": resync_latency_sec,
+            "resync_latency_ratio": resync_latency_ratio,
+            "backfill_jobs": backfill_jobs,
+            "resync_queue_path": str(queue_path) if queue_path else None,
         }
+        self._log_resync_job(
+            job_id=resync_job_id,
+            range_minutes=range_minutes,
+            symbols=list(symbols or ()),
+            priority=priority,
+            failover_plan=failover_plan,
+            manual_csv_required=manual_csv_required,
+            duration_sec=catch_up_elapsed_sec,
+            status="dry_run" if dry_run else "completed",
+        )
+        if resync_latency_sec is not None:
+            self._log_resync_latency(
+                resync_job_id=resync_job_id,
+                resync_latency_sec=resync_latency_sec,
+                resync_latency_ratio=resync_latency_ratio,
+                timeframe=timeframe or "M5",
+            )
         if metrics_collector:
             metrics_path = Path(
                 os.getenv("TRADECTL_INGESTION_METRICS_PATH", "metrics/data_ingestion_sla.jsonl")
             )
             with contextlib.suppress(Exception):  # pragma: no cover - defensive
                 metrics_collector.write_snapshot(metrics_path=metrics_path)
+        if self._active_context and self._active_context.mode_context:
+            self._active_context.mode_context = replace(
+                self._active_context.mode_context,
+                catch_up_state="idle",
+            )
         return result
 
     def _load_gate_state(self) -> Mapping[str, Any]:
@@ -856,6 +1011,175 @@ class DefaultSessionManager:
                     payload["retry_count"] = int(record["retry_count"])
             if "catch_up_lag_minutes" in record:
                 payload["catch_up_lag_minutes"] = record.get("catch_up_lag_minutes")
+            if "quality_flag" in record:
+                with contextlib.suppress(TypeError, ValueError):
+                    payload["quality_flag"] = int(record["quality_flag"])
             if payload:
                 return payload
         return {}
+
+    @staticmethod
+    def _parse_since(value: str | None) -> datetime | None:
+        if not value:
+            return None
+        text = value.strip()
+        if not text:
+            return None
+        if text.endswith("Z"):
+            text = text[:-1] + "+00:00"
+        try:
+            parsed = datetime.fromisoformat(text)
+        except ValueError:
+            return None
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed
+
+    @staticmethod
+    def _compute_range_minutes(since: datetime | None, now: datetime) -> int | None:
+        if since is None:
+            return None
+        delta = now - since
+        minutes = int(delta.total_seconds() // 60)
+        return max(minutes, 0)
+
+    @staticmethod
+    def _compute_catch_up_priority(lag_minutes: int, symbols: Sequence[str]) -> str:
+        majors = sum(1 for symbol in symbols if symbol.upper() in _MAJOR_SYMBOLS)
+        if lag_minutes >= 30 and majors >= 4:
+            return "critical"
+        if lag_minutes >= 30:
+            return "high"
+        if lag_minutes >= 20:
+            return "high"
+        return "normal"
+
+    def _log_resync_job(
+        self,
+        *,
+        job_id: str,
+        range_minutes: int | None,
+        symbols: Sequence[str],
+        priority: str,
+        failover_plan: Sequence[str],
+        manual_csv_required: bool,
+        duration_sec: int,
+        status: str,
+    ) -> None:
+        path = Path(os.getenv("TRADECTL_RESYNC_JOBS_PATH", str(_DEFAULT_RESYNC_JOBS_PATH)))
+        payload = {
+            "ts": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+            "job_id": job_id,
+            "range_minutes": range_minutes,
+            "symbols": list(symbols),
+            "priority": priority,
+            "failover_plan": list(failover_plan),
+            "manual_csv_required": bool(manual_csv_required),
+            "duration_sec": int(duration_sec),
+            "status": status,
+        }
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with path.open("a", encoding="utf-8") as handle:
+                handle.write(json.dumps(payload, ensure_ascii=False))
+                handle.write("\n")
+        except OSError:
+            return
+
+    def _log_resync_latency(
+        self,
+        *,
+        resync_job_id: str,
+        resync_latency_sec: int,
+        resync_latency_ratio: float | None,
+        timeframe: str,
+    ) -> None:
+        path = Path(os.getenv("TRADECTL_RESYNC_LATENCY_PATH", str(_DEFAULT_RESYNC_LATENCY_PATH)))
+        payload: dict[str, Any] = {
+            "ts": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+            "resync_job_id": resync_job_id,
+            "resync_latency_sec": int(resync_latency_sec),
+            "timeframe": timeframe,
+        }
+        if resync_latency_ratio is not None:
+            payload["resync_latency_ratio"] = float(resync_latency_ratio)
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with path.open("a", encoding="utf-8") as handle:
+                handle.write(json.dumps(payload, ensure_ascii=False))
+                handle.write("\n")
+        except OSError:
+            return
+
+    @staticmethod
+    def _resolve_resync_queue_path() -> Path:
+        path = os.getenv("TRADECTL_RESYNC_QUEUE_PATH")
+        return Path(path) if path else _DEFAULT_RESYNC_QUEUE_PATH
+
+    def _enqueue_backfill_jobs(
+        self,
+        *,
+        resync_job_id: str,
+        start: datetime | None,
+        end: datetime,
+        symbols: Sequence[str],
+        timeframe: str,
+        priority: str,
+        failover_plan: Sequence[str],
+        manual_csv_required: bool,
+        retry_count: int,
+        dry_run: bool,
+    ) -> tuple[list[Mapping[str, Any]], Path | None]:
+        if not symbols or start is None:
+            return [], None
+        total_minutes = int((end - start).total_seconds() // 60)
+        if total_minutes <= 0:
+            return [], None
+        split_window = (
+            manual_csv_required and retry_count >= 3 and total_minutes >= 24 * 60
+        )
+        segment_minutes = 4 * 60 if split_window else total_minutes
+        segments: list[tuple[datetime, datetime]] = []
+        cursor = start
+        while cursor < end:
+            segment_end = min(end, cursor + timedelta(minutes=segment_minutes))
+            if segment_end <= cursor:
+                break
+            segments.append((cursor, segment_end))
+            cursor = segment_end
+        queue_path = self._resolve_resync_queue_path()
+        status = "planned" if dry_run else "queued"
+        payloads: list[Mapping[str, Any]] = []
+        for idx, (seg_start, seg_end) in enumerate(segments, start=1):
+            range_minutes = int((seg_end - seg_start).total_seconds() // 60)
+            payloads.append(
+                {
+                    "ts": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+                    "job_id": str(uuid.uuid4()),
+                    "resync_job_id": resync_job_id,
+                    "segment_index": idx,
+                    "segment_total": len(segments),
+                    "start": seg_start.replace(microsecond=0)
+                    .isoformat()
+                    .replace("+00:00", "Z"),
+                    "end": seg_end.replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+                    "range_minutes": range_minutes,
+                    "symbols": list(symbols),
+                    "timeframe": timeframe,
+                    "priority": priority,
+                    "failover_plan": list(failover_plan),
+                    "manual_csv_required": bool(manual_csv_required),
+                    "retry_count": int(retry_count),
+                    "status": status,
+                }
+            )
+        if payloads:
+            try:
+                queue_path.parent.mkdir(parents=True, exist_ok=True)
+                with queue_path.open("a", encoding="utf-8") as handle:
+                    for payload in payloads:
+                        handle.write(json.dumps(payload, ensure_ascii=False))
+                        handle.write("\n")
+            except OSError:
+                return payloads, None
+        return payloads, queue_path if payloads else None

@@ -85,6 +85,51 @@
         "manual_csv_required": {
           "type": "boolean"
         },
+        "catch_up_lag_minutes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "fetch_p95_ms": {
+          "type": "number",
+          "minimum": 0
+        },
+        "fetch_p99_ms": {
+          "type": "number",
+          "minimum": 0
+        },
+        "retry_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "latency_status": {
+          "type": "string",
+          "enum": [
+            "ok",
+            "watch",
+            "warn",
+            "breach",
+            "degraded",
+            "halt_recommended",
+            "unknown"
+          ]
+        },
+        "quality_flag": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4
+        },
+        "resync_latency_sec": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "resync_latency_ratio": {
+          "type": "number",
+          "minimum": 0
+        },
+        "determinism_hash": {
+          "type": "string",
+          "minLength": 1
+        },
         "data_hash": {
           "type": "string",
           "pattern": "^sha256:[0-9a-f]{64}$"

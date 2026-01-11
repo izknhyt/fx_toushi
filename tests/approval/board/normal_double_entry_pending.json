@@ -4,8 +4,9 @@
     "kill_switch_state": "none",
     "spread_status": "normal",
     "reduce_only": false,
-    "risk_disclosure": "signed",
-    "risk_disclosure_consent_id": null
+    "risk_disclosure": "accepted",
+    "risk_disclosure_consent_id": null,
+    "auto_execute": true
   },
   "tickets": [
     {
@@ -82,6 +83,6 @@
     "kind": "normal",
     "message": "Board mode normal"
   },
-  "render_summary": "mode=normal | banner=Board mode normal | ks=none, spread=normal, reduce_only=False | risk_disclosure=signed | badges: profit=ok, latency=ok, slippage=ok | tickets=1",
-  "rendered_table": "                                                                                                Tickets                                                                                                 \n┏━━━━━━━━━━━━━━━┳━━━━━━━━┳━━━━━━━━┳━━━━━━━━┳━━━━━━━━┳━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━┳━━━━━━━━┳━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━┓\n┃Ticket ID      ┃ Symbol ┃ Action ┃ Qty    ┃ TTL(s) ┃ Entry          ┃ SL/TP          ┃ Guardrails     ┃ Badges         ┃ Checklist       ┃ RiskDisclosure ┃ Spread ┃ Notes          ┃ AuditRefs       ┃\n┡━━━━━━━━━━━━━━━╇━━━━━━━━╇━━━━━━━━╇━━━━━━━━╇━━━━━━━━╇━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━╇━━━━━━━━╇━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━┩\n│TK-DOUBLE-PEND │ GBPJPY │ buy    │ 100000 │ 900    │ limit @191.25  │ SL=190.8       │ ks=none,       │ double_entry_… │ 1/2 (pending:   │ signed         │ normal │ Awaiting       │ cfg=sha256:cfg-…│\n│               │        │        │        │        │                │ TP=192.1 TRAIL │ spread=normal, │                │ double_entry_c… │                │        │ second         │ data=sha256:dat…│\n│               │        │        │        │        │                │ TTL=900        │ ro=False       │                │                 │                │        │ approver       │ det=deadbeef13  │\n└───────────────┴────────┴────────┴────────┴────────┴────────────────┴────────────────┴────────────────┴────────────────┴─────────────────┴────────────────┴────────┴────────────────┴─────────────────┘\n"
+  "render_summary": "mode=normal | banner=Board mode normal | ks=none, spread=normal, reduce_only=False | risk_disclosure=accepted | badges: profit=ok, latency=ok, slippage=ok | tickets=1",
+  "rendered_table": "                                                                                      Tickets | Board mode normal                                                                                       \n┏━━━━━━━━━━━━━━━┳━━━━━━━━┳━━━━━━━━┳━━━━━━━━┳━━━━━━━━┳━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━┳━━━━━━━━┳━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━┓\n┃Ticket ID      ┃ Symbol ┃ Action ┃ Qty    ┃ TTL(s) ┃ Entry          ┃ SL/TP          ┃ Guardrails     ┃ Badges         ┃ Checklist       ┃ RiskDisclosure ┃ Spread ┃ Notes          ┃ AuditRefs       ┃\n┡━━━━━━━━━━━━━━━╇━━━━━━━━╇━━━━━━━━╇━━━━━━━━╇━━━━━━━━╇━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━╇━━━━━━━━╇━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━┩\n│TK-DOUBLE-PEND │ GBPJPY │ buy    │ 100000 │ 900    │ limit @191.25  │ SL=190.8       │ ks=none,       │ double_entry_… │ 1/2 (pending:   │ signed         │ normal │ Awaiting       │ cfg=sha256:cfg-…│\n│               │        │        │        │        │                │ TP=192.1 TRAIL │ spread=normal, │                │ double_entry_c… │                │        │ second         │ data=sha256:dat…│\n│               │        │        │        │        │                │ TTL=900        │ ro=False       │                │                 │                │        │ approver       │ det=deadbeef13  │\n└───────────────┴────────┴────────┴────────┴────────┴────────────────┴────────────────┴────────────────┴────────────────┴─────────────────┴────────────────┴────────┴────────────────┴─────────────────┘\n"
 }

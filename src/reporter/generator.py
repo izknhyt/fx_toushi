@@ -11,6 +11,39 @@ TICKET_SUMMARY_TEMPLATE = Path("src/reporter/templates/weekly_m1_core.md")
 
 
 @dataclass(slots=True)
+class PerformanceStats:
+    sharpe: object = "n/a"
+    max_dd: object = "n/a"
+    win_rate: object = "n/a"
+    cum_r: object = "n/a"
+
+    def to_context(self) -> dict[str, object]:
+        return {
+            "kpi_sharpe": self.sharpe,
+            "kpi_max_dd": self.max_dd,
+            "kpi_win_rate": self.win_rate,
+            "kpi_cum_r": self.cum_r,
+        }
+
+
+@dataclass(slots=True)
+class RiskSummaryStub:
+    status: str = "disabled"
+    summary: str = "n/a"
+
+    def to_context(self) -> dict[str, object]:
+        return {"risk_summary_status": self.status, "risk_summary": self.summary}
+
+
+@dataclass(slots=True)
+class ManualCsvSummary:
+    summary: str = "n/a"
+
+    def to_context(self) -> dict[str, object]:
+        return {"manual_csv_summary": self.summary}
+
+
+@dataclass(slots=True)
 class ReportGenerator:
     output_dir: Path = Path("reports/auto")
 
@@ -91,6 +124,7 @@ class ReportGenerator:
         journal_entries: Sequence[Mapping[str, object]] = (),
         template_path: Path | None = None,
         kpi: Mapping[str, object] | None = None,
+        extra_context: Mapping[str, object] | None = None,
     ) -> str:
         """Compose weekly report content with ticket summary, stress runs, journal, and KPI."""
 
@@ -104,6 +138,8 @@ class ReportGenerator:
                 "trade_journal": journal_block,
             }
         )
+        if extra_context:
+            context.update(extra_context)
         if kpi:
             for key, value in kpi.items():
                 context[f"kpi_{key}"] = value
@@ -161,6 +197,9 @@ def _build_ticket_context(tickets: Sequence[Mapping[str, object]]) -> dict[str, 
             "data_quality_summary": "n/a",
             "resync_summary": "n/a",
             "manual_csv_summary": "n/a",
+            "risk_summary_status": "disabled",
+            "risk_summary": "n/a",
+            "ops_worklog_excerpt": "- n/a",
         }
     )
     guardrails_obj = SimpleNamespace(
@@ -177,4 +216,9 @@ def _build_ticket_context(tickets: Sequence[Mapping[str, object]]) -> dict[str, 
     return context
 
 
-__all__ = ["ReportGenerator"]
+__all__ = [
+    "ManualCsvSummary",
+    "PerformanceStats",
+    "ReportGenerator",
+    "RiskSummaryStub",
+]

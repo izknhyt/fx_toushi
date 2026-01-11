@@ -24,6 +24,7 @@ def test_ticket_approve_cli_writes_json(monkeypatch: MonkeyPatch, tmp_path: Path
             "T1",
             "--user",
             "alice",
+            "--yes",
             "--json",
         ],
     )

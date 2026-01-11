@@ -26,7 +26,11 @@
     "risk_disclosure": { "type": ["string", "null"], "enum": ["pending", "warning", "expired", "accepted", null] },
     "profit_readiness_status": { "type": "string", "enum": ["ok", "guarded", "halted", "stale"] },
     "auto_execute": { "type": "boolean" },
-    "auto_execute_forced_off": { "type": "boolean" }
+    "auto_execute_forced_off": { "type": "boolean" },
+    "time_sync_status": { "type": ["string", "null"] },
+    "time_sync_drift_ms": { "type": ["number", "null"] },
+    "time_sync_reason": { "type": ["string", "null"] },
+    "time_sync_action": { "type": ["string", "null"] }
   },
   "additionalProperties": true
 }

@@ -10,6 +10,8 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
+from src.utils.hashing import sha256_path
+
 __all__ = [
     "AuditBundleService",
     "AuditBundleManifest",
@@ -84,7 +86,7 @@ class AuditBundleService:
             bundle_root.mkdir(parents=True, exist_ok=True)
 
         for kind, source_path in files:
-            digest = _sha256_path(source_path)
+            digest = sha256_path(source_path)
             counts[kind] = counts.get(kind, 0) + 1
             safe_name = _safe_name(source_path)
             dest = bundle_root / kind / safe_name
@@ -141,7 +143,7 @@ class AuditBundleService:
             if not target.exists():
                 missing.append(rel_path)
                 continue
-            actual = _sha256_path(target)
+            actual = sha256_path(target)
             if expected and actual != expected:
                 mismatches.append({"path": rel_path, "expected": expected, "actual": actual})
         sig_status = _verify_signature(manifest_path, signature_path)
@@ -201,14 +203,6 @@ def _collect_glob(kind: str, base: Path, pattern: str) -> list[tuple[str, Path]]
     return [(kind, path) for path in base.glob(pattern) if path.is_file()]
 
 
-def _sha256_path(path: Path) -> str:
-    h = hashlib.sha256()
-    with path.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(8192), b""):
-            h.update(chunk)
-    return f"sha256:{h.hexdigest()}"
-
-
 def _safe_name(path: Path) -> str:
     rel = path.as_posix().lstrip("./")
     return rel.replace("/", "__")
@@ -219,7 +213,7 @@ def _utcnow_iso() -> str:
 
 
 def _write_signature(manifest_path: Path, signature_path: Path, *, signer: str) -> None:
-    manifest_sha = _sha256_path(manifest_path)
+    manifest_sha = sha256_path(manifest_path)
     signature_seed = f"{manifest_sha}:{signer}".encode()
     signature = hashlib.sha256(signature_seed).hexdigest()
     payload = {
@@ -240,7 +234,7 @@ def _verify_signature(manifest_path: Path, signature_path: Path) -> Mapping[str,
     except json.JSONDecodeError as exc:
         return {"status": "error", "error": str(exc), "path": str(signature_path)}
     signer = payload.get("signer", "local")
-    manifest_sha = _sha256_path(manifest_path)
+    manifest_sha = sha256_path(manifest_path)
     expected = hashlib.sha256(f"{manifest_sha}:{signer}".encode()).hexdigest()
     status = (
         "ok"

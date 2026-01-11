@@ -4,8 +4,9 @@
     "kill_switch_state": "soft_stop",
     "spread_status": "watch",
     "reduce_only": true,
-    "risk_disclosure": "signed",
-    "risk_disclosure_consent_id": null
+    "risk_disclosure": "accepted",
+    "risk_disclosure_consent_id": null,
+    "auto_execute": false
   },
   "tickets": [
     {
@@ -90,6 +91,6 @@
     "severity": "soft",
     "runbook": "docs/runbooks/RUN-RISK-01.md"
   },
-  "render_summary": "mode=guarded | banner=Kill Switch SOFT_STOP | ks=soft_stop, spread=watch, reduce_only=True | risk_disclosure=signed | badges: profit=ok, latency=ok, slippage=ok | tickets=1",
-  "rendered_table": "                                                                                                Tickets                                                                                                 \n┏━━━━━━━━━━━━┳━━━━━━━━┳━━━━━━━━┳━━━━━━━┳━━━━━━━━┳━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━┳━━━━━━━━┳━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━┓\n┃Ticket ID   ┃ Symbol ┃ Action ┃ Qty   ┃ TTL(s) ┃ Entry           ┃ SL/TP           ┃ Guardrails      ┃ Badges          ┃ Checklist       ┃ RiskDisclosure ┃ Spread ┃ Notes           ┃ AuditRefs      ┃\n┡━━━━━━━━━━━━╇━━━━━━━━╇━━━━━━━━╇━━━━━━━╇━━━━━━━━╇━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━╇━━━━━━━━╇━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━┩\n│TK-WATCH-RO │ CADJPY │ sell   │ 70000 │ 500    │ market @112.34  │ SL=112.7        │ ks=soft_stop(s… │ spread_watch,r… │ 1/2 (pending:   │ signed         │ watch  │ Reduce-only due │ cfg=sha256:cfg…│\n│            │        │        │       │        │                 │ TP=111.5        │ spread=watch,   │                 │ spread_window_… │                │        │ to watch spread │ data=sha256:da…│\n│            │        │        │       │        │                 │ TTL=500         │ ro=True         │                 │                 │                │        │                 │ det=deadbeef09 │\n└────────────┴────────┴────────┴───────┴────────┴─────────────────┴─────────────────┴─────────────────┴─────────────────┴─────────────────┴────────────────┴────────┴─────────────────┴────────────────┘\n"
+  "render_summary": "mode=guarded | banner=Kill Switch SOFT_STOP | ks=soft_stop, spread=watch, reduce_only=True | risk_disclosure=accepted | badges: profit=ok, latency=ok, slippage=ok | tickets=1",
+  "rendered_table": "                                                                                    Tickets | Kill Switch SOFT_STOP                                                                                     \n┏━━━━━━━━━━━━┳━━━━━━━━┳━━━━━━━━┳━━━━━━━┳━━━━━━━━┳━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━┳━━━━━━━━┳━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━┓\n┃Ticket ID   ┃ Symbol ┃ Action ┃ Qty   ┃ TTL(s) ┃ Entry           ┃ SL/TP           ┃ Guardrails      ┃ Badges          ┃ Checklist       ┃ RiskDisclosure ┃ Spread ┃ Notes           ┃ AuditRefs      ┃\n┡━━━━━━━━━━━━╇━━━━━━━━╇━━━━━━━━╇━━━━━━━╇━━━━━━━━╇━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━╇━━━━━━━━╇━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━┩\n│TK-WATCH-RO │ CADJPY │ sell   │ 70000 │ 500    │ market @112.34  │ SL=112.7        │ ks=soft_stop(s… │ spread_watch,r… │ 1/2 (pending:   │ signed         │ watch  │ Reduce-only due │ cfg=sha256:cfg…│\n│            │        │        │       │        │                 │ TP=111.5        │ spread=watch,   │                 │ spread_window_… │                │        │ to watch spread │ data=sha256:da…│\n│            │        │        │       │        │                 │ TTL=500         │ ro=True         │                 │                 │                │        │                 │ det=deadbeef09 │\n└────────────┴────────┴────────┴───────┴────────┴─────────────────┴─────────────────┴─────────────────┴─────────────────┴─────────────────┴────────────────┴────────┴─────────────────┴────────────────┘\n"
 }

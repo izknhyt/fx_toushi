@@ -88,6 +88,7 @@ def determinism_replay(
     diff_count = _compute_diff_count(filtered_events)
     signals_summary = None
     signals_markdown = None
+    signals_diffs: list[Mapping[str, Any]] | None = None
     if signals_expected or signals_actual:
         if not (signals_expected and signals_actual) and not allow_missing_signals:
             raise FileNotFoundError("Both --signals-expected and --signals-actual are required")
@@ -109,6 +110,7 @@ def determinism_replay(
             )
             signals_summary = signal_diff.get("summary")
             signals_markdown = signal_diff.get("markdown_table")
+            signals_diffs = list(signal_diff.get("diffs") or [])
 
     summary = {
         "event_count": len(filtered_events),
@@ -120,6 +122,7 @@ def determinism_replay(
         "signals": signals_summary,
     }
     report_paths: list[str] = []
+    diff_artifacts: dict[str, str] = {}
     if filtered_events:
         report_paths = _write_reports(
             events=filtered_events,
@@ -128,6 +131,15 @@ def determinism_replay(
             job_id=job_id,
             signals=signals_summary,
             signals_markdown=signals_markdown,
+        )
+    if signals_diffs is not None:
+        diff_artifacts = _write_signal_diff_artifacts(
+            root=report_root,
+            strategy=strategy,
+            job_id=job_id,
+            summary=signals_summary,
+            diffs=signals_diffs,
+            markdown_table=signals_markdown,
         )
 
     payload = {
@@ -138,6 +150,8 @@ def determinism_replay(
         "output": str(output) if output else None,
         "reports": report_paths,
         "signals_summary": signals_summary,
+        "diff_report": diff_artifacts.get("diff_report"),
+        "diffs_path": diff_artifacts.get("diffs_path"),
     }
     _emit_audit_replay(payload)
     _append_validation_log(payload)
@@ -147,9 +161,18 @@ def determinism_replay(
         serialisable = json.loads(json.dumps(payload, ensure_ascii=False, default=str))
         output.write_text(json.dumps(serialisable, ensure_ascii=False, indent=2), encoding="utf-8")
 
-    resolved_metrics = metrics_path or Path("metrics") / "determinism_replay.jsonl"
+    resolved_metrics = metrics_path or Path("metrics") / "replay_jobs.jsonl"
     try:
         resolved_metrics.parent.mkdir(parents=True, exist_ok=True)
+        seed = next(
+            (
+                evt.get("seed")
+                for evt in filtered_events
+                if isinstance(evt.get("seed"), (int, float))
+            ),
+            None,
+        )
+        max_latency_ms = _max_latency_ms(signals_diffs)
         metric_record = {
             "event": "determinism.replay",
             "job_id": job_id,
@@ -160,6 +183,8 @@ def determinism_replay(
             "window": window,
             "event_count": summary["event_count"],
             "diff_count": summary["diff_count"],
+            "max_latency_ms": max_latency_ms,
+            "seed": seed,
             "status": payload["status"],
             "log_path": str(resolved_log),
             "ts": datetime.utcnow().replace(microsecond=0).isoformat() + "Z",
@@ -384,3 +409,68 @@ def _write_reports(
         written.extend([str(json_path), str(md_path)])
 
     return written
+
+
+def _write_signal_diff_artifacts(
+    *,
+    root: Path,
+    strategy: str | None,
+    job_id: str,
+    summary: Mapping[str, Any] | None,
+    diffs: list[Mapping[str, Any]],
+    markdown_table: str | None,
+) -> dict[str, str]:
+    if summary is None:
+        return {}
+    if not diffs and not summary.get("diff_count"):
+        return {}
+    strategy_id = strategy or "unknown"
+    root.mkdir(parents=True, exist_ok=True)
+    strategy_dir = root / strategy_id
+    strategy_dir.mkdir(parents=True, exist_ok=True)
+    diffs_path = strategy_dir / f"diffs_{strategy_id}.json"
+    diff_report = root / f"{strategy_id}.md"
+
+    diff_payload = {
+        "job_id": job_id,
+        "strategy_id": strategy_id,
+        "summary": summary,
+        "diffs": diffs,
+    }
+    diffs_path.write_text(
+        json.dumps(diff_payload, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+
+    lines = [
+        f"# Determinism Diff Report ({strategy_id})",
+        "",
+        f"- Job: `{job_id}`",
+        f"- Generated: {datetime.utcnow().isoformat()}Z",
+        f"- Diff Count: {summary.get('diff_count')}",
+        f"- Expected Count: {summary.get('expected_count')}",
+        f"- Actual Count: {summary.get('actual_count')}",
+        f"- Expected Hash: {summary.get('expected_hash')}",
+        f"- Actual Hash: {summary.get('actual_hash')}",
+    ]
+    if markdown_table:
+        lines.extend(["", "## Diffs", "", markdown_table])
+    diff_report.write_text("\n".join(lines), encoding="utf-8")
+
+    return {"diffs_path": str(diffs_path), "diff_report": str(diff_report)}
+
+
+def _max_latency_ms(diffs: list[Mapping[str, Any]] | None) -> float | None:
+    if not diffs:
+        return None
+    max_latency: float | None = None
+    for diff in diffs:
+        for side in ("expected", "actual"):
+            payload = diff.get(side)
+            if not isinstance(payload, Mapping):
+                continue
+            latency = payload.get("latency_ms")
+            if isinstance(latency, (int, float)):
+                value = float(latency)
+                if max_latency is None or value > max_latency:
+                    max_latency = value
+    return max_latency

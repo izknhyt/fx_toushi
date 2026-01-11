@@ -4,8 +4,9 @@
     "kill_switch_state": "none",
     "spread_status": "normal",
     "reduce_only": false,
-    "risk_disclosure": "signed",
-    "risk_disclosure_consent_id": null
+    "risk_disclosure": "accepted",
+    "risk_disclosure_consent_id": null,
+    "auto_execute": true
   },
   "tickets": [
     {
@@ -89,6 +90,6 @@
     "kind": "normal",
     "message": "Board mode normal"
   },
-  "render_summary": "mode=normal | banner=Board mode normal | ks=none, spread=normal, reduce_only=False | risk_disclosure=signed | badges: profit=ok, latency=ok, slippage=ok | tickets=1",
-  "rendered_table": "                                                                                                Tickets                                                                                                 \n┏━━━━━━━━━━━━┳━━━━━━━━┳━━━━━━━━┳━━━━━━━━┳━━━━━━━━┳━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━┳━━━━━━━━━━━━━━━━┳━━━━━━━━┳━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━┓\n┃Ticket ID   ┃ Symbol ┃ Action ┃ Qty    ┃ TTL(s) ┃ Entry            ┃ SL/TP            ┃ Guardrails       ┃ Badges          ┃ Checklist ┃ RiskDisclosure ┃ Spread ┃ Notes            ┃ AuditRefs       ┃\n┡━━━━━━━━━━━━╇━━━━━━━━╇━━━━━━━━╇━━━━━━━━╇━━━━━━━━╇━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━╇━━━━━━━━━━━━━━━━╇━━━━━━━━╇━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━┩\n│TK-NORMAL-1 │ GBPUSD │ buy    │ 150000 │ 1200   │ limit_requote    │ SL=1.2971        │ ks=none,         │ spread_watch,l… │ 2/2       │ signed         │ watch  │ TP adjusted      │ cfg=sha256:cfg-…│\n│            │        │        │        │        │ @1.30012         │ TP=1.3065 TRAIL  │ spread=normal,   │                 │           │                │        │ after news       │ data=sha256:dat…│\n│            │        │        │        │        │                  │ TTL=1200         │ ro=False         │                 │           │                │        │                  │ det=deadbeef01  │\n└────────────┴────────┴────────┴────────┴────────┴──────────────────┴──────────────────┴──────────────────┴─────────────────┴───────────┴────────────────┴────────┴──────────────────┴─────────────────┘\n"
+  "render_summary": "mode=normal | banner=Board mode normal | ks=none, spread=normal, reduce_only=False | risk_disclosure=accepted | badges: profit=ok, latency=ok, slippage=ok | tickets=1",
+  "rendered_table": "                                                                                      Tickets | Board mode normal                                                                                       \n┏━━━━━━━━━━━━┳━━━━━━━━┳━━━━━━━━┳━━━━━━━━┳━━━━━━━━┳━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━┳━━━━━━━━━━━━━━━━┳━━━━━━━━┳━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━┓\n┃Ticket ID   ┃ Symbol ┃ Action ┃ Qty    ┃ TTL(s) ┃ Entry            ┃ SL/TP            ┃ Guardrails       ┃ Badges          ┃ Checklist ┃ RiskDisclosure ┃ Spread ┃ Notes            ┃ AuditRefs       ┃\n┡━━━━━━━━━━━━╇━━━━━━━━╇━━━━━━━━╇━━━━━━━━╇━━━━━━━━╇━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━╇━━━━━━━━━━━━━━━━╇━━━━━━━━╇━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━┩\n│TK-NORMAL-1 │ GBPUSD │ buy    │ 150000 │ 1200   │ limit_requote    │ SL=1.2971        │ ks=none,         │ spread_watch,l… │ 2/2       │ signed         │ watch  │ TP adjusted      │ cfg=sha256:cfg-…│\n│            │        │        │        │        │ @1.30012         │ TP=1.3065 TRAIL  │ spread=normal,   │                 │           │                │        │ after news       │ data=sha256:dat…│\n│            │        │        │        │        │                  │ TTL=1200         │ ro=False         │                 │           │                │        │                  │ det=deadbeef01  │\n└────────────┴────────┴────────┴────────┴────────┴──────────────────┴──────────────────┴──────────────────┴─────────────────┴───────────┴────────────────┴────────┴──────────────────┴─────────────────┘\n"
 }

@@ -6,6 +6,7 @@ import builtins
 import json
 import logging
 import os
+import re
 from collections.abc import Iterable, Mapping
 from datetime import datetime, timezone
 from pathlib import Path
@@ -15,8 +16,9 @@ import yaml
 from src.compliance import RiskDisclosureService
 from src.core.gate import GateState
 from src.interfaces.cli.board import DEFAULT_MANIFEST
-from src.persistence.audit import AuditLogger
+from src.persistence.audit import AuditWriter
 from src.ticket.lock import TicketLockError, TicketLockManager
+from src.utils.hashing import sha256_path
 
 logger = logging.getLogger(__name__)
 
@@ -102,6 +104,8 @@ def approve(
         diff=diff,
         board_mode=board_mode,
         guardrails=guardrails_payload,
+        spread_state=_extract_spread_state(gate_state),
+        health_status=_extract_health_status(guardrails_payload, gate_state),
         determinism_hash=determinism_hash,
         determinism_version=determinism_version,
         checklist_progress=DEFAULT_CHECKLIST_PROGRESS,
@@ -111,7 +115,7 @@ def approve(
         cfg_hash=cfg_hash,
         data_hash=data_hash,
     )
-    _append_jsonl(AUDIT_PATH, audit_entry)
+    _record_audit_entry(audit_entry)
     _append_ops_worklog(
         ts=audit_entry["ts"],
         ticket_id=ticket_id,
@@ -169,6 +173,8 @@ def reject(
         diff=diff,
         board_mode=board_mode,
         guardrails=guardrails_payload,
+        spread_state=_extract_spread_state(gate_state),
+        health_status=_extract_health_status(guardrails_payload, gate_state),
         determinism_hash=determinism_hash,
         determinism_version=determinism_version,
         checklist_progress=DEFAULT_CHECKLIST_PROGRESS,
@@ -178,7 +184,7 @@ def reject(
         cfg_hash=cfg_hash,
         data_hash=data_hash,
     )
-    _append_jsonl(AUDIT_PATH, audit_entry)
+    _record_audit_entry(audit_entry)
     _append_ops_worklog(
         ts=audit_entry["ts"],
         ticket_id=ticket_id,
@@ -238,6 +244,8 @@ def edit(
         diff=diff,
         board_mode=board_mode,
         guardrails=guardrails_payload,
+        spread_state=_extract_spread_state(gate_state),
+        health_status=_extract_health_status(guardrails_payload, gate_state),
         determinism_hash=determinism_hash,
         determinism_version=determinism_version,
         checklist_progress=DEFAULT_CHECKLIST_PROGRESS,
@@ -247,7 +255,7 @@ def edit(
         cfg_hash=cfg_hash,
         data_hash=data_hash,
     )
-    _append_jsonl(AUDIT_PATH, audit_entry)
+    _record_audit_entry(audit_entry)
     _append_ops_worklog(
         ts=audit_entry["ts"],
         ticket_id=ticket_id,
@@ -314,6 +322,8 @@ def _build_audit_entry(
     diff: list[Mapping[str, object]] | None = None,
     board_mode: str,
     guardrails: Mapping[str, object],
+    spread_state: Mapping[str, object],
+    health_status: str | None,
     determinism_hash: str | None,
     determinism_version: int,
     checklist_progress: Mapping[str, object],
@@ -371,6 +381,8 @@ def _build_audit_entry(
         "risk_disclosure_state": guardrails.get("risk_disclosure", "pending"),
         "auto_execute": _compute_auto_execute(board_mode, guardrails),
         "guardrails": dict(guardrails),
+        "spread_state": dict(spread_state),
+        "health_status": health_status,
         "determinism_hash": determinism_hash,
         "determinism_version": determinism_version,
         "cfg_hash": cfg_hash or DEFAULT_CFG_HASH,
@@ -390,9 +402,10 @@ def _append_jsonl(path: Path, entry: Mapping[str, object]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a", encoding="utf-8") as fp:
         fp.write(json.dumps(entry, ensure_ascii=False) + "\n")
-    # mirror to audit logger for compliance format (v2)
-    if path == AUDIT_PATH:
-        AuditLogger(path=Path("logs/audit/hitl.jsonl")).record(entry)
+
+
+def _record_audit_entry(entry: Mapping[str, object]) -> None:
+    AuditWriter(path=AUDIT_PATH).record_ticket_action(entry)
 
 
 def _persist_ticket(
@@ -516,7 +529,7 @@ def _extract_hashes(
     if not isinstance(cfg_hash, str):
         cfg_path = os.getenv("TRADECTL_CFG_PATH")
         if cfg_path and Path(cfg_path).exists():
-            cfg_hash = _sha256_path(Path(cfg_path))
+            cfg_hash = sha256_path(Path(cfg_path))
         else:
             cfg_hash = os.getenv("TRADECTL_CFG_HASH")
     if not isinstance(data_hash, str):
@@ -528,17 +541,45 @@ def _extract_hashes(
             data_hash = entry.get("dataset_sha256")
         except json.JSONDecodeError:
             data_hash = None
-    return cfg_hash, data_hash
+    return _normalize_hash(cfg_hash), _normalize_hash(data_hash)
 
 
-def _sha256_path(path: Path) -> str:
-    import hashlib
+def _normalize_hash(value: str | None) -> str | None:
+    if not value:
+        return None
+    if value.startswith("sha256:"):
+        return value
+    if re.fullmatch(r"[0-9a-fA-F]{64}", value):
+        return f"sha256:{value.lower()}"
+    return value
 
-    h = hashlib.sha256()
-    with path.open("rb") as fp:
-        for chunk in iter(lambda: fp.read(8192), b""):
-            h.update(chunk)
-    return f"sha256:{h.hexdigest()}"
+
+def _extract_spread_state(gate_state: GateState | None) -> Mapping[str, object]:
+    if gate_state is None:
+        return {}
+    spread_state: dict[str, object] = {}
+    try:
+        spread_state["global"] = gate_state.market.spread.to_dict()
+    except Exception:
+        spread_state["global"] = {}
+    for symbol, block in (gate_state.market.per_symbol or {}).items():
+        if block.spread is None:
+            continue
+        try:
+            spread_state[symbol] = block.spread.to_dict()
+        except Exception:
+            spread_state[symbol] = {"state": block.spread.state}
+    return spread_state
+
+
+def _extract_health_status(
+    guardrails: Mapping[str, object], gate_state: GateState | None
+) -> str | None:
+    if guardrails.get("health_state") is not None:
+        return str(guardrails.get("health_state"))
+    if gate_state is None:
+        return None
+    return None
 
 
 def _apply_patch(

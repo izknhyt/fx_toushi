@@ -12,6 +12,10 @@
 - Win Rate: {kpi_win_rate}
 - Cumulative R: {kpi_cum_r}
 
+## Risk Summary
+- Status: {risk_summary_status}
+- Summary: {risk_summary}
+
 ## Extended Guardrails
 - Reduce-Only advisor: {reduce_only_advisor_summary}
 - Kill Switch history: {kill_switch_history}
@@ -20,8 +24,16 @@
 - Resync summary: {resync_summary}
 - Manual CSV summary: {manual_csv_summary}
 
+## Ops Worklog (latest)
+{ops_worklog_excerpt}
+
 ## Stress Runs
 {stress_runs}
 
 ## Trade Journal
 {trade_journal}
+
+## Sign-off
+- Prepared by:
+- Reviewed by:
+- Approved by:

@@ -5,7 +5,8 @@
     "spread_status": "normal",
     "reduce_only": false,
     "risk_disclosure": "expired",
-    "risk_disclosure_consent_id": null
+    "risk_disclosure_consent_id": null,
+    "auto_execute": false
   },
   "tickets": [
     {
@@ -80,10 +81,11 @@
   "auto_execute": false,
   "banner": {
     "kind": "risk_disclosure",
-    "message": "RiskDisclosure expired",
+    "message": "RiskDisclosure expired (approval locked)",
     "severity": "warn",
+    "locked": true,
     "runbook": "docs/runbooks/RUN-HITL-01.md"
   },
-  "render_summary": "mode=guarded | banner=RiskDisclosure expired | ks=guarded, spread=normal, reduce_only=False | risk_disclosure=expired | badges: profit=ok, latency=ok, slippage=ok | tickets=1",
-  "rendered_table": "                                                                                                Tickets                                                                                                 \n┏━━━━━━━━━━┳━━━━━━━━┳━━━━━━━━┳━━━━━━━┳━━━━━━━━┳━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━┳━━━━━━━━┳━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━┓\n┃Ticket ID ┃ Symbol ┃ Action ┃ Qty   ┃ TTL(s) ┃ Entry          ┃ SL/TP           ┃ Guardrails       ┃ Badges          ┃ Checklist       ┃ RiskDisclosure ┃ Spread ┃ Notes            ┃ AuditRefs       ┃\n┡━━━━━━━━━━╇━━━━━━━━╇━━━━━━━━╇━━━━━━━╇━━━━━━━━╇━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━╇━━━━━━━━╇━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━┩\n│TK-EXP-1  │ AUDCAD │ buy    │ 60000 │ 800    │ limit @0.9105  │ SL=0.907        │ ks=guarded,      │ consent_expired │ 1/2 (pending:   │ expired        │ normal │ Consent renewal  │ cfg=sha256:cfg-…│\n│          │        │        │       │        │                │ TP=0.916 TRAIL  │ spread=normal,   │                 │ risk_disclosur… │                │        │ needed           │ data=sha256:dat…│\n│          │        │        │       │        │                │ TTL=800         │ ro=False         │                 │                 │                │        │                  │ det=deadbeef07  │\n└──────────┴────────┴────────┴───────┴────────┴────────────────┴─────────────────┴──────────────────┴─────────────────┴─────────────────┴────────────────┴────────┴──────────────────┴─────────────────┘\n"
+  "render_summary": "mode=guarded | banner=RiskDisclosure expired (approval locked) | ks=guarded, spread=normal, reduce_only=False | risk_disclosure=expired | badges: profit=ok, latency=ok, slippage=ok | tickets=1",
+  "rendered_table": "                                                                           Tickets | RiskDisclosure expired (approval locked)                                                                           \n┏━━━━━━━━━━┳━━━━━━━━┳━━━━━━━━┳━━━━━━━┳━━━━━━━━┳━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━┳━━━━━━━━┳━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━┓\n┃Ticket ID ┃ Symbol ┃ Action ┃ Qty   ┃ TTL(s) ┃ Entry          ┃ SL/TP           ┃ Guardrails       ┃ Badges          ┃ Checklist       ┃ RiskDisclosure ┃ Spread ┃ Notes            ┃ AuditRefs       ┃\n┡━━━━━━━━━━╇━━━━━━━━╇━━━━━━━━╇━━━━━━━╇━━━━━━━━╇━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━╇━━━━━━━━╇━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━┩\n│TK-EXP-1  │ AUDCAD │ buy    │ 60000 │ 800    │ limit @0.9105  │ SL=0.907        │ ks=guarded,      │ consent_expired │ 1/2 (pending:   │ expired        │ normal │ Consent renewal  │ cfg=sha256:cfg-…│\n│          │        │        │       │        │                │ TP=0.916 TRAIL  │ spread=normal,   │                 │ risk_disclosur… │                │        │ needed           │ data=sha256:dat…│\n│          │        │        │       │        │                │ TTL=800         │ ro=False         │                 │                 │                │        │                  │ det=deadbeef07  │\n└──────────┴────────┴────────┴───────┴────────┴────────────────┴─────────────────┴──────────────────┴─────────────────┴─────────────────┴────────────────┴────────┴──────────────────┴─────────────────┘\n"
 }

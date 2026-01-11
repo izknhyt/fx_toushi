@@ -455,14 +455,33 @@ def _evaluate_reduce_only_advisor(
     if not _read_feature_flag("reduce_only_advisor"):
         return None
     spread_state = gate_state.market.spread.state
-    should_reduce_only = spread_state in {"cooldown", "halt"}
-    reason = f"spread_{spread_state}"
+    latency_status = gate_state.market.latency_data_status
+    slippage_status = gate_state.market.slippage_data_status
+    kill_switch_rec = gate_state.risk.kill_switch_recommendation
+    signals: list[str] = []
+    if spread_state in {"cooldown", "halt"}:
+        signals.append(f"spread_{spread_state}")
+    if gate_state.risk.reduce_only:
+        signals.append("risk_reduce_only")
+    if kill_switch_rec:
+        signals.append(f"kill_switch_{kill_switch_rec}")
+    if latency_status in {"degraded", "halt_recommended"}:
+        signals.append(f"latency_{latency_status}")
+    if slippage_status in {"degraded", "halt_recommended"}:
+        signals.append(f"slippage_{slippage_status}")
+    should_reduce_only = bool(signals)
+    reason = ",".join(signals) if signals else None
     return {
-        "advisor": "reduce_only_stub",
+        "advisor": "reduce_only_guard",
         "symbol": draft.symbol,
         "should_reduce_only": should_reduce_only,
         "reason": reason,
+        "signals": signals,
         "spread_state": spread_state,
+        "latency_data_status": latency_status,
+        "slippage_data_status": slippage_status,
+        "risk_reduce_only": gate_state.risk.reduce_only,
+        "kill_switch_recommendation": kill_switch_rec,
     }
 
 

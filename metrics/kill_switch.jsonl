@@ -21,3 +21,5 @@
 {"ts": "2025-12-16T12:53:59Z", "state": "soft_stop", "previous_state": "none", "reason": "spread_block", "actor": "tester", "runbook": null}
 {"ts": "2026-01-10T12:55:34Z", "state": "hard_stop", "previous_state": "none", "reason": "M3 test", "actor": "cli", "runbook": null}
 {"ts": "2026-01-10T12:55:59Z", "state": "none", "previous_state": "hard_stop", "reason": "M3 reset", "actor": "cli", "runbook": null}
+{"ts": "2026-01-11T13:13:08Z", "state": "soft_stop", "previous_state": "none", "reason": "spread_block", "actor": "tester", "runbook": null}
+{"ts": "2026-01-11T13:16:02Z", "state": "soft_stop", "previous_state": "none", "reason": "spread_block", "actor": "tester", "runbook": null}

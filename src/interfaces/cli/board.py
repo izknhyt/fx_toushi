@@ -6,6 +6,7 @@ import json
 import logging
 import os
 from collections.abc import Iterable, Mapping, Sequence
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
@@ -13,12 +14,29 @@ from rich.console import Console
 from rich.table import Table
 
 from src.compliance import RiskDisclosureService
+from src.interfaces.cli.board_diagnostics import board_diagnostics
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_MANIFEST = Path("reports/data_manifest.json")
 
-__all__ = ["board", "_load_manifest_entry"]
+__all__ = ["board", "_load_manifest_entry", "BoardRenderer"]
+
+
+@dataclass(slots=True)
+class BoardRenderer:
+    """Render ticket payloads into CLI-friendly tables."""
+
+    rich: bool = True
+
+    def render_ticket(self, ticket: Mapping[str, object]) -> list[str]:
+        columns = _ticket_columns()
+        return [str(extract(ticket)) for _, extract in columns]
+
+    def render_table(
+        self, tickets: Sequence[Mapping[str, object]], *, banner: Mapping[str, object] | None = None
+    ) -> str:
+        return _render_ticket_table(tickets, rich=self.rich, banner=banner)
 
 
 def _load_manifest_entry(
@@ -59,10 +77,44 @@ def board(
     compat_mode: str | None = None,
     tickets: Sequence[Mapping[str, object]] | None = None,
     rich_table: bool = True,
+    diagnostics_log: Path | None = None,
+    diagnostics_limit: int = 50,
+    diagnostics_strategy: str | None = None,
 ) -> dict[str, object]:
     """Render a lightweight board payload and optionally persist a JSON snapshot."""
 
     compat_mode = compat_mode or _read_compat_env()
+    if view == "diagnostics":
+        diagnostics = board_diagnostics(
+            log_path=diagnostics_log,
+            limit=diagnostics_limit,
+            strategy=diagnostics_strategy,
+        )
+        table = _render_diagnostics_table(diagnostics.get("strategies", {}), rich=rich_table)
+        diag_status = "diverged" if diagnostics.get("diff_strategies") else "ok"
+        payload = {
+            "timestamp": datetime.utcnow().isoformat(timespec="seconds") + "Z",
+            "view": "diagnostics",
+            "status": diag_status,
+            "diagnostics_status": diagnostics.get("status"),
+            "summary": diagnostics.get("summary"),
+            "strategies": diagnostics.get("strategies"),
+            "diff_strategies": diagnostics.get("diff_strategies"),
+            "log_path": diagnostics.get("log_path"),
+            "render_summary": _render_diagnostics_summary(
+                diagnostics.get("summary"), diag_status
+            ),
+            "rendered_table": table,
+            "exit_code": diagnostics.get("exit_code", 0),
+        }
+        if save_snapshot:
+            save_snapshot.parent.mkdir(parents=True, exist_ok=True)
+            save_snapshot.write_text(
+                json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
+            )
+            payload["snapshot_path"] = str(save_snapshot)
+        logger.info("cli.board.rendered", extra={"view": view, "snapshot": str(save_snapshot or "")})
+        return payload
     manifest_entry = _load_manifest_entry(manifest_path)
     effective_kill_switch = kill_switch_state or ("guarded" if guarded else "none")
     rd_status, rd_consent_id = _resolve_risk_disclosure_status(risk_disclosure_status)
@@ -73,6 +125,7 @@ def board(
         and not reduce_only
         and (kill_switch_state or "none") in {"none", None}
         and (spread_status or "normal") == "normal"
+        and rd_status == "accepted"
     )
     payload = {
         "timestamp": datetime.utcnow().isoformat(timespec="seconds") + "Z",
@@ -152,7 +205,9 @@ def board(
         badges=payload["badges"],
         ticket_count=len(ticket_rows),
     )
-    payload["rendered_table"] = _render_ticket_table(ticket_rows, rich=rich_table)
+    payload["rendered_table"] = BoardRenderer(rich=rich_table).render_table(
+        ticket_rows, banner=payload.get("banner")
+    )
 
     if save_snapshot:
         save_snapshot.parent.mkdir(parents=True, exist_ok=True)
@@ -200,7 +255,8 @@ def _build_banner(
     ):
         banner["kind"] = "risk_disclosure"
         banner["severity"] = "warn"
-        banner["message"] = f"RiskDisclosure {risk_disclosure_status}"
+        banner["locked"] = True
+        banner["message"] = f"RiskDisclosure {risk_disclosure_status} (approval locked)"
         banner["runbook"] = "docs/runbooks/RUN-HITL-01.md"
 
     return banner
@@ -267,12 +323,20 @@ def _render_summary(
     return " | ".join(summary)
 
 
-def _render_ticket_table(tickets: Sequence[Mapping[str, object]], *, rich: bool) -> str:
-    """Render tickets into a Rich or ASCII table for snapshot inclusion."""
+def _render_diagnostics_summary(summary: Mapping[str, object] | None, status: object) -> str:
+    if not isinstance(summary, Mapping):
+        return f"Determinism diagnostics: status={status}"
+    return (
+        "Determinism diagnostics\n"
+        f"- status: {status}\n"
+        f"- events: {summary.get('event_count')}\n"
+        f"- strategies: {summary.get('strategy_count')}\n"
+        f"- diffs: {summary.get('diff_count')}"
+    )
 
-    if not tickets:
-        return "No tickets"
-    columns = [
+
+def _ticket_columns() -> list[tuple[str, object]]:
+    return [
         ("Ticket ID", lambda t: t.get("ticket_id") or t.get("id") or "unknown"),
         ("Symbol", lambda t: t.get("symbol") or t.get("pair") or "—"),
         ("Action", lambda t: t.get("action") or t.get("side") or "—"),
@@ -291,16 +355,69 @@ def _render_ticket_table(tickets: Sequence[Mapping[str, object]], *, rich: bool)
         ("Notes", _extract_notes),
         ("AuditRefs", _summarize_audit_refs),
     ]
+
+
+def _render_ticket_table(
+    tickets: Sequence[Mapping[str, object]],
+    *,
+    rich: bool,
+    banner: Mapping[str, object] | None = None,
+) -> str:
+    """Render tickets into a Rich or ASCII table for snapshot inclusion."""
+
+    if not tickets:
+        return "No tickets"
+    columns = _ticket_columns()
     rows = [[str(extract(ticket)) for _, extract in columns] for ticket in tickets]
     headers = [name for name, _ in columns]
+    banner_msg = None
+    if isinstance(banner, Mapping):
+        banner_msg = banner.get("message")
+    title = "Tickets"
+    if banner_msg:
+        title = f"Tickets | {banner_msg}"
     if rich:
-        return _render_rich_table(headers, rows)
+        return _render_rich_table(headers, rows, title=title)
+    ascii_table = _render_ascii_table(headers, rows)
+    if banner_msg:
+        return "\n".join([f"BANNER: {banner_msg}", ascii_table])
+    return ascii_table
+
+
+def _render_diagnostics_table(strategies: Mapping[str, object], *, rich: bool) -> str:
+    headers = [
+        "strategy_id",
+        "determinism_hash",
+        "seed",
+        "feature_version",
+        "data_manifest_hash",
+        "status",
+    ]
+    rows: list[list[str]] = []
+    for strategy_id, entry in sorted(strategies.items()):
+        if not isinstance(entry, Mapping):
+            continue
+        hashes = entry.get("hashes") or []
+        unique = {str(h) for h in hashes if h}
+        status = "diverged" if len(unique) > 1 else "ok"
+        rows.append(
+            [
+                str(strategy_id),
+                str(entry.get("latest_hash") or ""),
+                str(entry.get("seed") or ""),
+                str(entry.get("feature_version") or ""),
+                str(entry.get("data_manifest_hash") or ""),
+                status,
+            ]
+        )
+    if rich:
+        return _render_rich_table(headers, rows, title="Diagnostics")
     return _render_ascii_table(headers, rows)
 
 
-def _render_rich_table(headers: Sequence[str], rows: Sequence[Sequence[str]]) -> str:
+def _render_rich_table(headers: Sequence[str], rows: Sequence[Sequence[str]], *, title: str) -> str:
     console = Console(record=True, width=200)
-    table = Table(title="Tickets", expand=False, pad_edge=False)
+    table = Table(title=title, expand=False, pad_edge=False)
     for header in headers:
         table.add_column(header)
     for row in rows:

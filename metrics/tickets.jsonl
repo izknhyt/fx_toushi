@@ -25,3 +25,6 @@
 {"ts": "2025-12-16T11:00:10.210709+00:00", "ticket_id": "t-hash", "action": "approve", "user": "alice", "latency_ms": 0, "board_mode": "normal"}
 {"ts": "2025-12-16T12:42:12.783453+00:00", "ticket_id": "t-hash", "action": "approve", "user": "alice", "latency_ms": 0, "board_mode": "normal"}
 {"ts": "2025-12-16T12:54:00.574901+00:00", "ticket_id": "t-hash", "action": "approve", "user": "alice", "latency_ms": 0, "board_mode": "normal"}
+{"ts": "2026-01-11T08:55:57.472320+00:00", "ticket_id": "t-hash", "action": "approve", "user": "alice", "latency_ms": 0, "board_mode": "normal"}
+{"ts": "2026-01-11T13:13:13.184381+00:00", "ticket_id": "t-hash", "action": "approve", "user": "alice", "latency_ms": 0, "board_mode": "normal"}
+{"ts": "2026-01-11T13:16:07.070039+00:00", "ticket_id": "t-hash", "action": "approve", "user": "alice", "latency_ms": 0, "board_mode": "normal"}

@@ -2,11 +2,9 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 import logging
 import os
-import re
 from collections.abc import Mapping, Sequence
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -14,7 +12,14 @@ from pathlib import Path
 import pandas as pd
 
 from src.core.health import HealthMonitor
-from src.data.quality import DataQualityGuard
+from src.data.paid_feed import PaidFeedEvaluator
+from src.data.manual_csv import (
+    ManualCsvError,
+    ManualCsvReconciler,
+    ManualCsvValidationResult,
+    parse_manual_csv_meta,
+)
+from src.utils.hashing import sha256_path
 from src.data.rate_limit_guard import RateLimitGuard
 from src.data.service import spawn_provider_workers
 
@@ -42,7 +47,6 @@ __all__ = [
 DEFAULT_METRICS_ROOT = Path("metrics")
 DEFAULT_RATE_LIMIT_FILE = DEFAULT_METRICS_ROOT / "rate_limit_window.jsonl"
 DEFAULT_INGESTION_FILE = DEFAULT_METRICS_ROOT / "data_ingestion_sla.jsonl"
-DEFAULT_MANUAL_CSV_METRICS = DEFAULT_METRICS_ROOT / "data_ingestion_manual.jsonl"
 OPS_WORKLOG_PATH = Path("ops_worklog.jsonl")
 DEFAULT_STAGE_CHANGE_LOG = Path("logs/ops/stage_change.log")
 DEFAULT_MANUAL_CSV_LOG = Path("logs/ops/manual_csv.log")
@@ -106,6 +110,7 @@ def status(
     log_stage_eval: bool = False,
     auto_apply: bool = False,
     suggest_guarded: bool = False,
+    profile: str | None = None,
     metrics_root: Path | None = None,
 ) -> dict[str, object]:
     """Report ingestion status and optionally log stage evaluation."""
@@ -116,6 +121,11 @@ def status(
 
     provider_list = list(providers or ("yfinance",))
     now = _utcnow_iso()
+    paid_feed_eval = PaidFeedEvaluator().evaluate(
+        profile=profile,
+        provider=os.getenv("TRADECTL_PAID_FEED_PROVIDER"),
+        write_report=bool(profile),
+    )
     logged_providers: list[str] = []
     stage_evaluations: list[dict[str, object]] = []
     guard = RateLimitGuard(
@@ -204,6 +214,7 @@ def status(
         "stage_evaluations": stage_evaluations,
         "worker_plans": worker_plans,
         "health_suggestion": health_payload,
+        "paid_feed": paid_feed_eval.to_dict(),
     }
     logger.info("cli.data.status.completed", extra=payload)
     return payload
@@ -370,119 +381,126 @@ def manual_template(provider: str, symbol: str, date: str, *, timeframe: str) ->
     return str(base_dir)
 
 
-def validate_csv(path: str) -> None:
+def validate_csv(
+    path: str,
+    *,
+    approve: bool = False,
+    approver: str | None = None,
+) -> dict[str, object]:
     """Validate manual CSV submissions."""
 
     target = Path(path)
+    reconciler = ManualCsvReconciler()
+    results: list[dict[str, object]] = []
     try:
         if target.is_dir():
             op_files = sorted(target.glob("*_op.csv"))
             if not op_files:
                 raise FileNotFoundError(f"No op CSV files found in {target}")
             for op_file in op_files:
-                _validate_csv_pair(op_file)
-                _log_manual_csv_verification(op_file)
+                results.append(
+                    _validate_csv_with_report(
+                        op_file,
+                        reconciler=reconciler,
+                        approve=approve,
+                        approver=approver,
+                    )
+                )
         else:
-            _validate_csv_pair(target)
-            _log_manual_csv_verification(target)
+            results.append(
+                _validate_csv_with_report(
+                    target,
+                    reconciler=reconciler,
+                    approve=approve,
+                    approver=approver,
+                )
+            )
     except Exception as exc:
         logger.error("cli.data.validate_csv.failed", extra={"path": path, "error": str(exc)})
         raise SystemExit(120) from exc
     logger.info("cli.data.validate_csv.completed", extra={"path": path})
+    return {"status": "ok", "path": str(target), "results": results}
 
 
-def _validate_csv_pair(path: Path) -> None:
-    """Validate op/review CSV pair with integrity and gap checks."""
-
-    if path.is_dir():
-        raise ValueError("CSV validation requires a file path, not a directory")
-    if path.suffix.lower() != ".csv":
-        raise ValueError(f"Expected CSV file, got: {path}")
-    if path.name.endswith("_op.csv"):
-        review_path = path.with_name(path.name.replace("_op.csv", "_review.csv"))
-    elif path.name.endswith("_review.csv"):
-        review_path = path.with_name(path.name.replace("_review.csv", "_op.csv"))
-    else:
-        review_path = path
-    if not review_path.exists():
-        raise FileNotFoundError(f"Missing twin CSV: {review_path}")
-
-    def _load_frame(csv_path: Path) -> pd.DataFrame:
-        frame = pd.read_csv(csv_path)
-        required_cols = {"open", "high", "low", "close", "volume", "spread"}
-        ts_cols = {"ts", "timestamp"}
-        if not (ts_cols & set(frame.columns)):
-            raise ValueError(f"Missing timestamp column (ts|timestamp) in {csv_path}")
-        missing = required_cols - set(frame.columns)
-        if missing:
-            raise ValueError(f"Missing required columns {missing} in {csv_path}")
-        return frame
-
-    op_frame = _load_frame(path)
-    review_frame = _load_frame(review_path)
-
-    _validate_required(op_frame, "op")
-    _validate_required(review_frame, "review")
-
-    if list(op_frame.columns) != list(review_frame.columns) or len(op_frame) != len(review_frame):
-        raise ValueError(f"op/review shape mismatch: {path} vs {review_path}")
-
-    for frame, label in ((op_frame, "op"), (review_frame, "review")):
-        _validate_required(frame, label)
-        if frame.isnull().any().any():
-            raise ValueError(f"Missing values detected in {label} file: {path}")
-        low_ok = (frame["low"] <= frame["open"]) & (frame["low"] <= frame["close"])
-        high_ok = (frame["high"] >= frame["open"]) & (frame["high"] >= frame["close"])
-        if not bool(low_ok.all() and high_ok.all()):
-            raise ValueError(f"Price envelope violation in {label} file: {path}")
-        if (frame["volume"] < 0).any():
-            raise ValueError(f"Negative volume detected in {label} file: {path}")
-        if (frame["spread"] < 0).any():
-            raise ValueError(f"Negative spread detected in {label} file: {path}")
-        session_col = frame.get("session_tag")
-        if session_col is not None:
-            allowed_sessions = {"asia", "london", "newyork", "overlap", "holiday"}
-            if not set(session_col.dropna().unique()).issubset(allowed_sessions):
-                raise ValueError(f"Invalid session_tag in {label} file: {path}")
-        try:
-            ts_col = "ts" if "ts" in frame.columns else "timestamp"
-            timestamps = pd.to_datetime(frame[ts_col], utc=True)
-        except Exception as exc:  # pragma: no cover - defensive
-            raise ValueError(f"Timestamp parsing failed for {label} file: {exc}") from exc
-        if timestamps.duplicated().any():
-            raise ValueError(f"Duplicate timestamps detected in {label} file: {path}")
-
-        expected_step = _infer_step_seconds(path.stem)
-        if expected_step and len(timestamps) >= 2:
-            diffs = (timestamps.sort_values().diff().dropna().dt.total_seconds()).unique()
-            if any(d != expected_step for d in diffs):
-                raise ValueError(
-                    f"Timestamp gap detected in {label} file: {path} (expected {expected_step}s)"
-                )
-        if "timestamp_jst" in frame.columns:
-            ts_jst = pd.to_datetime(frame["timestamp_jst"], utc=True)
-            if not ((ts_jst - timestamps).dt.total_seconds() == 9 * 3600).all():
-                raise ValueError(f"UTC/JST mismatch in {label} file: {path}")
-
-    if _hash_file(path) != _hash_file(review_path):
-        raise ValueError(f"op/review hash mismatch: {path} vs {review_path}")
+def _validate_csv_with_report(
+    path: Path,
+    *,
+    reconciler: ManualCsvReconciler,
+    approve: bool,
+    approver: str | None,
+) -> dict[str, object]:
+    try:
+        result = reconciler.validate_path(path)
+    except ManualCsvError as exc:
+        _write_manual_csv_validation_report(path, status="fail", error=str(exc))
+        raise
+    _write_manual_csv_validation_report(path, status="ok", error=None)
+    _log_manual_csv_verification(result)
+    audit_payload = None
+    if approve:
+        effective_approver = approver or os.getenv("MANUAL_CSV_REVIEWER", "ops_manager")
+        audit_payload = reconciler.approve(result, approver=effective_approver)
+    payload = {"result": result.to_dict()}
+    if audit_payload:
+        payload["audit"] = audit_payload
+    return payload
 
 
-def _log_manual_csv_verification(path: Path) -> None:
-    if path.name.endswith("_op.csv"):
-        review_path = path.with_name(path.name.replace("_op.csv", "_review.csv"))
-    elif path.name.endswith("_review.csv"):
-        review_path = path.with_name(path.name.replace("_review.csv", "_op.csv"))
-    else:
-        review_path = path
+def _write_manual_csv_validation_report(
+    path: Path, *, status: str, error: str | None
+) -> None:
+    provider, symbol, timeframe, date = parse_manual_csv_meta(path)
+    base = Path("reports") / "validation_log"
+    base.mkdir(parents=True, exist_ok=True)
+    report_path = base / f"manual_csv_{provider}_{symbol}_{date}.md"
 
-    op_hash = _hash_file(path)
-    review_hash = _hash_file(review_path) if review_path.exists() else None
+    op_path = path
+    if path.name.endswith("_review.csv"):
+        op_path = path.with_name(path.name.replace("_review.csv", "_op.csv"))
+    review_path = op_path.with_name(op_path.name.replace("_op.csv", "_review.csv"))
+
+    op_hash = sha256_path(op_path) if op_path.exists() else None
+    review_hash = sha256_path(review_path) if review_path.exists() else None
+
+    lines = [
+        f"# Manual CSV Validation Report {date}",
+        f"- provider: {provider}",
+        f"- symbol: {symbol}",
+        f"- timeframe: {timeframe}",
+        f"- generated_at: {_utcnow_iso()}",
+        f"- status: {status}",
+        f"- error: {error or 'none'}",
+        "",
+        "## Files",
+        f"- op: {op_path}",
+        f"- review: {review_path}",
+        f"- op_hash: {op_hash or 'missing'}",
+        f"- review_hash: {review_hash or 'missing'}",
+        "",
+        "- runbook_ref: RUN-DATA-06.step2",
+    ]
+    report_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    _append_ops_worklog(
+        "manual_csv_report",
+        {
+            "provider": provider,
+            "symbol": symbol,
+            "timeframe": timeframe,
+            "date": date,
+            "status": status,
+            "path": str(report_path),
+        },
+    )
+
+
+def _log_manual_csv_verification(result: ManualCsvValidationResult) -> None:
+    op_hash = result.op_hash
+    review_hash = result.review_hash
     entry = {
         "ts": _utcnow_iso(),
         "event": "manual_csv.validate",
-        "op_path": str(path),
-        "review_path": str(review_path) if review_path.exists() else None,
+        "op_path": str(result.op_path),
+        "review_path": str(result.review_path),
         "op_hash": op_hash,
         "review_hash": review_hash,
         "status": "ok" if review_hash == op_hash else "mismatch",
@@ -490,52 +508,16 @@ def _log_manual_csv_verification(path: Path) -> None:
     }
     _append_jsonl(DEFAULT_MANUAL_CSV_LOG, entry)
     _append_jsonl(DEFAULT_RATE_LIMIT_FILE, {"provider": "manual_csv", "stage_eval": entry})
-    guard = DataQualityGuard()
-    reviewer = os.getenv("MANUAL_CSV_REVIEWER", "ops_manager")
-    guard.record_manual_csv_hash_verification(
-        hash_value=op_hash,
-        symbol=_infer_symbol_from_path(path),
-        timeframe=_infer_timeframe_from_path(path),
-        reviewer=reviewer,
-        metrics_path=DEFAULT_MANUAL_CSV_METRICS,
-    )
     _append_ops_worklog(
         "manual_csv_validate",
         {
-            "op_path": str(path),
-            "review_path": str(review_path) if review_path.exists() else None,
+            "op_path": str(result.op_path),
+            "review_path": str(result.review_path),
             "status": entry["status"],
         },
     )
 
 
-def _validate_required(frame: pd.DataFrame, label: str) -> None:
-    required_cols = {"open", "high", "low", "close", "volume", "spread"}
-    ts_cols = {"ts", "timestamp"}
-    missing = required_cols - set(frame.columns)
-    if missing:
-        raise ValueError(f"Missing required columns {missing} in {label} file")
-    if not (ts_cols & set(frame.columns)):
-        raise ValueError(f"Missing timestamp column in {label} file")
-
-
-def _infer_step_seconds(stem: str) -> int | None:
-    """Infer expected step size from filename tokens (e.g., 5m -> 300s, 1h -> 3600s)."""
-
-    for token in stem.lower().split("_"):
-        match = re.fullmatch(r"(\d+)([mh])", token)
-        if not match:
-            continue
-        value, unit = match.groups()
-        try:
-            magnitude = int(value)
-        except ValueError:
-            continue
-        if unit == "m":
-            return magnitude * 60
-        if unit == "h":
-            return magnitude * 3600
-    return None
 
 
 def _build_template_rows(date: str, *, timeframe: str) -> pd.DataFrame:
@@ -586,20 +568,6 @@ def _normalize_timeframe(timeframe: str) -> int | None:
     if tf in {"h1", "1h", "60m"}:
         return 3600
     return None
-
-
-def _infer_symbol_from_path(path: Path) -> str:
-    parts = path.name.split("_")
-    if len(parts) >= 3:
-        return parts[2].upper()
-    return "UNKNOWN"
-
-
-def _infer_timeframe_from_path(path: Path) -> str:
-    parts = path.name.split("_")
-    if len(parts) >= 4:
-        return parts[3]
-    return "unknown"
 
 
 def _manual_csv_range(date: str, *, timeframe: str) -> tuple[str, str]:
@@ -776,6 +744,22 @@ def _suggest_guarded_from_metrics(ingestion_path: Path) -> dict[str, object]:
                     details.append("bars:0")
             except (TypeError, ValueError):
                 pass
+        bar_gap = entry.get("bar_gap_minutes")
+        if bar_gap is not None:
+            try:
+                if int(bar_gap) > 10:
+                    degraded = True
+                    details.append(f"bar_gap_minutes:{bar_gap}")
+            except (TypeError, ValueError):
+                pass
+        catch_up = entry.get("catch_up_lag_minutes")
+        if catch_up is not None:
+            try:
+                if int(catch_up) >= 30:
+                    degraded = True
+                    details.append(f"catch_up_lag_minutes:{catch_up}")
+            except (TypeError, ValueError):
+                pass
         if degraded:
             break
 
@@ -936,7 +920,7 @@ def manual_report(
         status = "ready" if review_exists else "pending"
         if review_exists:
             try:
-                hash_ok = _hash_file(op_path) == _hash_file(review_path)
+                hash_ok = sha256_path(op_path) == sha256_path(review_path)
             except Exception:
                 hash_ok = False
             if not hash_ok:
@@ -994,18 +978,9 @@ def hash_path(path: str) -> str:
     file_path = Path(path)
     if not file_path.exists():
         raise FileNotFoundError(file_path)
-    value = _hash_file(file_path)
+    value = sha256_path(file_path)
     logger.info("cli.data.hash.completed", extra={"path": path, "hash": value})
     return value
-
-
-def _hash_file(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(8192), b""):
-            digest.update(chunk)
-    return f"sha256:{digest.hexdigest()}"
-
 
 def _load_watchlist_datasets(manifest_path: Path, strategy: str) -> Mapping[str, Mapping[str, str]]:
     if not manifest_path.exists():

@@ -4,11 +4,35 @@ from __future__ import annotations
 
 import json
 from collections.abc import Mapping, MutableMapping
+from dataclasses import dataclass
 from pathlib import Path
 from functools import lru_cache
-import json
 
 from jsonschema import Draft202012Validator, ValidationError
+
+
+@dataclass(slots=True)
+class AuditWriter:
+    """Persist ticket.action audit records to both raw and validated logs."""
+
+    path: Path = Path("audit/ticket_actions.jsonl")
+    compliance_path: Path = Path("logs/audit/hitl.jsonl")
+
+    def record_ticket_action(self, payload: Mapping[str, object]) -> Mapping[str, object]:
+        entry: MutableMapping[str, object] = dict(payload)
+        entry.setdefault("spread_state", {})
+        if "health_status" not in entry:
+            guardrails = entry.get("guardrails")
+            if isinstance(guardrails, Mapping):
+                health_status = guardrails.get("health_state") or guardrails.get("health_status")
+                if health_status is not None:
+                    entry["health_status"] = health_status
+        AuditLogger(path=self.compliance_path).record(entry)
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        with self.path.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(entry, ensure_ascii=False))
+            handle.write("\n")
+        return entry
 
 
 class AuditLogger:
@@ -80,4 +104,4 @@ def _load_validator() -> Draft202012Validator:
     return Draft202012Validator(schema)
 
 
-__all__ = ["AuditLogger"]
+__all__ = ["AuditLogger", "AuditWriter"]

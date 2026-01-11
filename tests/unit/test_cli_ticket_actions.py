@@ -35,15 +35,15 @@ def test_ticket_approve_writes_audit_and_metrics(
         "kill_switch": "none",
         "spread_status": "normal",
         "reduce_only": False,
-        "cfg_hash": "sha256:cfg",
-        "data_hash": "sha256:data",
+        "cfg_hash": "sha256:" + ("a" * 64),
+        "data_hash": "sha256:" + ("b" * 64),
     }
     result = tickets.approve(
         "t1",
         user="alice",
         note="ok-to-ship",
         force_consent=True,
-        consent_reference_id="rc-1",
+        consent_reference_id="123e4567-e89b-12d3-a456-426614174000",
         guardrails=guardrails,
     )
     assert result["status"] == "ok"
@@ -52,7 +52,7 @@ def test_ticket_approve_writes_audit_and_metrics(
     audit_entry = json.loads(audit_lines[0])
     assert audit_entry["action"] == "approve"
     assert audit_entry["cfg_hash"].startswith("sha256:")
-    assert audit_entry["consent_reference_id"] == "rc-1"
+    assert audit_entry["consent_reference_id"] == "123e4567-e89b-12d3-a456-426614174000"
     assert audit_entry["guardrails"]["risk_disclosure"] in {
         "pending",
         "signed",
@@ -78,12 +78,12 @@ def test_ticket_approve_uses_gate_state_hash_when_missing_guardrails(
     monkeypatch.setattr(tickets, "METRICS_PATH", tmp_path / "metrics.jsonl")
     monkeypatch.setattr(tickets, "AUDIT_PATH", tmp_path / "audit.jsonl")
     monkeypatch.setattr(tickets, "OPS_WORKLOG_PATH", tmp_path / "ops_worklog.jsonl")
-    gate_state = GateState(cfg_hash="sha256:cfg-gs", data_hash="sha256:data-gs")
+    gate_state = GateState(cfg_hash="sha256:" + ("c" * 64), data_hash="sha256:" + ("d" * 64))
     result = tickets.approve("t-gs", user="alice", gate_state=gate_state)
     assert result["status"] == "ok"
     audit_entry = json.loads((tmp_path / "audit.jsonl").read_text(encoding="utf-8").strip())
-    assert audit_entry["cfg_hash"] == "sha256:cfg-gs"
-    assert audit_entry["data_hash"] == "sha256:data-gs"
+    assert audit_entry["cfg_hash"] == "sha256:" + ("c" * 64)
+    assert audit_entry["data_hash"] == "sha256:" + ("d" * 64)
 
 
 def test_ticket_edit_requires_lock_and_records_diff(
@@ -91,7 +91,10 @@ def test_ticket_edit_requires_lock_and_records_diff(
 ) -> None:
     monkeypatch.setattr(tickets, "METRICS_PATH", tmp_path / "metrics.jsonl")
     monkeypatch.setattr(tickets, "AUDIT_PATH", tmp_path / "audit.jsonl")
-    result = tickets.edit("t2", field="size_lot", value="1.0", user="bob")
+    guardrails = {"cfg_hash": "sha256:" + ("e" * 64), "data_hash": "sha256:" + ("f" * 64)}
+    result = tickets.edit(
+        "t2", field="size_lot", value="1.0", user="bob", guardrails=guardrails
+    )
     assert result["status"] == "ok"
     audit_entry = json.loads((tmp_path / "audit.jsonl").read_text(encoding="utf-8").strip())
     patch = audit_entry["delta"]["diff"]["patch"]
@@ -101,3 +104,14 @@ def test_ticket_edit_requires_lock_and_records_diff(
 def test_ticket_approve_requires_double_entry_when_flagged() -> None:
     with pytest.raises(ValueError):
         tickets.approve("t3", require_double_entry=True)
+
+
+def test_ticket_approve_requires_consent_when_enforced(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("TRADECTL_RISK_DISCLOSURE_ENFORCE", "1")
+    monkeypatch.setattr(tickets, "METRICS_PATH", tmp_path / "metrics.jsonl")
+    monkeypatch.setattr(tickets, "AUDIT_PATH", tmp_path / "audit.jsonl")
+
+    with pytest.raises(tickets.ConsentRequiredError):
+        tickets.approve("t4", user="alice")

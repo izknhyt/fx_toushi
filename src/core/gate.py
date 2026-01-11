@@ -10,7 +10,6 @@ structure follows :mod:`docs/schemas/gate_state.schema.json`.
 from __future__ import annotations
 
 import copy
-import hashlib
 import json
 import os
 from collections.abc import Mapping, MutableMapping, Sequence
@@ -19,6 +18,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
+from src.utils.hashing import sha256_path
 if TYPE_CHECKING:
     from src.risk.manager import RiskAssessment
 
@@ -539,7 +539,7 @@ class GateAggregator:
             cfg_path_env = os.getenv("TRADECTL_CFG_PATH")
             cfg_env = os.getenv("TRADECTL_CFG_HASH")
             if cfg_path_env and Path(cfg_path_env).exists():
-                cfg_resolved = _sha256_path(Path(cfg_path_env))
+                cfg_resolved = sha256_path(Path(cfg_path_env))
             elif cfg_env:
                 cfg_resolved = cfg_env
         if not data_resolved:
@@ -556,14 +556,6 @@ class GateAggregator:
                     except json.JSONDecodeError:
                         data_resolved = None
         return cfg_resolved, data_resolved
-
-
-def _sha256_path(path: Path) -> str:
-    h = hashlib.sha256()
-    with path.open("rb") as fp:
-        for chunk in iter(lambda: fp.read(8192), b""):
-            h.update(chunk)
-    return f"sha256:{h.hexdigest()}"
 
 
 __all__ = [

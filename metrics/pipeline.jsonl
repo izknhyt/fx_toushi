@@ -2,3 +2,13 @@
 {"ts": "2025-12-21T13:57:24Z", "symbol": "USDJPY", "timeframe": "5m", "bars": 60, "latency_ms": 7.689, "cpu_ms": 7.45, "indicators": 8}
 {"ts": "2025-12-21T13:57:47Z", "symbol": "USDJPY", "timeframe": "5m", "bars": 60, "latency_ms": 14.17, "cpu_ms": 12.494, "indicators": 8}
 {"ts": "2025-12-21T14:14:16Z", "symbol": "USDJPY", "timeframe": "5m", "bars": 60, "latency_ms": 15.095, "cpu_ms": 9.437, "indicators": 8}
+{"ts": "2026-01-10T13:48:58Z", "symbol": "USDJPY", "timeframe": "5m", "bars": 60, "latency_ms": 57.695, "cpu_ms": 32.943, "indicators": 8}
+{"ts": "2026-01-10T13:59:23Z", "symbol": "USDJPY", "timeframe": "5m", "bars": 2, "latency_ms": 16.089, "cpu_ms": 9.771, "indicators": 9}
+{"ts": "2026-01-10T14:00:55Z", "symbol": "USDJPY", "timeframe": "5m", "bars": 60, "latency_ms": 15.935, "cpu_ms": 10.406, "indicators": 9}
+{"ts": "2026-01-11T11:10:55Z", "symbol": "USDJPY", "timeframe": "5m", "bars": 60, "latency_ms": 23.114, "cpu_ms": 20.972, "indicators": 9}
+{"ts": "2026-01-11T11:11:34Z", "symbol": "USDJPY", "timeframe": "5m", "bars": 60, "latency_ms": 8.771, "cpu_ms": 8.922, "indicators": 9}
+{"ts": "2026-01-11T11:11:47Z", "symbol": "USDJPY", "timeframe": "5m", "bars": 60, "latency_ms": 7.478, "cpu_ms": 7.678, "indicators": 9}
+{"ts": "2026-01-11T13:13:09Z", "symbol": "USDJPY", "timeframe": "5m", "bars": 2, "latency_ms": 22.386, "cpu_ms": 15.491, "indicators": 9}
+{"ts": "2026-01-11T13:13:13Z", "symbol": "USDJPY", "timeframe": "5m", "bars": 60, "latency_ms": 9.336, "cpu_ms": 9.3, "indicators": 9}
+{"ts": "2026-01-11T13:16:03Z", "symbol": "USDJPY", "timeframe": "5m", "bars": 2, "latency_ms": 11.15, "cpu_ms": 10.012, "indicators": 9}
+{"ts": "2026-01-11T13:16:06Z", "symbol": "USDJPY", "timeframe": "5m", "bars": 60, "latency_ms": 26.089, "cpu_ms": 22.839, "indicators": 9}

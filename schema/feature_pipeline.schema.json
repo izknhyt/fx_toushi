@@ -38,6 +38,10 @@
           "type": "integer",
           "minimum": 1
         },
+        "max_workers": {
+          "type": "integer",
+          "minimum": 1
+        },
         "resample": {
           "type": "object",
           "required": [

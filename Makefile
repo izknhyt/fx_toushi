@@ -1,6 +1,6 @@
 ARGS ?=
 
-.PHONY: config-init schema-validate check-ops-readiness contract-performance-snapshot check-doc-sync config-evidence verify-config-evidence edge-watch-report check-profit-readiness check-alpha-profiles check-profit-readiness-hands-off check-profit-readiness-hands-off-all
+.PHONY: config-init schema-validate check-ops-readiness contract-performance-snapshot check-doc-sync config-evidence verify-config-evidence edge-watch-report check-profit-readiness check-alpha-profiles check-profit-readiness-hands-off check-profit-readiness-hands-off-all sla-report
 
 config-init:
 	@if command -v poetry >/dev/null 2>&1; then \
@@ -59,6 +59,13 @@ edge-watch-report:
 		poetry run python tools/generate_edge_watch_report.py $(ARGS); \
 	else \
 		python3 tools/generate_edge_watch_report.py $(ARGS); \
+	fi
+
+sla-report:
+	@if command -v poetry >/dev/null 2>&1; then \
+		poetry run python tools/sla_report.py $(ARGS); \
+	else \
+		python3 tools/sla_report.py $(ARGS); \
 	fi
 
 check-profit-readiness:

@@ -18,7 +18,7 @@ def test_gate_state_hashes_can_be_set_and_serialised() -> None:
     assert payload["data_hash"] == "sha256:data-xyz"
 
 
-def test_gate_state_hashes_used_in_cli_actions(monkeypatch) -> None:
+def test_gate_state_hashes_used_in_cli_actions(tmp_path: Path, monkeypatch) -> None:
     # Ensure Ticket CLI can ingest GateState hashes when guardrails overrides are absent.
     from src.interfaces.cli import tickets
 
@@ -29,17 +29,20 @@ def test_gate_state_hashes_used_in_cli_actions(monkeypatch) -> None:
         tickets,
         "RiskDisclosureService",
         lambda: RiskDisclosureService(
-            state_path=tickets.Path("risk_state.json"), audit_dir=tickets.Path("audit_dir")
+            state_path=tmp_path / "risk_state.json", audit_dir=tmp_path / "audit_dir"
         ),
     )
 
-    gate_state = GateState(cfg_hash="sha256:cfg-gate", data_hash="sha256:data-gate")
+    gate_state = GateState(
+        cfg_hash="sha256:" + "c" * 64,
+        data_hash="sha256:" + "d" * 64,
+    )
     result = tickets.approve("t-hash", user="alice", gate_state=gate_state)
     assert result["status"] == "ok"
     audit_text = tickets.Path("audit.jsonl").read_text(encoding="utf-8").strip().splitlines()[-1]
     audit = tickets.json.loads(audit_text)
-    assert audit["cfg_hash"] == "sha256:cfg-gate"
-    assert audit["data_hash"] == "sha256:data-gate"
+    assert audit["cfg_hash"] == "sha256:" + "c" * 64
+    assert audit["data_hash"] == "sha256:" + "d" * 64
 
 
 def test_persist_latest_resolves_hashes_from_env_and_manifest(tmp_path: Path, monkeypatch) -> None:

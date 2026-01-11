@@ -43,3 +43,17 @@ def test_risk_manager_respects_reduce_only_assessment() -> None:
     assert decision.board_mode == "guarded"
     assert decision.exit_code == 21
     assert decision.kill_switch_state == "none"
+
+
+def test_risk_manager_reduce_only_advisor_hook() -> None:
+    def advisor(_gate_state, _assessment, _spread_status, _kill_switch_state):
+        return True, "latency_fallback"
+
+    manager = RiskManager(reduce_only_advisor=advisor)
+
+    decision = manager.evaluate_ticket()
+
+    assert decision.reduce_only is True
+    assert decision.board_mode == "guarded"
+    assert decision.exit_code == 21
+    assert decision.reason == "latency_fallback"

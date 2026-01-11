@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import contextlib
 import json
+import math
 import os
 import random
 from collections.abc import Mapping
@@ -195,7 +196,8 @@ class DeterministicExecutionModel(ExecutionModelProtocol):
         fill_style, fill_policy = self._resolve_fill_style(entry_config)
         direction = getattr(signal, "direction", "long")
 
-        delay_stats = self._resolve_delay_stats(mode=mode, symbol=symbol)
+        delay_stats = dict(self._resolve_delay_stats(mode=mode, symbol=symbol))
+        delay_stats["_mode"] = mode
         seed_offset = int(delay_stats.get("seed_offset", 0))
         delay_seed = deterministic_seed ^ seed_offset
         self._delay_stats_cache[delay_seed] = delay_stats
@@ -307,20 +309,39 @@ class DeterministicExecutionModel(ExecutionModelProtocol):
 
     def apply_human_delay(self, *, seed: int) -> float:
         stats = self._delay_stats_cache.get(seed)
+        mode_label = None
         if stats is None:
             defaults = self._config.get("defaults", {})
             delay_defaults = {}
             if isinstance(defaults, Mapping):
                 delay_defaults = defaults.get("human_delay_seconds", {})
             stats = delay_defaults.get("backtest", {})
+        else:
+            mode_label = stats.get("_mode") if isinstance(stats, Mapping) else None
         minimum = float(stats.get("min", 0.0))
-        mode = float(stats.get("p50", minimum))
-        maximum = float(stats.get("p95", max(mode, minimum)))
+        mode_value = float(stats.get("p50", minimum))
+        maximum = float(stats.get("p95", max(mode_value, minimum)))
         if maximum < minimum:
             maximum = minimum
+        if mode_value < minimum:
+            mode_value = minimum
+        if mode_value > maximum:
+            mode_value = maximum
         rng = random.Random(seed)
-        # Deterministic uniform draw; `mode` retained for compatibility but unused.
-        return rng.uniform(minimum, maximum)
+        if maximum == minimum:
+            delay = minimum
+        else:
+            u = rng.random()
+            c = (mode_value - minimum) / (maximum - minimum)
+            if u < c:
+                delay = minimum + math.sqrt(u * (maximum - minimum) * (mode_value - minimum))
+            else:
+                delay = maximum - math.sqrt(
+                    (1.0 - u) * (maximum - minimum) * (maximum - mode_value)
+                )
+        if mode_label in {"paper", "live"}:
+            return float(round(delay))
+        return delay
 
     # ------------------------------------------------------------------
     # helpers

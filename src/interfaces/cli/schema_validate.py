@@ -48,6 +48,20 @@ def _build_validator(schema_path: Path) -> Draft202012Validator:
     return Draft202012Validator(schema_data, registry=registry)
 
 
+def validate_target(target: Path, schema: Path) -> tuple[bool, str | None]:
+    """Validate the target path against schema and return status + error message."""
+
+    validator = _build_validator(schema)
+    payload = _load_target(target)
+    try:
+        validator.validate(payload)
+    except ValidationError as error:
+        location = "/".join(str(elem) for elem in error.path)
+        detail = f" at {location}" if location else ""
+        return False, f"Validation failed{detail}: {error.message}"
+    return True, None
+
+
 def _cli(
     target: Path = typer.Argument(
         ..., exists=True, resolve_path=True, help="Config file or directory to validate."

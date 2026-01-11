@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 import logging
 import os
@@ -22,7 +21,9 @@ from src.core.health import (
     HealthState,
     KillSwitchSuggestion,
 )
+from src.core.time_sync import DEFAULT_TIME_SYNC_METRICS, TimeSyncGuard
 from src.core.snapshot import SnapshotManager, SnapshotRestoreResult
+from src.utils.hashing import sha256_path
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +33,7 @@ DEFAULT_HEALTH_ACTION_AUDIT = Path("logs/audit/health_action.jsonl")
 DEFAULT_GATE_STATE_PATH = Path("snapshots/latest/gate_state.json")
 DEFAULT_HEALTH_STATE_PATH = Path("snapshots/latest/health_state.json")
 DEFAULT_KILL_SWITCH_STATE_PATH = Path("snapshots/latest/kill_switch_state.json")
+DEFAULT_TIME_SYNC_METRICS_PATH = DEFAULT_TIME_SYNC_METRICS
 
 __all__ = [
     "status",
@@ -114,16 +116,17 @@ def _load_health_state(monitor: HealthMonitor, path: Path) -> None:
     monitor._actions = actions  # type: ignore[attr-defined]
 
 
-def _load_kill_switch_state(path: Path) -> tuple[str, str | None]:
+def _load_kill_switch_state(path: Path) -> tuple[str, str | None, bool]:
     if not path or not path.exists():
-        return "none", None
+        return "none", None, False
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except json.JSONDecodeError:
-        return "none", None
+        return "none", None, False
     state = data.get("state", "none")
     reason = data.get("reason")
-    return state, reason
+    auto_ack_required = bool(data.get("auto_ack_required", False))
+    return state, reason, auto_ack_required
 
 
 def _serialise_snapshot_restore(result: SnapshotRestoreResult) -> Mapping[str, Any]:
@@ -235,14 +238,6 @@ def _kill_switch_history(path: Path, *, limit: int = 10) -> Mapping[str, Any]:
     }
 
 
-def _sha256_path(path: Path) -> str:
-    h = hashlib.sha256()
-    with path.open("rb") as fp:
-        for chunk in iter(lambda: fp.read(8192), b""):
-            h.update(chunk)
-    return f"sha256:{h.hexdigest()}"
-
-
 def _normalise_hash(value: str | None) -> str | None:
     if not value:
         return None
@@ -270,6 +265,9 @@ def status(
     gate_state_path: Path | None = None,
     health_state_path: Path | None = None,
     kill_switch_state_path: Path | None = DEFAULT_KILL_SWITCH_STATE_PATH,
+    time_sync_check: bool = False,
+    time_sync_metrics_path: Path = DEFAULT_TIME_SYNC_METRICS_PATH,
+    time_sync_guard: TimeSyncGuard | None = None,
     actor: str = "cli",
 ) -> Mapping[str, object]:
     """Return the current status snapshot for operators."""
@@ -291,6 +289,15 @@ def status(
         _load_health_state(monitor, health_state_path)
     gate_state = gate_state or (GateState.load(gate_state_path) if gate_state_path else GateState())
     snapshot_manager = snapshot_manager or SnapshotManager()
+    time_sync_payload: dict[str, object] | None = None
+    if time_sync_check:
+        guard = time_sync_guard or TimeSyncGuard()
+        time_sync_payload = guard.evaluate(
+            metrics_path=time_sync_metrics_path,
+            monitor=monitor,
+            persist_health_state=False,
+            log_events=False,
+        ).to_dict()
     # propagate manifest hashes from guardrails metrics when present
     if guardrails.get("manifest_hash") and not gate_state.cfg_hash:
         gate_state.cfg_hash = guardrails.get("manifest_hash")
@@ -301,7 +308,7 @@ def status(
         cfg_path_env = os.getenv("TRADECTL_CFG_PATH")
         cfg_env = os.getenv("TRADECTL_CFG_HASH")
         if cfg_path_env and Path(cfg_path_env).exists():
-            gate_state.cfg_hash = _sha256_path(Path(cfg_path_env))
+            gate_state.cfg_hash = sha256_path(Path(cfg_path_env))
         elif cfg_env:
             gate_state.cfg_hash = cfg_env
     if not gate_state.data_hash:
@@ -318,10 +325,10 @@ def status(
                 except json.JSONDecodeError:
                     gate_state.data_hash = None
 
-    raw_kill_switch_state, kill_switch_reason = (
+    raw_kill_switch_state, kill_switch_reason, auto_ack_required = (
         _load_kill_switch_state(kill_switch_state_path)
         if kill_switch_state_path
-        else ("none", None)
+        else ("none", None, False)
     )
     kill_switch_override = (
         None if raw_kill_switch_state in {None, "none"} else raw_kill_switch_state
@@ -389,6 +396,7 @@ def status(
         "reason": kill_switch_reason,
         "suggestion": risk_state.kill_switch_recommendation,
         "requested_transition": kill_switch,
+        "auto_ack_required": auto_ack_required,
     }
 
     guardrail_payload = guardrail.to_dict()
@@ -396,6 +404,8 @@ def status(
     guardrail_payload["kill_switch"] = guardrail.kill_switch_state
     guardrail_payload["risk_disclosure"] = risk_disclosure_state
     guardrail_payload["auto_execute_forced_off"] = auto_execute_forced_off
+    if time_sync_payload:
+        guardrail_payload["time_sync"] = time_sync_payload
     if auto_execute_forced_off:
         guardrail_payload["reasons"].append("auto_execute_forced_off")
     guardrail_payload["pending_actions"] = ops_actions["pending"]
@@ -416,6 +426,25 @@ def status(
         },
         "exit_code": guardrail.exit_code,
     }
+    if verbose:
+        release_conditions: list[dict[str, object]] = []
+        for reason in health_state.reasons:
+            release_conditions.append(
+                {
+                    "reason": reason.code,
+                    "detail": reason.detail,
+                    "recommended_action": reason.recommended_action,
+                }
+            )
+        pending_runbooks: list[str] = []
+        if health_state.board_mode_runbook:
+            pending_runbooks.append(health_state.board_mode_runbook)
+        if health_state.kill_switch and health_state.kill_switch.runbook:
+            pending_runbooks.append(health_state.kill_switch.runbook)
+        result["ops"]["release_conditions"] = release_conditions  # type: ignore[index]
+        result["ops"]["pending_runbooks"] = list(dict.fromkeys(pending_runbooks))  # type: ignore[index]
+    if time_sync_payload:
+        result["time_sync"] = time_sync_payload
 
     if history:
         history_key = history.lower()
@@ -465,6 +494,11 @@ def status(
         "auto_execute": gate_state.auto_execute,
         "auto_execute_forced_off": auto_execute_forced_off,
     }
+    if time_sync_payload:
+        metrics_payload["time_sync_status"] = time_sync_payload.get("status")
+        metrics_payload["time_sync_drift_ms"] = time_sync_payload.get("drift_ms")
+        metrics_payload["time_sync_reason"] = time_sync_payload.get("reason")
+        metrics_payload["time_sync_action"] = time_sync_payload.get("action")
     if auto_execute_forced_off:
         metrics_payload["reasons"].append("auto_execute_forced_off")
     if metrics_payload["manifest_hash"] is None:

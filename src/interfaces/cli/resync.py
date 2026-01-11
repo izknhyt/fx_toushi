@@ -17,12 +17,17 @@ from rich.panel import Panel
 from rich.progress import Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
 
 from src.core.gate import GateState
+from src.core.health import HealthMonitor
 from src.core.session import SessionManager
 from src.data.service import IngestionMetricsCollector
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_RESYNC_LOG_PATH = Path("logs/resync/resync_events.jsonl")
+DEFAULT_RESYNC_REPORT_DIR = Path("reports") / "ops" / "resync"
+DEFAULT_HEALTH_STATE_PATH = Path("snapshots/latest/health_state.json")
+DEFAULT_HEALTH_ACTION_AUDIT = Path("logs/audit/health_action.jsonl")
+DEFAULT_HEALTH_SUGGEST_LOG = Path("logs/events/health_suggested.jsonl")
 _DEFAULT_HASH = "sha256:" + ("0" * 64)
 _EXIT_CODE_MAP = {
     "ok": 0,
@@ -48,6 +53,9 @@ def _render_success(console: Console | None, payload: Mapping[str, Any]) -> None
         console.print(Panel.fit(f"[bold green]Resync completed[/]\n{summary}"))
     else:
         console.print(Panel.fit("[bold green]Resync completed[/]"))
+    progress_table = payload.get("progress_table")
+    if isinstance(progress_table, str) and progress_table.strip():
+        console.print(Panel.fit(progress_table, title="Resync Progress"))
 
 
 def resync(
@@ -68,7 +76,7 @@ def resync(
 ) -> Mapping[str, Any]:
     """Trigger a session catch-up run while reporting progress."""
 
-    if evidence_path is None and log_path == DEFAULT_RESYNC_LOG_PATH:
+    if evidence_path is None and (log_path == DEFAULT_RESYNC_LOG_PATH or failover_report):
         timestamp = (
             datetime.now(timezone.utc)
             .isoformat()
@@ -76,7 +84,7 @@ def resync(
             .replace(":", "")
             .replace("-", "")
         )
-        evidence_path = Path("reports") / "ops" / "resync" / f"{timestamp}.md"
+        evidence_path = DEFAULT_RESYNC_REPORT_DIR / f"{timestamp}.md"
 
     payload: MutableMapping[str, Any] = {
         "since": since,
@@ -104,8 +112,22 @@ def resync(
         )
         payload["summary"] = summary
         payload["context"] = _build_resync_context(summary)
+        if failover_report:
+            progress_rows = _build_progress_rows(summary, symbols or ())
+            payload["progress_rows"] = progress_rows
+            payload["progress_table"] = _render_progress_table(progress_rows)
         if evidence_path:
-            _write_markdown_evidence(evidence_path, summary, context=payload["context"])
+            _write_markdown_evidence(
+                evidence_path,
+                summary,
+                context=payload["context"],
+                failover_report=failover_report,
+                progress_table=payload.get("progress_table"),
+            )
+        if not dry_run and (log_path != DEFAULT_RESYNC_LOG_PATH or json_output):
+            health_action = _apply_catch_up_health(summary, log_path=log_path)
+            if health_action:
+                payload["health_action"] = health_action
         if log_path != DEFAULT_RESYNC_LOG_PATH or json_output:
             payload["status"] = "ok"
             _render_success(console, payload)
@@ -173,12 +195,26 @@ def resync(
             payload["summary"] = summary
             context = _build_resync_context(summary)
             payload["context"] = context
+            if failover_report:
+                progress_rows = _build_progress_rows(summary, symbols or ())
+                payload["progress_rows"] = progress_rows
+                payload["progress_table"] = _render_progress_table(progress_rows)
             if collector:
                 resolved_metrics_path = metrics_path or Path("metrics/data_ingestion_sla.jsonl")
                 collector.write_snapshot(metrics_path=resolved_metrics_path)
             _maybe_write_ingestion_metrics(summary, metrics_path)
             if evidence_path:
-                _write_markdown_evidence(evidence_path, payload["summary"], context=context)
+                _write_markdown_evidence(
+                    evidence_path,
+                    payload["summary"],
+                    context=context,
+                    failover_report=failover_report,
+                    progress_table=payload.get("progress_table"),
+                )
+            if not dry_run:
+                health_action = _apply_catch_up_health(payload["summary"], log_path=log_path)
+                if health_action:
+                    payload["health_action"] = health_action
             _emit_resync_completed_event(
                 log_path=log_path,
                 summary=payload["summary"],
@@ -231,6 +267,7 @@ def _simulate_resync(
         "fetch_p99_ms": 1200.0,
         "retry_count": 0,
         "latency_status": "watch",
+        "quality_flag": 0,
     }
     with log_path.open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(event, ensure_ascii=False))
@@ -252,6 +289,7 @@ def _simulate_resync(
         "fetch_p99_ms": event["fetch_p99_ms"],
         "retry_count": event["retry_count"],
         "latency_status": event["latency_status"],
+        "quality_flag": event["quality_flag"],
     }
     if metrics_path:
         metrics_path.parent.mkdir(parents=True, exist_ok=True)
@@ -315,6 +353,12 @@ def _emit_resync_completed_event(
         event["payload"]["retry_count"] = int(summary.get("retry_count") or 0)
     if "latency_status" in summary and summary.get("latency_status") is not None:
         event["payload"]["latency_status"] = summary.get("latency_status")
+    if "quality_flag" in summary and summary.get("quality_flag") is not None:
+        event["payload"]["quality_flag"] = int(summary.get("quality_flag") or 0)
+    if "resync_latency_sec" in summary and summary.get("resync_latency_sec") is not None:
+        event["payload"]["resync_latency_sec"] = int(summary.get("resync_latency_sec") or 0)
+    if "resync_latency_ratio" in summary and summary.get("resync_latency_ratio") is not None:
+        event["payload"]["resync_latency_ratio"] = float(summary.get("resync_latency_ratio"))
     if determinism_hash:
         event["payload"]["determinism_hash"] = determinism_hash
     context_mode = context.get("mode")
@@ -341,6 +385,7 @@ def _enrich_summary_with_metrics(
     env_fetch_p99 = _coerce_float(os.getenv("TRADECTL_RESYNC_FETCH_P99_MS"))
     env_retry = _coerce_int(os.getenv("TRADECTL_RESYNC_RETRY_COUNT"))
     env_latency = os.getenv("TRADECTL_RESYNC_LATENCY_STATUS")
+    env_quality = _coerce_int(os.getenv("TRADECTL_RESYNC_QUALITY_FLAG"))
     if metrics_path is None and all(
         value is None for value in (env_fetch_p95, env_fetch_p99, env_retry, env_latency)
     ):
@@ -363,6 +408,7 @@ def _enrich_summary_with_metrics(
     _set_default("retry_count", metrics.get("retry_count") or env_retry)
     _set_default("latency_status", metrics.get("latency_status") or env_latency)
     _set_default("catch_up_lag_minutes", metrics.get("catch_up_lag_minutes"))
+    _set_default("quality_flag", metrics.get("quality_flag") or env_quality)
     return merged
 
 
@@ -374,11 +420,13 @@ def _maybe_write_ingestion_metrics(summary: Mapping[str, Any], metrics_path: Pat
     latency_status = summary.get("latency_status")
     retry_count = summary.get("retry_count")
     catch_up_lag_minutes = summary.get("catch_up_lag_minutes")
+    quality_flag = summary.get("quality_flag")
     if (
         fetch_p95_ms is None
         and fetch_p99_ms is None
         and latency_status is None
         and catch_up_lag_minutes is None
+        and quality_flag is None
     ):
         return
     path = metrics_path or Path("metrics/data_ingestion_sla.jsonl")
@@ -400,6 +448,8 @@ def _maybe_write_ingestion_metrics(summary: Mapping[str, Any], metrics_path: Pat
         entry["retry_count"] = int(retry_count)
     if catch_up_lag_minutes is not None:
         entry["catch_up_lag_minutes"] = int(catch_up_lag_minutes)
+    if quality_flag is not None:
+        entry["quality_flag"] = int(quality_flag)
     with path.open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(entry, ensure_ascii=False))
         handle.write("\n")
@@ -431,6 +481,9 @@ def _load_latest_ingestion_metrics(path: Path | None) -> Mapping[str, Any]:
         if "p99_latency_sec" in record:
             with contextlib.suppress(TypeError, ValueError):
                 payload["fetch_p99_ms"] = float(record["p99_latency_sec"]) * 1000
+        if "quality_flag" in record:
+            with contextlib.suppress(TypeError, ValueError):
+                payload["quality_flag"] = int(record["quality_flag"])
         return payload
     return {}
 
@@ -504,7 +557,12 @@ def _load_latest_gate_state(path: Path | None = None) -> Mapping[str, Any]:
 
 
 def _write_markdown_evidence(
-    path: Path, summary: Mapping[str, Any], *, context: Mapping[str, Any]
+    path: Path,
+    summary: Mapping[str, Any],
+    *,
+    context: Mapping[str, Any],
+    failover_report: bool = False,
+    progress_table: str | None = None,
 ) -> None:
     """Persist a simple Markdown summary for ops evidence."""
 
@@ -529,5 +587,202 @@ def _write_markdown_evidence(
     lines.append(f"- data_hash: {context.get('data_hash')}")
     lines.append(f"- board_mode: {context.get('board_mode')}")
     lines.append(f"- mode: {context.get('mode')}")
+    if failover_report:
+        lines.extend(
+            [
+                "",
+                "## Failover Summary",
+                "",
+                "| Field | Value |",
+                "| --- | --- |",
+                f"| failover_used | {summary.get('failover_used')} |",
+                f"| manual_csv_required | {summary.get('manual_csv_required')} |",
+                f"| retry_count | {summary.get('retry_count')} |",
+                f"| latency_status | {summary.get('latency_status')} |",
+                f"| resync_latency_sec | {summary.get('resync_latency_sec')} |",
+                f"| resync_latency_ratio | {summary.get('resync_latency_ratio')} |",
+                f"| fetch_p95_ms | {summary.get('fetch_p95_ms')} |",
+                f"| fetch_p99_ms | {summary.get('fetch_p99_ms')} |",
+                f"| quality_flag | {summary.get('quality_flag')} |",
+                f"| priority | {summary.get('priority')} |",
+                f"| resync_job_id | {summary.get('resync_job_id')} |",
+            ]
+        )
+        if progress_table:
+            lines.extend(["", "## Resync Progress", "", progress_table])
     lines.append("")
     path.write_text("\n".join(lines), encoding="utf-8")
+
+
+def _build_progress_rows(
+    summary: Mapping[str, Any], symbols: Sequence[str] | None
+) -> list[dict[str, Any]]:
+    symbol_list = summary.get("recovered_symbols") or summary.get("symbols") or list(symbols or ())
+    if not symbol_list:
+        symbol_list = ["all"]
+    timeframe = (
+        summary.get("timeframe")
+        or os.getenv("TRADECTL_RESYNC_TIMEFRAME")
+        or "M5"
+    )
+    failover_used = summary.get("failover_used") or []
+    provider = summary.get("provider") or (failover_used[-1] if failover_used else "unknown")
+    rows = []
+    for symbol in symbol_list:
+        rows.append(
+            {
+                "symbol": symbol,
+                "timeframe": timeframe,
+                "provider": provider,
+                "failover_used": ", ".join(str(p) for p in failover_used),
+                "manual_csv_required": bool(summary.get("manual_csv_required", False)),
+                "retries": int(summary.get("retry_count") or 0),
+                "duration_sec": int(summary.get("catch_up_elapsed_sec") or 0),
+            }
+        )
+    return rows
+
+
+def _render_progress_table(rows: Sequence[Mapping[str, Any]]) -> str:
+    headers = [
+        "symbol",
+        "timeframe",
+        "provider",
+        "failover_used",
+        "manual_csv_required",
+        "retries",
+        "duration_sec",
+    ]
+    lines = ["|" + "|".join(headers) + "|", "|" + "|".join(["---"] * len(headers)) + "|"]
+    for row in rows:
+        lines.append(
+            "|"
+            + "|".join(
+                [
+                    str(row.get("symbol") or ""),
+                    str(row.get("timeframe") or ""),
+                    str(row.get("provider") or ""),
+                    str(row.get("failover_used") or ""),
+                    "yes" if row.get("manual_csv_required") else "no",
+                    str(row.get("retries") or 0),
+                    str(row.get("duration_sec") or 0),
+                ]
+            )
+            + "|"
+        )
+    return "\n".join(lines)
+
+
+def _apply_catch_up_health(
+    summary: Mapping[str, Any], *, log_path: Path | None = None
+) -> Mapping[str, Any] | None:
+    lag = summary.get("catch_up_lag_minutes")
+    try:
+        lag_minutes = int(lag) if lag is not None else None
+    except (TypeError, ValueError):
+        lag_minutes = None
+    resync_latency_ratio = _coerce_float(summary.get("resync_latency_ratio"))
+    resync_latency_sec = _coerce_int(summary.get("resync_latency_sec"))
+    if lag_minutes is None and resync_latency_ratio is None:
+        return None
+
+    monitor = HealthMonitor()
+    reason = "data_latency_catch_up"
+    action_reason = reason
+    evidence = [str(log_path or DEFAULT_RESYNC_LOG_PATH)]
+    if lag_minutes is not None and lag_minutes >= 30:
+        monitor.raise_condition(
+            "critical",
+            reason,
+            detail=f"catch_up_lag_minutes={lag_minutes}",
+            recommended_action="runbook:RUN-DATA-06#guarded_checklist",
+        )
+        monitor.suggest_guarded(
+            reason=reason,
+            runbook="docs/runbooks/RUN-DATA-06.md",
+            evidence=evidence,
+        )
+        action = "guarded"
+    elif lag_minutes is not None and lag_minutes >= 20:
+        monitor.raise_condition(
+            "warning",
+            reason,
+            detail=f"catch_up_lag_minutes={lag_minutes}",
+            recommended_action="notify:ops",
+        )
+        action = "warn"
+    else:
+        action = "resume_candidate" if lag_minutes is not None else None
+
+    if resync_latency_ratio is not None and resync_latency_ratio > 24:
+        monitor.raise_condition(
+            "degraded",
+            "resync_lag",
+            detail=f"resync_latency_ratio={resync_latency_ratio:.2f}",
+            recommended_action="runbook:RUN-DATA-06#guarded_checklist",
+        )
+        if action != "guarded":
+            monitor.suggest_guarded(
+                reason="resync_lag",
+                runbook="docs/runbooks/RUN-DATA-06.md",
+                evidence=evidence,
+            )
+            action = "guarded"
+            action_reason = "resync_lag"
+
+    if action == "resume_candidate":
+        monitor.suggest_resume(
+            reason="data_latency_catch_up_recovered",
+            runbook="docs/runbooks/RUN-DATA-05.md",
+            evidence=evidence,
+        )
+        action = "resume"
+        action_reason = "data_latency_catch_up_recovered"
+
+    if action is None:
+        return None
+
+    snapshot = monitor.snapshot().to_dict()
+    DEFAULT_HEALTH_STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
+    DEFAULT_HEALTH_STATE_PATH.write_text(
+        json.dumps(snapshot, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+
+    events = []
+    for queued in monitor.actions():
+        event = {
+            "event": "health_action.suggested",
+            "ts": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+            "action_id": queued.id,
+            "action": queued.action,
+            "reason": queued.reason,
+            "evidence": queued.evidence,
+        }
+        events.append(event)
+        _append_jsonl(DEFAULT_HEALTH_ACTION_AUDIT, event)
+    _append_jsonl(
+        DEFAULT_HEALTH_SUGGEST_LOG,
+        {
+            "ts": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+            "event": "health.suggested",
+            "action": action,
+            "reason": action_reason,
+            "lag_minutes": lag_minutes,
+            "resync_latency_sec": resync_latency_sec,
+            "resync_latency_ratio": resync_latency_ratio,
+            "health_state_path": str(DEFAULT_HEALTH_STATE_PATH),
+        },
+    )
+    return {
+        "action": action,
+        "lag_minutes": lag_minutes,
+        "health_state_path": str(DEFAULT_HEALTH_STATE_PATH),
+        "events": events,
+    }
+
+
+def _append_jsonl(path: Path, payload: Mapping[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(payload, ensure_ascii=False))
+        handle.write("\n")

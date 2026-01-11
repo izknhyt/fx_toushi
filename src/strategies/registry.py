@@ -14,6 +14,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import os
 from collections.abc import Iterable, Iterator, Mapping, MutableMapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -38,6 +39,7 @@ __all__ = [
 ]
 
 logger = logging.getLogger(__name__)
+DEFAULT_DETERMINISM_METRICS = Path("metrics") / "determinism.jsonl"
 
 
 def _as_utc(value: datetime | None) -> datetime:
@@ -478,7 +480,12 @@ class StrategyEvaluationContext:
 class StrategyEngine:
     """Simple registry that executes strategy plugins based on a manifest."""
 
-    def __init__(self, *, determinism_log_path: Path | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        determinism_log_path: Path | None = None,
+        determinism_metrics_path: Path | None = None,
+    ) -> None:
         self._plugins: dict[str, StrategyPluginProtocol] = {}
         self._manifest: StrategyManifest | None = None
         self._last_determinism_events: list[Mapping[str, Any]] = []
@@ -487,6 +494,11 @@ class StrategyEngine:
             if determinism_log_path is None
             else Path(determinism_log_path)
         )
+        if determinism_metrics_path is not None:
+            self._determinism_metrics_path = Path(determinism_metrics_path)
+        else:
+            env_path = os.getenv("TRADECTL_DETERMINISM_METRICS")
+            self._determinism_metrics_path = Path(env_path) if env_path else DEFAULT_DETERMINISM_METRICS
 
     # ------------------------------------------------------------------
     # Plugin registration & manifest loading
@@ -747,6 +759,7 @@ class StrategyEngine:
         self._last_determinism_events.append(payload)
         try:
             self._append_determinism_log(payload)
+            self._append_determinism_metrics(payload)
         except OSError as exc:  # pragma: no cover - best-effort logging
             logger.warning("strategy.registry.determinism_log_failed", extra={"error": str(exc)})
 
@@ -755,4 +768,22 @@ class StrategyEngine:
         path.parent.mkdir(parents=True, exist_ok=True)
         with path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(payload, ensure_ascii=False))
+            handle.write("\n")
+
+    def _append_determinism_metrics(self, payload: Mapping[str, Any]) -> None:
+        path = self._determinism_metrics_path
+        if path is None:
+            return
+        record = {
+            "ts": payload.get("ts") or _utcnow_iso(),
+            "strategy_id": payload.get("strategy_id"),
+            "feature_version": payload.get("feature_version"),
+            "determinism_hash": payload.get("determinism_hash"),
+            "status": "ok",
+            "latency_ms": payload.get("latency_ms"),
+            "mode": payload.get("mode") or "unknown",
+        }
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(record, ensure_ascii=False))
             handle.write("\n")

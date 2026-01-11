@@ -3,15 +3,22 @@
 from __future__ import annotations
 
 import copy
+import json
 from collections.abc import Iterable, Mapping, MutableMapping
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
+from pathlib import Path
 from typing import Any, Literal, Protocol, runtime_checkable
 from warnings import warn
 
+from src.calendar import CalendarEvent, CalendarService
+
 SpreadCooldownState = Literal["normal", "watch", "cooldown", "halt", "block"]
 """Spread guard state shared between execution, risk, and strategy layers."""
+
+DEFAULT_TIME_SYNC_METRICS = Path("metrics/time_sync.jsonl")
+DEFAULT_NETWORK_METRICS = Path("metrics/network.jsonl")
 
 
 @dataclass(slots=True, frozen=True)
@@ -26,6 +33,10 @@ class SpreadState:
     last_updated: datetime
     lookback_window_sec: int
     reason: str | None = None
+
+    @property
+    def cooldown_reason(self) -> str | None:
+        return self.reason
 
 
 @dataclass(slots=True, frozen=True)
@@ -114,6 +125,71 @@ def _parse_window_seconds(window: str | None) -> int | None:
         return int(float(token))
     except ValueError:
         return None
+
+
+def _load_latest_ntp_drift(path: Path) -> int | None:
+    if not path.exists():
+        return None
+    try:
+        lines = [line for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    except OSError:
+        return None
+    for line in reversed(lines):
+        try:
+            payload = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        drift = payload.get("clock_drift_ms")
+        if drift is None:
+            continue
+        try:
+            return int(round(float(drift)))
+        except (TypeError, ValueError):
+            continue
+    return None
+
+
+def _normalize_event_time(event: CalendarEvent) -> datetime:
+    if event.timestamp.tzinfo is None:
+        return event.timestamp.replace(tzinfo=timezone.utc)
+    return event.timestamp
+
+
+def _resolve_news_event(
+    service: CalendarService,
+    *,
+    now: datetime,
+    window_minutes: tuple[int, int],
+) -> str | None:
+    try:
+        if service.is_blocked(now):
+            return "calendar_blocked"
+    except Exception:
+        return None
+    try:
+        events = service.upcoming_events(limit=1)
+    except Exception:
+        return None
+    if not events:
+        return None
+    event = events[0]
+    event_ts = _normalize_event_time(event)
+    start = now + timedelta(minutes=window_minutes[0])
+    end = now + timedelta(minutes=window_minutes[1])
+    if start <= event_ts <= end:
+        return event.title
+    return None
+
+
+def _utcnow_iso() -> str:
+    return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def _append_jsonl(path: Path, payload: Mapping[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(payload, ensure_ascii=False))
+        handle.write("\n")
 
 
 def evaluate_spread_guard(
@@ -265,13 +341,126 @@ class SimpleSpreadMonitor(SpreadMonitorProtocol):
         return SpreadSnapshot(symbol=symbol, spread_state=spread_state)
 
 
+class SpreadMonitor(SimpleSpreadMonitor):
+    """Spread monitor that enriches frames with NTP drift and calendar news."""
+
+    def __init__(
+        self,
+        *,
+        cooldown_threshold: float = 1.8,
+        block_threshold: float = 2.5,
+        ntp_max_ms: int = 50,
+        cooldown_minutes: int = 5,
+        lookback_window_sec: int | None = None,
+        time_sync_metrics_path: Path = DEFAULT_TIME_SYNC_METRICS,
+        calendar_service: CalendarService | None = None,
+        news_block_minutes: tuple[int, int] = (-15, 30),
+        enable_news_block: bool = True,
+        network_metrics_path: Path = DEFAULT_NETWORK_METRICS,
+        emit_network_metrics: bool = True,
+    ) -> None:
+        super().__init__(
+            cooldown_threshold=cooldown_threshold,
+            block_threshold=block_threshold,
+            ntp_max_ms=ntp_max_ms,
+            cooldown_minutes=cooldown_minutes,
+            lookback_window_sec=lookback_window_sec,
+        )
+        self._time_sync_metrics_path = time_sync_metrics_path
+        self._calendar_service = calendar_service or CalendarService()
+        self._news_block_minutes = news_block_minutes
+        self._enable_news_block = enable_news_block
+        self._network_metrics_path = network_metrics_path
+        self._emit_network_metrics = emit_network_metrics
+        self._cooldown_started: dict[str, datetime] = {}
+
+    def update(self, spread_frame: Mapping[str, Any]) -> SpreadCooldownState:
+        frame = dict(spread_frame)
+        symbol = str(frame.get("symbol") or "*")
+        previous_state = self._state.get(symbol)
+        previous_label = previous_state.state if previous_state else "normal"
+        previous_reason = previous_state.reason if previous_state else None
+        if frame.get("ntp_drift_ms") is None:
+            drift = _load_latest_ntp_drift(self._time_sync_metrics_path)
+            if drift is not None:
+                frame["ntp_drift_ms"] = drift
+        if self._enable_news_block and not (
+            frame.get("news_id") or frame.get("news_event")
+        ):
+            news_event = _resolve_news_event(
+                self._calendar_service,
+                now=datetime.now(timezone.utc),
+                window_minutes=self._news_block_minutes,
+            )
+            if news_event:
+                frame["news_event"] = news_event
+        state = super().update(frame)
+        if self._emit_network_metrics and symbol in self._state:
+            self._record_network_metrics(
+                symbol=symbol,
+                previous_state=previous_label,
+                previous_reason=previous_reason,
+                current_state=self._state[symbol],
+            )
+        return state
+
+    def _record_network_metrics(
+        self,
+        *,
+        symbol: str,
+        previous_state: SpreadCooldownState,
+        previous_reason: str | None,
+        current_state: SpreadState,
+    ) -> None:
+        if not self._network_metrics_path:
+            return
+        now = current_state.last_updated
+        cooldown_states = {"cooldown", "block", "halt"}
+        if current_state.state in cooldown_states:
+            if previous_state not in cooldown_states or previous_state != current_state.state:
+                self._cooldown_started[symbol] = now
+                payload = {
+                    "ts": _utcnow_iso(),
+                    "event": "spread.cooldown.start",
+                    "symbol": symbol,
+                    "status": current_state.state,
+                    "cooldown_reason": current_state.reason,
+                    "ntp_drift_ms": self._ntp_drift_ms,
+                    "news_id": self._news_id,
+                    "cooldown_eta": (
+                        current_state.cooldown_eta.isoformat()
+                        if current_state.cooldown_eta
+                        else None
+                    ),
+                }
+                _append_jsonl(self._network_metrics_path, payload)
+            return
+
+        start_ts = self._cooldown_started.pop(symbol, None)
+        if start_ts is None:
+            return
+        duration_sec = max(0.0, (now - start_ts).total_seconds())
+        payload = {
+            "ts": _utcnow_iso(),
+            "event": "spread.cooldown.clear",
+            "symbol": symbol,
+            "status": current_state.state,
+            "duration_sec": duration_sec,
+            "cooldown_reason": previous_reason,
+        }
+        _append_jsonl(self._network_metrics_path, payload)
+
+
 __all__ = [
     "SpreadCooldownState",
     "SpreadDataDegradedError",
     "SpreadEvaluation",
+    "SpreadMonitor",
     "SimpleSpreadMonitor",
     "evaluate_spread_guard",
     "SpreadMonitorProtocol",
     "SpreadState",
     "SpreadSnapshot",
+    "DEFAULT_TIME_SYNC_METRICS",
+    "DEFAULT_NETWORK_METRICS",
 ]
