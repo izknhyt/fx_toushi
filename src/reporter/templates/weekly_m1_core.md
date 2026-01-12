@@ -26,6 +26,9 @@
 - Data quality summary: {data_quality_summary}
 - Resync summary: {resync_summary}
 
+## Funding & Swap
+{funding_summary}
+
 ## Ops Worklog (latest)
 {ops_worklog_excerpt}
 

@@ -23,8 +23,9 @@ def _write_csv(path: Path, content: str) -> None:
     path.write_text(dedent(content), encoding="utf-8")
 
 
-def test_funding_sync_and_status(tmp_path: Path) -> None:
+def test_funding_sync_and_status(tmp_path: Path, monkeypatch) -> None:
     app = create_cli_app()
+    monkeypatch.chdir(tmp_path)
     main_csv = tmp_path / "config" / "swap_rates.csv"
     shadow_csv = tmp_path / "reports" / "funding" / "swap_rates_shadow.csv"
     state_path = tmp_path / "data" / "state" / "funding_state.json"

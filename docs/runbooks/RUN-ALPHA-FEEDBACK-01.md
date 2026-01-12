@@ -14,7 +14,7 @@
 ## 手順
 1. **Feature Flag切替**
    - `tradectl config flags --profile live --set alpha.profit_loop_enabled=true --set alpha.dynamic_sizing=true --set alpha.playbook_override=true`
-   - `git diff config/feature_flags.yaml` を確認し、`docs/change_requests/ALPHA-<date>.md` に貼り付ける。
+   - `git diff config/feature_flags.yaml` を確認し、`docs/development_plan.md#update-log-utc`へ要約を記録する。
 2. **HITLセーフティ確認**
    - Signal Board/Tauriで`board_mode`が`normal`かつ`double_entry`のコメントが正しく保存されることをスクリーンショット化（`evidence/alpha_loop/hitl_<timestamp>.png`）。
    - `tradectl alpha preview --pair USDJPY --regime asia --target-band day15 --risk moderate --format json` を実行し、`alpha_profiles.yaml`のConviction閾値が反映されているか確認。
@@ -41,5 +41,5 @@
 
 ## ロールバック
 1. `tradectl config flags --profile live --set alpha.profit_loop_enabled=false --set alpha.dynamic_sizing=false`
-2. `tradectl alpha review --with-scoreboard` を再実行し、Evidence差分を`docs/change_requests/ALPHA-<date>.md`へ追記。
+2. `tradectl alpha review --with-scoreboard` を再実行し、Evidence差分を`docs/development_plan.md#update-log-utc`へ追記。
 3. `record_readiness(... status="warning")` を記録し、`OpsAgendaService`にTODOを登録。

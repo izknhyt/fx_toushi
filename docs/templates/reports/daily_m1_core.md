@@ -50,4 +50,4 @@
 - Ops Worklog Entry: `metrics/ops_workload.json`
 - Feature Flags: `config/profile_{{profile}}.yaml`
 
-> コメント欄は当日23:00 JST以降の追記を禁止し、差分は`docs/review_log.md`に追記すること。
+> コメント欄は当日23:00 JST以降の追記を禁止し、差分は`docs/development_plan.md#update-log-utc`に追記すること。

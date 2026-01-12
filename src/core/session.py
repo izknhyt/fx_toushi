@@ -34,6 +34,7 @@ from typing import (
 from yaml import safe_load
 
 from src.data.service import IngestionMetricsCollector
+from src.core.health import HealthMonitor
 
 if TYPE_CHECKING:  # pragma: no cover - import cycle guard for type checking only
     from .workflow import WorkflowContext, WorkflowOrchestrator, WorkflowResult
@@ -43,6 +44,7 @@ __all__ = [
     "AuditChannel",
     "DataFeedBundle",
     "ExecutionProfile",
+    "HitlProfile",
     "MarketClock",
     "ModeContext",
     "ModeContextFactory",
@@ -59,6 +61,7 @@ _DEFAULT_RESYNC_JOBS_PATH = Path("metrics/resync_jobs.jsonl")
 _DEFAULT_RESYNC_QUEUE_PATH = Path("metrics/resync_queue.jsonl")
 _DEFAULT_RESYNC_LATENCY_PATH = Path("metrics/resync_latency.jsonl")
 _MAJOR_SYMBOLS = {"USDJPY", "EURUSD", "GBPUSD", "AUDUSD"}
+_DEFAULT_HEALTH_STATE_PATH = Path("snapshots/latest/health_state.json")
 
 ProfileMode = Literal["backtest", "paper", "live"]
 
@@ -217,6 +220,20 @@ class AuditChannel:
 
 
 @dataclass(slots=True, frozen=True)
+class HitlProfile:
+    """Normalized HITL settings shared across modes."""
+
+    board_mode_default: str
+    enable_news_block: bool
+    require_double_ack_on_resume: bool
+    enforce_research_ticket: bool
+    required_roles: tuple[str, ...]
+    manual_comment_required: bool
+    comment_min_length: int
+    comment_max_length: int
+
+
+@dataclass(slots=True, frozen=True)
 class ModeContext:
     """Aggregate container built from a :class:`ModeProfile`."""
 
@@ -228,6 +245,7 @@ class ModeContext:
     execution_profile: ExecutionProfile
     account_gateway: AccountGateway
     audit_channel: AuditChannel
+    hitl: HitlProfile
     catch_up_state: str = "idle"
 
 
@@ -246,6 +264,7 @@ class ModeContextFactory:
         execution_profile = self.build_execution_profile(profile)
         account_gateway = self.build_account_gateway(profile)
         audit_channel = self.build_audit_channel(profile)
+        hitl_profile = self.build_hitl_profile(profile)
         deterministic_seed = self._derive_seed(profile=profile, session_id=session_id)
 
         return ModeContext(
@@ -257,6 +276,7 @@ class ModeContextFactory:
             execution_profile=execution_profile,
             account_gateway=account_gateway,
             audit_channel=audit_channel,
+            hitl=hitl_profile,
         )
 
     def load_profile(self, profile_name: str) -> ModeProfile:
@@ -322,6 +342,28 @@ class ModeContextFactory:
 
         return AuditChannel(
             profile_id=profile.profile_id, streams=("session", "signals", "execution")
+        )
+
+    def build_hitl_profile(self, profile: ModeProfile) -> HitlProfile:
+        """Normalize HITL gate settings for consistent cross-mode behavior."""
+
+        gates = profile.gates
+        required_roles = gates.get("required_roles") or ()
+        if isinstance(required_roles, Sequence) and not isinstance(
+            required_roles, (str, bytes, bytearray)
+        ):
+            roles = tuple(str(role) for role in required_roles)
+        else:
+            roles = ()
+        return HitlProfile(
+            board_mode_default=str(gates.get("board_mode_default", "normal")),
+            enable_news_block=bool(gates.get("enable_news_block", False)),
+            require_double_ack_on_resume=bool(gates.get("require_double_ack_on_resume", False)),
+            enforce_research_ticket=bool(gates.get("enforce_research_ticket", False)),
+            required_roles=roles,
+            manual_comment_required=bool(gates.get("manual_comment_required", False)),
+            comment_min_length=int(gates.get("comment_min_length", 0) or 0),
+            comment_max_length=int(gates.get("comment_max_length", 0) or 0),
         )
 
     @staticmethod
@@ -544,6 +586,9 @@ class DefaultSessionManager:
         self._active_context = context
         self._last_result = result
         self._last_workflow_context = workflow_context
+        cfg_hash = os.getenv("TRADECTL_CFG_HASH") or _DEFAULT_HASH
+        data_hash = os.getenv("TRADECTL_DATA_HASH") or _DEFAULT_HASH
+        self._check_snapshot_consistency(cfg_hash=cfg_hash, data_hash=data_hash)
 
     def stop(self) -> None:
         """Tear down the active session."""
@@ -852,6 +897,9 @@ class DefaultSessionManager:
             "backfill_jobs": backfill_jobs,
             "resync_queue_path": str(queue_path) if queue_path else None,
         }
+        if not dry_run:
+            self._update_session_snapshot(resync_summary=result)
+            self._apply_catch_up_thresholds(resync_summary=result)
         self._log_resync_job(
             job_id=resync_job_id,
             range_minutes=range_minutes,
@@ -880,7 +928,88 @@ class DefaultSessionManager:
                 self._active_context.mode_context,
                 catch_up_state="idle",
             )
+        self._check_snapshot_consistency(cfg_hash=cfg_hash, data_hash=data_hash)
         return result
+
+    def _check_snapshot_consistency(self, *, cfg_hash: str, data_hash: str) -> None:
+        gate_state = self._load_gate_state()
+        if not gate_state:
+            return
+        mismatch = []
+        if gate_state.get("cfg_hash") and gate_state.get("cfg_hash") != cfg_hash:
+            mismatch.append("cfg_hash")
+        if gate_state.get("data_hash") and gate_state.get("data_hash") != data_hash:
+            mismatch.append("data_hash")
+        if mismatch:
+            HealthMonitor().raise_condition(
+                "warning",
+                "snapshot_consistency_mismatch",
+                detail=f"mismatch={','.join(mismatch)}",
+                recommended_action="verify_snapshot_consistency",
+            )
+
+    def _update_session_snapshot(self, *, resync_summary: Mapping[str, Any]) -> None:
+        if self._snapshot_path is None:
+            return
+        snapshot_path = Path(self._snapshot_path)
+        payload: dict[str, Any] = {}
+        if snapshot_path.exists():
+            try:
+                payload = json.loads(snapshot_path.read_text(encoding="utf-8"))
+            except json.JSONDecodeError:
+                payload = {}
+        payload.setdefault(
+            "session_id", self._active_context.session_id if self._active_context else None
+        )
+        payload["updated_at"] = (
+            datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+        )
+        payload["catch_up_summary"] = dict(resync_summary)
+        snapshot_path.parent.mkdir(parents=True, exist_ok=True)
+        snapshot_path.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+
+    def _apply_catch_up_thresholds(self, *, resync_summary: Mapping[str, Any]) -> None:
+        lag = resync_summary.get("catch_up_lag_minutes")
+        try:
+            lag_minutes = int(lag) if lag is not None else None
+        except (TypeError, ValueError):
+            lag_minutes = None
+        if lag_minutes is None:
+            return
+        monitor = HealthMonitor()
+        reason = "data_latency_catch_up"
+        if lag_minutes >= 30:
+            monitor.raise_condition(
+                "critical",
+                reason,
+                detail=f"catch_up_lag_minutes={lag_minutes}",
+                recommended_action="runbook:RUN-DATA-06#guarded_checklist",
+            )
+            monitor.suggest_guarded(
+                reason=reason,
+                runbook="docs/runbooks/RUN-DATA-06.md",
+                evidence=[str(self._snapshot_path or "")],
+            )
+        elif lag_minutes >= 20:
+            monitor.raise_condition(
+                "warning",
+                reason,
+                detail=f"catch_up_lag_minutes={lag_minutes}",
+                recommended_action="runbook:RUN-DATA-06#notify_ops",
+            )
+        else:
+            monitor.suggest_resume(
+                reason="data_latency_catch_up_recovered",
+                runbook="docs/runbooks/RUN-DATA-05.md",
+                evidence=[str(self._snapshot_path or "")],
+            )
+        snapshot = monitor.snapshot().to_dict()
+        _DEFAULT_HEALTH_STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
+        _DEFAULT_HEALTH_STATE_PATH.write_text(
+            json.dumps(snapshot, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
 
     def _load_gate_state(self) -> Mapping[str, Any]:
         """Best-effort load of the latest gate state for hashes/board mode."""

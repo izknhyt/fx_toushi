@@ -9,10 +9,12 @@ from datetime import date, datetime
 from pathlib import Path
 
 import yaml
+import pandas as pd
 
 from src.interfaces.cli import tickets as tickets_actions
 from src.journal import TradeJournalService
 from src.reporter.generator import ManualCsvSummary, ReportGenerator, RiskSummaryStub
+from src.funding import load_funding_csv
 from src.reporter.kpi import compute_kpi_from_equity, compute_kpi_from_returns
 
 logger = logging.getLogger(__name__)
@@ -35,6 +37,7 @@ DEFAULT_INGESTION_METRICS = Path("metrics/data_ingestion_sla.jsonl")
 DEFAULT_RESYNC_LOG = Path("logs/resync/resync_events.jsonl")
 DEFAULT_MANUAL_CSV_JOBS = Path("data/manual_fallback/jobs/jobs.jsonl")
 DEFAULT_OPS_WORKLOG = Path("ops_worklog.jsonl")
+DEFAULT_FUNDING_STATE = Path("data") / "state" / "funding_state.json"
 
 
 def _append_jsonl(path: Path, payload: Mapping[str, object]) -> None:
@@ -269,6 +272,67 @@ def _load_latest_kpis(base_dir: Path = DEFAULT_KPI_BASE) -> tuple[dict[str, obje
     }, candidates[0]
 
 
+def _resolve_metric_state(*, profile: str, kpi_source: Path | None) -> str:
+    if profile != "paper" or kpi_source is None or not kpi_source.exists():
+        return "confirmed"
+    try:
+        df = pd.read_parquet(kpi_source)
+    except Exception:
+        return "confirmed"
+    if df.empty:
+        return "provisional"
+    if "timestamp" in df.columns:
+        series = pd.to_datetime(df["timestamp"], utc=True, errors="coerce").dropna()
+        if series.empty:
+            return "provisional"
+        start = series.min()
+        end = series.max()
+    else:
+        try:
+            series = pd.to_datetime(df.index, utc=True, errors="coerce")
+        except Exception:
+            return "confirmed"
+        series = series.dropna()
+        if series.empty:
+            return "provisional"
+        start = series.min()
+        end = series.max()
+    days = (end - start).days
+    return "provisional" if days < 90 else "confirmed"
+
+
+def _summarize_funding(
+    *,
+    state_path: Path = DEFAULT_FUNDING_STATE,
+    max_pairs: int = 5,
+) -> str:
+    if not state_path.exists():
+        return "funding_state missing"
+    try:
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return "funding_state unreadable"
+    csv_path = state.get("csv_path")
+    if not csv_path:
+        return "funding_state missing csv_path"
+    curve = load_funding_csv(csv_path)
+    if not curve.swap_rates:
+        return "swap rates not found"
+    today = date.today()
+    lines = []
+    for pair, rate in sorted(curve.swap_rates.items())[:max_pairs]:
+        long_penalty = curve.swap_penalty(pair=pair, direction="long", session_date=today)
+        short_penalty = curve.swap_penalty(pair=pair, direction="short", session_date=today)
+        lines.append(
+            f"- {pair}: long={rate.swap_long}, short={rate.swap_short}, "
+            f"triple_day={rate.triple_day}, penalty_long={long_penalty}, "
+            f"penalty_short={short_penalty}"
+        )
+    if len(curve.swap_rates) > max_pairs:
+        lines.append(f"- ... {len(curve.swap_rates) - max_pairs} more pairs")
+    return "\n".join(lines)
+
+
 def weekly(
     profile: str,
     *,
@@ -349,6 +413,7 @@ def weekly(
     extra_context.update(risk_summary.to_context())
     extra_context.update(manual_csv.to_context())
     extra_context["ops_worklog_excerpt"] = _summarize_ops_worklog()
+    extra_context["funding_summary"] = _summarize_funding()
     if extended_blocks:
         extra_context.update(
             {
@@ -448,12 +513,14 @@ def performance(
         else:
             kpi_payload = {"sharpe": "n/a", "max_dd": "n/a", "win_rate": "n/a", "cum_r": "n/a"}
 
+    metric_state = _resolve_metric_state(profile=profile, kpi_source=kpi_source)
     payload = {
         "timestamp": now,
         "status": "ok",
         "profile": profile,
         "kpi": kpi_payload,
         "kpi_source": str(kpi_source) if kpi_source else None,
+        "metric_state": metric_state,
     }
 
     if not dry_run:
@@ -478,6 +545,7 @@ def _render_performance_md(payload: Mapping[str, object]) -> str:
             f"- Timestamp: {payload.get('timestamp')}",
             f"- Profile: {payload.get('profile')}",
             f"- KPI Source: {payload.get('kpi_source') or 'n/a'}",
+            f"- Metric State: {payload.get('metric_state') or 'confirmed'}",
             "",
             "## KPI",
             "",

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import json
 import logging
 import os
@@ -19,6 +20,7 @@ from src.core.gate import GateState
 from src.execution import ExecutionAdjustments
 from src.execution.alpha_overlay import LotLadderRule, apply_hands_off_sizing
 from src.execution.model import DeterministicExecutionModel, ExecutionError
+from src.sizing import PositionSizer, SizingRequest, SizingResult
 
 from .checklist import ChecklistBuilder, ChecklistItem
 from .exceptions import TicketBlockedError
@@ -90,6 +92,7 @@ class DefaultTicketBuilder:
         self._checklist_builder = ChecklistBuilder()
         self._lot_ladder = _load_lot_ladder(Path("config") / "risk_policy.yaml")
         self._execution_model = _load_execution_model(Path("config") / "execution_model.yaml")
+        self._position_sizer = _load_position_sizer(Path("config") / "broker_rules.yaml")
 
     def build(
         self,
@@ -98,6 +101,13 @@ class DefaultTicketBuilder:
         execution_adjustments: ExecutionAdjustments | None = None,
     ) -> TicketArtifact:
         """Construct a :class:`TicketArtifact` while applying gate constraints."""
+
+        draft.metadata = dict(draft.metadata)
+        gate_state = copy.deepcopy(gate_state)
+        if not gate_state.auto_execute and not gate_state.risk.reduce_only:
+            gate_state.risk.reduce_only = True
+            if gate_state.risk.reduce_only_reason is None:
+                gate_state.risk.reduce_only_reason = "board_mode_guarded"
 
         validate_market_open(draft.symbol, gate_state)
         if execution_adjustments is None and self._execution_model is not None:
@@ -114,6 +124,22 @@ class DefaultTicketBuilder:
                 message="determinism_hash required in draft metadata",
                 details={"reason": "determinism_hash required in draft metadata"},
             )
+
+        sizing_request = _extract_sizing_request(
+            draft=draft,
+            execution_adjustments=execution_adjustments,
+        )
+        if sizing_request and self._position_sizer is not None:
+            try:
+                sizing_result = self._position_sizer.size(sizing_request)
+            except Exception as exc:
+                logger.warning("PositionSizer failed for %s: %s", draft.symbol, exc)
+            else:
+                _apply_position_sizer_result(
+                    draft=draft,
+                    request=sizing_request,
+                    result=sizing_result,
+                )
 
         spread_status, spread_metadata = evaluate_spread(draft.symbol, gate_state)
         double_entry_status, double_entry_metadata = evaluate_double_entry(gate_state)
@@ -358,6 +384,13 @@ def _normalize_spread_state(state: str) -> str:
     return normalized
 
 
+def _load_position_sizer(path: Path) -> PositionSizer | None:
+    try:
+        return PositionSizer.from_rules_path(str(path))
+    except Exception:
+        return None
+
+
 def _load_execution_model(path: Path) -> DeterministicExecutionModel | None:
     if not path.exists():
         return None
@@ -420,6 +453,99 @@ def _resolve_ttl(
             return float(ttl)  # type: ignore[return-value]
         except (TypeError, ValueError):
             return None
+
+
+def _coerce_float(value: object) -> float | None:
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _extract_sizing_request(
+    *,
+    draft: TicketDraft,
+    execution_adjustments: ExecutionAdjustments | None,
+) -> SizingRequest | None:
+    meta = draft.metadata
+    equity = _coerce_float(
+        meta.get("equity") or meta.get("account_equity") or meta.get("equity_value")
+    )
+    risk_pct = _coerce_float(
+        meta.get("risk_pct") or meta.get("per_trade_risk_pct") or meta.get("account_risk_pct")
+    )
+    stop_distance_pips = _coerce_float(
+        meta.get("stop_distance_pips") or meta.get("stop_loss_pips")
+    )
+    if equity is None or risk_pct is None or stop_distance_pips is None:
+        return None
+
+    take_profit_ratio = _coerce_float(meta.get("take_profit_ratio") or meta.get("tp_r_multiple"))
+    entry_type = str(meta.get("entry_type") or meta.get("entry_mode") or "marketable_limit")
+    ttl_seconds: int | None = None
+    if execution_adjustments is not None and execution_adjustments.ttl_seconds is not None:
+        try:
+            ttl_seconds = int(execution_adjustments.ttl_seconds)
+        except (TypeError, ValueError):
+            ttl_seconds = None
+    elif meta.get("ttl_seconds") is not None:
+        try:
+            ttl_seconds = int(meta.get("ttl_seconds"))  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            ttl_seconds = None
+
+    return SizingRequest(
+        symbol=draft.symbol,
+        equity=equity,
+        risk_pct=risk_pct,
+        stop_distance_pips=stop_distance_pips,
+        take_profit_ratio=take_profit_ratio if take_profit_ratio is not None else 2.0,
+        atr_pips=_coerce_float(meta.get("atr_pips")),
+        entry_type=entry_type,
+        ttl_seconds=ttl_seconds,
+    )
+
+
+def _apply_position_sizer_result(
+    *,
+    draft: TicketDraft,
+    request: SizingRequest,
+    result: SizingResult,
+) -> None:
+    draft.qty = result.size_lot
+    meta = draft.metadata
+    meta.setdefault("account_risk_pct", request.risk_pct)
+    meta.setdefault(
+        "oco_recommendation",
+        {
+            "stop_loss_pips": result.oco.stop_loss_pips,
+            "take_profit_pips": result.oco.take_profit_pips,
+            "min_distance_pips": result.oco.min_distance_pips,
+        },
+    )
+    meta.setdefault("sizer_metadata", dict(result.metadata))
+    meta.setdefault("sizer_raw_size_lot", result.raw_size_lot)
+
+    if "stop_loss" in meta and "take_profit" in meta:
+        return
+    entry_price = _coerce_float(meta.get("entry_price"))
+    pip_size = _coerce_float(result.metadata.get("pip_size"))
+    if entry_price is None or pip_size is None:
+        return
+
+    is_long = draft.action.lower() in {"buy", "long"}
+    stop_delta = result.oco.stop_loss_pips * pip_size
+    tp_delta = result.oco.take_profit_pips * pip_size
+    if is_long:
+        stop_price = entry_price - stop_delta
+        tp_price = entry_price + tp_delta
+    else:
+        stop_price = entry_price + stop_delta
+        tp_price = entry_price - tp_delta
+    meta.setdefault("stop_loss", stop_price)
+    meta.setdefault("take_profit", tp_price)
 
 
 __all__ = [

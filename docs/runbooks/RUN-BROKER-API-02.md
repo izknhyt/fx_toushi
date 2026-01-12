@@ -36,6 +36,6 @@
 - `DocOps Orchestrator`はEvidenceパスとRunbook参照の整合性を毎朝`make check-validation --category broker_orders`で監査し、欠落があれば`ops.agenda.docops_pending`を生成する。
 
 ## 6. 更新フロー
-1. `config/brokers/error_map.yaml`に新しいエラーコードが追加された場合、DocOpsは本Runbookの表・手順を更新し、`review_log.md`へ記録する。
+1. `config/brokers/error_map.yaml`に新しいエラーコードが追加された場合、DocOpsは本Runbookの表・手順を更新し、`docs/development_plan.md#update-log-utc`へ記録する。
 2. 更新後、`tradectl runbook verify --id RUN-BROKER-API-02`を実行して構文エラーが無いことを確認する。
 3. Opsレビュー（ダブルサイン）完了後に`ops.agenda.docops_pending`をCloseし、Evidenceとして更新前後の差分（`git diff`）を添付する。

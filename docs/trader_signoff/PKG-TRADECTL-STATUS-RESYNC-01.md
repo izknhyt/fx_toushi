@@ -1,7 +1,7 @@
 # Trader Sign-off — PKG-TRADECTL-STATUS-RESYNC-01
 
 ## 1. Packet概要
-- Implementation Packet: docs/implementation_packets/20250322_tradectl_cli_status_resync.md
+- Implementation Packet: docs/archive/implementation_packets/20250322_tradectl_cli_status_resync.md
 - Evidence root: reports/implementation/20250322_pkg-tradectl-status-resync-01/
 - 参照Runbook: Packet本文に列挙されたRUN-*** / GOV-*** / OPS-***
 - 主要KPI: 詳細設計 §0.6.3 対応エピック

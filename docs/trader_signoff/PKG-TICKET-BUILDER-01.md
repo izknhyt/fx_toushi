@@ -1,7 +1,7 @@
 # Trader Sign-off — PKG-TICKET-BUILDER-01
 
 ## 1. Packet概要
-- Implementation Packet: docs/implementation_packets/20250315_ticket_builder.md
+- Implementation Packet: docs/archive/implementation_packets/20250315_ticket_builder.md
 - Evidence root: reports/implementation/20250315_pkg-ticket-builder-01/
 - 参照Runbook: Packet本文に列挙されたRUN-*** / GOV-*** / OPS-***
 - 主要KPI: 詳細設計 §0.6.3 対応エピック
@@ -13,7 +13,7 @@
 
 ## 3. Runbook整合
 - [x] `docs/runbooks/RUN-HITL-01.md` のBadge/Checklist補足をレビュー
-- [x] `docs/runbooks/daily_agenda/2025-03-18.md` へ本Packetのレビュー結果を追記
+- [x] `docs/archive/daily_agenda/2025-03-18.md` へ本Packetのレビュー結果を追記
 
 ## 4. サイン
 | 役割 | 氏名/イニシャル | サイン日時 | コメント |

@@ -75,6 +75,10 @@ logger = logging.getLogger(__name__)
 DEFAULT_METRICS_PATH = Path("metrics") / "data_ingestion_sla.jsonl"
 DEFAULT_PROVIDER_PRIORITY_PATH = Path("config") / "provider_priority.yaml"
 DEFAULT_INGESTION_PRIORITY_PATH = Path("config") / "ingestion" / "priorities.yaml"
+DEFAULT_BAR_READY_QUEUE = Path("data") / "queues" / "bar_ready.jsonl"
+DEFAULT_OPS_WORKLOG_PATH = Path("ops_worklog.jsonl")
+DEFAULT_MAX_WORKERS_NORMAL = 4
+DEFAULT_MAX_WORKERS_CATCH_UP = 6
 
 
 def load_provider_priority(
@@ -111,6 +115,30 @@ def resolve_provider_priority(
     if default_order:
         return list(default_order)
     return ["primary"]
+
+
+def _truthy_env(name: str) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return False
+    return str(value).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _read_int_env(name: str, default: int) -> int:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _append_jsonl(path: Path, payload: Mapping[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(payload, ensure_ascii=False))
+        handle.write("\n")
 
 
 def load_ingestion_priorities(
@@ -839,6 +867,38 @@ def _persist_rate_limit_state(path: Path | None, state: Mapping[str, str]) -> No
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8") as handle:
         handle.write(json.dumps(state, ensure_ascii=False, indent=2))
+
+
+def _append_bar_ready(
+    frames: Sequence[MarketFrame],
+    *,
+    path: Path | None = None,
+    source: str | None = None,
+) -> None:
+    if not frames:
+        return
+    resolved = path or Path(
+        os.getenv("TRADECTL_BAR_READY_QUEUE", str(DEFAULT_BAR_READY_QUEUE))
+    )
+    resolved.parent.mkdir(parents=True, exist_ok=True)
+    ts = _utcnow_iso()
+    try:
+        with resolved.open("a", encoding="utf-8") as handle:
+            for frame in frames:
+                payload = {
+                    "event": "bar.ready",
+                    "ts": ts,
+                    "symbol": frame.symbol,
+                    "timeframe": frame.timeframe,
+                    "bars": frame.bars,
+                    "bar_count": len(frame.bars),
+                    "quality_flag": frame.quality_flag,
+                    "source": source or "ingestion",
+                }
+                handle.write(json.dumps(payload, ensure_ascii=False))
+                handle.write("\n")
+    except OSError:
+        return
 
 
 def _compute_latency_status(
@@ -1594,6 +1654,7 @@ def fetch_latest(
         )
     if auto_apply_rate_limit_stage:
         _persist_rate_limit_state(rate_limit_state_path, rate_limit_state)
+    _append_bar_ready(frames, source="fetch_latest")
     return frames
 
 
@@ -1846,6 +1907,7 @@ def backfill(
                 quality_flag=quality_flags.get(symbol, 0),
             )
         )
+    _append_bar_ready(frames, source=f"backfill:{provider_used or priority or 'unknown'}")
     return BackfillResult(
         frames=frames,
         provider_used=provider_used or priority,
@@ -1867,30 +1929,85 @@ def spawn_provider_workers(
     rate_limit_state: Mapping[str, str] | None = None,
     default_poll_interval: float = 15.0,
     default_max_workers: int = 4,
+    catch_up_mode: bool | None = None,
+    max_workers_normal: int | None = None,
+    max_workers_catch_up: int | None = None,
+    runbook_ref: str | None = None,
+    ops_worklog_path: Path | None = None,
 ) -> list[WorkerPlan]:
     """Return worker plans (poll interval/max workers) per provider."""
 
     plans: list[WorkerPlan] = []
     rate_limit_state = rate_limit_state or {}
+    if catch_up_mode is None:
+        catch_up_mode = _truthy_env("TRADECTL_CATCH_UP_MODE")
+    if max_workers_normal is None:
+        max_workers_normal = _read_int_env("TRADECTL_MAX_WORKERS_NORMAL", DEFAULT_MAX_WORKERS_NORMAL)
+    if max_workers_catch_up is None:
+        max_workers_catch_up = _read_int_env(
+            "TRADECTL_MAX_WORKERS_CATCH_UP", DEFAULT_MAX_WORKERS_CATCH_UP
+        )
+    target_max_workers = max_workers_catch_up if catch_up_mode else max_workers_normal
+    ops_worklog_path = ops_worklog_path or DEFAULT_OPS_WORKLOG_PATH
     for provider in providers or ("primary",):
         if rate_limit_guard:
             stage = rate_limit_state.get(provider)
             plan = rate_limit_guard.worker_plan(provider=provider, stage=stage)
+            raw_workers = int(plan["max_workers"])
+            capped_workers = min(raw_workers, target_max_workers)
+            if capped_workers != raw_workers:
+                _append_jsonl(
+                    ops_worklog_path,
+                    {
+                        "timestamp": datetime.now(timezone.utc)
+                        .replace(microsecond=0)
+                        .isoformat()
+                        .replace("+00:00", "Z"),
+                        "task": "worker_plan_capped",
+                        "provider": provider,
+                        "stage": plan["stage"],
+                        "raw_max_workers": raw_workers,
+                        "max_workers": capped_workers,
+                        "target_max_workers": target_max_workers,
+                        "catch_up_mode": catch_up_mode,
+                        "runbook_ref": runbook_ref,
+                    },
+                )
             plans.append(
                 WorkerPlan(
                     provider=provider,
                     stage=plan["stage"],
                     poll_interval_sec=float(plan["poll_interval_sec"]),
-                    max_workers=int(plan["max_workers"]),
+                    max_workers=capped_workers,
                 )
             )
         else:
+            raw_workers = default_max_workers
+            capped_workers = min(raw_workers, target_max_workers)
+            if capped_workers != raw_workers:
+                _append_jsonl(
+                    ops_worklog_path,
+                    {
+                        "timestamp": datetime.now(timezone.utc)
+                        .replace(microsecond=0)
+                        .isoformat()
+                        .replace("+00:00", "Z"),
+                        "task": "worker_plan_capped",
+                        "provider": provider,
+                        "stage": "stage0",
+                        "raw_max_workers": raw_workers,
+                        "max_workers": capped_workers,
+                        "target_max_workers": target_max_workers,
+                        "catch_up_mode": catch_up_mode,
+                        "runbook_ref": runbook_ref,
+                    },
+                )
             plans.append(
                 WorkerPlan(
                     provider=provider,
                     stage="stage0",
                     poll_interval_sec=default_poll_interval,
-                    max_workers=default_max_workers,
+                    max_workers=capped_workers,
                 )
             )
     return plans

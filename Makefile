@@ -1,6 +1,7 @@
 ARGS ?=
 
 .PHONY: config-init schema-validate check-ops-readiness contract-performance-snapshot check-doc-sync config-evidence verify-config-evidence edge-watch-report check-profit-readiness check-alpha-profiles check-profit-readiness-hands-off check-profit-readiness-hands-off-all sla-report
+.PHONY: update-log
 
 config-init:
 	@if command -v poetry >/dev/null 2>&1; then \
@@ -38,6 +39,17 @@ check-doc-sync:
 		poetry run python tools/verify_doc_updates.py $(ARGS); \
 	else \
 		python3 tools/verify_doc_updates.py $(ARGS); \
+	fi
+
+update-log:
+	@if [ -z "$(MSG)" ]; then \
+		echo "MSG is required. Example: make update-log MSG=\"Did X\""; \
+		exit 1; \
+	fi
+	@if command -v poetry >/dev/null 2>&1; then \
+		poetry run python tools/update_log.py "$(MSG)"; \
+	else \
+		python3 tools/update_log.py "$(MSG)"; \
 	fi
 
 config-evidence:

@@ -13,10 +13,10 @@ Codex向け実装依頼時に利用するIssueテンプレート。§0.6.9の前
 - 依存する設計セクション: §
 
 ## 2. 前提チェック (CHK-0.6.9)
-> 最新の前提証跡: `reports/validation_log/CHK-0.6.9_env_setup_20250318.md`, `reports/validation_log/CHK-0.6.9_mode_context_20250318.md`, `docs/runbooks/daily_agenda/2025-03-18.md`
+> 最新の前提証跡: `reports/validation_log/CHK-0.6.9_env_setup_<YYYYMMDD>.md`, `reports/validation_log/CHK-0.6.9_mode_context_<YYYYMMDD>.md`, `docs/runbooks/daily_agenda/<YYYY-MM-DD>.md`
 - [ ] CHK-0.6.9-1: `poetry install --no-root` & `python -m tradectl --help` 証跡 (`logs/ops/`)
 - [ ] CHK-0.6.9-2: `pytest -k smoke` CI整合 (`reports/validation_log/`)
-- [ ] CHK-0.6.9-3: レビュー記録 & Prompt Packet 整備 (`docs/review_log.md`, `docs/prompt_packages/`)
+- [ ] CHK-0.6.9-3: レビュー記録 & Prompt Packet 整備 (`docs/development_plan.md#update-log-utc`, legacy: `docs/archive/prompt_packages/`)
 - [ ] CHK-0.6.9-4: リスク閾値スキーマ整合 (`reports/validation_log/` or CI Job ID)
 - [ ] CHK-0.6.9-5: Issue/PRへ§0.6.8是正番号を明記（例: `§0.6.8 #1, #4`）し、参照ログ/PRリンクを添付
 - [ ] CHK-0.6.9-6: CLIスナップショット / Runbook同期 (`docs/runbooks/`, `snapshots/`)
@@ -28,9 +28,9 @@ Codex向け実装依頼時に利用するIssueテンプレート。§0.6.9の前
 - [ ] `pytest -k config_schema_smoke` 実行ログ（`reports/validation_log/`配下に保存）
 - [ ] `poetry run schema-validate ...` コマンド結果（対象スキーマ名とともに`reports/validation_log/`へ格納）
 - [ ] CLIスナップショット (`tradectl benchmark replay` / `tradectl status` 等) の出力またはキャプチャ（`logs/ops/`または`snapshots/`）
-- [ ] アクションアイテム同期結果: `tradectl ops action-sync --review-log docs/review_log.md --agenda docs/runbooks/daily_agenda/<date>.md --out docs/change_requests/CR-<date>-ops-followups.md --label-date <date>` の出力、および`docs/change_requests/CR-<date>-ops-followups.md`/`logs/ops/review.log`のリンク（Runbook `RUN-POST-03`参照）
+- [ ] アクションアイテム同期結果: `docs/development_plan.md`のBacklog更新と`docs/development_plan.md#update-log-utc`の追記、`logs/ops/review.log`のリンク（Runbook `RUN-POST-03`参照）
 - [ ] Runbookリンク & Validation Data Playbook ID（例: `RUN-FEATURE-FLAG-01 §5.1`, `VDP-AC45-20250312`）
-- [ ] その他必須証跡（`docs/implementation_packets/`, `reports/`）: 
+- [ ] その他必須証跡（legacy: `docs/archive/implementation_packets/`, `reports/`）: 
 
 ## 4. 作業内容 / 期待結果
 - 実装・設定変更詳細:
@@ -43,7 +43,7 @@ Codex向け実装依頼時に利用するIssueテンプレート。§0.6.9の前
   - 証跡保存先は`reports/validation_log/`・`logs/ops/`と整合しているか
   - Runbook / Validation Data Playbookが最新か
   - Codex PR本文に必須添付物が反映されるか
-  - `RUN-POST-03`手順に従い、今回のIssueに紐づく`Closed #n`が`docs/review_log.md`および`logs/ops/review.log`へ追記されたか（`tradectl ops action-sync`実行ログと`docs/change_requests/CR-<date>-ops-followups.md`を参照）
+  - `RUN-POST-03`手順に従い、今回のIssueに紐づく`Closed #n`が`docs/development_plan.md#update-log-utc`および`logs/ops/review.log`へ追記されたか
 
 ## 6. フォローアップ / リスク
 - 追加フォローアップの有無:

@@ -1,7 +1,7 @@
 # Trader Sign-off — PKG-STRAT-MANIFEST-01
 
 ## 1. Packet概要
-- Implementation Packet: docs/implementation_packets/20250315_strategy_manifest.md
+- Implementation Packet: docs/archive/implementation_packets/20250315_strategy_manifest.md
 - Evidence root: reports/implementation/20250315_pkg-strat-manifest-01/
 - 参照Runbook: Packet本文に列挙されたRUN-*** / GOV-*** / OPS-***
 - 主要KPI: 詳細設計 §0.6.3 対応エピック
@@ -13,7 +13,7 @@
 
 ## 3. Runbook整合
 - [x] `docs/runbooks/GOV-STRAT-01.md` にLifecycle/Watchlistチェックリストを追加したことをレビュー
-- [x] `docs/runbooks/daily_agenda/2025-03-18.md` にPKG-STRAT-GOV項目を追記
+- [x] `docs/archive/daily_agenda/2025-03-18.md` にPKG-STRAT-GOV項目を追記
 
 ## 4. サイン
 | 役割 | 氏名/イニシャル | サイン日時 | コメント |

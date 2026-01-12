@@ -17,6 +17,7 @@ from src.compliance import RiskDisclosureService
 from src.core.gate import GateState
 from src.interfaces.cli.board import DEFAULT_MANIFEST
 from src.persistence.audit import AuditWriter
+from src.ticket.monitor import monitor_ticket
 from src.ticket.lock import TicketLockError, TicketLockManager
 from src.utils.hashing import sha256_path
 
@@ -89,6 +90,7 @@ def approve(
         )
     consent_id = consent_reference_id or consent_from_state
     guardrails_payload = _build_guardrails(guardrails, risk_status=risk_status)
+    guardrails_payload = _enforce_board_mode_guardrails(board_mode, guardrails_payload)
     _acquire_lock(ticket_id, owner=actor, take_over=take_over, reason="approve")
 
     diff = [{"op": "replace", "path": "/status", "value": "approved"}]
@@ -116,6 +118,17 @@ def approve(
         data_hash=data_hash,
     )
     _record_audit_entry(audit_entry)
+    ttl_seconds = _extract_ttl_seconds(audit_entry)
+    protect = _extract_protect_payload(audit_entry)
+    _maybe_warn_missing_inputs(
+        ticket_id=ticket_id,
+        note=note,
+        ttl_seconds=ttl_seconds,
+        protect=protect,
+        actor=actor,
+        board_mode=board_mode,
+    )
+    _maybe_monitor_ticket(ticket_id=ticket_id, ttl_seconds=ttl_seconds)
     _append_ops_worklog(
         ts=audit_entry["ts"],
         ticket_id=ticket_id,
@@ -160,6 +173,7 @@ def reject(
     if _enforce_risk_disclosure() and risk_status in {"pending", "warning", "expired"}:
         raise ConsentRequiredError("risk disclosure consent required before reject action")
     guardrails_payload = _build_guardrails(guardrails, risk_status=risk_status)
+    guardrails_payload = _enforce_board_mode_guardrails(board_mode, guardrails_payload)
     _acquire_lock(ticket_id, owner=actor, take_over=take_over, reason="reject")
     diff = [{"op": "replace", "path": "/status", "value": "rejected"}]
     cfg_hash, data_hash = _extract_hashes(guardrails_payload, gate_state=gate_state)
@@ -415,6 +429,14 @@ def _persist_ticket(
     diff: Iterable[Mapping[str, object]],
     audit: Mapping[str, object],
 ) -> None:
+    after = (audit.get("delta") or {}).get("after") or {}
+    ttl_seconds = None
+    if isinstance(after, Mapping):
+        protect = after.get("protect") or {}
+        if isinstance(protect, Mapping):
+            ttl_seconds = protect.get("ttl_seconds")
+        if ttl_seconds is None:
+            ttl_seconds = after.get("ttl_seconds")
     record: dict[str, object] = {
         "ticket_id": ticket_id,
         "status": status,
@@ -428,6 +450,8 @@ def _persist_ticket(
         "data_hash": audit.get("data_hash"),
         "checklist_progress": audit.get("checklist_progress"),
         "watchlist_reasons": audit.get("watchlist_reasons"),
+        "protect": after.get("protect") if isinstance(after, Mapping) else None,
+        "ttl_seconds": ttl_seconds,
     }
     _append_jsonl(TICKET_STORE_PATH, record)
 
@@ -502,6 +526,19 @@ def _build_guardrails(
     if "auto_execute" not in merged:
         merged["auto_execute"] = False
     return merged
+
+
+def _enforce_board_mode_guardrails(
+    board_mode: str, guardrails: Mapping[str, object]
+) -> Mapping[str, object]:
+    if board_mode.lower() == "normal":
+        return dict(guardrails)
+    enforced = dict(guardrails)
+    enforced["reduce_only"] = True
+    enforced.setdefault("reduce_only_reason", "board_mode_guarded")
+    enforced["auto_execute"] = False
+    enforced["auto_execute_forced_off"] = True
+    return enforced
 
 
 def _compute_auto_execute(board_mode: str, guardrails: Mapping[str, object]) -> bool:
@@ -710,3 +747,97 @@ def _append_ops_worklog(
     if data_hash:
         payload["data_hash"] = data_hash
     _append_jsonl(OPS_WORKLOG_PATH, payload)
+
+
+def _append_ops_worklog_event(payload: Mapping[str, object]) -> None:
+    _append_jsonl(OPS_WORKLOG_PATH, payload)
+
+
+def _truthy_env(name: str) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return False
+    return str(value).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _extract_ttl_seconds(audit_entry: Mapping[str, object]) -> int | None:
+    after = (audit_entry.get("delta") or {}).get("after") or {}
+    if isinstance(after, Mapping):
+        protect = after.get("protect") or {}
+        ttl = None
+        if isinstance(protect, Mapping):
+            ttl = protect.get("ttl_seconds")
+        if ttl is None:
+            ttl = after.get("ttl_seconds")
+        try:
+            if ttl is None:
+                return None
+            return int(ttl)
+        except (TypeError, ValueError):
+            return None
+    return None
+
+
+def _extract_protect_payload(audit_entry: Mapping[str, object]) -> Mapping[str, object]:
+    after = (audit_entry.get("delta") or {}).get("after") or {}
+    if isinstance(after, Mapping):
+        protect = after.get("protect") or {}
+        if isinstance(protect, Mapping):
+            return protect
+    return {}
+
+
+def _maybe_warn_missing_inputs(
+    *,
+    ticket_id: str,
+    note: str | None,
+    ttl_seconds: int | None,
+    protect: Mapping[str, object],
+    actor: str,
+    board_mode: str,
+) -> None:
+    ts = datetime.now(timezone.utc).isoformat()
+    if _truthy_env("TRADECTL_REQUIRE_TTL") and not ttl_seconds:
+        _append_ops_worklog_event(
+            {
+                "timestamp": ts,
+                "task": "ticket_ttl_missing",
+                "ticket_id": ticket_id,
+                "actor": actor,
+                "board_mode": board_mode,
+            }
+        )
+    if _truthy_env("TRADECTL_REQUIRE_MANUAL_COMMENT") and not note:
+        _append_ops_worklog_event(
+            {
+                "timestamp": ts,
+                "task": "ticket_manual_comment_missing",
+                "ticket_id": ticket_id,
+                "actor": actor,
+                "board_mode": board_mode,
+            }
+        )
+    if _truthy_env("TRADECTL_REQUIRE_OCO"):
+        stop_loss = protect.get("stop_loss")
+        take_profit = protect.get("take_profit")
+        if stop_loss is None or take_profit is None:
+            _append_ops_worklog_event(
+                {
+                    "timestamp": ts,
+                    "task": "ticket_oco_missing",
+                    "ticket_id": ticket_id,
+                    "actor": actor,
+                    "board_mode": board_mode,
+                    "missing": {
+                        "stop_loss": stop_loss is None,
+                        "take_profit": take_profit is None,
+                    },
+                }
+            )
+
+
+def _maybe_monitor_ticket(*, ticket_id: str, ttl_seconds: int | None) -> None:
+    if not _truthy_env("TRADECTL_TICKET_MONITOR"):
+        return
+    watch_seconds = ttl_seconds if ttl_seconds and ttl_seconds > 0 else 120
+    monitor_ticket(ticket_id=ticket_id, watch_seconds=watch_seconds, export_path=None)

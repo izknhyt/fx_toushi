@@ -12,7 +12,7 @@
 1. `tradectl funding status --json > evidence/funding_status_<timestamp>.json`を実行し、現状を保存する。
 2. `reports/validation_log/AC-09_funding_<date>.md`の「Incident Log」に発生日、検知者、影響推定（想定PnL差）を記入する。
 3. Ops/Riskが`config/swap_rates.csv`と`reports/funding/swap_rates_shadow.csv`を更新し、Runbook `RUN-FUND-01`のStep 1-3を再実施する。
-4. CLI `tradectl funding sync --shadow reports/funding/swap_rates_shadow.csv`を再実行し、イニシャルとハッシュ値を記録する。同期が成功したら、CLI出力と`funding_state.json`を`docs/implementation_packets/<packet>/evidence/`に保存し、`reports/funding/daily_hash_log.md`へ復旧日のハッシュ値とリンクを追記する。
+4. CLI `tradectl funding sync --shadow reports/funding/swap_rates_shadow.csv`を再実行し、イニシャルとハッシュ値を記録する。同期が成功したら、CLI出力と`funding_state.json`を`reports/validation_log/`と`reports/funding/`に保存し、`reports/funding/daily_hash_log.md`へ復旧日のハッシュ値とリンクを追記する。進捗は`docs/development_plan.md#update-log-utc`に記録する。
 5. POが`reports/validation_log/AC-09_funding_<date>.md`の「Recovery Sign-off」にイニシャルを記入し、`tradectl health ack --reason funding_data_gap`を実行する。
 6. `reports/ops/degradation_log/<YYYYMMDD>.md`へ影響ペア、対応時間、再発防止策を追記し、週次Ops会議でレビューする。
 

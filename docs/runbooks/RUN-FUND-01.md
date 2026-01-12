@@ -6,7 +6,7 @@ Paper/Paper+Live運用におけるスワップレートの正確性維持と監�
 ## トリガー
 - 平日 15:00 JST にOps担当へSlackリマインド。
 - 祝日前営業日は 12:00 JST に前倒しリマインド。
-- `docs/risk_review/20250318_prelaunch.md` で定義したフォローアップ（自動化・ダブルチェック）が未完了の場合は、当日中に再実行を計画する。
+- `docs/archive/risk_review/20250318_prelaunch.md`は参照のみとし、フォローアップ（自動化・ダブルチェック）は`docs/development_plan.md#update-log-utc`へ記録する。
 
 ## ファイル構成
 | ファイル/ディレクトリ | 用途 | 更新者 |
@@ -27,8 +27,8 @@ Paper/Paper+Live運用におけるスワップレートの正確性維持と監�
    tradectl funding sync --shadow reports/funding/swap_rates_shadow.csv
    ```
 5. CLI出力を保存し、`data/state/funding_state.json`と`reports/validation_log/AC-09_funding_<date>.md`を更新する。併せて`reports/funding/daily_hash_log.md`へ当日のハッシュ値・証跡リンクを追記する（手順は後述）。
-6. POが`reports/validation_log/AC-09_funding_<date>.md`の「Daily Sign-off」にイニシャルを記入し、`docs/implementation_packets/<packet>/evidence/funding/`へCLIログとハッシュ値を保管する。
-7. `docs/risk_review/20250318_prelaunch.md`のチェックリストを更新し、Spread/Funding自動化タスクの進捗を記録する。
+6. POが`reports/validation_log/AC-09_funding_<date>.md`の「Daily Sign-off」にイニシャルを記入し、CLIログとハッシュ値は`reports/validation_log/`と`reports/funding/`に保管する。進捗は`docs/development_plan.md#update-log-utc`に記録する。
+7. リスクレビューの記録は`docs/archive/risk_review/`を参照しつつ、現行の進捗は`docs/development_plan.md`へ記録する。
 
 ### ハッシュ記録 & Evidence
 1. メイン/シャドー双方でSHA-256を取得する。

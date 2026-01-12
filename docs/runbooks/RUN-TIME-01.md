@@ -40,7 +40,7 @@
 
 ### 実行頻度
 - 週次Opsレビュー前（通常は火曜）にBacktest/Paper/Live各1回。
-- Acceptable Degradation時は即時再実行し、`docs/risk_review/20250318_prelaunch.md`へタイムスタンプを記録。
+- Acceptable Degradation時は即時再実行し、`docs/development_plan.md#update-log-utc`へタイムスタンプを記録（`docs/archive/risk_review/20250318_prelaunch.md`は参照のみ）。
 
 ### 事前準備
 - `config/profiles/<mode>.yaml` が最新版であること。
@@ -57,7 +57,7 @@
 
 ### エラー時の対応
 - `snapshots/...json` が破損している場合は直近良品へロールバックし、`git clean` は使用せずリネームで退避。
-- `tradectl start` が`config`解決に失敗した場合は`config/profiles/<mode>.yaml`と`ConfigRegistry`差分を確認。再現ログを`logs/ops/modecontext_<date>.log`へ保存し、R-04フォローアップとして`docs/risk_review/20250318_prelaunch.md`に追記。
+- `tradectl start` が`config`解決に失敗した場合は`config/profiles/<mode>.yaml`と`ConfigRegistry`差分を確認。再現ログを`logs/ops/modecontext_<date>.log`へ保存し、R-04フォローアップとして`docs/development_plan.md#update-log-utc`に追記（`docs/archive/risk_review/20250318_prelaunch.md`は参照のみ）。
 
 ## チェックリスト
 - [ ] `tradectl preflight --recheck`前後のログ取得

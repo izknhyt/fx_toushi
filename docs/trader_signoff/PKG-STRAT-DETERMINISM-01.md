@@ -1,7 +1,7 @@
 # Trader Sign-off — PKG-STRAT-DETERMINISM-01
 
 ## 1. Packet概要
-- Implementation Packet: docs/implementation_packets/20250315_strategy_determinism.md
+- Implementation Packet: docs/archive/implementation_packets/20250315_strategy_determinism.md
 - Evidence root: reports/implementation/20250315_pkg-strat-determinism-01/（ログ・メトリクスは `reports/validation_log/PKG-STRAT-DETERMINISM_20250319.md` / `metrics/benchmark_replay.jsonl` に集約）
 - 参照Runbook: STRAT-M1-VALIDATION, GOV-STRAT-01
 - 主要KPI: 詳細設計 §0.6.3（決定論一致率>99.5%）

@@ -31,7 +31,7 @@
 4. **タグ付け**
    - `tradectl release tag --version <tag>`を実行し、`reports/audit/release/<tag>.tag`が生成されることを確認する。
 5. **アーカイブ**
-   - 完了したチェックリストを`docs/releases/<tag>.md`やリリース告知（`docs/templates/release_announcement.md`）へリンクする。
+   - 完了したチェックリストを`docs/archive/releases/<tag>.md`やリリース告知（`docs/templates/release_announcement.md`）へリンクする。
 
 ## チェックリスト
 - [ ] `tradectl release prepare`の出力が作成されている

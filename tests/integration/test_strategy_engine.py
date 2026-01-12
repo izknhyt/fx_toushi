@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
+import os
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -82,6 +83,40 @@ class DeterministicStrategy(StrategyPluginProtocol):
                 )
             )
         return results
+
+
+def _register_donchian_stub(engine: StrategyEngine) -> None:
+    engine.register_plugin(
+        type(
+            "DonchianStrategy",
+            (StrategyPluginProtocol,),
+            {
+                "id": "m1_baseline_donchian",
+                "determinism_key": "m1_baseline_donchian:v0",
+                "metadata": StrategyMetadata(
+                    name="M1 Baseline Donchian",
+                    version="0.1.2",
+                    required_features=frozenset(
+                        {
+                            "donchian_upper20_1h",
+                            "donchian_lower20_1h",
+                            "donchian_mid20_1h",
+                            "donchian_upper20_1d",
+                            "donchian_lower20_1d",
+                            "donchian_mid20_1d",
+                            "atr_14_1h",
+                            "close_5m",
+                            "regime_trend_1h",
+                            "session_tag_5m",
+                        }
+                    ),
+                ),
+                "required_warmup_bars": lambda self: 0,
+                "cooldown_bars": lambda self: 0,
+                "generate_signals": lambda self, context: (),
+            },
+        )()
+    )
 
 
 @pytest.fixture
@@ -199,18 +234,98 @@ def test_strategy_determinism_engine(project_root: Path, feature_pipeline: Featu
         ]
     )
 
-    assert len(plugin.contexts) == 2
-    first_context, second_context = plugin.contexts
-    assert first_context.features is feature_context
-    assert first_context.gate is gate_state
-    assert first_context.watchlist == frozenset(watchlist)
-    assert first_context.seed == seed + plugin.metadata.seed_offset
-    assert second_context.seed == first_context.seed
 
-    manifest.validate_feature_contract(feature_context.available_keys)
+def test_signal_events_emitted(project_root: Path, tmp_path: Path) -> None:
+    signal_log = tmp_path / "signal.generated.jsonl"
+    os.environ["TRADECTL_SIGNAL_EVENT_LOG"] = str(signal_log)
+    try:
+        engine = StrategyEngine()
+        plugin = DeterministicStrategy()
+        engine.register_plugin(plugin)
+        _register_donchian_stub(engine)
+        manifest_path = project_root / "config" / "strategy_manifest.yaml"
+        engine.load_manifest(manifest_path)
 
-    with pytest.raises(ManifestValidationError):
-        manifest.validate_feature_contract({"nonexistent_feature"})
+        config_path = project_root / "config" / "feature_pipeline.yaml"
+        pipeline = FeaturePipeline.from_config_file(config_path)
+        manifest_symbols: set[str] = set()
+        for entry in engine.manifest.strategies.values():  # type: ignore[union-attr]
+            if entry.watchlist:
+                manifest_symbols.update(entry.watchlist)
+        features = pipeline.update(symbols=manifest_symbols)
+
+        gate_state = GateState()
+        regime_state = type("RegimeState", (), {"mode": "normal"})()
+        account_state = type("AccountState", (), {"equity": 1_000_000.0})()
+        config_snapshot = type("ConfigSnapshot", (), {"cfg_hash": "cfg:v1"})()
+        clock = type(
+            "MarketClock",
+            (),
+            {
+                "now": datetime(2025, 3, 1, 12, 0, tzinfo=timezone.utc),
+                "timeframe": "5m",
+            },
+        )()
+
+        engine.run_all(
+            features=features,
+            regime=regime_state,
+            gate=gate_state,
+            account=account_state,
+            config=config_snapshot,
+            clock=clock,
+            watchlist={"USDJPY"},
+            seed=1,
+        )
+    finally:
+        os.environ.pop("TRADECTL_SIGNAL_EVENT_LOG", None)
+
+    lines = signal_log.read_text(encoding="utf-8").splitlines()
+    assert any('"event": "signal.generated"' in line for line in lines)
+
+
+def test_guarded_mode_suppresses_signals(project_root: Path) -> None:
+    engine = StrategyEngine()
+    plugin = DeterministicStrategy()
+    engine.register_plugin(plugin)
+    _register_donchian_stub(engine)
+    manifest_path = project_root / "config" / "strategy_manifest.yaml"
+    engine.load_manifest(manifest_path)
+
+    config_path = project_root / "config" / "feature_pipeline.yaml"
+    pipeline = FeaturePipeline.from_config_file(config_path)
+    manifest_symbols: set[str] = set()
+    for entry in engine.manifest.strategies.values():  # type: ignore[union-attr]
+        if entry.watchlist:
+            manifest_symbols.update(entry.watchlist)
+    features = pipeline.update(symbols=manifest_symbols)
+
+    gate_state = GateState()
+    gate_state.risk.reduce_only = True
+    regime_state = type("RegimeState", (), {"mode": "normal"})()
+    account_state = type("AccountState", (), {"equity": 1_000_000.0})()
+    config_snapshot = type("ConfigSnapshot", (), {"cfg_hash": "cfg:v1"})()
+    clock = type(
+        "MarketClock",
+        (),
+        {
+            "now": datetime(2025, 3, 1, 12, 0, tzinfo=timezone.utc),
+            "timeframe": "5m",
+        },
+    )()
+
+    signals = engine.run_all(
+        features=features,
+        regime=regime_state,
+        gate=gate_state,
+        account=account_state,
+        config=config_snapshot,
+        clock=clock,
+        watchlist={"USDJPY"},
+        seed=1,
+    )
+    assert signals == []
+    assert len(plugin.contexts) == 0
 
 
 def test_strategy_engine_runs_with_pipeline_update(

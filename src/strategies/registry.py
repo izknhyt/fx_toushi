@@ -39,6 +39,7 @@ __all__ = [
 ]
 
 logger = logging.getLogger(__name__)
+DEFAULT_SIGNAL_EVENT_LOG = Path("logs") / "events" / "signal.generated.jsonl"
 DEFAULT_DETERMINISM_METRICS = Path("metrics") / "determinism.jsonl"
 
 
@@ -62,6 +63,25 @@ def _normalise_symbol_set(symbols: Iterable[str]) -> frozenset[str]:
             continue
         normalised.add(token.upper())
     return frozenset(normalised)
+
+
+def _append_jsonl(path: Path, payload: Mapping[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(payload, ensure_ascii=False))
+        handle.write("\n")
+
+
+def _is_guarded_mode(gate: Any) -> bool:
+    risk = getattr(gate, "risk", None)
+    if risk is not None and bool(getattr(risk, "reduce_only", False)):
+        return True
+    market = getattr(gate, "market", None)
+    if market is not None:
+        status = getattr(market, "profit_readiness_status", None)
+        if isinstance(status, str) and status.lower() in {"guarded", "halted"}:
+            return True
+    return False
 
 
 def _utcnow_iso() -> str:
@@ -499,6 +519,10 @@ class StrategyEngine:
         else:
             env_path = os.getenv("TRADECTL_DETERMINISM_METRICS")
             self._determinism_metrics_path = Path(env_path) if env_path else DEFAULT_DETERMINISM_METRICS
+        signal_env = os.getenv("TRADECTL_SIGNAL_EVENT_LOG")
+        self._signal_log_path = (
+            Path(signal_env) if signal_env else DEFAULT_SIGNAL_EVENT_LOG
+        )
 
     # ------------------------------------------------------------------
     # Plugin registration & manifest loading
@@ -639,6 +663,7 @@ class StrategyEngine:
         feature_version = getattr(determinism_meta, "feature_version", None)
         data_manifest_hash = getattr(determinism_meta, "data_manifest_hash", None)
         feature_seed = getattr(determinism_meta, "seed", None)
+        guarded_mode = _is_guarded_mode(gate)
 
         results: list[Any] = []
         for strategy_id, entry in ordered_entries:
@@ -679,6 +704,16 @@ class StrategyEngine:
                 plugin_metadata=plugin_metadata,
             )
             plugin.context = context
+            if guarded_mode and not entry.feature_flags.get("guarded_board_required", False):
+                self._emit_signal_event(
+                    strategy_id=strategy_id,
+                    signal=None,
+                    context=context,
+                    feature_flags=entry.feature_flags,
+                    status="suppressed_guarded",
+                    reason="guarded_mode",
+                )
+                continue
 
             try:
                 signals = plugin.generate_signals(context)
@@ -689,6 +724,14 @@ class StrategyEngine:
             try:
                 for signal in signals:
                     results.append(signal)
+                    self._emit_signal_event(
+                        strategy_id=strategy_id,
+                        signal=signal,
+                        context=context,
+                        feature_flags=entry.feature_flags,
+                        status="generated",
+                        reason=None,
+                    )
                     signal_count += 1
             except BaseException as exc:  # pragma: no cover - defensive
                 raise StrategyExecutionError(strategy_id, exc) from exc
@@ -718,6 +761,7 @@ class StrategyEngine:
                 "watchlist": sorted(context.watchlist),
                 "required_features": sorted(plugin_metadata.required_features),
                 "signal_count": signal_count,
+                "feature_flags": dict(entry.feature_flags),
                 "manifest_metadata": {
                     "name": manifest_metadata.name,
                     "version": manifest_metadata.version,
@@ -762,6 +806,45 @@ class StrategyEngine:
             self._append_determinism_metrics(payload)
         except OSError as exc:  # pragma: no cover - best-effort logging
             logger.warning("strategy.registry.determinism_log_failed", extra={"error": str(exc)})
+
+    def _emit_signal_event(
+        self,
+        *,
+        strategy_id: str,
+        signal: Any,
+        context: StrategyContext,
+        feature_flags: Mapping[str, bool],
+        status: str,
+        reason: str | None,
+    ) -> None:
+        payload = {
+            "event": "signal.generated",
+            "ts": _utcnow_iso(),
+            "status": status,
+            "reason": reason,
+            "strategy_id": strategy_id,
+            "feature_flags": dict(feature_flags),
+            "seed": context.seed,
+            "watchlist": sorted(context.watchlist),
+        }
+        if signal is not None:
+            payload.update(
+                {
+                    "symbol": getattr(signal, "symbol", None),
+                    "direction": getattr(signal, "direction", None),
+                    "confidence": getattr(signal, "confidence", None),
+                    "rationale": getattr(signal, "rationale", None),
+                    "breakout": getattr(signal, "breakout", None),
+                    "level": getattr(signal, "level", None),
+                    "buffer": getattr(signal, "buffer", None),
+                    "score": getattr(signal, "score", None),
+                    "badges": getattr(signal, "badges", None),
+                }
+            )
+        try:
+            _append_jsonl(self._signal_log_path, payload)
+        except OSError as exc:  # pragma: no cover - best-effort logging
+            logger.warning("strategy.registry.signal_log_failed", extra={"error": str(exc)})
 
     def _append_determinism_log(self, payload: Mapping[str, Any]) -> None:
         path = self._determinism_log_path

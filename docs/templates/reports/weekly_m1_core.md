@@ -68,7 +68,7 @@
 ## Manual Commentary
 
 ### A/Bテスト結果（担当: Quant Lead / 締切: 日曜 18:00 JST）
-- レビュー記録: `docs/review_log.md` の `AB-{{report_week}}`
+- レビュー記録: `docs/development_plan.md#update-log-utc` の `AB-{{report_week}}`
 - Runbook参照: `docs/runbooks/STRAT-M1-VALIDATION.md`
 - サマリ:
   - 実施テスト: 
@@ -76,7 +76,7 @@
   - 次アクション: 
 
 ### 次週ToDo（担当: Ops Manager / 締切: 月曜 08:30 JST）
-- レビュー記録: `docs/review_log.md` の `OPS-{{report_week}}`
+- レビュー記録: `docs/development_plan.md#update-log-utc` の `OPS-{{report_week}}`
 - Runbook参照: `docs/runbooks/RUN-PERF-01.md`, `docs/runbooks/RUN-RISK-01.md`, `docs/runbooks/RUN-RISK-07.md`, `docs/runbooks/OPS-READINESS-01.md`
 - サマリ:
   - 優先タスク: 
@@ -95,4 +95,4 @@
 - Reviewed by:
 - Approved by:
 
-> コメント欄は締切後の修正を禁止し、差分は`docs/review_log.md`に追記すること。
+> コメント欄は締切後の修正を禁止し、差分は`docs/development_plan.md#update-log-utc`に追記すること。

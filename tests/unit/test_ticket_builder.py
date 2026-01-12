@@ -117,3 +117,31 @@ def test_missing_determinism_hash_raises() -> None:
     with pytest.raises(TicketBlockedError) as excinfo:
         builder.build(draft, GateState())
     assert excinfo.value.code == "determinism_hash_missing"
+
+
+def test_position_sizer_updates_qty_and_oco() -> None:
+    draft = TicketDraft(
+        symbol="USDJPY",
+        action="buy",
+        qty=1.0,
+        metadata={
+            "ticket_id": "TCK-003",
+            "determinism_hash": "deadbeef02",
+            "equity": 10_000,
+            "risk_pct": 0.5,
+            "stop_distance_pips": 10.0,
+            "tp_r_multiple": 2.0,
+            "entry_price": 150.0,
+        },
+    )
+    artifact = DefaultTicketBuilder().build(draft, GateState())
+
+    assert artifact.payload["quantity"] == pytest.approx(0.1)
+    meta = artifact.payload["metadata"]
+    assert meta["account_risk_pct"] == pytest.approx(0.5)
+    oco = meta["oco_recommendation"]
+    assert oco["stop_loss_pips"] == pytest.approx(10.0)
+    assert oco["take_profit_pips"] == pytest.approx(20.0)
+    assert oco["min_distance_pips"] == pytest.approx(3.5)
+    assert meta["stop_loss"] == pytest.approx(149.9)
+    assert meta["take_profit"] == pytest.approx(150.2)

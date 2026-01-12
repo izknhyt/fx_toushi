@@ -54,7 +54,7 @@
    - `poetry run schema-validate config --schema docs/schemas/config_bundle.schema.json`
    - `pytest -k ops_readiness`（テスト未実装の場合は`CONFIG-SCAFF-01`で追加する）。ログはEvidenceに追記する。
    - `make check-ops-readiness`（`tools/check_ops_readiness.py`）を実行し、Evidenceパスの存在と更新時刻を検証する。エラーが出た場合は`OpsEvidenceMissing`イベントを`logs/health/events.jsonl`で確認し、本Runbookの`#evidence-recovery`節へ移行する。
-   - Opsレビュー前に`tradectl ops action-sync --review-log docs/review_log.md --agenda docs/runbooks/daily_agenda/<date>.md --out docs/change_requests/CR-<date>-ops-followups.md --label-date <YYYY-MM-DD>`を実行し、未完了のレビューアクションが`docs/change_requests/`とAgenda末尾の`<!-- ACTION_ITEM_SYNC:BEGIN -->`ブロックへ反映されていることを確認する。最新の`Closed #n`が`logs/ops/review.log`に記録されていない場合はRunbook `RUN-POST-03`を参照して復旧する。
+   - Opsレビュー前に未完了のレビューアクションを`docs/development_plan.md`のBacklogへ追加し、`docs/development_plan.md#update-log-utc`へ記録する。Legacy同期が必要な場合のみ、`tradectl ops action-sync --review-log docs/archive/review_log.md --agenda docs/runbooks/daily_agenda/<date>.md --out docs/archive/change_requests/CR-<date>-ops-followups.md --label-date <YYYY-MM-DD>`を使用する。
 3. **スコア評価 (`score-evaluation`)**
    - バックアップ: `reports/drill/backup_integrity.md`を確認し、直近実施日とハッシュ照合結果を記録。欠損がある場合はDRチームへ再実行を依頼する。
    - Runbook整備: `docs/runbooks/`の更新履歴（`git log --since "last friday"`）を確認し、レビュー未完了のRunbookがある場合は担当を割り当てる。
@@ -66,17 +66,17 @@
      2. `RUN-RISK-07`と連携し、Kill Switchレビュー（`tradectl kill-switch review --reason ops_readiness --strategy <id>`）を起票。
      3. 不足証跡の回復タスクを`docs/runbooks/daily_agenda/<date>.md`へ追加。完了したら`make check-ops-readiness`を再実行する。
 5. **サインオフとアーカイブ (`sign-off`)**
-   - Ops Manager / Quant Lead / Product Ownerが`reports/validation_log/ops_readiness_<YYYYWW>.md`へイニシャルを記入し、`docs/review_log.md`の`OPS-{{report_week}}`エントリと相互リンクする。
+   - Ops Manager / Quant Lead / Product Ownerが`reports/validation_log/ops_readiness_<YYYYWW>.md`へイニシャルを記入し、`docs/development_plan.md#update-log-utc`の`OPS-{{report_week}}`エントリと相互リンクする。
    - `tradectl status --json`で`ops_readiness`関連バナーが解除されたことを確認し、`health.ack --reason ops_readiness_recovered`を実行してIDをEvidenceに記録する。
    - 週次レポート (`reports/weekly/<YYYY-WW>.md`) の`Ops Evidence Checklist`節を更新し、本Runbookで取得した証跡パスを貼り付ける。
-   - `tradectl ops action-sync ...` の結果を再実行（または`tools/check_ops_review_log.py --require`）し、今回のレビューで完了したアクションが`Closed #n`として`docs/review_log.md`と`logs/ops/review.log`に反映されたことを確認する。未反映の場合は`RUN-POST-03#欠損時のエスカレーション`へ移行する。
+   - `tradectl ops action-sync ...` の結果を再実行（または`tools/check_ops_review_log.py --require`）し、今回のレビューで完了したアクションが`Closed #n`として`logs/ops/review.log`と`docs/development_plan.md#update-log-utc`に反映されたことを確認する。未反映の場合は`RUN-POST-03#欠損時のエスカレーション`へ移行する。
 
 ## 証跡と保存先
 - `reports/governance/ops_readiness_<YYYYWW>.{json,md}`
 - `reports/validation_log/ops_readiness_<YYYYWW>.md`
 - `metrics/ops_readiness.jsonl`（CLIが追記。週次レビューで確認）
 - `logs/health/events.jsonl`（`ops_readiness_low`, `ops_readiness_recovered`）
-- `docs/review_log.md`（カテゴリ: `OPS-<YYYYWW>`）
+- `docs/development_plan.md#update-log-utc`（カテゴリ: `OPS-<YYYYWW>`）
 
 ## エスカレーション (`#evidence-recovery`)
 - `make check-ops-readiness`が失敗した場合は、欠損ファイルを`CONFIG-SCAFF-01`の手順に沿って再生成する。

@@ -44,7 +44,7 @@
 6. **ドキュメント/Runbook整合**
    - `config/README.md`の該当セクション（例: `Live Guard`, `Ops Readiness`）を更新し、Runbookリンクと管理責任者が最新であることを確認する。
    - Runbook参照が増えた場合は`docs/runbooks/*`の該当手順へハイパーリンクを追加する。
-   - 変更内容を`docs/review_log.md`へ記録（カテゴリ: `CONFIG-SCAFF-01`、週次Opsレビューで確認）。
+   - 変更内容を`docs/development_plan.md#update-log-utc`へ記録（カテゴリ: `CONFIG-SCAFF-01`、週次Opsレビューで確認）。
 7. **証跡パッケージ**
    - `reports/validation_log/config_init_<date>.md`を完成させ、以下のファイルをリンクする。
      - `reports/weekly/evidence/<YYYY-WW>/config_bundle_diff.md`（任意: 週次確認用 diff）

@@ -52,6 +52,7 @@ _TIMEFRAME_RULES: Mapping[str, str] = {
 }
 
 DEFAULT_FEATURE_CACHE_METRICS = Path("metrics") / "feature_cache.jsonl"
+_ALWAYS_ON_INDICATORS = frozenset({"sma_20", "ema_fast", "ema_slow", "rsi_14", "atr_14"})
 
 __all__ = [
     "FeatureContext",
@@ -569,7 +570,8 @@ class FeaturePipeline:
     def _load_enabled_indicators(self) -> None:
         indicators_cfg: Mapping[str, Mapping[str, Any]] = self._config.get("indicators", {})
         for identifier, raw_cfg in indicators_cfg.items():
-            if not raw_cfg.get("enabled", False):
+            forced_on = identifier in _ALWAYS_ON_INDICATORS
+            if not raw_cfg.get("enabled", False) and not forced_on:
                 continue
             timeframes = tuple(raw_cfg.get("timeframes", ()))
             if not timeframes:

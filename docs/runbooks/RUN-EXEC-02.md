@@ -49,7 +49,7 @@
    - `pytest -k config_schema_smoke and execution_model`を再実行して全体整合を確認。
    - `git diff config/execution_model.yaml`を`reports/validation_log/execution_recalibration_<date>.md`の`Diff`節へ貼り付ける。
 6. **サインオフ**
-   - Quant LeadとOps Managerが`reports/validation_log/execution_recalibration_<date>.md`にイニシャルを追記し、`docs/review_log.md`の`EXEC-{{date}}`エントリへリンクする。
+   - Quant LeadとOps Managerが`reports/validation_log/execution_recalibration_<date>.md`にイニシャルを追記し、`docs/development_plan.md#update-log-utc`の`EXEC-{{date}}`エントリへリンクする。
    - POが`docs/runbooks/RUN-EXEC-02.md`の最新版を確認し、`tradectl status --json`の`execution.latency_alert`が`resolved`に変化したことを`logs/health/events.jsonl`で確認する。
    - Reduce-Only解除は`RUN-RISK-07`の回復条件（PF/Sharpe/Latency閾値が連続2日以内）を満たした後、`tradectl board --normal`→`health.ack --reason execution_latency_recovered`の順に実行する。
 

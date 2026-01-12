@@ -5,7 +5,7 @@
 
 ## 1. リスク・コンプライアンス
 - [ ] `risk_state.json` が `status: accepted` で `consent_reference_id` / `accepted_at` がセットされている（consent_reference_id=`<id>`）
-- [ ] `docs/change_requests/` の未クローズ項目なし（CR-<id>）
+- [ ] `docs/development_plan.md` のBacklogにリリース対象の未完了項目がない
 - [ ] Kill Switch/Spread/Reduce-Only 状態が `tradectl status --json` で正常（Exit Code 0 または 21）である証跡: `reports/validation_log/release_status_<date>.json`
 
 ## 2. テスト・品質

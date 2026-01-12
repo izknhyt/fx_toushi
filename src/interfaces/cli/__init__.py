@@ -102,8 +102,9 @@ from .kill_switch import (
     set_state as kill_switch_set_state,
 )
 from .metrics import report as metrics_report
-from .ops import action_item_sync, readiness
+from .ops import action_item_sync, degraded_ack, readiness
 from .performance import live_guard as performance_live_guard
+from .pipeline import drain_bar_ready_queue
 from .preflight import preflight
 from .report import (
     daily as generate_daily_report,
@@ -2330,6 +2331,40 @@ def create_cli_app() -> typer.Typer:
     broker_app.add_typer(broker_monitor_app, name="monitor")
     app.add_typer(broker_app, name="broker")
 
+    pipeline_app = typer.Typer(help="Feature pipeline utilities")
+
+    @pipeline_app.command("drain-bar-ready")
+    def pipeline_drain_bar_ready_command(
+        ctx: typer.Context,
+        queue_path: Path
+        | None = typer.Option(
+            None,
+            "--queue-path",
+            help="Override bar_ready queue path",
+            show_default=False,
+        ),
+        feature_config_path: Path = typer.Option(
+            Path("config") / "feature_pipeline.yaml",
+            "--feature-config",
+            help="Feature pipeline config",
+            show_default=False,
+        ),
+        max_events: int = typer.Option(50, "--max-events", help="Max events to consume"),
+        timeframe: str = typer.Option("5m", "--timeframe", help="Timeframe to consume"),
+        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON."),
+    ) -> None:
+        ctx_obj = ctx.obj or {"json": False}
+        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        payload = drain_bar_ready_queue(
+            queue_path=queue_path,
+            feature_config_path=feature_config_path,
+            max_events=max_events,
+            timeframe=timeframe,
+        )
+        _render_payload(console, payload, json_output=effective_json)
+
+    app.add_typer(pipeline_app, name="pipeline")
+
     data_app = typer.Typer(help="Market data utilities")
 
     @data_app.command("status")
@@ -3544,6 +3579,39 @@ def create_cli_app() -> typer.Typer:
             typer.echo(f"[ops.readiness] {exc}", err=True)
             exit_code = getattr(exc, "exit_code", 1)
             raise typer.Exit(exit_code) from exc
+        _render_payload(console, payload, json_output=effective_json)
+
+    @ops_app.command("degraded-ack")
+    def ops_degraded_ack_command(
+        ctx: typer.Context,
+        reason: str = typer.Option(..., "--reason", help="Reason for degraded acknowledgement"),
+        runbook_ref: str | None = typer.Option(
+            None, "--runbook-ref", help="Runbook reference (e.g., RUN-DATA-05.step3)"
+        ),
+        evidence: list[str] = typer.Option(
+            None, "--evidence", help="Evidence paths or IDs", show_default=False
+        ),
+        actor: str | None = typer.Option(None, "--actor", help="Operator or approver"),
+        board_mode: str = typer.Option(
+            "guarded", "--board-mode", help="Board mode during acknowledgement"
+        ),
+        ops_worklog_path: Path = typer.Option(
+            Path("ops_worklog.jsonl"),
+            "--ops-worklog-path",
+            help="Ops worklog output path",
+        ),
+        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
+    ) -> None:
+        ctx_obj = ctx.obj or {"json": False}
+        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        payload = degraded_ack(
+            reason=reason,
+            runbook_ref=runbook_ref,
+            evidence=evidence,
+            actor=actor,
+            board_mode=board_mode,
+            ops_worklog_path=ops_worklog_path,
+        )
         _render_payload(console, payload, json_output=effective_json)
         ops_payload = payload.get("ops_readiness") or {}
         exit_code = ops_payload.get("exit_code")

@@ -59,5 +59,5 @@ combine-as-imports = true
 | CLIスナップショット | `poetry run pytest tests/approval -k cli` | CLI差分発生時 |
 
 ---
-- 例外的なスタイル逸脱は`docs/change_requests/`に設計裁量として記録し、プロダクトオーナーと運用担当の承認を得ること。
+- 例外的なスタイル逸脱は`docs/development_plan.md`のUpdate Logに設計裁量として記録し、プロダクトオーナーと運用担当の承認を得ること。
 - 本書の更新は詳細設計書の改訂履歴 (§0.1) に反映させ、該当コミットに`style-guide`ラベルを付与する。

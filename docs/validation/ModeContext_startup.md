@@ -67,13 +67,13 @@ Codex実装物の受入時に、`ModeContext`初期化手順（詳細設計 §0.
 | --- | --- | --- | --- |
 | CHK-0.6.9-1 | `poetry install --no-root` 成功 & `poetry run tradectl --help` 0終了 | `reports/validation_log/CHK-0.6.9_env_setup_20250316.md`（2025-03-16記録） | Codex Issueチェックリスト「環境前提」項 |
 | CHK-0.6.9-2 | `pytest -k smoke` スイートがCIテンプレに組み込み済み | `reports/validation_log/CHK-0.6.9_env_setup_20250316.md`（スモーク実行ログ）<br>`ci/templates/python_smoke.yml` | Codex PRチェックリスト「Tests」項 |
-| CHK-0.6.9-3 | レビュー記録/Prompt Packet 格納 | `docs/review_log.md`, `docs/prompt_packages/` | Codex Issueチェックリスト「Review Hand-off」項 |
+| CHK-0.6.9-3 | レビュー記録/Prompt Packet 格納 | `docs/development_plan.md#update-log-utc`（Prompt Packetは`docs/archive/prompt_packages/`を参照） | Codex Issueチェックリスト「Review Hand-off」項 |
 | CHK-0.6.9-4 | リスク閾値ファイル雛形とスキーマ整合 | `config/` サンプル & `docs/schemas/` | Codex Issueチェックリスト「Risk Controls」項 |
 | CHK-0.6.9-5 | Issue/PR テンプレに §0.6.8 番号を引用 | Codex Issue/PR テンプレート | Codex Issueチェックリスト「Checklist」項 |
 | CHK-0.6.9-6 | `ModeContext` フィールド初期化証跡 | 本テンプレ §2 | Codex PRチェックリスト「Mode Context」項 |
 | CHK-0.6.9-7 | `tradectl start --profile ...` ログ証跡 | 本テンプレ §1 | Codex PRチェックリスト「CLI Evidence」項 |
 
-- 新たに作成したエビデンスファイルは `docs/validation/` 以下に配置し、レビュー記録 (`docs/review_log.md`) から `CHK-0.6.9-<n>` へのリンクを張る。
+- 新たに作成したエビデンスファイルは `docs/validation/` 以下に配置し、レビュー記録 (`docs/development_plan.md#update-log-utc`) から `CHK-0.6.9-<n>` へのリンクを張る。
 - Codex側テンプレート（Issue/PRチェックリスト）にチェックを付ける際は、Evidence欄のパス/コミットIDを記入してクロスリファレンスを維持する。
 
 ## 4. 更新履歴

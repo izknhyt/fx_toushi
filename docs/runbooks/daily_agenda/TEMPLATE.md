@@ -4,14 +4,14 @@
 - **Chair**: <Ops Manager>
 - **Attendees**: <Quant Lead / Product Owner / Codex Liaison / Trader Lead>
 - **Runbook References**: RUN-TIME-01, RUN-RISK-01, RUN-PERF-01, STRAT-M1-VALIDATION (必要に応じ追加)
-- **Related Review Log Entry**: docs/review_log.md#<anchor>
+- **Related Update Log Entry**: docs/development_plan.md#update-log-utc
 
 ## 1. Opening Checks
 | Item | Command / Artifact | Owner | Due | Status | Notes |
 | --- | --- | --- | --- | --- | --- |
 | Environment health (`CHK-0.6.9-1`) | `poetry install --no-root`<br>`python -m tradectl --help` | Ops Manager | <HH:MM JST> | [ ] Pass [ ] Hold [ ] Fail | Evidence: <link> |
 | Smoke tests (`CHK-0.6.9-2`) | `pytest -k smoke` / CI Job ID | Codex Liaison |  |  |  |
-| Review packet sync (`CHK-0.6.9-3`) | `docs/review_log.md`, `docs/prompt_packages/` | Quant Lead |  |  |  |
+| Review packet sync (`CHK-0.6.9-3`) | `docs/development_plan.md#update-log-utc`（Prompt Packetは`docs/archive/prompt_packages/`参照） | Quant Lead |  |  |  |
 | Risk threshold scaffold (`CHK-0.6.9-4`) | `config/risk_policy.yaml`, `docs/schemas/` | Risk Manager |  |  |  |
 | Issue/PR numbering (`CHK-0.6.9-5`) | Codexテンプレ更新状況 | Product Owner |  |  |  |
 
@@ -58,8 +58,9 @@
 | Codex Liaison |  |  |
 
 ## 7. Action Item Sync (RUN-POST-03)
-- `tradectl ops action-sync --review-log docs/review_log.md --agenda <this file> --out docs/change_requests/CR-<date>-ops-followups.md`
-- `Closed #n` の更新とChange Requestリンクを以下ブロックに残す。
+- 未完了項目は`docs/development_plan.md`のBacklogへ追加し、`docs/development_plan.md#update-log-utc`へ記録する。
+- **Legacy**: `tradectl ops action-sync --review-log docs/archive/review_log.md --agenda <this file> --out docs/archive/change_requests/CR-<date>-ops-followups.md`
+- `Closed #n` の更新とリンクを以下ブロックに残す。
 
 <!-- ACTION_ITEM_SYNC:BEGIN -->
 - Synced at: _pending_

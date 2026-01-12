@@ -4,7 +4,7 @@
 - **目的**: プロダクトに導入されるFeature Flagのライフサイクルを可視化し、§5.15および§12.2で定義されたガバナンス手順に基づく承認・ロールバック記録を保持する。
 - **更新頻度**: Flagの新設/更新/廃止時に即時、少なくとも週次Opsレビューで差分確認。
 - **責任者**: Config Governance担当（定常更新）、Product Owner（有効化承認）、Risk Officer（リスク分類確認）。
-- **記録フォーマット**: 下記テーブルに1Flag1行で記入し、詳細は`docs/implementation_packets/<date>_<packet>.md`とRunbook差分にリンクする。
+- **記録フォーマット**: 下記テーブルに1Flag1行で記入し、詳細は`docs/development_plan.md#update-log-utc`とRunbook差分にリンクする（過去Packetは`docs/archive/implementation_packets/`を参照）。
 
 ## 登録テンプレート
 | Flagキー | 導入日 | Packet/Issue | 目的/KPI | 実装対象 (ファイル/セクション) | 初期値 (Env別) | ロールバック手順 | メトリクス監視 | 最終レビュー |

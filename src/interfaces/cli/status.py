@@ -33,6 +33,7 @@ DEFAULT_HEALTH_ACTION_AUDIT = Path("logs/audit/health_action.jsonl")
 DEFAULT_GATE_STATE_PATH = Path("snapshots/latest/gate_state.json")
 DEFAULT_HEALTH_STATE_PATH = Path("snapshots/latest/health_state.json")
 DEFAULT_KILL_SWITCH_STATE_PATH = Path("snapshots/latest/kill_switch_state.json")
+DEFAULT_FUNDING_STATE_PATH = Path("data/state/funding_state.json")
 DEFAULT_TIME_SYNC_METRICS_PATH = DEFAULT_TIME_SYNC_METRICS
 
 __all__ = [
@@ -177,7 +178,20 @@ def _snapshot_section(manager: SnapshotManager) -> Mapping[str, Any]:
     else:
         payload: MutableMapping[str, Any] = dict(_serialise_snapshot_restore(restore))
         payload["base_path"] = str(manager.base_path)
-        return payload
+    return payload
+
+
+def _load_funding_state(path: Path = DEFAULT_FUNDING_STATE_PATH) -> Mapping[str, Any]:
+    if not path.exists():
+        return {"status": "missing", "state_path": str(path)}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return {"status": "invalid", "state_path": str(path)}
+    payload = dict(payload)
+    payload["status"] = "ok"
+    payload["state_path"] = str(path)
+    return payload
 
 
 def _build_banner(
@@ -416,6 +430,7 @@ def status(
         "kill_switch": kill_switch_payload,
         "guardrails": guardrail_payload,
         "snapshots": _snapshot_section(snapshot_manager),
+        "funding_state": _load_funding_state(),
         "ops": {
             "banner": banner,
             "actions": ops_actions,

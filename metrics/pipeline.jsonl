@@ -12,3 +12,15 @@
 {"ts": "2026-01-11T13:13:13Z", "symbol": "USDJPY", "timeframe": "5m", "bars": 60, "latency_ms": 9.336, "cpu_ms": 9.3, "indicators": 9}
 {"ts": "2026-01-11T13:16:03Z", "symbol": "USDJPY", "timeframe": "5m", "bars": 2, "latency_ms": 11.15, "cpu_ms": 10.012, "indicators": 9}
 {"ts": "2026-01-11T13:16:06Z", "symbol": "USDJPY", "timeframe": "5m", "bars": 60, "latency_ms": 26.089, "cpu_ms": 22.839, "indicators": 9}
+{"ts": "2026-01-12T02:21:27Z", "symbol": "USDJPY", "timeframe": "5m", "bars": 2, "latency_ms": 8.634, "cpu_ms": 8.692, "indicators": 9}
+{"ts": "2026-01-12T02:21:27Z", "symbol": "USDJPY", "timeframe": "5m", "bars": 1, "latency_ms": 5.918, "cpu_ms": 6.066, "indicators": 9}
+{"ts": "2026-01-12T02:21:55Z", "symbol": "USDJPY", "timeframe": "5m", "bars": 2, "latency_ms": 8.71, "cpu_ms": 8.752, "indicators": 9}
+{"ts": "2026-01-12T02:21:55Z", "symbol": "USDJPY", "timeframe": "5m", "bars": 1, "latency_ms": 7.144, "cpu_ms": 7.086, "indicators": 9}
+{"ts": "2026-01-12T02:22:14Z", "symbol": "USDJPY", "timeframe": "5m", "bars": 2, "latency_ms": 7.918, "cpu_ms": 8.134, "indicators": 9}
+{"ts": "2026-01-12T02:22:14Z", "symbol": "USDJPY", "timeframe": "5m", "bars": 1, "latency_ms": 5.791, "cpu_ms": 5.993, "indicators": 9}
+{"ts": "2026-01-12T02:22:27Z", "symbol": "USDJPY", "timeframe": "5m", "bars": 2, "latency_ms": 8.29, "cpu_ms": 8.413, "indicators": 9}
+{"ts": "2026-01-12T02:22:27Z", "symbol": "USDJPY", "timeframe": "5m", "bars": 1, "latency_ms": 5.81, "cpu_ms": 6.01, "indicators": 9}
+{"ts": "2026-01-12T02:22:58Z", "symbol": "USDJPY", "timeframe": "5m", "bars": 2, "latency_ms": 7.774, "cpu_ms": 7.981, "indicators": 9}
+{"ts": "2026-01-12T02:22:58Z", "symbol": "USDJPY", "timeframe": "5m", "bars": 1, "latency_ms": 5.782, "cpu_ms": 5.919, "indicators": 9}
+{"ts": "2026-01-12T02:44:01Z", "symbol": "USDJPY", "timeframe": "5m", "bars": 2, "latency_ms": 21.763, "cpu_ms": 14.439, "indicators": 9}
+{"ts": "2026-01-12T02:44:04Z", "symbol": "USDJPY", "timeframe": "5m", "bars": 1, "latency_ms": 22.329, "cpu_ms": 17.026, "indicators": 9}

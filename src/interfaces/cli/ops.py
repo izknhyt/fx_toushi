@@ -34,6 +34,7 @@ __all__ = [
     "agenda",
     "automation_log",
     "action_item_sync",
+    "degraded_ack",
     "OpsWorklogService",
     "AutomationEffectTracker",
     "OpsAgendaService",
@@ -120,6 +121,30 @@ def _apply_auto_execute_lifecycle(
         "worklog": worklog_entry,
         "readiness_entry": readiness_entry,
     }
+
+
+def degraded_ack(
+    *,
+    reason: str,
+    runbook_ref: str | None = None,
+    evidence: Iterable[str] | None = None,
+    actor: str | None = None,
+    board_mode: str = "guarded",
+    ops_worklog_path: Path = DEFAULT_OPS_WORKLOG_PATH,
+) -> dict[str, object]:
+    """Record a degraded acknowledgement in the ops worklog ledger."""
+
+    entry = {
+        "timestamp": _utcnow(),
+        "task": "degraded_ack.registered",
+        "actor": actor,
+        "board_mode": board_mode,
+        "reason": reason,
+        "runbook_ref": runbook_ref,
+        "evidence": list(evidence or ()),
+    }
+    _append_jsonl(ops_worklog_path, entry)
+    return {"status": "ok", "worklog": entry, "ops_worklog_path": str(ops_worklog_path)}
 
 
 def readiness(

@@ -42,7 +42,7 @@
 4. **是正アクション**
    - `tradectl performance live-guard --strategy <id> --output md --save reports/weekly/evidence/<YYYY-WW>/live_guard.md`で人間向けサマリを生成し、改善タスクを列挙する。
    - 例: ポジション縮小は`config/risk_policy.yaml::position_limits`, 手動介入は`RUN-HITL-01`, データ補完は`RUN-DATA-05`参照。
-   - Opsが実施した手動アクションは`docs/review_log.md`（カテゴリ: `LG-<YYYYWW>`）と`ops_worklog`に記録する。
+   - Opsが実施した手動アクションは`docs/development_plan.md#update-log-utc`（カテゴリ: `LG-<YYYYWW>`）と`ops_worklog`に記録する。
 5. **モニタリングと解除判定**
    - 翌営業日から`tradectl performance live-guard --strategy <id> --strict --output json`を毎日実行し、`metrics/performance_live_guard.jsonl`に追記される`pf_trailing`/`sharpe_trailing`/`latency_p75`を監視する。
    - 解除条件: `pf_trailing ≥ config.risk.live_guard.pf_threshold`かつ`latency_p75 ≤ config.risk.live_guard.latency_p75_threshold`が連続2日以上、`P&L drawdown`が`config/risk_policy.yaml`の`weekly_drawdown_pct`以内。
@@ -53,21 +53,21 @@
      - 実施アクションと実装箇所（例: `src/risk/live_guard.py`）
      - `RUN-EXEC-02`または他Runbookへのエスカレーション有無
      - 再発防止タスク（`tickets/live_guard_followup/<date>.md`）
-   - 週次OpsレビューでPO/Risk Managerがサインし、`docs/review_log.md`の該当週へリンクを追加する。
+   - 週次OpsレビューでPO/Risk Managerがサインし、`docs/development_plan.md#update-log-utc`の該当週へリンクを追加する。
 
 ## Board/Weeklyレポート統合（§11.1 リスク#5対応）
 - **Board Modeの強制**: `LATENCY-LIVE-GUARD`が連続Failした場合、`tradectl board --guarded`でBoardMode=guardedを強制し、`reports/audit/kill_switch_review/<timestamp>.md`に`reason=live_guard_chain_fail`を追記する。解除条件は本RunbookのStep5に従い、2営業日連続でPF/Latencyが閾値内に戻るまで維持する。
 - **Ops Agenda連携**: `tradectl ops agenda --date <YYYY-MM-DD> --include live_guard`（スタブ）で`live_guard_board_review`タスクを生成し、Ops Managerが`ops_worklog`へ`{"task":"live_guard_board_review","status":"queued"}`→`:"done"`を記録する。
 - **レポート整合**: `tradectl report weekly --since 7d --section live_guard`の出力を`reports/weekly/evidence/<YYYY-WW>/live_guard_board.md`へ貼り付け、`OPS-74`チェックリストに「Board/Weekly PF整合」項目としてリンクする。
 - **Evidence**: `reports/risk/20250318_prelaunch/live_guard_board_mode.md`（Boardスナップショット、Ops/POサイン付き）。
-- **Closed条件**: 上記エビデンスが最新週まで揃い、`docs/risk_review/20250318_prelaunch.md` §11.1-5へ「Closed (RUN-RISK-07 v1.0 board addendum)」を追記する。
+- **Closed条件**: 上記エビデンスが最新週まで揃い、`docs/development_plan.md#update-log-utc`へ「Closed (RUN-RISK-07 v1.0 board addendum)」を追記する。
 
 ## 証跡と保存先
 - `reports/weekly/evidence/<YYYY-WW>/live_guard.{json,md}`
 - `reports/validation_log/live_guard_<date>.md`（初動〜解除までの全ログ）
 - `reports/audit/kill_switch_review/<timestamp>.md`
 - `metrics/performance_live_guard.jsonl`（CLIが自動追記）
-- `logs/ops/workload.log`, `docs/review_log.md`（カテゴリ: `LG-<YYYYWW>`）
+- `logs/ops/workload.log`, `docs/development_plan.md#update-log-utc`（カテゴリ: `LG-<YYYYWW>`）
 
 ## 関連Runbook/依存
 - `RUN-EXEC-02`: Execution再キャリブレーション

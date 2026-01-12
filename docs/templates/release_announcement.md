@@ -53,4 +53,4 @@
 | Ops Lead | {{signoff.ops_lead.name}} | {{signoff.ops_lead.timestamp}} | {{signoff.ops_lead.note}} |
 | Trader Representative | {{signoff.trader_rep.name}} | {{signoff.trader_rep.timestamp}} | {{signoff.trader_rep.note}} |
 
-> 詳細設計§13.7で定義されたリリースコミュニケーション手順と整合すること。更新後は`docs/releases/<tag>.md`にリンクを追加する。
+> 詳細設計§13.7で定義されたリリースコミュニケーション手順と整合すること。更新後は`docs/archive/releases/<tag>.md`にリンクを追加する。

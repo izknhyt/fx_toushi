@@ -86,6 +86,29 @@ def _utcnow_iso() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
+def _write_funding_evidence(*, state: FundingState, output_dir: Path) -> Path:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    date_tag = datetime.now(timezone.utc).strftime("%Y%m%d")
+    path = output_dir / f"AC-09_funding_{date_tag}.md"
+    lines = [
+        f"# Funding Evidence {date_tag}",
+        "",
+        f"- Synced At: {state.last_synced_at}",
+        f"- CSV Path: {state.csv_path}",
+        f"- Shadow Path: {state.shadow_path}",
+        f"- CSV SHA256: {state.csv_sha256}",
+        f"- Shadow SHA256: {state.shadow_sha256}",
+        f"- Pair Count: {state.pair_count}",
+        f"- Prepared By: {state.prepared_by or 'n/a'}",
+        f"- Reviewed By: {state.reviewed_by or 'n/a'}",
+        f"- Approved By: {state.approved_by or 'n/a'}",
+        "",
+        "- Runbook: RUN-FUNDING-01",
+    ]
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return path
+
+
 def funding_sync(
     *,
     csv_path: Path,
@@ -130,6 +153,7 @@ def funding_sync(
         state_path.write_text(
             json.dumps(asdict(state), ensure_ascii=False, indent=2), encoding="utf-8"
         )
+        _write_funding_evidence(state=state, output_dir=Path("reports") / "validation_log")
 
     return state
 

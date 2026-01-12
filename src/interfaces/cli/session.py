@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import asdict
 from collections.abc import Mapping, Sequence
 from datetime import datetime, timezone
 from pathlib import Path
@@ -41,6 +42,7 @@ def _serialise_mode_context(mode_context: ModeContext) -> Mapping[str, Any]:
         "timeframes": _normalise(profile.timeframes),
         "risk": _normalise(profile.risk),
         "gates": _normalise(profile.gates),
+        "hitl": _normalise(mode_context.hitl),
         "strategies": _normalise(profile.strategies),
         "execution": _normalise(profile.execution),
         "spread": _normalise(profile.spread),
@@ -253,6 +255,8 @@ def stop_session(
 
 
 def _normalise(value: Any) -> Any:
+    if hasattr(value, "__dataclass_fields__"):
+        return _normalise(asdict(value))
     if isinstance(value, Mapping):
         return {str(key): _normalise(val) for key, val in value.items()}
     if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):

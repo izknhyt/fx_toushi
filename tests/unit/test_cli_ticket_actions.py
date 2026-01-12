@@ -115,3 +115,17 @@ def test_ticket_approve_requires_consent_when_enforced(
 
     with pytest.raises(tickets.ConsentRequiredError):
         tickets.approve("t4", user="alice")
+
+
+def test_guarded_mode_forces_reduce_only(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(tickets, "METRICS_PATH", tmp_path / "metrics.jsonl")
+    monkeypatch.setattr(tickets, "AUDIT_PATH", tmp_path / "audit.jsonl")
+    guardrails = {"reduce_only": False}
+    result = tickets.approve("t5", user="alice", board_mode="guarded", guardrails=guardrails)
+    assert result["status"] == "ok"
+    audit_entry = json.loads((tmp_path / "audit.jsonl").read_text(encoding="utf-8").strip())
+    assert audit_entry["guardrails"]["reduce_only"] is True
+    assert audit_entry["guardrails"]["auto_execute"] is False
+    assert audit_entry["guardrails"]["auto_execute_forced_off"] is True

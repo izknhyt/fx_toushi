@@ -75,7 +75,7 @@
 4. Validation Data Playbook（要件定義§8.2, AC-09行）に従い、Risk ManagerとOps Managerが`reports/validation_log/AC-09_<date>.md`へ更新者・実行コマンド・ファイルハッシュ・差分要約を記録する。必要に応じて`tradectl correlation diff --base data/correlation/initial/bootstrap.parquet --target data/correlation/$(date +%G%V)_correlation.parquet`で基準データとの差分を確認し、バケット閾値の逸脱があれば是正タスクを起票する。
 
 ### 6. Kill Switch演習・オンコール整合（週次 / Acceptable Degradation時）
-> 目的: オンコール体制とKill Switch操作手順を定期的に訓練し、R-02/R-05のフォローアップ（`docs/risk_review/20250318_prelaunch.md`）を満たす。
+> 目的: オンコール体制とKill Switch操作手順を定期的に訓練し、R-02/R-05のフォローアップは`docs/development_plan.md#update-log-utc`へ記録する（`docs/archive/risk_review/20250318_prelaunch.md`は参照のみ）。
 
 1. **オンコール表の更新**  
    - 週初め（月曜 09:00 JST）に`reports/risk/20250318_prelaunch/R02_oncall_readiness.md`へ直近4週間分のオンコール担当（Primary/Secondary/Risk）を追記し、Slack `#ops-oncall` のピン留めを更新する。  
@@ -89,7 +89,7 @@
 
 3. **ウォッチポイント**  
    - Kill Switch演習中に`tradectl diagnostics risk --from -1d --mode paper`の結果が閾値外だった場合、即座に`RUN-TIME-01`「Snapshot復旧演習」と連携し、ModeContext再起動テストを実施する。  
-   - オンコール担当が応答しない場合はRACIに従いSecondaryへ即時引き継ぎ、`docs/risk_review/20250318_prelaunch.md`へ記録する。
+   - オンコール担当が応答しない場合はRACIに従いSecondaryへ即時引き継ぎ、`docs/development_plan.md#update-log-utc`へ記録する。
 
 4. **証跡**  
    - `reports/validation_log/AC-03_<date>.md`へ演習コマンド・結果・参加者サインを記録。  
@@ -103,7 +103,7 @@
   3. `reports/audit/reduce_only/<date>.md`へ処理対象（チケットID、Spreadクールダウン状態、TTL、ダブルエントリーチェック）と承認者を列挙する。
   4. `tradectl kill-switch review --reason backlog --strategy <id>`を使用し、Guarded状態が2時間超過した場合にKill Switch判断を再評価する。
 - **キャパシティ分散**: `reduce_only_queue_<date>.json`に未処理チケットの推定件数が10件を超えた場合、Quant/Risk/POと協議して2名体制を設定し、Ops Agendaに担当列を追加する。Ops Managerは`tradectl ops agenda --date <YYYY-MM-DD> --with-oncall`のメモ欄へ本RunbookIDを明記する。
-- **Evidence**: `reports/risk/20250318_prelaunch/reduce_only_queue.md`に日次レビュー結果・Ops/Risk/POのイニシャルを追記し、`docs/risk_review/20250318_prelaunch.md` §11.1-2へ「Closed (RUN-RISK-01 v1.2)」と記録する。
+- **Evidence**: `reports/risk/20250318_prelaunch/reduce_only_queue.md`に日次レビュー結果・Ops/Risk/POのイニシャルを追記し、`docs/development_plan.md#update-log-utc`へ「Closed (RUN-RISK-01 v1.2)」を記録する。
 
 ## チェックリスト
 - [ ] `risk_disclosure_enforce` の有効/無効と承諾状態を確認（M1.1）

@@ -15,4 +15,4 @@
 
 - エビデンスは`reports/ux/<YYYYMMDD>_<slug>/`配下に保存し、スクリーンショットは`docs/trader_signoff/`の該当Packet参照を追記する。
 - ステータスは`logged → triaged → in_progress → validated → closed`を想定し、変更時はGit履歴に加えて末尾へ`Update:`行を追記する。
-- Packet化された項目は`docs/prompt_packages/<YYYYMMDD>_<feature>.md`にリンクし、改善要望の優先度タグ（must/should/nice）を再掲する。
+- Packet化された項目は`docs/development_plan.md`のBacklog/Update Logにリンクし、改善要望の優先度タグ（must/should/nice）を再掲する。

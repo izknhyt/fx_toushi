@@ -103,6 +103,54 @@ def _read_jsonl_tail(path: Path, limit: int = 5) -> list[dict[str, object]]:
     return results
 
 
+def _should_use_catch_up_parallelism(
+    ingestion_path: Path, *, lag_threshold_minutes: int = 30
+) -> tuple[bool, str | None]:
+    if _read_bool_env("TRADECTL_CATCH_UP_MODE", False):
+        return True, "env:TRADECTL_CATCH_UP_MODE"
+    if _read_bool_env("TRADECTL_CATCH_UP_ENABLED", False):
+        return True, "env:TRADECTL_CATCH_UP_ENABLED"
+    entries = _read_jsonl_tail(ingestion_path, limit=20)
+    for entry in reversed(entries):
+        lag = entry.get("catch_up_lag_minutes")
+        try:
+            if lag is not None and int(lag) >= lag_threshold_minutes:
+                return True, f"catch_up_lag_minutes={lag}"
+        except (TypeError, ValueError):
+            continue
+    return False, None
+
+
+def _has_recent_degraded_ack(
+    *,
+    window_hours: int = 24,
+    path: Path = OPS_WORKLOG_PATH,
+) -> bool:
+    if not path.exists():
+        return False
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=window_hours)
+    lines = path.read_text(encoding="utf-8").splitlines()
+    for line in reversed(lines[-200:]):
+        if not line.strip():
+            continue
+        try:
+            entry = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if entry.get("task") != "degraded_ack.registered":
+            continue
+        ts = entry.get("timestamp") or entry.get("ts")
+        if not ts:
+            continue
+        try:
+            parsed = datetime.fromisoformat(str(ts).replace("Z", "+00:00"))
+        except ValueError:
+            continue
+        if parsed >= cutoff:
+            return True
+    return False
+
+
 def status(
     *,
     providers: Sequence[str] | None = None,
@@ -135,7 +183,13 @@ def status(
         stages=["stage0", "stage1", "stage2"],
     )
     worker_plans: list[dict[str, object]] = []
+    degraded_ack_required = _read_bool_env("TRADECTL_REQUIRE_DEGRADED_ACK", False)
+    degraded_ack_recent = _has_recent_degraded_ack() if degraded_ack_required else False
+    ack_blocked = degraded_ack_required and not degraded_ack_recent
+    if auto_apply and degraded_ack_required and not degraded_ack_recent:
+        auto_apply = False
 
+    catch_up_mode, catch_up_reason = _should_use_catch_up_parallelism(ingestion_path)
     if log_stage_eval:
         for provider in provider_list:
             rate_429 = _latest_429_rate(rate_limit_path, provider, ingestion_path=ingestion_path)
@@ -150,6 +204,9 @@ def status(
                 "stage_eval": {
                     **decision.to_mapping(),
                     "decision_source": "auto" if auto_apply else "manual",
+                    "approval_status": "blocked_no_degraded_ack" if ack_blocked else "ok",
+                    "degraded_ack_required": degraded_ack_required,
+                    "degraded_ack_recent": degraded_ack_recent,
                     "approver_stub": "ops_manager",
                     "runbook_ref": "RUN-DATA-05.step3",
                 },
@@ -186,6 +243,10 @@ def status(
             providers=provider_list,
             rate_limit_guard=guard,
             rate_limit_state={p["provider"]: p["stage"] for p in stage_evaluations},
+            catch_up_mode=catch_up_mode,
+            runbook_ref="RUN-DATA-06#catch_up_parallelism"
+            if catch_up_mode
+            else "RUN-DATA-05.step3",
         )
         worker_plans = [
             {
@@ -215,6 +276,12 @@ def status(
         "worker_plans": worker_plans,
         "health_suggestion": health_payload,
         "paid_feed": paid_feed_eval.to_dict(),
+        "degraded_ack_required": degraded_ack_required,
+        "degraded_ack_recent": degraded_ack_recent,
+        "catch_up_parallelism": {
+            "enabled": catch_up_mode,
+            "reason": catch_up_reason,
+        },
     }
     logger.info("cli.data.status.completed", extra=payload)
     return payload
@@ -1065,6 +1132,7 @@ def health_snapshot(
         "start": str(df["timestamp"].min()),
         "end": str(df["timestamp"].max()),
         "gaps_detected": 0,
+        "runbook_ref": "RUN-DATA-06",
     }
     logger.info("cli.data.health_snapshot", extra=payload)
     return payload

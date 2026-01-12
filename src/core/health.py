@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import copy
 from collections.abc import Iterable
+import json
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:  # pragma: no cover - type hints only
@@ -22,6 +24,7 @@ __all__ = [
 
 
 _SEVERITY_ORDER = ("ok", "warn", "degraded", "soft_stop", "hard_stop")
+DEFAULT_HEALTH_EVENT_LOG = Path("logs/events/health.changed.jsonl")
 
 
 def _now() -> datetime:
@@ -204,6 +207,37 @@ class HealthMonitor:
             existing.detail = detail
             existing.recommended_action = recommended_action
             existing.raised_at = _now()
+        self._emit_health_event(level=level, reason=reason, detail=detail, action=recommended_action)
+
+    def _emit_health_event(
+        self,
+        *,
+        level: str,
+        reason: str,
+        detail: str | None,
+        action: str | None,
+    ) -> None:
+        mapped_status = self._LEVEL_TO_STATUS.get(level, "degraded")
+        runbook_ref = None
+        if action and action.startswith("runbook:"):
+            runbook_ref = action.split("runbook:", 1)[-1].strip() or None
+        payload = {
+            "event": "health.changed",
+            "ts": _now().isoformat().replace("+00:00", "Z"),
+            "level": level,
+            "reason": reason,
+            "detail": detail,
+            "recommended_action": action,
+        }
+        if runbook_ref:
+            payload["runbook_ref"] = runbook_ref
+        try:
+            DEFAULT_HEALTH_EVENT_LOG.parent.mkdir(parents=True, exist_ok=True)
+            with DEFAULT_HEALTH_EVENT_LOG.open("a", encoding="utf-8") as handle:
+                handle.write(json.dumps(payload, ensure_ascii=False))
+                handle.write("\n")
+        except OSError:
+            return
         self._state.status = self._merge_status(self._state.status, mapped_status)
 
     def queue_action(

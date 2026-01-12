@@ -26,7 +26,7 @@
 3. レビュー: Ops Managerが`Summary`/`Critical First`の内容を確認し、必要に応じて`Operational Tasks`を追記。
 4. 承認準備: `Runbook Reviews`と`Validation Pending`セクションをDocOps/Validation担当へ共有し、期限と担当を確定。
 5. ダブルサイン: Ops Managerが`Ops Sign-off`欄、POが`PO Sign-off`欄へイニシャルとタイムスタンプを記入。
-6. 公開: 完成したアジェンダをOpsチャンネルへ共有し、`docs/review_log.md`の該当週エントリへリンクを貼る。
+6. 公開: 完成したアジェンダをOpsチャンネルへ共有し、`docs/development_plan.md#update-log-utc`の該当週エントリへリンクを貼る。
 
 ## 承認フロー
 | ロール | 責務 | 承認方法 |
@@ -38,7 +38,7 @@
 ## 記録と証跡
 - Ops Worklog: `tradectl ops log add --task agenda_generation --duration <所要分> --notes "RUN-OPS-AGENDA-01#<対象日>"`。
 - Validation: `reports/validation_log/AC-51_ops_<対象日>.md`へアジェンダファイルとCLI出力ハッシュを貼付。
-- リンク更新: `docs/review_log.md`「Ops Agenda Export」に`reports/ops/daily_agenda/<対象日>.md`を追記。
+- リンク更新: `docs/development_plan.md#update-log-utc`に`reports/ops/daily_agenda/<対象日>.md`を追記。
 
 ## Board Mode/Acceptable Degradation 解除チェック（手動）
 - 解除条件: (1) 直近15分の`metrics/data_ingestion_sla.jsonl`と`metrics/spread_guard.jsonl`が正常ステータス、(2) `health.status ∈ {ok}`かつ`kill_switch_state != hard_stop`、(3) Runbook該当原因コードの解消を確認。

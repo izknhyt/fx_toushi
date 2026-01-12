@@ -40,8 +40,8 @@
       },
       {
         "rel": "change_request",
-        "href": "docs/change_requests/CR-20250318-kpi-sample.md",
-        "title": "CR-20250318 KPI validation checklist"
+        "href": "docs/archive/change_requests/CR-<YYYYMMDD>-kpi-sample.md",
+        "title": "CR-<YYYYMMDD> KPI validation checklist (legacy)"
       }
     ],
     "generated_by": "tradectl kpi snapshot --mode paper --window 90d",

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pandas as pd
+
 from src.interfaces.cli.report import daily, performance, weekly
 
 
@@ -105,3 +107,26 @@ def test_performance_enabled_writes_report(tmp_path: Path, monkeypatch) -> None:
     assert metrics_path.exists()
     content = output_path.read_text(encoding="utf-8")
     assert "Performance Snapshot" in content
+
+
+def test_performance_metric_state_provisional(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    _write_feature_flags(tmp_path, profile="paper", enabled=True)
+    returns_path = tmp_path / "returns.parquet"
+    df = pd.DataFrame(
+        {
+            "timestamp": pd.date_range("2025-01-01", periods=10, freq="D"),
+            "return": [0.0] * 10,
+        }
+    )
+    df.to_parquet(returns_path, index=False)
+
+    payload = performance(
+        profile="paper",
+        output_path=tmp_path / "performance.md",
+        metrics_path=tmp_path / "performance.jsonl",
+        returns_path=returns_path,
+        dry_run=True,
+    )
+
+    assert payload["metric_state"] == "provisional"
