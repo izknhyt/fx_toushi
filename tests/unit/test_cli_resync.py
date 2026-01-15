@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+import importlib
+import json
 from typing import Any
 
-from src.interfaces.cli.resync import resync
+resync_module = importlib.import_module("src.interfaces.cli.resync")
 
 
 class _SessionStub:
@@ -41,21 +43,21 @@ class _SessionStub:
 
 
 def test_resync_returns_unavailable_when_session_is_missing() -> None:
-    payload = resync(session=None)
+    payload = resync_module.resync(session=None)
     assert payload["status"] == "unavailable"
     assert "error" in payload
 
 
 def test_resync_returns_unimplemented_when_session_raises() -> None:
     session = _SessionStub(error=NotImplementedError("catch_up not wired"))
-    payload = resync(session=session)
+    payload = resync_module.resync(session=session)
     assert payload["status"] == "unimplemented"
     assert "catch_up not wired" in payload["error"]
 
 
 def test_resync_success_path_serialises_summary_and_arguments() -> None:
     session = _SessionStub(result={"catch_up_elapsed_sec": 45, "windows": 3})
-    payload = resync(
+    payload = resync_module.resync(
         session=session,
         since="2025-03-18T10:00:00Z",
         symbols=["USDJPY", "EURUSD"],
@@ -73,3 +75,26 @@ def test_resync_success_path_serialises_summary_and_arguments() -> None:
     assert session.calls[-1]["symbols"] == ["USDJPY", "EURUSD"]
     assert session.calls[-1]["force"] is True
     assert session.calls[-1]["failover_report"] is True
+
+
+def test_apply_catch_up_health_uses_degraded_for_30_min_lag(
+    tmp_path, monkeypatch
+) -> None:
+    health_state_path = tmp_path / "health_state.json"
+    monkeypatch.setattr(resync_module, "DEFAULT_HEALTH_STATE_PATH", health_state_path)
+    monkeypatch.setattr(
+        resync_module, "DEFAULT_HEALTH_ACTION_AUDIT", tmp_path / "health_action.jsonl"
+    )
+    monkeypatch.setattr(
+        resync_module, "DEFAULT_HEALTH_SUGGEST_LOG", tmp_path / "health_suggested.jsonl"
+    )
+
+    summary = {"catch_up_lag_minutes": 30}
+    result = resync_module._apply_catch_up_health(
+        summary, log_path=tmp_path / "resync_events.jsonl"
+    )
+
+    assert result is not None
+    assert result["action"] == "guarded"
+    payload = json.loads(health_state_path.read_text(encoding="utf-8"))
+    assert payload["status"] == "degraded"

@@ -1,9 +1,9 @@
 # RUN-RELEASE-01: リリースゲート運用手順
 
 > **ACカバレッジ**: AC-06, AC-40
-> **Runbook版数**: v1.0
-> **最終更新日**: 2026-01-07
-> **最終更新者**: Product Owner (Doc Maintainer)
+> **Runbook版数**: v1.1
+> **最終更新日**: 2026-01-12
+> **最終更新者**: Codex (Doc Maintainer)
 > **関連CLI**: `tradectl release prepare`, `tradectl release record`, `tradectl release verify`, `tradectl release tag`
 > **関連ファイル**: `docs/release_checklist.md`, `reports/audit/release/<version>.md`, `reports/audit/release/<version>.json`
 

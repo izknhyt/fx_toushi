@@ -51,11 +51,13 @@
     "signatures/index.json",
     "sla_thresholds/candidate_template.yaml",
     "provider_priority.yaml",
+    "provider_profiles/local.yaml",
     "ingestion/priorities.yaml",
     "event_bus.yaml",
     "pipeline/m1_core.yaml",
     "data_sources/dukascopy.yaml",
     "data_sources/yfinance.yaml",
+    "data_sources/paid_feed.yaml",
     "data_sources/TEMPLATE.yaml"
   ],
   "additionalProperties": true,
@@ -198,6 +200,9 @@
     "provider_priority.yaml": {
       "$ref": "provider_priority.schema.json"
     },
+    "provider_profiles/local.yaml": {
+      "$ref": "provider_profile.schema.json"
+    },
     "ingestion/priorities.yaml": {
       "$ref": "ingestion_priorities.schema.json"
     },
@@ -211,6 +216,9 @@
       "$ref": "data_source.schema.json"
     },
     "data_sources/yfinance.yaml": {
+      "$ref": "data_source.schema.json"
+    },
+    "data_sources/paid_feed.yaml": {
       "$ref": "data_source.schema.json"
     },
     "data_sources/TEMPLATE.yaml": {

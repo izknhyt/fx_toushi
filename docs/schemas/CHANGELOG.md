@@ -1,5 +1,9 @@
 # Schema Registry Change Log
 
+## 2026-01-12
+- Added `provider_profile.schema.json` to validate provider retry/backoff/timeout profiles under `config/provider_profiles/`.
+- Updated `config_bundle.schema.json` to require `config/provider_profiles/local.yaml` and `config/data_sources/paid_feed.yaml`.
+
 ## 2026-01-04
 - `guardrails_metrics.schema.json` adds required `profit_readiness_status` and `auto_execute` fields, and marks `spread_status`, `risk_disclosure`, and `auto_execute_forced_off` as required to keep guardrails telemetry aligned with profit readiness and Hands-off state.
 

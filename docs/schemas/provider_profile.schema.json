@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://fx-toushi.dev/schemas/provider_profile.schema.json",
+  "title": "ProviderProfile",
+  "description": "Provider-specific retry/backoff/timeout profile overrides for data ingestion.",
+  "type": "object",
+  "required": ["schema_version", "defaults"],
+  "properties": {
+    "schema_version": {"type": "string"},
+    "defaults": {"$ref": "#/$defs/profile"},
+    "providers": {
+      "type": "object",
+      "additionalProperties": {"$ref": "#/$defs/profile"}
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "profile": {
+      "type": "object",
+      "properties": {
+        "timeout_sec": {"type": "number", "minimum": 0},
+        "retry": {"$ref": "#/$defs/retry"}
+      },
+      "additionalProperties": false
+    },
+    "retry": {
+      "type": "object",
+      "properties": {
+        "max_attempts": {"type": "integer", "minimum": 1},
+        "backoff_sec": {"type": "number", "minimum": 0}
+      },
+      "additionalProperties": false
+    }
+  }
+}

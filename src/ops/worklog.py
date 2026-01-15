@@ -6,7 +6,7 @@ import hashlib
 import json
 from collections.abc import Iterable
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 OPS_WORKLOG_JSONL_PATH = Path("ops_worklog.jsonl")
@@ -117,7 +117,7 @@ class OpsWorklogService:
 
         if not self._ledger_path.exists():
             return ()
-        cutoff = datetime.utcnow() - window
+        cutoff = datetime.now(timezone.utc) - window
         results: list[OpsWorklogEntry] = []
         for line in self._ledger_path.read_text(encoding="utf-8").splitlines():
             if not line.strip():
@@ -130,6 +130,8 @@ class OpsWorklogService:
                 ts = datetime.fromisoformat(str(data.get("ts")).replace("Z", "+00:00"))
             except Exception:
                 continue
+            if ts.tzinfo is None:
+                ts = ts.replace(tzinfo=timezone.utc)
             if ts < cutoff:
                 continue
             if task and data.get("task") != task:

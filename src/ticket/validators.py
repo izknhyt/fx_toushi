@@ -9,6 +9,7 @@ from src.core.gate import (
     CalendarGateState,
     GateBlockState,
     GateState,
+    LiquidityGateState,
     NewsGateState,
     SpreadGateState,
 )
@@ -39,6 +40,13 @@ def _resolve_spread(symbol: str, gate_state: GateState) -> SpreadGateState:
     if block and block.spread is not None:
         return block.spread
     return gate_state.market.spread
+
+
+def _resolve_liquidity(gate_state: GateState) -> LiquidityGateState | None:
+    try:
+        return gate_state.market.liquidity
+    except Exception:
+        return None
 
 
 def validate_market_open(symbol: str, gate_state: GateState) -> None:
@@ -83,9 +91,27 @@ def evaluate_spread(symbol: str, gate_state: GateState) -> tuple[str, Mapping[st
         )
 
     status = "ok"
-    if spread_state.state == "cooldown":
+    if spread_state.state in {"cooldown", "watch"}:
         status = "warn"
     return status, metadata
+
+
+def evaluate_liquidity(gate_state: GateState) -> tuple[str, Mapping[str, object]]:
+    """Return checklist status for liquidity monitoring."""
+
+    liquidity = _resolve_liquidity(gate_state)
+    if liquidity is None:
+        return "ok", {}
+    metadata: dict[str, object] = {"state": liquidity.state}
+    if liquidity.recommendation:
+        metadata["recommendation"] = liquidity.recommendation
+    if liquidity.updated_at:
+        metadata["updated_at"] = _isoformat(liquidity.updated_at)
+    if liquidity.state in {"guarded", "halted"}:
+        return "warn", metadata
+    if liquidity.state == "watch":
+        return "warn", metadata
+    return "ok", metadata
 
 
 def evaluate_double_entry(gate_state: GateState) -> tuple[str, Mapping[str, object]]:
@@ -131,6 +157,7 @@ def _isoformat(value: datetime) -> str:
 
 __all__ = [
     "evaluate_double_entry",
+    "evaluate_liquidity",
     "evaluate_manual_comment",
     "evaluate_spread",
     "validate_market_open",

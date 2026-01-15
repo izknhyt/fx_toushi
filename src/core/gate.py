@@ -23,6 +23,7 @@ if TYPE_CHECKING:
     from src.risk.manager import RiskAssessment
 
 SpreadState = Literal["normal", "watch", "cooldown", "halt"]
+LiquidityState = Literal["normal", "watch", "guarded", "halted"]
 DataStatus = Literal["ok", "degraded", "halt_recommended"]
 ProfitReadinessStatus = Literal["ok", "guarded", "halted", "stale"]
 SchemaVersion = int | str
@@ -110,6 +111,28 @@ class SpreadGateState:
 
 
 @dataclass(slots=True)
+class LiquidityGateState:
+    state: LiquidityState
+    recommendation: str | None = None
+    updated_at: datetime | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "state": self.state,
+            "recommendation": self.recommendation,
+            "updated_at": _datetime_to_iso(self.updated_at),
+        }
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> LiquidityGateState:
+        return cls(
+            state=data.get("state", "normal"),
+            recommendation=data.get("recommendation"),
+            updated_at=_datetime_from_iso(data.get("updated_at")),
+        )
+
+
+@dataclass(slots=True)
 class GateBlockState:
     news: NewsGateState | None = None
     calendar: CalendarGateState | None = None
@@ -145,6 +168,7 @@ class MarketGateState:
     news: NewsGateState
     calendar: CalendarGateState
     spread: SpreadGateState
+    liquidity: LiquidityGateState
     latency_data_status: DataStatus = "ok"
     slippage_data_status: DataStatus = "ok"
     profit_readiness_status: ProfitReadinessStatus = "ok"
@@ -156,6 +180,7 @@ class MarketGateState:
             news=NewsGateState(blocked=False),
             calendar=CalendarGateState(blocked=False, holiday_block=False),
             spread=SpreadGateState(state="normal"),
+            liquidity=LiquidityGateState(state="normal"),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -168,6 +193,7 @@ class MarketGateState:
             "news": self.news.to_dict(),
             "calendar": self.calendar.to_dict(),
             "spread": self.spread.to_dict(),
+            "liquidity": self.liquidity.to_dict(),
             "latency_data_status": self.latency_data_status,
             "slippage_data_status": self.slippage_data_status,
             "profit_readiness_status": self.profit_readiness_status,
@@ -188,6 +214,7 @@ class MarketGateState:
             news=NewsGateState.from_dict(data["news"]),
             calendar=CalendarGateState.from_dict(data["calendar"]),
             spread=SpreadGateState.from_dict(data["spread"]),
+            liquidity=LiquidityGateState.from_dict(data.get("liquidity", {})),
             latency_data_status=data.get("latency_data_status", "ok"),
             slippage_data_status=data.get("slippage_data_status", "ok"),
             profit_readiness_status=data.get("profit_readiness_status", "ok"),
@@ -291,6 +318,7 @@ class GateState:
             normalized_board != "normal"
             or normalized_spread in {"cooldown", "block", "halt"}
             or normalized_kill_switch not in {"none", "normal"}
+            or self.market.liquidity.state in {"guarded", "halted"}
             or self.risk.reduce_only
         ):
             self.auto_execute = False
@@ -416,6 +444,12 @@ class GateAggregator:
         if per_symbol is not None:
             for symbol, state in per_symbol.items():
                 self._assign_symbol_component(symbol, "spread", state)
+
+    def update_liquidity(self, *, global_state: LiquidityGateState | None = None) -> None:
+        if global_state is not None:
+            self._state.market.liquidity = copy.deepcopy(global_state)
+            if global_state.state in {"guarded", "halted"}:
+                self.set_auto_execute(board_mode="guarded")
 
     def update_risk(
         self,
@@ -564,6 +598,8 @@ __all__ = [
     "GateBlockState",
     "GateState",
     "HumanGateState",
+    "LiquidityGateState",
+    "LiquidityState",
     "MarketGateState",
     "NewsGateState",
     "RiskGateState",

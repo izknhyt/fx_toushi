@@ -1,9 +1,9 @@
 """Data ingestion service scaffolding with SLA metrics logging.
 
 The implementation focuses on deterministic scaffolding that downstream CLIs
-and tests consume. Real provider integration is left as an extension point,
-while the public API and metrics format remain stable per the detailed design
-§3.1/§17.6.
+and tests consume. Provider handlers remain optional extension points; paid
+feed adapters and profile-based retry/backoff tuning are wired while the
+public API and metrics format remain stable per the detailed design §3.1/§17.6.
 """
 
 from __future__ import annotations
@@ -39,6 +39,13 @@ class WorkerPlan:
     max_workers: int
 
 
+@dataclass(slots=True)
+class ProviderProfile:
+    timeout_sec: float | None = None
+    retry_max_attempts: int | None = None
+    retry_backoff_sec: float | None = None
+
+
 __all__ = [
     "MarketRequest",
     "MarketFrame",
@@ -69,12 +76,15 @@ __all__ = [
     "log_processing_delay",
     "run_worker_plan",
     "run_fetch_workers",
+    "ProviderProfile",
+    "load_provider_profiles",
 ]
 
 logger = logging.getLogger(__name__)
 DEFAULT_METRICS_PATH = Path("metrics") / "data_ingestion_sla.jsonl"
 DEFAULT_PROVIDER_PRIORITY_PATH = Path("config") / "provider_priority.yaml"
 DEFAULT_INGESTION_PRIORITY_PATH = Path("config") / "ingestion" / "priorities.yaml"
+DEFAULT_PROVIDER_PROFILE_PATH = Path("config") / "provider_profiles" / "local.yaml"
 DEFAULT_BAR_READY_QUEUE = Path("data") / "queues" / "bar_ready.jsonl"
 DEFAULT_OPS_WORKLOG_PATH = Path("ops_worklog.jsonl")
 DEFAULT_MAX_WORKERS_NORMAL = 4
@@ -92,6 +102,91 @@ def load_provider_priority(
     if not isinstance(payload, dict):
         return {}
     return payload
+
+
+def load_provider_profiles(
+    path: Path = DEFAULT_PROVIDER_PROFILE_PATH,
+) -> Mapping[str, Any]:
+    """Load provider profile overrides for retry/backoff/timeout."""
+
+    if not path.exists():
+        return {}
+    payload = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    if not isinstance(payload, dict):
+        return {}
+    return payload
+
+
+def _merge_profile(base: Mapping[str, Any], override: Mapping[str, Any]) -> dict[str, Any]:
+    merged: dict[str, Any] = dict(base)
+    for key, value in override.items():
+        if isinstance(value, Mapping) and isinstance(merged.get(key), Mapping):
+            nested = dict(merged[key])
+            nested.update(value)
+            merged[key] = nested
+        else:
+            merged[key] = value
+    return merged
+
+
+def _coerce_int(raw: object) -> int | None:
+    if raw is None:
+        return None
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        return None
+
+
+def _coerce_float(raw: object) -> float | None:
+    if raw is None:
+        return None
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        return None
+
+
+def _parse_provider_profile(raw: Mapping[str, Any]) -> ProviderProfile:
+    retry = raw.get("retry") if isinstance(raw.get("retry"), Mapping) else {}
+    max_attempts = _coerce_int(retry.get("max_attempts"))
+    backoff_sec = _coerce_float(retry.get("backoff_sec"))
+    timeout_sec = _coerce_float(raw.get("timeout_sec"))
+    return ProviderProfile(
+        timeout_sec=timeout_sec,
+        retry_max_attempts=max_attempts if max_attempts and max_attempts > 0 else None,
+        retry_backoff_sec=backoff_sec if backoff_sec and backoff_sec >= 0 else None,
+    )
+
+
+def _resolve_provider_profile(
+    provider: str, profiles: Mapping[str, Any] | None
+) -> ProviderProfile:
+    if not profiles:
+        return ProviderProfile()
+    defaults = profiles.get("defaults") if isinstance(profiles.get("defaults"), Mapping) else {}
+    providers = profiles.get("providers") if isinstance(profiles.get("providers"), Mapping) else {}
+    merged = _merge_profile(defaults, providers.get(provider, {}) if isinstance(providers, Mapping) else {})
+    if not isinstance(merged, Mapping):
+        return ProviderProfile()
+    return _parse_provider_profile(merged)
+
+
+def _resolve_retry_settings(
+    provider: str,
+    profiles: Mapping[str, Any] | None,
+    *,
+    default_retries: int,
+    default_backoff_ms: float,
+) -> tuple[int, float]:
+    profile = _resolve_provider_profile(provider, profiles)
+    retries = default_retries
+    if profile.retry_max_attempts is not None:
+        retries = max(profile.retry_max_attempts - 1, 0)
+    backoff_ms = default_backoff_ms
+    if profile.retry_backoff_sec is not None:
+        backoff_ms = max(profile.retry_backoff_sec * 1000.0, 0.0)
+    return retries, backoff_ms
 
 
 def resolve_provider_priority(
@@ -201,6 +296,7 @@ def build_provider_handlers(
     timeframe: str,
     start: str | None = None,
     end: str | None = None,
+    provider_profiles: Mapping[str, Any] | None = None,
 ) -> dict[str, Callable[[Sequence[str], str], ProviderResult | list[MarketFrame]]]:
     """Build default provider handlers for known adapters."""
 
@@ -208,7 +304,8 @@ def build_provider_handlers(
     try:
         from src.data.providers.yahoo import YahooProvider
 
-        yahoo = YahooProvider()
+        profile = _resolve_provider_profile("yfinance", provider_profiles)
+        yahoo = YahooProvider(timeout_sec=profile.timeout_sec)
 
         def _yahoo_handler(symbols: Sequence[str], timeframe: str) -> list[MarketFrame]:
             request = MarketRequest(symbols=symbols, timeframe=timeframe, start=start, end=end)
@@ -220,7 +317,12 @@ def build_provider_handlers(
     try:
         from src.data.providers.dukascopy import DukascopyProvider
 
-        duka = DukascopyProvider()
+        profile = _resolve_provider_profile("dukascopy", provider_profiles)
+        duka = DukascopyProvider(
+            timeout_sec=profile.timeout_sec,
+            retries=profile.retry_max_attempts,
+            backoff_sec=profile.retry_backoff_sec,
+        )
 
         def _duka_handler(symbols: Sequence[str], timeframe: str) -> list[MarketFrame]:
             request = MarketRequest(symbols=symbols, timeframe=timeframe, start=start, end=end)
@@ -252,15 +354,24 @@ def build_provider_handlers(
         pass
     if _read_feature_flag("data.paid_feed"):
         try:
-            from src.data.providers.paid_feed_stub import PaidFeedStubProvider
+            provider_name = os.getenv("TRADECTL_PAID_FEED_PROVIDER") or "paid_feed"
+            if provider_name == "paid_feed_stub":
+                from src.data.providers.paid_feed_stub import PaidFeedStubProvider
 
-            paid_feed = PaidFeedStubProvider()
+                paid_feed = PaidFeedStubProvider()
+                handler_name = "paid_feed_stub"
+            else:
+                from src.data.providers.paid_feed import PaidFeedProvider
+
+                profile = _resolve_provider_profile(provider_name, provider_profiles)
+                paid_feed = PaidFeedProvider(timeout_sec=profile.timeout_sec)
+                handler_name = provider_name
 
             def _paid_feed_handler(symbols: Sequence[str], timeframe: str) -> list[MarketFrame]:
                 request = MarketRequest(symbols=symbols, timeframe=timeframe, start=start, end=end)
                 return list(paid_feed.fetch_bars(request))
 
-            handlers["paid_feed_stub"] = _paid_feed_handler
+            handlers[handler_name] = _paid_feed_handler
         except Exception:
             pass
     return handlers
@@ -997,6 +1108,7 @@ def fetch_latest(
     metrics_path: Path = DEFAULT_METRICS_PATH,
     provider_handlers: dict[str, Callable[[Sequence[str], str], ProviderResult | list[MarketFrame]]]
     | None = None,
+    provider_profiles: Mapping[str, Any] | None = None,
     warn_ms: float = 1_000.0,
     breach_ms: float = 1_500.0,
     provider_sla_thresholds: Mapping[str, tuple[float, float]] | None = None,
@@ -1028,8 +1140,13 @@ def fetch_latest(
     providers = resolve_provider_priority(symbols, provider_priority=provider_priority)
     primary_provider = providers[0] if providers else "primary"
     frames: list[MarketFrame] = []
+    if provider_profiles is None:
+        provider_profiles = load_provider_profiles()
     handler_map = provider_handlers or build_provider_handlers(
-        timeframe=timeframe, start=start, end=end
+        timeframe=timeframe,
+        start=start,
+        end=end,
+        provider_profiles=provider_profiles,
     )
     provider_sla_thresholds = provider_sla_thresholds or {}
     rate_limit_state = (
@@ -1077,15 +1194,20 @@ def fetch_latest(
         _enqueue_fallback_task(FallbackRetryTask(**kwargs))
 
     def _fetch_provider_once(
-        provider: str, current_plan: WorkerPlan | None = None
+        provider: str,
+        current_plan: WorkerPlan | None = None,
+        *,
+        retries_for_provider: int,
+        backoff_ms_for_provider: float,
     ) -> tuple[list[MarketFrame], float]:
         local_frames: list[MarketFrame] = []
-        retry_budget = retries
+        retry_budget = retries_for_provider
         attempt = 0
         warn = provider_sla_thresholds.get(provider, (warn_ms, breach_ms))[0]
         breach = provider_sla_thresholds.get(provider, (warn_ms, breach_ms))[1]
         rate_limit_ratio = 0.0
         quality_flag = 0
+        max_attempts = retry_budget + 1
         while retry_budget >= 0:
             buffer_item: BufferItem | None = None
             try:
@@ -1269,7 +1391,7 @@ def fetch_latest(
                         symbols=symbols,
                         timeframe=timeframe,
                         attempt=attempt,
-                        max_attempts=retries + 1,
+                        max_attempts=max_attempts,
                         state="retry_scheduled",
                         reason=str(exc),
                         stage="fetch_latest",
@@ -1280,7 +1402,7 @@ def fetch_latest(
                 backoff_base = (
                     current_plan_for_backoff.poll_interval_sec * 1000
                     if current_plan_for_backoff
-                    else backoff_ms
+                    else backoff_ms_for_provider
                 )
                 delay_ms = backoff_base if attempt == 1 else backoff_base * 2
                 if fallback_log_path is not None:
@@ -1289,7 +1411,7 @@ def fetch_latest(
                         symbols=symbols,
                         timeframe=timeframe,
                         attempt=attempt,
-                        max_attempts=retries + 1,
+                        max_attempts=max_attempts,
                         state="retry_backoff",
                         backoff_sec=delay_ms / 1000.0,
                         reason=str(exc),
@@ -1310,7 +1432,7 @@ def fetch_latest(
                 symbols=symbols,
                 timeframe=timeframe,
                 attempt=attempt,
-                max_attempts=retries + 1,
+                max_attempts=max_attempts,
                 state="retry_exhausted",
                 reason="no_frames",
                 stage="fetch_latest",
@@ -1340,8 +1462,17 @@ def fetch_latest(
 
         def _make_job(target_provider: str) -> Callable[[], None]:
             def _job() -> None:
+                retries_for_provider, backoff_ms_for_provider = _resolve_retry_settings(
+                    target_provider,
+                    provider_profiles,
+                    default_retries=retries,
+                    default_backoff_ms=backoff_ms,
+                )
                 frames_for_provider, rl_ratio = _fetch_provider_once(
-                    target_provider, plan_lookup.get(target_provider)
+                    target_provider,
+                    plan_lookup.get(target_provider),
+                    retries_for_provider=retries_for_provider,
+                    backoff_ms_for_provider=backoff_ms_for_provider,
                 )
                 result_frames[target_provider] = frames_for_provider
                 if rate_limit_guard:
@@ -1369,11 +1500,18 @@ def fetch_latest(
 
     quality_flag = 0
     for index, provider in enumerate(providers):
-        retry_budget = retries
+        retries_for_provider, backoff_ms_for_provider = _resolve_retry_settings(
+            provider,
+            provider_profiles,
+            default_retries=retries,
+            default_backoff_ms=backoff_ms,
+        )
+        retry_budget = retries_for_provider
         attempt = 0
         warn = provider_sla_thresholds.get(provider, (warn_ms, breach_ms))[0]
         breach = provider_sla_thresholds.get(provider, (warn_ms, breach_ms))[1]
         quality_flag = 0
+        max_attempts = retry_budget + 1
         while retry_budget >= 0:
             try:
                 buffer_item: BufferItem | None = None
@@ -1558,7 +1696,7 @@ def fetch_latest(
                         symbols=symbols,
                         timeframe=timeframe,
                         attempt=attempt,
-                        max_attempts=retries + 1,
+                        max_attempts=max_attempts,
                         state="retry_scheduled",
                         reason=str(exc),
                         stage="fetch_latest",
@@ -1566,7 +1704,9 @@ def fetch_latest(
                 if retry_budget < 0:
                     break
                 current_plan = provider_plans.get(provider) if provider_plans else worker_plan
-                backoff_base = current_plan.poll_interval_sec * 1000 if current_plan else backoff_ms
+                backoff_base = (
+                    current_plan.poll_interval_sec * 1000 if current_plan else backoff_ms_for_provider
+                )
                 delay_ms = backoff_base if attempt == 1 else backoff_base * 2
                 if fallback_log_path is not None:
                     _emit_fallback_state(
@@ -1574,7 +1714,7 @@ def fetch_latest(
                         symbols=symbols,
                         timeframe=timeframe,
                         attempt=attempt,
-                        max_attempts=retries + 1,
+                        max_attempts=max_attempts,
                         state="retry_backoff",
                         backoff_sec=delay_ms / 1000.0,
                         reason=str(exc),
@@ -1615,7 +1755,7 @@ def fetch_latest(
                         symbols=symbols,
                         timeframe=timeframe,
                         attempt=attempt,
-                        max_attempts=retries + 1,
+                        max_attempts=max_attempts,
                         state="failover_to",
                         reason="rate_limit_high",
                         failover_to=providers[index + 1],
@@ -1630,7 +1770,7 @@ def fetch_latest(
                 symbols=symbols,
                 timeframe=timeframe,
                 attempt=attempt,
-                max_attempts=retries + 1,
+                max_attempts=max_attempts,
                 state=state,
                 reason="no_frames",
                 failover_to=failover_to,
@@ -1672,6 +1812,7 @@ def backfill(
     retries: int = 2,
     backoff_ms: float = 500.0,
     metrics_path: Path = DEFAULT_METRICS_PATH,
+    provider_profiles: Mapping[str, Any] | None = None,
     warn_ms: float = 1_000.0,
     breach_ms: float = 1_500.0,
     provider_sla_thresholds: Mapping[str, tuple[float, float]] | None = None,
@@ -1697,6 +1838,8 @@ def backfill(
 
     provider_sla_thresholds = provider_sla_thresholds or {}
     buffer_coordinator = buffer_coordinator or DEFAULT_BUFFER_COORDINATOR
+    if provider_profiles is None:
+        provider_profiles = load_provider_profiles()
     priorities = load_ingestion_priorities()
     ordered_symbols = order_symbols_by_priority(symbols, timeframe=timeframe, priorities=priorities)
     providers = resolve_provider_priority(ordered_symbols, provider_priority=provider_priority)
@@ -1710,11 +1853,18 @@ def backfill(
             timeframe=timeframe,
             start=chunk_start.replace(microsecond=0).isoformat().replace("+00:00", "Z"),
             end=chunk_end.replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+            provider_profiles=provider_profiles,
         )
         success = False
         for provider in providers:
+            retries_for_provider, backoff_ms_for_provider = _resolve_retry_settings(
+                provider,
+                provider_profiles,
+                default_retries=retries,
+                default_backoff_ms=backoff_ms,
+            )
             warn, breach = provider_sla_thresholds.get(provider, (warn_ms, breach_ms))
-            retry_budget = retries
+            retry_budget = retries_for_provider
             attempt = 0
             while retry_budget >= 0:
                 try:
@@ -1882,7 +2032,9 @@ def backfill(
                     attempt += 1
                     if retry_budget < 0:
                         break
-                    delay_ms = backoff_ms if attempt == 1 else backoff_ms * 2
+                    delay_ms = (
+                        backoff_ms_for_provider if attempt == 1 else backoff_ms_for_provider * 2
+                    )
                     time.sleep(max(delay_ms / 1000.0, 0.0))
                 except Exception as exc:  # pragma: no cover - defensive
                     if buffer_item is not None:

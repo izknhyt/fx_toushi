@@ -1,9 +1,9 @@
 # RUN-EXEC-02: Executionモデル再キャリブレーション手順
 
 > **ACカバレッジ**: AC-34, AC-43  
-> **Runbook版数**: v1.1  
-> **最終更新日**: 2025-03-21  
-> **最終更新者**: Quant Lead / Ops Manager
+> **Runbook版数**: v1.2  
+> **最終更新日**: 2026-01-12  
+> **最終更新者**: Codex (Doc Maintainer)
 
 ## 目的
 - `ExecutionModel`の遅延・スリッページ分布がライブ fills と乖離した際に、最小限のボード停止で新パラメータへ更新する。

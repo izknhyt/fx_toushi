@@ -1,9 +1,9 @@
 # RUN-POST-03: Opsポストモーテム & レビュー記録手順
 
 > **ACカバレッジ**: AC-45, AC-51, AC-63  
-> **Runbook版数**: v1.0  
-> **最終更新日**: 2025-03-19  
-> **最終更新者**: Ops Manager (Doc Maintainer)  
+> **Runbook版数**: v1.1  
+> **最終更新日**: 2026-01-12  
+> **最終更新者**: Codex (Doc Maintainer)  
 > **関連CLI**: `tradectl ops action-items sync` (legacy), `python tools/check_ops_review_log.py --require` (legacy), `python tools/update_log.py "<message>"`  
 > **証跡**: `logs/ops/review.log`, `docs/development_plan.md#update-log-utc`, `docs/runbooks/daily_agenda/<date>.md`
 

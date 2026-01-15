@@ -1,0 +1,30 @@
+{
+  "summary": {
+    "job_id": "replay-d5c93024",
+    "strategy_id": "m1_baseline_ma_rsi",
+    "event_count": 2,
+    "hashes": [
+      "hash-a",
+      "hash-b"
+    ],
+    "first_ts": "2025-01-02T00:00:00Z",
+    "last_ts": "2025-01-02T01:00:00Z",
+    "signals": null,
+    "signals_markdown": null
+  },
+  "events": [
+    {
+      "event": "strategy.determinism",
+      "strategy_id": "m1_baseline_ma_rsi",
+      "determinism_hash": "hash-a",
+      "ts": "2025-01-02T00:00:00Z"
+    },
+    {
+      "event": "strategy.determinism",
+      "strategy_id": "m1_baseline_ma_rsi",
+      "determinism_hash": "hash-b",
+      "ts": "2025-01-02T01:00:00Z"
+    }
+  ],
+  "signals_markdown": null
+}

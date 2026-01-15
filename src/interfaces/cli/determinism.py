@@ -255,12 +255,13 @@ def _filter_events(
 
 
 def _compute_diff_count(events: list[Mapping[str, Any]]) -> int:
-    hashes: set[str] = set()
+    per_strategy: dict[str, set[str]] = {}
     for event in events:
+        strategy_id = str(event.get("strategy_id") or "unknown")
         hash_value = event.get("determinism_hash") or event.get("deterministic_hash")
         if hash_value:
-            hashes.add(str(hash_value))
-    return max(0, len(hashes) - 1)
+            per_strategy.setdefault(strategy_id, set()).add(str(hash_value))
+    return sum(max(0, len(hashes) - 1) for hashes in per_strategy.values())
 
 
 def _load_jsonl(path: Path) -> list[Mapping[str, Any]]:

@@ -1,0 +1,9 @@
+validation_playbook_id: AC44_risk_consent
+category: risk_consent
+entries:
+  - ts: 2026-01-12T12:18:10Z
+    action: approve
+    decision: prompt
+    device_id: None
+    consent_reference_id: None
+    runbook_ref: COMPLIANCE-01

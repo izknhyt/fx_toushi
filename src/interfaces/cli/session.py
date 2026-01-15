@@ -135,60 +135,62 @@ def start_session(
         factory=mode_factory,
     )
 
-    manager.start(session_context)
-
-    log_path = manager.session_log_path or (log_dir / f"{session_identifier}.log")
-    snapshot_path_str = manager.request_snapshot()
-    snapshot_path = (
-        Path(snapshot_path_str)
-        if snapshot_path_str
-        else snapshot_root / session_context.mode / f"{session_identifier}.json"
-    )
-
-    log_path.parent.mkdir(parents=True, exist_ok=True)
-    snapshot_path.parent.mkdir(parents=True, exist_ok=True)
-
+    log_path = log_dir / f"{session_identifier}.log"
+    snapshot_path = snapshot_root / session_context.mode / f"{session_identifier}.json"
     _ensure_log_not_exists(log_path)
 
-    timestamp = _ts()
-    mode_context_payload = _serialise_mode_context(session_context.mode_context)
-    log_payload: dict[str, Any] = {
-        "session": {
-            "id": session_identifier,
-            "mode": session_context.mode,
-            "profile": session_context.mode_context.profile.profile_id,
-            "deterministic_seed": session_context.mode_context.deterministic_seed,
-            "profile_source": str(session_context.mode_context.profile.source),
-            "plan": list(manager.last_plan),
-            "log_path": str(log_path),
-            "snapshot_path": str(snapshot_path),
-        },
-        "events": [
-            {
-                "event": "start",
-                "timestamp": timestamp,
-                "ctx_mode": session_context.mode,
-                "ctx_profile": session_context.mode_context.profile.profile_id,
+    manager.start(session_context)
+    try:
+        log_path = manager.session_log_path or log_path
+        snapshot_path_str = manager.request_snapshot()
+        snapshot_path = (
+            Path(snapshot_path_str) if snapshot_path_str else snapshot_path
+        )
+
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        snapshot_path.parent.mkdir(parents=True, exist_ok=True)
+
+        timestamp = _ts()
+        mode_context_payload = _serialise_mode_context(session_context.mode_context)
+        log_payload: dict[str, Any] = {
+            "session": {
+                "id": session_identifier,
+                "mode": session_context.mode,
+                "profile": session_context.mode_context.profile.profile_id,
                 "deterministic_seed": session_context.mode_context.deterministic_seed,
-            }
-        ],
-        "mode_context": mode_context_payload,
-    }
+                "profile_source": str(session_context.mode_context.profile.source),
+                "plan": list(manager.last_plan),
+                "log_path": str(log_path),
+                "snapshot_path": str(snapshot_path),
+            },
+            "events": [
+                {
+                    "event": "start",
+                    "timestamp": timestamp,
+                    "ctx_mode": session_context.mode,
+                    "ctx_profile": session_context.mode_context.profile.profile_id,
+                    "deterministic_seed": session_context.mode_context.deterministic_seed,
+                }
+            ],
+            "mode_context": mode_context_payload,
+        }
 
-    log_path.write_text(json.dumps(log_payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        log_path.write_text(
+            json.dumps(log_payload, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
 
-    snapshot_payload = {
-        "session_id": session_identifier,
-        "captured_at": timestamp,
-        "plan": list(manager.last_plan),
-        "mode_context": mode_context_payload,
-    }
-    snapshot_path.write_text(
-        json.dumps(snapshot_payload, ensure_ascii=False, indent=2),
-        encoding="utf-8",
-    )
-
-    manager.stop()
+        snapshot_payload = {
+            "session_id": session_identifier,
+            "captured_at": timestamp,
+            "plan": list(manager.last_plan),
+            "mode_context": mode_context_payload,
+        }
+        snapshot_path.write_text(
+            json.dumps(snapshot_payload, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+    finally:
+        manager.stop()
 
     return {
         "session_id": session_identifier,

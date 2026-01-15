@@ -34,6 +34,13 @@
 | {{task}} | {{owner}} | {{due}} | {{estimate_min}} | {{last_worklog}} | {{notes}} |
 {{/operational.tasks}}
 
+## Pending Drills
+| Plan ID | Scenario ID | Scheduled For | Owner | Impact Tags | Board Mode |
+| --- | --- | --- | --- | --- | --- |
+{{#drill_pending}}
+| {{plan_id}} | {{scenario_id}} | {{scheduled_for}} | {{owner}} | {{impact_tags}} | {{board_mode}} |
+{{/drill_pending}}
+
 ## Runbook Reviews
 | Runbook ID | Status | Review Due (days) | Owner | Follow-up |
 | --- | --- | --- | --- | --- |

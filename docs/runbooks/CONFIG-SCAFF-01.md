@@ -1,9 +1,9 @@
 # CONFIG-SCAFF-01: Config雛形整備ハンドオフ手順
 
 > **ACカバレッジ**: AC-45, AC-51, AC-63  
-> **Runbook版数**: v1.0  
-> **最終更新日**: 2025-03-23  
-> **最終更新者**: Ops Manager (Doc Maintainer)
+> **Runbook版数**: v1.1  
+> **最終更新日**: 2026-01-12  
+> **最終更新者**: Codex (Doc Maintainer)  
 
 ## 目的
 - `config/`配下の雛形を最新スキーマと整合させ、Codex/Jr.SEが即座に`pytest -k config_schema_smoke`を実行できる状態を維持する。

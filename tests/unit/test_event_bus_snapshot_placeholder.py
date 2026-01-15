@@ -54,6 +54,7 @@ def test_snapshot_manager_persist_and_restore(tmp_path: Path) -> None:
     )
     restored = manager.restore(result.path)
     assert restored.state["state"] == "demo"
+    assert "Z" in result.path.read_text(encoding="utf-8")
 
 
 def test_snapshot_manager_restore_path_missing(tmp_path: Path) -> None:

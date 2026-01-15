@@ -1,6 +1,6 @@
 ARGS ?=
 
-.PHONY: config-init schema-validate check-ops-readiness contract-performance-snapshot check-doc-sync config-evidence verify-config-evidence edge-watch-report check-profit-readiness check-alpha-profiles check-profit-readiness-hands-off check-profit-readiness-hands-off-all sla-report
+.PHONY: config-init schema-validate check-ops-readiness contract-performance-snapshot check-doc-sync check-doc-refs config-evidence verify-config-evidence edge-watch-report check-profit-readiness check-alpha-profiles check-profit-readiness-hands-off check-profit-readiness-hands-off-all sla-report automation-report
 .PHONY: update-log
 
 config-init:
@@ -41,6 +41,13 @@ check-doc-sync:
 		python3 tools/verify_doc_updates.py $(ARGS); \
 	fi
 
+check-doc-refs:
+	@if command -v poetry >/dev/null 2>&1; then \
+		poetry run python tools/check_doc_refs.py; \
+	else \
+		python3 tools/check_doc_refs.py; \
+	fi
+
 update-log:
 	@if [ -z "$(MSG)" ]; then \
 		echo "MSG is required. Example: make update-log MSG=\"Did X\""; \
@@ -78,6 +85,13 @@ sla-report:
 		poetry run python tools/sla_report.py $(ARGS); \
 	else \
 		python3 tools/sla_report.py $(ARGS); \
+	fi
+
+automation-report:
+	@if command -v poetry >/dev/null 2>&1; then \
+		poetry run python tools/automation_effect_report.py $(ARGS); \
+	else \
+		python3 tools/automation_effect_report.py $(ARGS); \
 	fi
 
 check-profit-readiness:

@@ -17,6 +17,12 @@ EURUSD,EUR,USD,-5.10,1.80,Wed,21:00,2025-03-01T06:00:00Z,ops
 USDJPY,USD,JPY,1.20,-4.50,Wed,21:00,2025-03-01T06:00:00Z,ops
 """
 
+SHADOW_CSV = """\
+pair,base_currency,quote_currency,swap_long,swap_short,triple_day,rollover_time_utc,last_verified_at,data_source
+EURUSD,EUR,USD,-5.1,1.8,Wed,21:00,2025-03-01T06:00:00Z,ops
+USDJPY,USD,JPY,1.2,-4.5,Wed,21:00,2025-03-01T06:00:00Z,ops
+"""
+
 
 def _write_csv(path: Path, content: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -72,3 +78,36 @@ def test_funding_sync_and_status(tmp_path: Path, monkeypatch) -> None:
     status_payload = json.loads(status_result.stdout)
     assert status_payload["status"] == "ok"
     assert status_payload["csv_sha256"] == payload["csv_sha256"]
+
+
+def test_funding_sync_allows_numeric_format_variance(tmp_path: Path, monkeypatch) -> None:
+    app = create_cli_app()
+    monkeypatch.chdir(tmp_path)
+    main_csv = tmp_path / "config" / "swap_rates.csv"
+    shadow_csv = tmp_path / "reports" / "funding" / "swap_rates_shadow.csv"
+    state_path = tmp_path / "data" / "state" / "funding_state.json"
+
+    _write_csv(main_csv, MAIN_CSV)
+    _write_csv(shadow_csv, SHADOW_CSV)
+
+    result = runner.invoke(
+        app,
+        [
+            "funding",
+            "sync",
+            "--csv",
+            str(main_csv),
+            "--shadow",
+            str(shadow_csv),
+            "--state",
+            str(state_path),
+            "--prepared-by",
+            "OM",
+            "--reviewed-by",
+            "RM",
+            "--approved-by",
+            "PO",
+            "--json",
+        ],
+    )
+    assert result.exit_code == 0, result.output

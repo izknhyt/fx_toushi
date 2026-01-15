@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 
 import pytest
-from src.core.gate import GateBlockState, GateState, SpreadGateState
+from src.core.gate import GateBlockState, GateState, LiquidityGateState, SpreadGateState
 from src.ticket import DefaultTicketBuilder, TicketBlockedError, TicketDraft
 
 
@@ -36,6 +36,23 @@ def test_spread_cooldown_generates_warn_checklist_entry() -> None:
     assert badge.severity == "warn"
 
 
+def test_spread_watch_generates_warn_checklist_entry() -> None:
+    gate_state = GateState()
+    gate_state.market.per_symbol["USDJPY"] = GateBlockState(
+        spread=SpreadGateState(state="watch", reason="spread_watch")
+    )
+
+    artifact = DefaultTicketBuilder().build(_make_draft(), gate_state)
+
+    spread_item = next(item for item in artifact.checklist if item.field == "spread_window_clear")
+    assert spread_item.status == "warn"
+    assert spread_item.metadata["state"] == "watch"
+    assert spread_item.metadata["reason"] == "spread_watch"
+
+    badge = next(b for b in artifact.badges if b.field == "spread_state")
+    assert badge.severity == "warn"
+
+
 def test_spread_halt_blocks_ticket() -> None:
     gate_state = GateState()
     gate_state.market.per_symbol["USDJPY"] = GateBlockState(
@@ -48,6 +65,18 @@ def test_spread_halt_blocks_ticket() -> None:
 
     assert excinfo.value.code == "spread_halt"
     assert excinfo.value.details["state"] == "halt"
+
+
+def test_liquidity_guarded_marks_spread_checklist_warn() -> None:
+    gate_state = GateState()
+    gate_state.market.liquidity = LiquidityGateState(state="guarded", recommendation="guarded")
+
+    artifact = DefaultTicketBuilder().build(_make_draft(), gate_state)
+
+    spread_item = next(item for item in artifact.checklist if item.field == "spread_window_clear")
+    assert spread_item.status == "warn"
+    badge_fields = {badge.field for badge in artifact.badges}
+    assert "liquidity_state" in badge_fields
 
 
 def test_double_entry_and_comment_requirements_reflected() -> None:

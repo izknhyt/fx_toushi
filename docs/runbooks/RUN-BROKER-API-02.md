@@ -1,5 +1,8 @@
 # RUN-BROKER-API-02: ブローカーAPI注文回復フロー
 
+> **最終更新日**: 2026-01-12
+> **最終更新者**: Codex (Doc Maintainer)
+
 ## 1. 目的
 - API注文のライフサイクル中に発生する例外/遅延を安定的に処理し、Ops/トレーダーが手順に従って回復を完了できるようにする。
 - `OrderLifecycleManager`が発行する`RecoveryPlan`と監査イベントをRunbook手順に紐付け、Evidenceの取得・保管を徹底する。

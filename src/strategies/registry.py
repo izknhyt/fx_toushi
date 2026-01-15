@@ -641,7 +641,19 @@ class StrategyEngine:
         self._last_determinism_events = []
         self._manifest.validate_feature_contract(features.available_keys)
         self._manifest.validate_watchlists(features.symbols)
-        resolved_watchlist = watchlist or self._manifest.resolve_watchlist(features.symbols)
+        resolved_watchlist: frozenset[str]
+        if watchlist:
+            normalised_watchlist = _normalise_symbol_set(watchlist)
+            missing = normalised_watchlist - _normalise_symbol_set(features.symbols)
+            if missing:
+                msg = (
+                    "Provided watchlist contains symbols missing from feature context: "
+                    f"{sorted(missing)}"
+                )
+                raise ManifestValidationError(msg)
+            resolved_watchlist = normalised_watchlist
+        else:
+            resolved_watchlist = self._manifest.resolve_watchlist(features.symbols)
 
         evaluation = StrategyEvaluationContext(
             features=features,

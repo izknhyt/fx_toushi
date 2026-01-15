@@ -12,8 +12,8 @@ Codex実装依頼時に利用するPR本文・Packetチェックリスト・受�
 - **Configスキャフォールト**: `CONFIG-SCAFF-01`適用済み前提。設定を追加・変更するPacketは`poetry run schema-validate ...`ログをPR本文へ貼付し、必要に応じて`make config-init`の差分を更新する。欠落している雛形が判明した場合は§0.6.12を参照して追加。
 - **DocOps同期**: `make check-doc-sync`を実行してRunbook/設計書の差分が反映されていることを確認する。差分が無い場合は`docs/development_plan.md`のBacklog/Update LogへTODOを起票し、RUN-POST-03の「欠損時のエスカレーション」に従う（CIの`python_smoke`ジョブでも同チェックが実行される）。
 - **新規CLI**: `tradectl execution recalibrate` / `tradectl scoring diagnostics` / `tradectl kill-switch review`を利用するPacketは、サンプル実行ログと生成物パス（`config/execution_model.calib.yaml`, `reports/diagnostics/scoring_<date>.md`, `reports/audit/kill_switch_review/<ts>.md`）を添付し、Runbook更新との整合を明記する。
-- **テンプレ同期**: ReporterやValidationテンプレを変更した場合は`reports/weekly/templates/m1_core.md`・`docs/validation_log/templates/weekly.md`・`docs/trader_signoff/TEMPLATE.md`の差分をPacketに含め、`pytest -k weekly_report_template`・`pytest -k validation_log_template`ログを添付する。
-- **初期テンプレート位置と保守責任**: 旧Implementation Packet/Prompt Packageは`docs/archive/`配下に保管（legacy）。現行の進捗管理は`docs/development_plan.md`に集約する。
+- **テンプレ同期**: Reporter/Validation/Sign-offテンプレ変更時は差分と対応テストログを添付する。
+- **テンプレ保守**: 旧Implementation Packet/Prompt Packageは`docs/archive/`配下に保管（legacy）。進捗管理は`docs/development_plan.md`に集約する。
 - **Runbook整合 (Governance/Finance)**: Manifest/Strategy Lifecycle/ガバナンス差分は`docs/runbooks/GOV-STRAT-01.md`、口座ヘルス/ステートメント突合/Ledger/税務差分は`docs/runbooks/RUN-ACC-01.md`・`RUN-AUD-02.md`・`RUN-REC-02.md`・`RUN-TAX-01.md`を更新し、PR本文に該当Runbookと証跡パス（`reports/governance/runbook_inventory_status.json`, `reports/audit/reconciliation/*.md`, `reports/tax/*.md` など）を明示する。
 
 ## 2. トレーダー受入試験テンプレ
@@ -37,7 +37,7 @@ Tests: pytest -k ticket_builder (pass), approvaltests (updated snapshot)
 Trader notes: Spread badge OK, RiskDisclosure pending banner text request
 Follow-up: Update copywriting (docs/development_plan.md#design-alignment-backlog)
 ```
-- フィードバックはPRマージ前に`docs/development_plan.md#update-log-utc`へ追記し、改善要望は3件以内に絞り、優先度を`{must,should,nice}`でタグ付けする。
+- フィードバックは`docs/development_plan.md#update-log-utc`へ追記し、改善要望は3件以内。
 
 ## 4. Pull Request テンプレート（Codex向け）
 ```
@@ -66,16 +66,5 @@ Follow-up: Update copywriting (docs/development_plan.md#design-alignment-backlog
 ```
 - CodexにはPR本文を上記形式で提出させ、チェックボックスは実行済み項目のみ`[x]`にする。実行できない項目は理由をPRコメントで説明させる。
 
-## 5. Promptパッケージ保管ルール (Legacy)
+## 5. Legacy References
 - 旧Prompt Packageは`docs/archive/prompt_packages/`に保管（参照のみ）。
-- 現行のフィードバック記録は`docs/development_plan.md#update-log-utc`に集約する。
-
-## 6. Codexレビューメモ例
-```
-### Review Notes (2025-02-20 / EP-01 data.service)
-- 👍 Resyncログの`failover_used`がRunbookと一致。
-- ✅ pytest -k data_pipeline OK (ログ添付あり)。
-- ⚠️ SpreadCooldown解除文言がRunbook表現とズレ → 次回PRで共通化タスクを起票。
-- 📌 KPIログ `metrics/data_ingestion_sla.jsonl` でp95=178s。目標<180sギリギリのため、M1.1で追加改善を検討。
-```
-- レビューメモは`docs/development_plan.md#update-log-utc`へ日付順に追記する。トレーダーはこのログをもとに運用改善メモを作成する。

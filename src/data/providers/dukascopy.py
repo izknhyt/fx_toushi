@@ -23,6 +23,9 @@ class DukascopyProvider(ProviderAdapter):  # type: ignore[misc]
     """Dukascopy adapter fetching tick data and aggregating to 5m bars."""
 
     name: str = "dukascopy"
+    timeout_sec: float | None = None
+    retries: int | None = None
+    backoff_sec: float | None = None
 
     def fetch_bars(self, request: MarketRequest) -> Iterable[MarketFrame]:
         if not _is_supported_timeframe(request.timeframe):
@@ -40,7 +43,15 @@ class DukascopyProvider(ProviderAdapter):  # type: ignore[misc]
         frames: list[MarketFrame] = []
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             futures = {
-                executor.submit(_fetch_dukascopy_bars, symbol, start, end): symbol
+                executor.submit(
+                    _fetch_dukascopy_bars,
+                    symbol,
+                    start,
+                    end,
+                    retries=self.retries,
+                    timeout_sec=self.timeout_sec,
+                    backoff_sec=self.backoff_sec,
+                ): symbol
                 for symbol in request.symbols
             }
             for future in as_completed(futures):
@@ -95,11 +106,26 @@ def _daterange(start: datetime, end: datetime) -> Iterable[datetime]:
         current += timedelta(hours=1)
 
 
-def _fetch_dukascopy_bars(symbol: str, start: datetime, end: datetime) -> pd.DataFrame:
+def _fetch_dukascopy_bars(
+    symbol: str,
+    start: datetime,
+    end: datetime,
+    *,
+    retries: int | None = None,
+    timeout_sec: float | None = None,
+    backoff_sec: float | None = None,
+) -> pd.DataFrame:
     frames: list[pd.DataFrame] = []
     cache_dir = Path("data/cache/dukascopy")
     for when in _daterange(start, end):
-        raw = fetch_hour(symbol, when, cache_dir=cache_dir)
+        raw = fetch_hour(
+            symbol,
+            when,
+            cache_dir=cache_dir,
+            retries=retries if retries is not None else 2,
+            timeout=int(timeout_sec) if timeout_sec is not None else 30,
+            backoff_sec=backoff_sec if backoff_sec is not None else 0.5,
+        )
         if not raw:
             continue
         ticks = parse_bi5(raw, when)

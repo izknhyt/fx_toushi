@@ -81,3 +81,36 @@ def test_determinism_replay_summary_and_output(tmp_path: Path) -> None:
     assert metrics_path.exists()
     metric_lines = metrics_path.read_text(encoding="utf-8").splitlines()
     assert metric_lines
+
+
+def test_determinism_replay_diff_count_is_per_strategy(tmp_path: Path) -> None:
+    log_path = tmp_path / "registry.log"
+    records = [
+        {
+            "event": "strategy.determinism",
+            "strategy_id": "a",
+            "determinism_hash": "h1",
+            "ts": "2024-01-02T00:00:00Z",
+        },
+        {
+            "event": "strategy.determinism",
+            "strategy_id": "b",
+            "determinism_hash": "h2",
+            "ts": "2024-01-02T00:00:00Z",
+        },
+    ]
+    log_path.write_text("\n".join(json.dumps(r) for r in records), encoding="utf-8")
+
+    payload = determinism_replay(
+        since="2024-01-01",
+        until=None,
+        mode="paper",
+        strategy=None,
+        window=None,
+        output=None,
+        log_path=log_path,
+        metrics_path=tmp_path / "metrics.jsonl",
+        allow_missing_signals=True,
+    )
+
+    assert payload["summary"]["diff_count"] == 0

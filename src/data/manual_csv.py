@@ -96,8 +96,11 @@ class ManualCsvReconciler:
         ):
             raise ManualCsvError("op/review shape mismatch", code="shape_mismatch")
 
-        for frame, label in ((op_frame, "op"), (review_frame, "review")):
-            _validate_frame(frame, label=label, path=op_path)
+        for frame, label, path in (
+            (op_frame, "op", op_path),
+            (review_frame, "review", review_path),
+        ):
+            _validate_frame(frame, label=label, path=path)
 
         op_hash = sha256_path(op_path)
         review_hash = sha256_path(review_path)

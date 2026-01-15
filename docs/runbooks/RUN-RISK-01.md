@@ -1,9 +1,9 @@
 # RUN-RISK-01: Kill Switch・リスク監視運用手順
 
 > **ACカバレッジ**: AC-03, AC-09
-> **Runbook版数**: v1.3
-> **最終更新日**: 2025-12-21
-> **最終更新者**: Risk Manager (Doc Maintainer)
+> **Runbook版数**: v1.4
+> **最終更新日**: 2026-01-12
+> **最終更新者**: Codex (Doc Maintainer)
 > **関連CLI**: `tradectl status`, `tradectl kill-switch engage`, `tradectl kill-switch release`, `tradectl ticket approve/reject/edit`, `tradectl compliance status`
 > **イベントログ**: `logs/events/risk.assessment.jsonl`, `logs/risk/kill_switch_events.jsonl`
 

@@ -65,6 +65,7 @@ from .compliance import (
     refresh as compliance_refresh,
     status as compliance_status,
 )
+from .compliance_risk import device_list, device_register, risk_disclosure_enforce
 from .config import validate as config_validate
 from .data import (
     acknowledge_degradation,
@@ -89,6 +90,7 @@ from .data_manifest import (
 )
 from .determinism import _should_exit, determinism_replay
 from .diagnostics import DeterminismDiagnosticsError, load_determinism_events
+from src.ops.emergency import trigger as emergency_trigger
 from .execution import ExecutionBridgeLogError, ExecutionEvidenceError, bridge_log, recalibrate
 from .execution_dashboard import execution_dashboard
 from .funding import FundingSyncError, funding_status, funding_sync
@@ -101,8 +103,32 @@ from .kill_switch import (
     review as kill_switch_review,
     set_state as kill_switch_set_state,
 )
+from .liquidity import compare as liquidity_compare
+from .liquidity import ingest as liquidity_ingest
+from .liquidity import status as liquidity_status
 from .metrics import report as metrics_report
-from .ops import action_item_sync, degraded_ack, readiness
+from .ops import (
+    action_item_sync,
+    degraded_ack,
+    drill_abort,
+    drill_catalog,
+    drill_complete,
+    drill_schedule,
+    drill_start,
+    drill_step,
+    readiness,
+    agenda,
+    automation_add,
+    worklog_add,
+    worklog_list,
+)
+from .ops_dashboard import render_dashboard as ops_dashboard_render
+from .ops_incident import (
+    incident_close,
+    incident_forensics,
+    incident_open,
+    incident_timeline_add,
+)
 from .performance import live_guard as performance_live_guard
 from .pipeline import drain_bar_ready_queue
 from .preflight import preflight
@@ -246,6 +272,11 @@ def create_cli_app() -> typer.Typer:
             "--spread-status",
             help="Spread status badge (normal|cooldown|block)",
         ),
+        liquidity_status: str = typer.Option(
+            "normal",
+            "--liquidity-status",
+            help="Liquidity status badge (normal|watch|guarded|halted)",
+        ),
         reduce_only: bool = typer.Option(
             False,
             "--reduce-only",
@@ -319,6 +350,7 @@ def create_cli_app() -> typer.Typer:
             normal=normal,
             kill_switch_state=kill_switch,
             spread_status=spread_status,
+            liquidity_status=liquidity_status,
             reduce_only=reduce_only,
             include=include,
             json_output=effective_json,
@@ -902,6 +934,7 @@ def create_cli_app() -> typer.Typer:
 
     app.add_typer(gate_app, name="gate")
     journal_app = typer.Typer(help="Trade journal utilities")
+    liquidity_app = typer.Typer(help="Liquidity monitoring utilities")
 
     @journal_app.command("add")
     def journal_add_command(
@@ -1780,9 +1813,65 @@ def create_cli_app() -> typer.Typer:
         path = service.export_weekly(week=week, output_dir=output_dir)
         _render_payload(console, {"status": "ok", "path": str(path)}, json_output=effective_json)
 
+    @liquidity_app.command("status")
+    def liquidity_status_command(
+        ctx: typer.Context,
+        symbol: str | None = typer.Option(None, "--symbol", help="Symbol filter"),
+        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
+    ) -> None:
+        ctx_obj = ctx.obj or {"json": False}
+        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        payload = liquidity_status(symbol=symbol, json_output=effective_json, console=console)
+        _render_payload(console, payload, json_output=effective_json)
+
+    @liquidity_app.command("compare")
+    def liquidity_compare_command(
+        ctx: typer.Context,
+        source_from: str = typer.Option(..., "--from", help="Source A"),
+        source_to: str = typer.Option(..., "--to", help="Source B"),
+        symbol: str | None = typer.Option(None, "--symbol", help="Symbol filter"),
+        export_md: Path | None = typer.Option(
+            None, "--export-md", help="Export Markdown report"
+        ),
+        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
+    ) -> None:
+        ctx_obj = ctx.obj or {"json": False}
+        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        payload = liquidity_compare(
+            source_from=source_from,
+            source_to=source_to,
+            symbol=symbol,
+            export_md=export_md,
+            json_output=effective_json,
+            console=console,
+        )
+        _render_payload(console, payload, json_output=effective_json)
+
+    @liquidity_app.command("ingest")
+    def liquidity_ingest_command(
+        ctx: typer.Context,
+        source: str = typer.Option(..., "--source", help="Source id"),
+        path: Path = typer.Option(..., "--path", help="CSV file path"),
+        symbol: str = typer.Option(..., "--symbol", help="Symbol name"),
+        weight: float | None = typer.Option(None, "--weight", help="Source weight"),
+        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
+    ) -> None:
+        ctx_obj = ctx.obj or {"json": False}
+        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        payload = liquidity_ingest(
+            source=source,
+            path=path,
+            symbol=symbol,
+            weight=weight,
+            json_output=effective_json,
+            console=console,
+        )
+        _render_payload(console, payload, json_output=effective_json)
+
     app.add_typer(release_app, name="release")
     app.add_typer(spread_app, name="spread")
     app.add_typer(journal_app, name="journal")
+    app.add_typer(liquidity_app, name="liquidity")
 
     @app.command("status")
     def status_command(
@@ -3196,6 +3285,8 @@ def create_cli_app() -> typer.Typer:
     app.add_typer(access_app, name="access")
 
     compliance_app = typer.Typer(help="Compliance and risk disclosure utilities")
+    risk_app = typer.Typer(help="Risk disclosure enforcement")
+    device_app = typer.Typer(help="Compliance device bindings")
 
     @compliance_app.command("status")
     def compliance_status_command(
@@ -3236,6 +3327,53 @@ def create_cli_app() -> typer.Typer:
         payload = compliance_refresh()
         _render_payload(console, payload, json_output=effective_json)
 
+    @risk_app.command("enforce")
+    def compliance_risk_enforce_command(
+        ctx: typer.Context,
+        action: str = typer.Option(..., "--action", help="Action to enforce (e.g. approve)."),
+        device_fingerprint: str | None = typer.Option(
+            None, "--device", help="Device fingerprint override."
+        ),
+        dry_run: bool = typer.Option(False, "--dry-run", help="Skip metrics/audit writes."),
+        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
+    ) -> None:
+        ctx_obj = ctx.obj or {"json": False}
+        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        payload = risk_disclosure_enforce(
+            action=action,
+            device_fingerprint=device_fingerprint,
+            dry_run=dry_run,
+        )
+        _render_payload(console, payload, json_output=effective_json)
+        if payload.get("status") == "error":
+            raise typer.Exit(1)
+
+    @device_app.command("register")
+    def compliance_device_register_command(
+        ctx: typer.Context,
+        user: str = typer.Option(..., "--user", help="User identifier."),
+        fingerprint: str = typer.Option(..., "--fingerprint", help="Device fingerprint."),
+        force: bool = typer.Option(False, "--force", help="Overwrite existing binding."),
+        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
+    ) -> None:
+        ctx_obj = ctx.obj or {"json": False}
+        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        payload = device_register(user=user, fingerprint=fingerprint, force=force)
+        _render_payload(console, payload, json_output=effective_json)
+
+    @device_app.command("list")
+    def compliance_device_list_command(
+        ctx: typer.Context,
+        show_revoked: bool = typer.Option(False, "--show-revoked", help="Include revoked devices."),
+        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
+    ) -> None:
+        ctx_obj = ctx.obj or {"json": False}
+        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        payload = device_list(show_revoked=show_revoked)
+        _render_payload(console, payload, json_output=effective_json)
+
+    compliance_app.add_typer(risk_app, name="risk-disclosure")
+    compliance_app.add_typer(device_app, name="device")
     app.add_typer(compliance_app, name="compliance")
 
     reconcile_app = typer.Typer(help="Statement reconciliation utilities")
@@ -3418,9 +3556,232 @@ def create_cli_app() -> typer.Typer:
     app.add_typer(kill_switch_app, name="kill-switch")
 
     ops_app = typer.Typer(help="Ops coordination utilities")
+    emergency_app = typer.Typer(help="Emergency playbook utilities")
     default_change_request = (
         Path("docs") / "change_requests" / f"CR-{date.today():%Y%m%d}-ops-followups.md"
     )
+    log_app = typer.Typer(help="Ops worklog entries")
+    automation_app = typer.Typer(help="Automation effect tracking")
+    incident_app = typer.Typer(help="Incident response workflows")
+
+    @emergency_app.command("trigger")
+    def emergency_trigger_command(
+        ctx: typer.Context,
+        scenario: str = typer.Option(..., "--scenario", help="Emergency scenario key"),
+        runbook: str | None = typer.Option(
+            None, "--runbook", help="Runbook reference (e.g. RUN-LIQ-01)"
+        ),
+        simulate: bool = typer.Option(False, "--simulate", help="Simulate without execution"),
+        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
+    ) -> None:
+        ctx_obj = ctx.obj or {"json": False}
+        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        payload = emergency_trigger(
+            scenario=scenario,
+            runbook=runbook,
+            simulate=simulate,
+        ).to_dict()
+        _render_payload(console, payload, json_output=effective_json)
+
+    @ops_app.command("dashboard")
+    def ops_dashboard_command(
+        ctx: typer.Context,
+        format: str = typer.Option("table", "--format", help="Output format (table|json|markdown)"),
+        export: Path | None = typer.Option(
+            None, "--export", help="Export dashboard output to a file"
+        ),
+        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
+    ) -> None:
+        ctx_obj = ctx.obj or {"json": False}
+        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        payload = ops_dashboard_render(
+            format=format,
+            export=export,
+            json_output=effective_json,
+            console=console,
+        )
+        _render_payload(console, payload, json_output=effective_json)
+
+    @log_app.command("add")
+    def ops_log_add_command(
+        ctx: typer.Context,
+        task: str = typer.Option(..., "--task", help="Worklog task identifier."),
+        owner: str = typer.Option(..., "--owner", help="Task owner."),
+        duration_min: int = typer.Option(0, "--duration-min", help="Duration in minutes."),
+        mode: str = typer.Option("normal", "--mode", help="Board mode context."),
+        source: str = typer.Option("cli", "--source", help="Entry source label."),
+        related: list[str] = typer.Option(
+            [], "--related", help="Related artifacts (repeatable).", show_default=False
+        ),
+        health_state: str = typer.Option("ok", "--health-state", help="Health state label."),
+        board_mode: str = typer.Option("normal", "--board-mode", help="Board mode value."),
+        notes: str | None = typer.Option(None, "--notes", help="Optional notes."),
+        ops_worklog_path: Path = typer.Option(
+            Path("ops_worklog.jsonl"),
+            "--ops-worklog-path",
+            help="Ops worklog output path",
+        ),
+        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
+    ) -> None:
+        ctx_obj = ctx.obj or {"json": False}
+        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        payload = worklog_add(
+            task=task,
+            owner=owner,
+            duration_min=duration_min,
+            mode=mode,
+            source=source,
+            related_artifacts=related,
+            health_state=health_state,
+            board_mode=board_mode,
+            notes=notes,
+            ops_worklog_path=ops_worklog_path,
+        )
+        _render_payload(console, payload, json_output=effective_json)
+
+    @log_app.command("list")
+    def ops_log_list_command(
+        ctx: typer.Context,
+        days: int = typer.Option(7, "--days", help="Window size in days."),
+        task: str | None = typer.Option(None, "--task", help="Filter by task name."),
+        ops_worklog_path: Path = typer.Option(
+            Path("ops_worklog.jsonl"),
+            "--ops-worklog-path",
+            help="Ops worklog input path",
+        ),
+        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
+    ) -> None:
+        ctx_obj = ctx.obj or {"json": False}
+        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        payload = worklog_list(days=days, task=task, ops_worklog_path=ops_worklog_path)
+        _render_payload(console, payload, json_output=effective_json)
+
+    @automation_app.command("add")
+    def ops_automation_add_command(
+        ctx: typer.Context,
+        task: str = typer.Option(..., "--task", help="Automation task identifier."),
+        before: int | None = typer.Option(None, "--before-min", help="Time before automation."),
+        after: int | None = typer.Option(None, "--after-min", help="Time after automation."),
+        effective_date: str
+        | None = typer.Option(None, "--effective-date", help="Effective date (YYYY-MM-DD)."),
+        runbook_ref: str | None = typer.Option(None, "--runbook-ref", help="Runbook reference."),
+        evidence: list[str] = typer.Option(
+            [], "--evidence", help="Evidence paths (repeatable).", show_default=False
+        ),
+        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
+    ) -> None:
+        ctx_obj = ctx.obj or {"json": False}
+        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        payload = automation_add(
+            task=task,
+            before=before,
+            after=after,
+            effective_date=effective_date,
+            runbook_ref=runbook_ref,
+            evidence=evidence,
+        )
+        _render_payload(console, payload, json_output=effective_json)
+
+    ops_app.add_typer(log_app, name="log")
+    ops_app.add_typer(automation_app, name="automation")
+    ops_app.add_typer(incident_app, name="incident")
+
+    @ops_app.command("agenda")
+    def ops_agenda_command(
+        ctx: typer.Context,
+        date: str = typer.Option(
+            datetime.utcnow().date().isoformat(),
+            "--date",
+            help="Agenda date (YYYY-MM-DD).",
+        ),
+        out: Path | None = typer.Option(None, "--out", help="Optional output path override."),
+        no_persist: bool = typer.Option(
+            False, "--no-persist", help="Render without writing to the default agenda path."
+        ),
+        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
+    ) -> None:
+        ctx_obj = ctx.obj or {"json": False}
+        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        payload = agenda(date, out=str(out) if out else None, persist=not no_persist)
+        _render_payload(console, payload, json_output=effective_json)
+
+    @incident_app.command("open")
+    def ops_incident_open_command(
+        ctx: typer.Context,
+        category: str = typer.Option(..., "--category", help="Incident category."),
+        severity: str = typer.Option(..., "--severity", help="Incident severity."),
+        related_event: list[str] = typer.Option(
+            [], "--related-event", help="Related event IDs (repeatable).", show_default=False
+        ),
+        detected_by: str | None = typer.Option(None, "--detected-by", help="Detector ID."),
+        board_mode: str = typer.Option("normal", "--board-mode", help="Board mode."),
+        health_state: str = typer.Option("ok", "--health-state", help="Health state."),
+        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
+    ) -> None:
+        ctx_obj = ctx.obj or {"json": False}
+        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        payload = incident_open(
+            category=category,
+            severity=severity,
+            detected_by=detected_by,
+            board_mode=board_mode,
+            health_state=health_state,
+            related_events=related_event or None,
+        )
+        _render_payload(console, payload, json_output=effective_json)
+
+    @incident_app.command("timeline-add")
+    def ops_incident_timeline_add_command(
+        ctx: typer.Context,
+        incident_id: str = typer.Option(..., "--incident", help="Incident ID."),
+        runbook_ref: str | None = typer.Option(None, "--runbook", help="Runbook reference."),
+        note: str = typer.Option(..., "--note", help="Timeline note."),
+        evidence: list[str] = typer.Option(
+            [], "--evidence", help="Evidence paths (repeatable).", show_default=False
+        ),
+        duration_min: int | None = typer.Option(None, "--duration-min", help="Duration in minutes."),
+        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
+    ) -> None:
+        ctx_obj = ctx.obj or {"json": False}
+        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        payload = incident_timeline_add(
+            incident_id=incident_id,
+            runbook_ref=runbook_ref,
+            note=note,
+            evidence=evidence,
+            duration_min=duration_min,
+        )
+        _render_payload(console, payload, json_output=effective_json)
+
+    @incident_app.command("forensics")
+    def ops_incident_forensics_command(
+        ctx: typer.Context,
+        incident_id: str = typer.Option(..., "--incident", help="Incident ID."),
+        window: str = typer.Option("6h", "--window", help="Window (e.g., 6h, 30m)."),
+        report: bool = typer.Option(False, "--report", help="Write reports to disk."),
+        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
+    ) -> None:
+        ctx_obj = ctx.obj or {"json": False}
+        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        payload = incident_forensics(incident_id=incident_id, window=window, report=report)
+        _render_payload(console, payload, json_output=effective_json)
+
+    @incident_app.command("close")
+    def ops_incident_close_command(
+        ctx: typer.Context,
+        incident_id: str = typer.Option(..., "--incident", help="Incident ID."),
+        verification_note: str = typer.Option(..., "--verification-note", help="Verification note."),
+        verified_by: str = typer.Option(..., "--verified-by", help="Verifier name."),
+        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
+    ) -> None:
+        ctx_obj = ctx.obj or {"json": False}
+        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        payload = incident_close(
+            incident_id=incident_id,
+            verification_note=verification_note,
+            verified_by=verified_by,
+        )
+        _render_payload(console, payload, json_output=effective_json)
 
     @ops_app.command("action-sync")
     def ops_action_sync_command(
@@ -3618,6 +3979,147 @@ def create_cli_app() -> typer.Typer:
         if isinstance(exit_code, int) and exit_code != 0:
             raise typer.Exit(code=exit_code)
 
+    @ops_app.command("drill-catalog")
+    def ops_drill_catalog_command(
+        ctx: typer.Context,
+        tag: list[str] = typer.Option(
+            [], "--tag", help="Filter scenarios by impact tag (repeatable).", show_default=False
+        ),
+        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
+    ) -> None:
+        ctx_obj = ctx.obj or {"json": False}
+        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        payload = drill_catalog(include_tags=tag or None)
+        _render_payload(console, payload, json_output=effective_json)
+
+    @ops_app.command("drill-schedule")
+    def ops_drill_schedule_command(
+        ctx: typer.Context,
+        scenario_id: str = typer.Option(..., "--scenario-id", help="Drill scenario identifier."),
+        scheduled_for: str = typer.Option(
+            ..., "--scheduled-for", help="ISO8601 timestamp (e.g., 2026-01-12T10:00:00Z)."
+        ),
+        owner: str = typer.Option(..., "--owner", help="Drill owner or facilitator."),
+        participant: list[str] = typer.Option(
+            [], "--participant", help="Participant identifiers (repeatable).", show_default=False
+        ),
+        board_mode: str = typer.Option(
+            "guarded", "--board-mode", help="Board mode for drill start."
+        ),
+        acceptance: list[str] = typer.Option(
+            [],
+            "--acceptance",
+            help="Acceptance criteria (repeatable).",
+            show_default=False,
+        ),
+        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
+    ) -> None:
+        ctx_obj = ctx.obj or {"json": False}
+        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        payload = drill_schedule(
+            scenario_id=scenario_id,
+            scheduled_for=scheduled_for,
+            owner=owner,
+            participants=participant,
+            board_mode=board_mode,
+            acceptance_conditions=acceptance,
+        )
+        _render_payload(console, payload, json_output=effective_json)
+
+    @ops_app.command("drill-start")
+    def ops_drill_start_command(
+        ctx: typer.Context,
+        plan_id: str = typer.Option(..., "--plan-id", help="Scheduled drill plan ID."),
+        actor: str = typer.Option(..., "--actor", help="Actor starting the drill."),
+        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
+    ) -> None:
+        ctx_obj = ctx.obj or {"json": False}
+        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        payload = drill_start(plan_id=plan_id, actor=actor)
+        _render_payload(console, payload, json_output=effective_json)
+
+    @ops_app.command("drill-step")
+    def ops_drill_step_command(
+        ctx: typer.Context,
+        execution_id: str = typer.Option(..., "--execution-id", help="Active drill execution ID."),
+        runbook_step: str = typer.Option(..., "--runbook-step", help="Runbook step reference."),
+        duration_min: int = typer.Option(..., "--duration-min", help="Step duration in minutes."),
+        comment: str | None = typer.Option(None, "--comment", help="Optional step comment."),
+        evidence: list[str] = typer.Option(
+            [], "--evidence", help="Evidence paths (repeatable).", show_default=False
+        ),
+        metric: list[str] = typer.Option(
+            [],
+            "--metric",
+            help="Metric entries in key=value form (repeatable).",
+            show_default=False,
+        ),
+        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
+    ) -> None:
+        ctx_obj = ctx.obj or {"json": False}
+        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        payload = drill_step(
+            execution_id=execution_id,
+            runbook_step=runbook_step,
+            duration_min=duration_min,
+            comment=comment,
+            evidence_paths=evidence,
+            metrics=metric,
+        )
+        _render_payload(console, payload, json_output=effective_json)
+
+    @ops_app.command("drill-complete")
+    def ops_drill_complete_command(
+        ctx: typer.Context,
+        execution_id: str = typer.Option(..., "--execution-id", help="Active drill execution ID."),
+        success: bool = typer.Option(..., "--success/--failed", help="Drill success outcome."),
+        evidence: list[str] = typer.Option(
+            [], "--evidence", help="Evidence paths (repeatable).", show_default=False
+        ),
+        follow_up_ticket: list[str] = typer.Option(
+            [],
+            "--follow-up-ticket",
+            help="Follow-up ticket IDs (repeatable).",
+            show_default=False,
+        ),
+        minutes_saved_estimate: int
+        | None = typer.Option(
+            None, "--minutes-saved-estimate", help="Minutes saved estimate."
+        ),
+        sign_off: list[str] = typer.Option(
+            [],
+            "--sign-off",
+            help="Sign-off entries role:actor:status (repeatable).",
+            show_default=False,
+        ),
+        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
+    ) -> None:
+        ctx_obj = ctx.obj or {"json": False}
+        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        payload = drill_complete(
+            execution_id=execution_id,
+            success=success,
+            evidence_paths=evidence,
+            follow_up_tickets=follow_up_ticket,
+            minutes_saved_estimate=minutes_saved_estimate,
+            sign_offs=sign_off,
+        )
+        _render_payload(console, payload, json_output=effective_json)
+
+    @ops_app.command("drill-abort")
+    def ops_drill_abort_command(
+        ctx: typer.Context,
+        execution_id: str = typer.Option(..., "--execution-id", help="Active drill execution ID."),
+        reason: str = typer.Option(..., "--reason", help="Reason for aborting drill."),
+        actor: str = typer.Option(..., "--actor", help="Actor aborting the drill."),
+        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
+    ) -> None:
+        ctx_obj = ctx.obj or {"json": False}
+        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        payload = drill_abort(execution_id=execution_id, reason=reason, actor=actor)
+        _render_payload(console, payload, json_output=effective_json)
+
     app.add_typer(ops_app, name="ops")
+    app.add_typer(emergency_app, name="emergency")
 
     return app

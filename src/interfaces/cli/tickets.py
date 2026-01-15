@@ -73,6 +73,8 @@ def approve(
 ) -> Mapping[str, object]:
     """Approve a ticket with optional double-entry and lock handling."""
 
+    if gate_state and gate_state.human.double_entry_required:
+        require_double_entry = True
     if require_double_entry and not double_entry_user:
         raise ValueError("double-entry confirmation required; pass double_entry_user")
 
@@ -95,8 +97,12 @@ def approve(
 
     diff = [{"op": "replace", "path": "/status", "value": "approved"}]
     cfg_hash, data_hash = _extract_hashes(guardrails_payload, gate_state=gate_state)
-    determinism_hash = guardrails_payload.get("determinism_hash")
-    determinism_version = guardrails_payload.get("determinism_version", DEFAULT_DETERMINISM_VERSION)
+    effective_determinism_hash = determinism_hash or guardrails_payload.get("determinism_hash")
+    effective_determinism_version = (
+        determinism_version
+        if determinism_version is not None
+        else guardrails_payload.get("determinism_version", DEFAULT_DETERMINISM_VERSION)
+    )
     audit_entry = _build_audit_entry(
         ticket_id=ticket_id,
         action="approve",
@@ -108,8 +114,8 @@ def approve(
         guardrails=guardrails_payload,
         spread_state=_extract_spread_state(gate_state),
         health_status=_extract_health_status(guardrails_payload, gate_state),
-        determinism_hash=determinism_hash,
-        determinism_version=determinism_version,
+        determinism_hash=effective_determinism_hash,
+        determinism_version=effective_determinism_version,
         checklist_progress=DEFAULT_CHECKLIST_PROGRESS,
         watchlist_reasons=DEFAULT_WATCHLIST_REASONS,
         lock_owner_before=None,
@@ -177,8 +183,12 @@ def reject(
     _acquire_lock(ticket_id, owner=actor, take_over=take_over, reason="reject")
     diff = [{"op": "replace", "path": "/status", "value": "rejected"}]
     cfg_hash, data_hash = _extract_hashes(guardrails_payload, gate_state=gate_state)
-    determinism_hash = guardrails_payload.get("determinism_hash")
-    determinism_version = guardrails_payload.get("determinism_version", DEFAULT_DETERMINISM_VERSION)
+    effective_determinism_hash = determinism_hash or guardrails_payload.get("determinism_hash")
+    effective_determinism_version = (
+        determinism_version
+        if determinism_version is not None
+        else guardrails_payload.get("determinism_version", DEFAULT_DETERMINISM_VERSION)
+    )
     audit_entry = _build_audit_entry(
         ticket_id=ticket_id,
         action="reject",
@@ -189,8 +199,8 @@ def reject(
         guardrails=guardrails_payload,
         spread_state=_extract_spread_state(gate_state),
         health_status=_extract_health_status(guardrails_payload, gate_state),
-        determinism_hash=determinism_hash,
-        determinism_version=determinism_version,
+        determinism_hash=effective_determinism_hash,
+        determinism_version=effective_determinism_version,
         checklist_progress=DEFAULT_CHECKLIST_PROGRESS,
         watchlist_reasons=DEFAULT_WATCHLIST_REASONS,
         lock_owner_before=None,
@@ -249,8 +259,12 @@ def edit(
     _acquire_lock(ticket_id, owner=actor, take_over=take_over, reason="edit")
     diff = [{"op": "replace", "path": f"/{field}", "value": value}]
     cfg_hash, data_hash = _extract_hashes(guardrails_payload, gate_state=gate_state)
-    determinism_hash = guardrails_payload.get("determinism_hash")
-    determinism_version = guardrails_payload.get("determinism_version", DEFAULT_DETERMINISM_VERSION)
+    effective_determinism_hash = determinism_hash or guardrails_payload.get("determinism_hash")
+    effective_determinism_version = (
+        determinism_version
+        if determinism_version is not None
+        else guardrails_payload.get("determinism_version", DEFAULT_DETERMINISM_VERSION)
+    )
     audit_entry = _build_audit_entry(
         ticket_id=ticket_id,
         action="edit",
@@ -260,8 +274,8 @@ def edit(
         guardrails=guardrails_payload,
         spread_state=_extract_spread_state(gate_state),
         health_status=_extract_health_status(guardrails_payload, gate_state),
-        determinism_hash=determinism_hash,
-        determinism_version=determinism_version,
+        determinism_hash=effective_determinism_hash,
+        determinism_version=effective_determinism_version,
         checklist_progress=DEFAULT_CHECKLIST_PROGRESS,
         watchlist_reasons=DEFAULT_WATCHLIST_REASONS,
         lock_owner_before=None,
@@ -484,10 +498,10 @@ def _resolve_risk_disclosure(*, actor: str | None, force: bool) -> tuple[str, st
     service = RiskDisclosureService()
     state = service.fetch_state()
     consent_id = state.consent_reference_id
-    status = "accepted" if state.status == "accepted" else state.status
+    status = _normalize_risk_status(state.status)
     if force and consent_id is None:
         updated, consent_id = service.record_consent("ack_warn", user=actor)
-        status = "accepted" if updated.status == "accepted" else updated.status
+        status = _normalize_risk_status(updated.status)
     return status, consent_id
 
 
@@ -522,7 +536,9 @@ def _build_guardrails(
     merged = dict(DEFAULT_GUARDRAILS)
     if guardrails:
         merged.update(guardrails)
-    merged["risk_disclosure"] = risk_status or merged.get("risk_disclosure", "pending")
+    merged["risk_disclosure"] = _normalize_risk_status(
+        risk_status or merged.get("risk_disclosure", "pending")
+    )
     if "auto_execute" not in merged:
         merged["auto_execute"] = False
     return merged
@@ -553,6 +569,15 @@ def _compute_auto_execute(board_mode: str, guardrails: Mapping[str, object]) -> 
     if (guardrails.get("spread_status") or "normal") not in {"normal"}:
         return False
     return bool(guardrails.get("auto_execute", True))
+
+
+def _normalize_risk_status(status: str | None) -> str:
+    if not status:
+        return "pending"
+    normalized = str(status).strip().lower()
+    if normalized in {"accepted", "signed"}:
+        return "ok"
+    return normalized
 
 
 def _extract_hashes(

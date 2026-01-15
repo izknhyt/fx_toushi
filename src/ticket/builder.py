@@ -27,6 +27,7 @@ from .exceptions import TicketBlockedError
 from .models import AuditRefs, Guardrails, TicketChecklistItem, TicketRecord
 from .validators import (
     evaluate_double_entry,
+    evaluate_liquidity,
     evaluate_manual_comment,
     evaluate_spread,
     validate_market_open,
@@ -142,6 +143,15 @@ class DefaultTicketBuilder:
                 )
 
         spread_status, spread_metadata = evaluate_spread(draft.symbol, gate_state)
+        liquidity_status, liquidity_metadata = evaluate_liquidity(gate_state)
+        if liquidity_status != "ok" and spread_status == "ok":
+            spread_status = "warn"
+            spread_metadata = dict(spread_metadata)
+            spread_metadata["liquidity_state"] = liquidity_metadata.get("state")
+            if liquidity_metadata.get("recommendation"):
+                spread_metadata["liquidity_recommendation"] = liquidity_metadata.get(
+                    "recommendation"
+                )
         double_entry_status, double_entry_metadata = evaluate_double_entry(gate_state)
         manual_comment_status, manual_comment_metadata = evaluate_manual_comment(gate_state)
 
@@ -161,6 +171,15 @@ class DefaultTicketBuilder:
                     label="Spread state",
                     severity=severity,
                     metadata=dict(spread_metadata),
+                )
+            )
+        if liquidity_status != "ok":
+            badges.append(
+                TicketBadge(
+                    field="liquidity_state",
+                    label="Liquidity watch",
+                    severity="warn",
+                    metadata=dict(liquidity_metadata),
                 )
             )
         if double_entry_status != "ok":
@@ -303,7 +322,7 @@ class DefaultTicketBuilder:
         guardrails = Guardrails(
             kill_switch=gate_state.risk.kill_switch_recommendation or "none",
             spread_status=_normalize_spread_state(spread_state),
-            health_state=gate_state.market.profit_readiness_status,
+            health_state=None,
             reduce_only=gate_state.risk.reduce_only,
             auto_execute=gate_state.auto_execute,
             reason=gate_state.risk.kill_switch_reason or spread_metadata.get("reason"),

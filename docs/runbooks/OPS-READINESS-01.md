@@ -1,9 +1,9 @@
 # OPS-READINESS-01: オペレーションレディネス評価手順
 
 > **ACカバレッジ**: AC-51, AC-63  
-> **Runbook版数**: v1.2  
-> **最終更新日**: 2026-01-07  
-> **最終更新者**: Ops Manager (Doc Maintainer)
+> **Runbook版数**: v1.3  
+> **最終更新日**: 2026-01-12  
+> **最終更新者**: Codex (Doc Maintainer)
 
 ## 目的
 - バックアップ整合性、Runbook整備率、演習実施状況を定量化し、`ops_readiness_score`が閾値(`config/ops_readiness.yaml::thresholds.min_score`)を下回らないよう維持する。

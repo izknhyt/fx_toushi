@@ -10,7 +10,11 @@ import pytest
 from src.features.pipeline import FeaturePipeline
 from src.strategies import StrategyEngine, StrategyRegistrationError
 from src.strategies.base import StrategyContext, StrategyMetadata, StrategyPluginProtocol
-from src.strategies.registry import StrategyManifest, compute_deterministic_hash
+from src.strategies.registry import (
+    ManifestValidationError,
+    StrategyManifest,
+    compute_deterministic_hash,
+)
 
 pytestmark = pytest.mark.strategy_registry
 
@@ -176,3 +180,23 @@ def test_strategy_registry_emits_determinism_hash(project_root, tmp_path) -> Non
     assert baseline_payload["deterministic_hash"] == expected_hash
     assert baseline_payload["feature_version"] == features.determinism.feature_version
     assert baseline_payload["data_manifest_hash"] == features.determinism.data_manifest_hash
+
+
+def test_run_all_rejects_watchlist_missing_symbols(project_root) -> None:
+    engine = StrategyEngine()
+    engine.register_plugin(
+        _RegistryStub(metadata=_strategy_metadata(project_root, "m1_baseline_ma_rsi"))
+    )
+    engine.register_plugin(
+        _DonchianStub(metadata=_strategy_metadata(project_root, "m1_baseline_donchian"))
+    )
+    engine.load_manifest(_manifest_path(project_root))
+    features = _feature_context(project_root)
+
+    with pytest.raises(ManifestValidationError, match="missing from feature context"):
+        engine.run_all(
+            features=features,
+            seed=1,
+            watchlist=["USDJPY", "MISSING"],
+            **_dummy_context_args(),
+        )

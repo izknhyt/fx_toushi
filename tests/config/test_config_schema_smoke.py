@@ -193,6 +193,11 @@ CONFIG_CASES = [
         Path("docs/schemas/provider_priority.schema.json"),
     ),
     (
+        "provider_profiles",
+        Path("config/provider_profiles/local.yaml"),
+        Path("docs/schemas/provider_profile.schema.json"),
+    ),
+    (
         "ingestion_priorities",
         Path("config/ingestion/priorities.yaml"),
         Path("docs/schemas/ingestion_priorities.schema.json"),
@@ -211,6 +216,11 @@ CONFIG_CASES = [
     (
         "data_source_yfinance",
         Path("config/data_sources/yfinance.yaml"),
+        Path("docs/schemas/data_source.schema.json"),
+    ),
+    (
+        "data_source_paid_feed",
+        Path("config/data_sources/paid_feed.yaml"),
         Path("docs/schemas/data_source.schema.json"),
     ),
     (

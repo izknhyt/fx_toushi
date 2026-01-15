@@ -128,13 +128,9 @@ def resync(
             health_action = _apply_catch_up_health(summary, log_path=log_path)
             if health_action:
                 payload["health_action"] = health_action
-        if log_path != DEFAULT_RESYNC_LOG_PATH or json_output:
-            payload["status"] = "ok"
-            _render_success(console, payload)
-        else:
-            payload["status"] = "unavailable"
-            payload["error"] = "session manager not provided (resync unavailable in CLI stub)"
-            _render_error(console, payload["error"])
+        payload["status"] = "unavailable"
+        payload["error"] = "session manager not provided (resync unavailable in CLI stub)"
+        _render_error(console, payload["error"])
         payload["exit_code"] = _EXIT_CODE_MAP[payload["status"]]
         return payload
 
@@ -692,7 +688,7 @@ def _apply_catch_up_health(
     evidence = [str(log_path or DEFAULT_RESYNC_LOG_PATH)]
     if lag_minutes is not None and lag_minutes >= 30:
         monitor.raise_condition(
-            "critical",
+            "degraded",
             reason,
             detail=f"catch_up_lag_minutes={lag_minutes}",
             recommended_action="runbook:RUN-DATA-06#guarded_checklist",

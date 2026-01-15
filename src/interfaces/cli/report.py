@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from datetime import date, datetime
 from pathlib import Path
 
@@ -32,12 +33,26 @@ DEFAULT_BACKTEST_EQUITY_PATH = Path("reports/performance/backtest/equity.parquet
 DEFAULT_PERFORMANCE_SNAPSHOT = Path("metrics") / "performance_snapshot.jsonl"
 DEFAULT_PERFORMANCE_REPORT = Path("reports") / "performance" / "latest.md"
 DEFAULT_KILL_SWITCH_LOG = Path("logs/events/risk.kill_switch.jsonl")
+DEFAULT_KILL_SWITCH_LOG_ALT = Path("logs/risk/kill_switch_events.jsonl")
+DEFAULT_RISK_DECISION_LOG = Path("logs/events/risk.decision.jsonl")
 DEFAULT_SPREAD_METRICS = Path("metrics/spread_cooldown.jsonl")
 DEFAULT_INGESTION_METRICS = Path("metrics/data_ingestion_sla.jsonl")
 DEFAULT_RESYNC_LOG = Path("logs/resync/resync_events.jsonl")
 DEFAULT_MANUAL_CSV_JOBS = Path("data/manual_fallback/jobs/jobs.jsonl")
 DEFAULT_OPS_WORKLOG = Path("ops_worklog.jsonl")
 DEFAULT_FUNDING_STATE = Path("data") / "state" / "funding_state.json"
+DEFAULT_RISK_POLICY = Path("config") / "risk_policy.yaml"
+DEFAULT_RISK_METRICS = Path("metrics/risk.jsonl")
+DEFAULT_RISK_THRESHOLD_DIR = Path("reports") / "risk"
+
+
+@dataclass(slots=True)
+class RiskSummary:
+    status: str = "unknown"
+    summary: str = "n/a"
+
+    def to_context(self) -> dict[str, object]:
+        return {"risk_summary_status": self.status, "risk_summary": self.summary}
 
 
 def _append_jsonl(path: Path, payload: Mapping[str, object]) -> None:
@@ -194,6 +209,156 @@ def _summarize_ops_worklog(path: Path = DEFAULT_OPS_WORKLOG, *, limit: int = 5) 
     return "\n".join(lines)
 
 
+def _load_risk_thresholds(
+    profile: str, *, path: Path = DEFAULT_RISK_POLICY
+) -> Mapping[str, float]:
+    if not path.exists():
+        return {}
+    try:
+        payload = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    except Exception:
+        return {}
+    profiles = payload.get("profiles") if isinstance(payload, dict) else {}
+    profile_cfg = {}
+    if isinstance(profiles, Mapping):
+        profile_cfg = profiles.get(profile) or profiles.get("m1_baseline") or {}
+    kill_switch = profile_cfg.get("kill_switch") if isinstance(profile_cfg, Mapping) else {}
+    drawdown = kill_switch.get("drawdown_threshold_pct") if isinstance(kill_switch, Mapping) else {}
+    risk_limits = profile_cfg.get("risk_limits") if isinstance(profile_cfg, Mapping) else {}
+    return {
+        "daily_drawdown_pct": float(drawdown.get("daily", 0.0)) if isinstance(drawdown, Mapping) else 0.0,
+        "weekly_drawdown_pct": float(drawdown.get("weekly", 0.0)) if isinstance(drawdown, Mapping) else 0.0,
+        "capital_floor_pct": float(kill_switch.get("capital_floor_pct_of_base", 0.0))
+        if isinstance(kill_switch, Mapping)
+        else 0.0,
+        "r_eff_soft": float(risk_limits.get("exposure_r_eff_soft_stop", 0.0))
+        if isinstance(risk_limits, Mapping)
+        else 0.0,
+        "r_eff_hard": float(risk_limits.get("exposure_r_eff_hard_stop", 0.0))
+        if isinstance(risk_limits, Mapping)
+        else 0.0,
+    }
+
+
+def _extract_risk_metrics(metrics_path: Path = DEFAULT_RISK_METRICS) -> Mapping[str, float]:
+    entries = _read_jsonl_tail(metrics_path, limit=50)
+    if not entries:
+        return {}
+    latest = entries[-1]
+    metrics: dict[str, float] = {}
+    for key in ("daily_drawdown_pct", "weekly_drawdown_pct", "equity_pct_of_base", "exposure_r_eff"):
+        value = latest.get(key)
+        try:
+            if value is not None:
+                metrics[key] = float(value)
+        except (TypeError, ValueError):
+            continue
+    return metrics
+
+
+def _find_threshold_change_doc(base_dir: Path = DEFAULT_RISK_THRESHOLD_DIR) -> Path | None:
+    if not base_dir.exists():
+        return None
+    candidates = sorted(base_dir.glob("threshold_change_*.md"))
+    if not candidates:
+        return None
+    return candidates[-1]
+
+
+def _summarize_risk_summary(
+    *,
+    profile: str,
+    risk_decision_log: Path = DEFAULT_RISK_DECISION_LOG,
+    kill_switch_log: Path = DEFAULT_KILL_SWITCH_LOG,
+    risk_policy_path: Path = DEFAULT_RISK_POLICY,
+    risk_metrics_path: Path = DEFAULT_RISK_METRICS,
+) -> RiskSummary:
+    thresholds = _load_risk_thresholds(profile, path=risk_policy_path)
+    kill_entries = _read_jsonl_tail(kill_switch_log, limit=200)
+    if not kill_entries:
+        kill_entries = _read_jsonl_tail(DEFAULT_KILL_SWITCH_LOG_ALT, limit=200)
+    kill_states: list[str] = []
+    for entry in kill_entries:
+        event = entry.get("event") or ""
+        if isinstance(event, str) and event.startswith("kill_switch."):
+            kill_states.append(event.split(".", 1)[1])
+        elif entry.get("state"):
+            kill_states.append(str(entry.get("state")))
+    kill_counts: dict[str, int] = {}
+    for state in kill_states:
+        kill_counts[state] = kill_counts.get(state, 0) + 1
+    last_kill = kill_states[-1] if kill_states else None
+
+    decision_entries = _read_jsonl_tail(risk_decision_log, limit=200)
+    last_decision: Mapping[str, object] | None = None
+    for entry in reversed(decision_entries):
+        decision = entry.get("decision")
+        if isinstance(decision, Mapping):
+            last_decision = decision
+            break
+    decision_state = {
+        "board_mode": "unknown",
+        "kill_switch_state": "none",
+        "reduce_only": False,
+        "reason": None,
+    }
+    if last_decision is not None:
+        decision_state = {
+            "board_mode": str(last_decision.get("board_mode") or "unknown"),
+            "kill_switch_state": str(last_decision.get("kill_switch_state") or "none"),
+            "reduce_only": bool(last_decision.get("reduce_only") or False),
+            "reason": last_decision.get("reason"),
+        }
+
+    metrics = _extract_risk_metrics(risk_metrics_path)
+    summary_parts: list[str] = []
+    if last_decision is not None:
+        reason = f" reason={decision_state['reason']}" if decision_state["reason"] else ""
+        summary_parts.append(
+            "decision="
+            f"{decision_state['board_mode']}/"
+            f"{decision_state['kill_switch_state']}/"
+            f"reduce_only={decision_state['reduce_only']}{reason}"
+        )
+    if kill_counts:
+        counts = ", ".join(f"{key}={kill_counts[key]}" for key in sorted(kill_counts))
+        summary_parts.append(f"kill_switch_last={last_kill}; counts: {counts}")
+    if thresholds:
+        summary_parts.append(
+            "thresholds="
+            f"daily={thresholds.get('daily_drawdown_pct', 0):g}%,"
+            f"weekly={thresholds.get('weekly_drawdown_pct', 0):g}%,"
+            f"r_eff={thresholds.get('r_eff_soft', 0):g}/{thresholds.get('r_eff_hard', 0):g},"
+            f"capital_floor={thresholds.get('capital_floor_pct', 0):g}%"
+        )
+    if metrics:
+        metric_parts = []
+        if "daily_drawdown_pct" in metrics:
+            metric_parts.append(f"daily_dd={metrics['daily_drawdown_pct']:.2f}%")
+        if "weekly_drawdown_pct" in metrics:
+            metric_parts.append(f"weekly_dd={metrics['weekly_drawdown_pct']:.2f}%")
+        if "equity_pct_of_base" in metrics:
+            metric_parts.append(f"equity={metrics['equity_pct_of_base']:.2f}%")
+        if "exposure_r_eff" in metrics:
+            metric_parts.append(f"r_eff={metrics['exposure_r_eff']:.2f}")
+        summary_parts.append("metrics=" + ", ".join(metric_parts))
+    threshold_doc = _find_threshold_change_doc()
+    if threshold_doc:
+        summary_parts.append(f"threshold_change={threshold_doc.as_posix()}")
+
+    status = "unknown"
+    alert_states = {"hard_stop", "soft_stop"}
+    if decision_state["kill_switch_state"] in alert_states or last_kill in alert_states:
+        status = "alert"
+    elif decision_state["reduce_only"] or decision_state["board_mode"] in {"guarded", "halted"}:
+        status = "watch"
+    elif summary_parts:
+        status = "ok"
+
+    summary_text = "; ".join(summary_parts) if summary_parts else "n/a"
+    return RiskSummary(status=status, summary=summary_text)
+
+
 def _resolve_template(profile: str, template: Path | None) -> Path:
     if template is not None:
         return template
@@ -276,7 +441,10 @@ def _resolve_metric_state(*, profile: str, kpi_source: Path | None) -> str:
     if profile != "paper" or kpi_source is None or not kpi_source.exists():
         return "confirmed"
     try:
-        df = pd.read_parquet(kpi_source)
+        if kpi_source.suffix.lower() == ".parquet":
+            df = pd.read_parquet(kpi_source)
+        else:
+            df = pd.read_csv(kpi_source)
     except Exception:
         return "confirmed"
     if df.empty:
@@ -408,6 +576,8 @@ def weekly(
         _, latest_path = _load_latest_kpis(kpi_base)
         kpi_source = latest_path
     risk_summary = RiskSummaryStub()
+    if extended_blocks:
+        risk_summary = _summarize_risk_summary(profile=profile)
     manual_csv = ManualCsvSummary(summary=_summarize_manual_csv())
     extra_context = {}
     extra_context.update(risk_summary.to_context())

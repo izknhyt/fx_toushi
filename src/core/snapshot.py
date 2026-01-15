@@ -86,7 +86,7 @@ class SnapshotManager:
             cfg_hash=cfg_hash,
             data_hash=data_hash,
             actor=actor,
-            created_at=datetime.utcnow(),
+            created_at=datetime.now(timezone.utc),
         )
         self._logger.debug("Preparing snapshot persist: base=%s", self.base_path)
         target_dir = Path(self.base_path)
@@ -167,4 +167,3 @@ class SnapshotManager:
             "Data mismatch detected: expected=%s actual=%s", expected_hash, data_hash
         )
         raise RuntimeError(SnapshotError.DATA_MISMATCH_DETECTED.value)
-

@@ -5,6 +5,7 @@ from __future__ import annotations
 import csv
 import hashlib
 import json
+import re
 from collections.abc import Iterable
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
@@ -68,7 +69,7 @@ def _compare(main_rows: list[dict[str, str]], shadow_rows: list[dict[str, str]])
     mismatches: list[str] = []
     for pair, row in main_index.items():
         shadow_row = shadow_index[pair]
-        if row != shadow_row:
+        if _normalize_row(row) != _normalize_row(shadow_row):
             mismatches.append(pair)
     if mismatches:
         raise FundingSyncError(f"Detected {len(mismatches)} row mismatches: {mismatches[:3]}")
@@ -80,6 +81,31 @@ def _sha256(path: Path) -> str:
         for chunk in iter(lambda: handle.read(65536), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+_NUMERIC_PATTERN = re.compile(r"^-?\d+(\.\d+)?$")
+
+
+def _normalize_row(row: dict[str, str]) -> dict[str, object]:
+    normalized: dict[str, object] = {}
+    for key, value in row.items():
+        cleaned = (value or "").strip()
+        if key == "pair":
+            normalized[key] = cleaned
+            continue
+        normalized[key] = _normalize_value(cleaned)
+    return normalized
+
+
+def _normalize_value(value: str) -> object:
+    if not value:
+        return ""
+    if _NUMERIC_PATTERN.fullmatch(value):
+        try:
+            return float(value)
+        except ValueError:
+            return value
+    return value
 
 
 def _utcnow_iso() -> str:
@@ -103,7 +129,7 @@ def _write_funding_evidence(*, state: FundingState, output_dir: Path) -> Path:
         f"- Reviewed By: {state.reviewed_by or 'n/a'}",
         f"- Approved By: {state.approved_by or 'n/a'}",
         "",
-        "- Runbook: RUN-FUNDING-01",
+        "- Runbook: RUN-FUND-01",
     ]
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return path

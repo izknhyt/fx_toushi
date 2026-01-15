@@ -1,9 +1,9 @@
 # RUN-RISK-07: ライブ性能ガード（PF/Sharpe/Latency）対応手順
 
 > **ACカバレッジ**: AC-34, AC-45, AC-52  
-> **Runbook版数**: v1.0  
-> **最終更新日**: 2025-03-23  
-> **最終更新者**: Risk Manager (Doc Maintainer)
+> **Runbook版数**: v1.1  
+> **最終更新日**: 2026-01-12  
+> **最終更新者**: Codex (Doc Maintainer)
 
 ## 目的
 - `tradectl performance live-guard`で検知されるPF/Sharpe/Latency逸脱に対し、速やかにReduce-Onlyモードへ遷移し、Kill Switch判定と戦略調整を実施する。

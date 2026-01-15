@@ -43,6 +43,7 @@ def fetch_hour(
     cache_dir: Path | None = None,
     retries: int = 2,
     timeout: int = 30,
+    backoff_sec: float = 0.5,
 ) -> bytes | None:
     """Download a single hour of Dukascopy tick data (.bi5)."""
 
@@ -77,7 +78,7 @@ def fetch_hour(
         except Exception as exc:
             last_exc = exc
             if attempt < retries:
-                time.sleep(0.5 * (attempt + 1))
+                time.sleep(max(backoff_sec * (attempt + 1), 0.0))
     _ = last_exc
     return None
 

@@ -64,6 +64,7 @@ def board(
     normal: bool = False,
     kill_switch_state: str | None = None,
     spread_status: str | None = None,
+    liquidity_status: str | None = None,
     reduce_only: bool = False,
     json_output: bool = False,
     include: Iterable[str] | None = None,
@@ -138,6 +139,7 @@ def board(
         "banner": _build_banner(
             kill_switch_state=effective_kill_switch,
             spread_status=spread_status or "normal",
+            liquidity_status=liquidity_status or "normal",
             reduce_only=reduce_only,
             kill_switch_reason=kill_switch_reason,
             risk_disclosure_status=rd_status,
@@ -156,6 +158,7 @@ def board(
             "profit_readiness": profit_readiness_status,
             "latency": latency_data_status,
             "slippage": slippage_data_status,
+            "liquidity": liquidity_status or "normal",
             "execution_stats": {
                 "latency_data_status": latency_data_status,
                 "slippage_data_status": slippage_data_status,
@@ -165,6 +168,7 @@ def board(
             "kill_switch_state": effective_kill_switch,
             "kill_switch_reason": kill_switch_reason,
             "spread_status": spread_status or "normal",
+            "liquidity_status": liquidity_status or "normal",
             "reduce_only": reduce_only,
             "risk_disclosure": rd_status,
             "auto_execute": auto_execute,
@@ -177,6 +181,7 @@ def board(
             guardrails={
                 "kill_switch_state": effective_kill_switch,
                 "spread_status": spread_status or "normal",
+                "liquidity_status": liquidity_status or "normal",
                 "reduce_only": reduce_only,
                 "risk_disclosure": rd_status,
             },
@@ -184,6 +189,7 @@ def board(
                 "profit_readiness": profit_readiness_status,
                 "latency": latency_data_status,
                 "slippage": slippage_data_status,
+                "liquidity": liquidity_status or "normal",
             },
             ticket_count=len(ticket_rows),
         ),
@@ -193,6 +199,7 @@ def board(
     payload["banner"] = _build_banner(
         kill_switch_state=effective_kill_switch,
         spread_status=spread_status or "normal",
+        liquidity_status=liquidity_status or "normal",
         reduce_only=reduce_only,
         kill_switch_reason=kill_switch_reason,
         risk_disclosure_status=rd_status,
@@ -224,6 +231,7 @@ def _build_banner(
     *,
     kill_switch_state: str,
     spread_status: str,
+    liquidity_status: str,
     reduce_only: bool,
     kill_switch_reason: str | None,
     risk_disclosure_status: str,
@@ -250,6 +258,11 @@ def _build_banner(
         banner["severity"] = "warn"
         banner["message"] = "Reduce-Only enforced"
         banner["runbook"] = "docs/runbooks/RUN-DATA-05.md"
+    elif liquidity_status in {"guarded", "halted", "watch"}:
+        banner["kind"] = "liquidity_watch"
+        banner["severity"] = "critical" if liquidity_status == "halted" else "warn"
+        banner["message"] = f"Liquidity {liquidity_status}"
+        banner["runbook"] = "docs/runbooks/RUN-LIQ-01.md"
     elif (
         risk_disclosure_status.lower() in {"pending", "warning", "expired"} and compat_mode != "v1"
     ):

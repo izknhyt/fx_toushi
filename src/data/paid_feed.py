@@ -45,6 +45,12 @@ class ProviderCapabilityRegistry:
                     license_required=False,
                     notes="public",
                 ),
+                "paid_feed": ProviderCapability(
+                    provider="paid_feed",
+                    paid_feed=True,
+                    license_required=True,
+                    notes="local",
+                ),
                 "paid_feed_stub": ProviderCapability(
                     provider="paid_feed_stub",
                     paid_feed=True,

@@ -1,5 +1,8 @@
 # RUN-FUND-01: Funding CSV日次更新
 
+> **最終更新日**: 2026-01-12
+> **最終更新者**: Codex (Doc Maintainer)
+
 ## 目的
 Paper/Paper+Live運用におけるスワップレートの正確性維持と監査証跡確保。
 

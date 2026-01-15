@@ -167,36 +167,39 @@ class RiskManager:
         if funding_rate is None and self._funding_curve and snapshot.session_date:
             funding_rate = self._funding_curve.rate_on(snapshot.session_date)
 
+        def _apply_kill_switch(level: str, reason: str) -> None:
+            nonlocal kill_switch, kill_switch_reason
+            if kill_switch == "hard_stop":
+                return
+            if level == "hard_stop" or kill_switch is None:
+                kill_switch = level
+                kill_switch_reason = reason
+
         if snapshot.exposure_r_eff is not None:
             if snapshot.exposure_r_eff >= self._r_eff_hard_stop:
-                kill_switch = "hard_stop"
-                kill_switch_reason = "r_eff_hard_stop"
+                _apply_kill_switch("hard_stop", "r_eff_hard_stop")
             elif snapshot.exposure_r_eff >= self._r_eff_soft_stop:
                 reduce_only = True
                 reduce_only_reason = "r_eff_soft_stop"
 
         spread_status = (snapshot.spread_status or "").lower()
         if spread_status in {"block", "halt"}:
-            kill_switch = "soft_stop"
-            kill_switch_reason = "spread_block"
+            _apply_kill_switch("soft_stop", "spread_block")
         elif spread_status in {"cooldown", "watch"} and not reduce_only:
             reduce_only = True
             reduce_only_reason = "spread_cooldown"
 
         if snapshot.daily_drawdown_pct >= self._daily_stop_pct:
-            kill_switch = "soft_stop"
-            kill_switch_reason = "daily_drawdown"
+            _apply_kill_switch("soft_stop", "daily_drawdown")
 
         if snapshot.weekly_drawdown_pct >= self._weekly_stop_pct:
-            kill_switch = "soft_stop"
-            kill_switch_reason = "weekly_drawdown"
+            _apply_kill_switch("soft_stop", "weekly_drawdown")
 
         if (
             snapshot.equity_pct_of_base is not None
             and snapshot.equity_pct_of_base <= self._capital_floor_pct
         ):
-            kill_switch = "hard_stop"
-            kill_switch_reason = "capital_floor"
+            _apply_kill_switch("hard_stop", "capital_floor")
 
         risk_state = RiskGateState(
             reduce_only=reduce_only,

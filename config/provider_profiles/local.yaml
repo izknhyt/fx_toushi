@@ -1,0 +1,29 @@
+schema_version: provider_profile.v1
+
+defaults:
+  timeout_sec: 12
+  retry:
+    max_attempts: 3
+    backoff_sec: 1.0
+
+providers:
+  yfinance:
+    timeout_sec: 12
+    retry:
+      max_attempts: 2
+      backoff_sec: 1.0
+  dukascopy:
+    timeout_sec: 30
+    retry:
+      max_attempts: 3
+      backoff_sec: 0.5
+  paid_feed:
+    timeout_sec: 5
+    retry:
+      max_attempts: 1
+      backoff_sec: 0.0
+  paid_feed_stub:
+    timeout_sec: 5
+    retry:
+      max_attempts: 1
+      backoff_sec: 0.0

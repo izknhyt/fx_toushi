@@ -17,6 +17,7 @@ class YahooProvider(ProviderAdapter):  # type: ignore[misc]
     """Minimal Yahoo Finance provider returning placeholder frames."""
 
     name: str = "yahoo"
+    timeout_sec: float | None = None
 
     def fetch_bars(self, request: MarketRequest) -> Iterable[MarketFrame]:
         """Return recent bars using yfinance when available."""

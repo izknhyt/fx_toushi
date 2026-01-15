@@ -117,6 +117,7 @@ class GuardrailSnapshot:
     board_mode: str
     kill_switch_state: str
     spread_status: str
+    liquidity_status: str
     reduce_only: bool
     exit_code: int
     reasons: list[str] = field(default_factory=list)
@@ -132,6 +133,7 @@ class GuardrailSnapshot:
             "board_mode": self.board_mode,
             "kill_switch_state": self.kill_switch_state,
             "spread_status": self.spread_status,
+            "liquidity_status": self.liquidity_status,
             "reduce_only": self.reduce_only,
             "exit_code": self.exit_code,
             "reasons": list(self.reasons),
@@ -443,6 +445,10 @@ class HealthMonitor:
         health = self.snapshot()
         spread_state = self._normalise_spread_state(gate_state.market.spread.state)
         spread_reason = gate_state.market.spread.reason
+        liquidity_state = getattr(gate_state.market, "liquidity", None)
+        liquidity_status = (
+            liquidity_state.state if liquidity_state is not None else "normal"
+        )
 
         kill_switch_reason = None
         if health.kill_switch:
@@ -465,20 +471,33 @@ class HealthMonitor:
         elif (
             spread_state != "normal"
             or gate_state.risk.reduce_only
+            or liquidity_status in {"guarded", "halted"}
             or health.status in {"warn", "degraded", "soft_stop"}
         ):
             board_mode = "guarded"
+
+        liquidity_reason = None
+        if liquidity_status != "normal":
+            liquidity_reason = f"liquidity_{liquidity_status}"
 
         banner = (
             health.board_mode_suggestion
             or spread_reason
             or reduce_only_reason
             or kill_switch_reason
+            or liquidity_reason
         )
+
+        effective_reduce_only = gate_state.risk.reduce_only
+        if board_mode == "guarded" and not effective_reduce_only:
+            effective_reduce_only = True
+            reduce_only_reason = reduce_only_reason or "board_mode_guarded"
 
         reasons: list[str] = [reason.code for reason in health.reasons]
         if spread_reason:
             reasons.append(f"spread:{spread_reason}")
+        if liquidity_status != "normal":
+            reasons.append(f"liquidity:{liquidity_status}")
         if reduce_only_reason:
             reasons.append(f"reduce_only:{reduce_only_reason}")
         if effective_kill_switch != "none":
@@ -488,19 +507,24 @@ class HealthMonitor:
             health_status=health.status,
             kill_switch_state=effective_kill_switch,
             spread_status=spread_state,
-            reduce_only=gate_state.risk.reduce_only,
+            reduce_only=effective_reduce_only,
         )
+
+        runbook = health.board_mode_runbook
+        if health.kill_switch and health.kill_switch.runbook:
+            runbook = health.kill_switch.runbook
 
         return GuardrailSnapshot(
             health_status=health.status,
             board_mode=board_mode,
             kill_switch_state=effective_kill_switch,
             spread_status=spread_state,
-            reduce_only=gate_state.risk.reduce_only,
+            liquidity_status=liquidity_status,
+            reduce_only=effective_reduce_only,
             exit_code=exit_code,
             reasons=reasons,
             banner=banner,
-            runbook=health.board_mode_runbook,
+            runbook=runbook,
             kill_switch_reason=kill_switch_reason,
             spread_reason=spread_reason,
             reduce_only_reason=reduce_only_reason,

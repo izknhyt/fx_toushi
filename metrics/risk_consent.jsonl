@@ -1,0 +1,1 @@
+{"event": "risk_consent.enforce", "ts": "2026-01-12T12:18:10Z", "action": "approve", "decision": "prompt", "required_steps": ["ack"], "device_match": null, "device_id": null, "duration_ms": 0, "override_used": false, "result": "blocked", "consent_reference_id": null, "runbook_ref": "COMPLIANCE-01"}

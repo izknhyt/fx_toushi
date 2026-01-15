@@ -404,6 +404,29 @@ class FeaturePipeline:
             filled[column] = self._fill_missing_series(filled[column], column=column)
         return filled
 
+    @staticmethod
+    def _parse_timestamp_series(series: pd.Series) -> pd.Series:
+        parsed = pd.to_datetime(series, utc=True, errors="coerce")
+        if parsed.isna().any():
+            fallback = pd.to_datetime(
+                series.astype(str), utc=True, errors="coerce", format="ISO8601"
+            )
+            parsed = parsed.fillna(fallback)
+        return parsed
+
+    def _refresh_context_symbols(self, symbols: Iterable[str]) -> None:
+        updated_symbols = set(self._context.symbols)
+        for symbol in symbols:
+            if symbol:
+                updated_symbols.add(str(symbol).upper())
+        self._context = FeatureContext(
+            symbols=frozenset(updated_symbols),
+            timeframes=self._timeframes,
+            available_keys=frozenset(self._available_keys),
+            determinism=self._determinism,
+            _store=self._context._store,
+        )
+
     def compute_feature_matrix(self, *, symbol: str, price_df: pd.DataFrame) -> pd.DataFrame:
         """Return a feature matrix aligned to the base timeframe index.
 
@@ -425,10 +448,14 @@ class FeaturePipeline:
         )
         cached = self._cache_store.get(cache_key)
         if cached is not None:
+            self._refresh_context_symbols([symbol_key])
             return cached.copy() if hasattr(cached, "copy") else cached
 
         frame = price_df.copy()
-        frame["timestamp"] = pd.to_datetime(frame["timestamp"])
+        frame["timestamp"] = self._parse_timestamp_series(frame["timestamp"])
+        frame = frame.dropna(subset=["timestamp"])
+        if frame.empty:
+            return pd.DataFrame()
         frame = frame.set_index("timestamp").sort_index()
 
         frames = {self._default_timeframe: frame}
@@ -467,13 +494,7 @@ class FeaturePipeline:
             },
         )
         # refresh context so manifest validation can see the symbol set
-        self._context = FeatureContext(
-            symbols=frozenset({symbol}),
-            timeframes=self._timeframes,
-            available_keys=frozenset(self._available_keys),
-            determinism=self._determinism,
-            _store=self._context._store,
-        )
+        self._refresh_context_symbols([symbol_key])
         return matrix
 
     # ------------------------------------------------------------------
@@ -731,7 +752,7 @@ class FeaturePipeline:
         if ts_col is None:
             return pd.DataFrame()
         frame = frame.rename(columns={ts_col: "timestamp"})
-        frame["timestamp"] = pd.to_datetime(frame["timestamp"], utc=True, errors="coerce")
+        frame["timestamp"] = self._parse_timestamp_series(frame["timestamp"])
         frame = frame.dropna(subset=["timestamp"])
         frame = frame.sort_values("timestamp")
         needed = {"open", "high", "low", "close"}

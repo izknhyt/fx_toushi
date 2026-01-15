@@ -48,6 +48,16 @@ def test_risk_manager_respects_reduce_only_assessment() -> None:
     assert decision.kill_switch_state == "none"
 
 
+def test_risk_manager_hard_stop_is_not_downgraded_by_spread() -> None:
+    manager = RiskManager(r_eff_hard_stop=2.5)
+    snapshot = RiskSnapshot(exposure_r_eff=3.0, spread_status="block")
+
+    assessment = manager.evaluate(snapshot)
+
+    assert assessment.kill_switch_suggestion == "hard_stop"
+    assert assessment.kill_switch_reason == "r_eff_hard_stop"
+
+
 def test_risk_manager_reduce_only_advisor_hook() -> None:
     def advisor(_gate_state, _assessment, _spread_status, _kill_switch_state):
         return True, "latency_fallback"

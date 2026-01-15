@@ -1,8 +1,8 @@
 # RUN-SPREAD-03: スプレッド監視とフェイルオーバー手順
 
 > **ACカバレッジ**: AC-22, AC-45（スプレッド関連）
-> **Runbook版数**: v0.1
-> **最終更新日**: 2025-03-10
+> **Runbook版数**: v0.2
+> **最終更新日**: 2026-01-12
 > **最終更新者**: Risk Manager (Doc Maintainer)
 
 ## 目的
@@ -14,6 +14,7 @@
 - `HealthMonitor`が`spread_latency`または`spread_anomaly`の`warning`/`critical`イベントを発火したとき。
 - `tradectl spread report`でSLA閾値（p95>60秒、成功率<97.5%等）が逸脱したとき。
 - プロバイダ切替や手動CSV投入を行う前後。
+- `LiquidityMonitorService`の`liquidity.alert`が`spread_shock`を示したとき（`RUN-LIQ-01`と併用）。
 
 ## 事前準備
 - `data/spread_metrics.parquet`の最新スナップショットを取得し、ハッシュを控える。

@@ -1,5 +1,8 @@
 # RUN-FUND-02: Fundingデグレ対応
 
+> **最終更新日**: 2026-01-12
+> **最終更新者**: Codex (Doc Maintainer)
+
 ## 目的
 `FundingDegraded`イベント発生時にPaper損益の誤差を最小化し、復旧証跡を完全に残す。
 

@@ -1,0 +1,2 @@
+{"event": "strategy.determinism", "strategy_id": "m1_baseline_ma_rsi", "determinism_hash": "hash-a", "ts": "2025-01-02T00:00:00Z"}
+{"event": "strategy.determinism", "strategy_id": "m1_baseline_ma_rsi", "determinism_hash": "hash-b", "ts": "2025-01-02T01:00:00Z"}

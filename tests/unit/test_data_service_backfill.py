@@ -3,7 +3,15 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from src.data.service import BackfillResult, MarketFrame, ProviderResult, backfill
+import pytest
+from src.data.service import (
+    BackfillFailedError,
+    BackfillResult,
+    MarketFrame,
+    ProviderError,
+    ProviderResult,
+    backfill,
+)
 
 
 def _read_jsonl(path: Path) -> list[dict[str, object]]:
@@ -43,3 +51,25 @@ def test_backfill_uses_provider_handler(tmp_path: Path) -> None:
     assert len(result.frames[0].bars) == 2
     entries = _read_jsonl(metrics_path)
     assert any(entry.get("stage") == "backfill" for entry in entries)
+
+
+def test_backfill_respects_provider_profile_retry_override(tmp_path: Path) -> None:
+    attempts = {"count": 0}
+
+    def failing(_symbols: list[str], _tf: str) -> ProviderResult:
+        attempts["count"] += 1
+        raise ProviderError("down")
+
+    with pytest.raises(BackfillFailedError):
+        backfill(
+            symbols=["USDJPY"],
+            timeframe="M5",
+            start="2025-01-01T00:00:00Z",
+            end="2025-01-01T01:00:00Z",
+            provider_priority=["primary"],
+            provider_handlers={"primary": failing},
+            provider_profiles={"defaults": {"retry": {"max_attempts": 1, "backoff_sec": 0.0}}},
+            chunk_hours=6,
+        )
+
+    assert attempts["count"] == 1

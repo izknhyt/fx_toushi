@@ -1,0 +1,11 @@
+{"event": "feature_cache", "status": "miss", "key": "USDJPY:5m:m1-core-2025-11-21:d1cef360c94c4bad403306dc07bf2e9e2b5d5b2f3c8cec71a59647dacdd1e2ec", "ts": "2026-01-12T05:55:57Z"}
+{"event": "feature_cache", "status": "store", "key": "USDJPY:5m:m1-core-2025-11-21:d1cef360c94c4bad403306dc07bf2e9e2b5d5b2f3c8cec71a59647dacdd1e2ec", "ts": "2026-01-12T05:55:57Z", "metadata": {"feature_version": "m1-core-2025-11-21", "seed": 0, "rows": 1}}
+{"event": "feature_cache", "status": "miss", "key": "USDJPY:5m:m1-core-2025-11-21:d1cef360c94c4bad403306dc07bf2e9e2b5d5b2f3c8cec71a59647dacdd1e2ec", "ts": "2026-01-12T05:56:37Z"}
+{"event": "feature_cache", "status": "store", "key": "USDJPY:5m:m1-core-2025-11-21:d1cef360c94c4bad403306dc07bf2e9e2b5d5b2f3c8cec71a59647dacdd1e2ec", "ts": "2026-01-12T05:56:37Z", "metadata": {"feature_version": "m1-core-2025-11-21", "seed": 0, "rows": 2}}
+{"event": "feature_cache", "status": "miss", "key": "USDJPY:5m:m1-core-2025-11-21:d1cef360c94c4bad403306dc07bf2e9e2b5d5b2f3c8cec71a59647dacdd1e2ec", "ts": "2026-01-12T06:47:50Z"}
+{"event": "feature_cache", "status": "store", "key": "USDJPY:5m:m1-core-2025-11-21:d1cef360c94c4bad403306dc07bf2e9e2b5d5b2f3c8cec71a59647dacdd1e2ec", "ts": "2026-01-12T06:47:50Z", "metadata": {"feature_version": "m1-core-2025-11-21", "seed": 0, "rows": 2}}
+{"event": "feature_cache", "status": "miss", "key": "USDJPY:5m:m1-core-2025-11-21:d1cef360c94c4bad403306dc07bf2e9e2b5d5b2f3c8cec71a59647dacdd1e2ec", "ts": "2026-01-12T09:15:15Z"}
+{"event": "feature_cache", "status": "store", "key": "USDJPY:5m:m1-core-2025-11-21:d1cef360c94c4bad403306dc07bf2e9e2b5d5b2f3c8cec71a59647dacdd1e2ec", "ts": "2026-01-12T09:15:15Z", "metadata": {"feature_version": "m1-core-2025-11-21", "seed": 0, "rows": 2}}
+{"event": "feature_cache", "status": "miss", "key": "USDJPY:5m:m1-core-2025-11-21:unknown", "ts": "2026-01-12T21:56:50Z"}
+{"event": "feature_cache", "status": "store", "key": "USDJPY:5m:m1-core-2025-11-21:unknown", "ts": "2026-01-12T21:56:50Z", "metadata": {"symbol": "USDJPY", "timeframe": "5m"}}
+{"event": "feature_cache", "status": "hit", "key": "USDJPY:5m:m1-core-2025-11-21:unknown", "ts": "2026-01-12T21:56:50Z"}

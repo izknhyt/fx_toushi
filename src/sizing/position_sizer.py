@@ -62,6 +62,8 @@ class PositionSizer:
         )
         raw_lot = max(raw_lot, rules.min_lot)
         size_lot = round_lot(raw_lot, lot_step=rules.lot_step)
+        if size_lot < rules.min_lot:
+            size_lot = rules.min_lot
 
         min_stop = float(
             rules.min_distance_pips.get("sl", rules.min_distance_pips.get("stop_loss", 0.0))

@@ -59,6 +59,33 @@ def test_quality_guard_flags_gap() -> None:
     assert "gap_exceeds_threshold" in result.issues
 
 
+def test_quality_guard_handles_mixed_timezone_timestamps() -> None:
+    guard = DataQualityGuard(expected_timeframe_minutes=5, max_gap_minutes=10)
+    bars = [
+        {
+            "timestamp": "2025-01-01T00:00:00Z",
+            "open": 1.0,
+            "high": 2.0,
+            "low": 0.5,
+            "close": 1.2,
+            "volume": 1.0,
+        },
+        {
+            "timestamp": "2025-01-01T00:05:00",
+            "open": 1.0,
+            "high": 2.0,
+            "low": 0.5,
+            "close": 1.2,
+            "volume": 1.0,
+        },
+    ]
+    frame = MarketFrame(symbol="USDJPY", timeframe="5m", bars=bars)
+
+    result = guard.validate(frame)
+
+    assert result.status == "ok"
+
+
 def test_quality_guard_records_ntp_drift_and_missing_ratio(tmp_path) -> None:
     metrics_path = tmp_path / "time_sync.jsonl"
     metrics_path.write_text(json.dumps({"clock_drift_ms": 120}) + "\n", encoding="utf-8")

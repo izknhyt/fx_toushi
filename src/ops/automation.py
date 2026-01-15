@@ -2,18 +2,27 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from collections.abc import Iterable
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from pathlib import Path
 
 AUTOMATION_EFFECT_JSONL_PATH = Path("automation_effect.jsonl")
 """Default ledger containing automation effect measurements."""
 
+OPS_AUTOMATION_METRICS_PATH = Path("metrics/ops_automation.jsonl")
+"""Derived metrics log for automation gains."""
+
+OPS_AUTOMATION_AUDIT_PATH = Path("logs/audit/ops_automation.jsonl")
+"""Audit trail for automation effect entries."""
+
 AUTOMATION_EFFECT_ACHIEVED_EVENT = "automation.effect_achieved"
 """Event emitted when an automation gain crosses the configured threshold."""
 
+AUTOMATION_GAIN_THRESHOLD_MIN = 10
+"""Minimum gain in minutes that triggers an achieved event."""
 
 class AutomationEffectError(Exception):
     """Base exception for automation effect tracking."""
@@ -54,10 +63,20 @@ class AutomationEffectDelta:
 class AutomationEffectTracker:
     """Service responsible for updating ``automation_effect.jsonl`` entries."""
 
-    def __init__(self, *, ledger_path: Path = AUTOMATION_EFFECT_JSONL_PATH) -> None:
+    def __init__(
+        self,
+        *,
+        ledger_path: Path = AUTOMATION_EFFECT_JSONL_PATH,
+        metrics_path: Path = OPS_AUTOMATION_METRICS_PATH,
+        audit_path: Path = OPS_AUTOMATION_AUDIT_PATH,
+        gain_threshold_min: int = AUTOMATION_GAIN_THRESHOLD_MIN,
+    ) -> None:
         """Create a tracker bound to the provided JSONL ledger path."""
 
         self._ledger_path = ledger_path
+        self._metrics_path = metrics_path
+        self._audit_path = audit_path
+        self._gain_threshold_min = gain_threshold_min
 
     def apply(self, delta: AutomationEffectDelta) -> AutomationEffectEntry:
         """Apply *delta* and emit ``automation.effect_achieved`` when the gain exceeds policy."""
@@ -66,7 +85,7 @@ class AutomationEffectTracker:
             raise AutomationEffectValidationError("task is required")
         entry = AutomationEffectEntry(
             schema_version="automation.effect.v1",
-            ts=datetime.utcnow(),
+            ts=datetime.now(timezone.utc),
             task=delta.task,
             before_min=delta.before_min or 0,
             after_min=delta.after_min or 0,
@@ -95,6 +114,9 @@ class AutomationEffectTracker:
                 handle.write("\n")
         except OSError as exc:
             raise AutomationEffectError(str(exc)) from exc
+        self._append_audit(payload)
+        if entry.gain_min >= self._gain_threshold_min:
+            self._append_metrics(entry)
         return entry
 
     def iter_effects(self, task: str | None = None) -> Iterable[AutomationEffectEntry]:
@@ -132,3 +154,34 @@ class AutomationEffectTracker:
                 )
             )
         return entries
+
+    def _append_metrics(self, entry: AutomationEffectEntry) -> None:
+        payload = {
+            "event": AUTOMATION_EFFECT_ACHIEVED_EVENT,
+            "ts": entry.ts.isoformat().replace("+00:00", "Z"),
+            "task": entry.task,
+            "gain_min": entry.gain_min,
+            "status": entry.status,
+        }
+        self._metrics_path.parent.mkdir(parents=True, exist_ok=True)
+        with self._metrics_path.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(payload, ensure_ascii=False))
+            handle.write("\n")
+
+    def _append_audit(self, payload: dict[str, object]) -> None:
+        audit_payload = {
+            "event": "audit.ops_automation",
+            "ts": payload.get("ts"),
+            "task": payload.get("task"),
+            "entry_hash": _hash_payload(payload),
+            "evidence": payload.get("evidence"),
+        }
+        self._audit_path.parent.mkdir(parents=True, exist_ok=True)
+        with self._audit_path.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(audit_payload, ensure_ascii=False))
+            handle.write("\n")
+
+
+def _hash_payload(payload: dict[str, object]) -> str:
+    digest = hashlib.sha256(json.dumps(payload, sort_keys=True).encode("utf-8")).hexdigest()
+    return f"sha256:{digest}"

@@ -5,11 +5,21 @@ from __future__ import annotations
 import json
 import logging
 from collections.abc import Iterable
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from src.core.gate import GateAggregator, GateState
-from src.ops import AutomationEffectTracker, OpsAgendaService, OpsDrillService, OpsWorklogService
+from src.ops import (
+    AutomationEffectTracker,
+    DrillOutcome,
+    DrillPlan,
+    DrillStep,
+    OpsAgendaService,
+    OpsDrillService,
+    OpsWorklogEntry,
+    OpsWorklogService,
+    SignOff,
+)
 from src.ops.action_sync import ActionSyncError, sync_action_items
 from src.ops.automation import AutomationEffectDelta
 from src.ops.profit_readiness import (
@@ -33,12 +43,22 @@ __all__ = [
     "readiness",
     "agenda",
     "automation_log",
+    "automation_add",
     "action_item_sync",
     "degraded_ack",
+    "worklog_add",
+    "worklog_list",
+    "drill_catalog",
+    "drill_schedule",
+    "drill_start",
+    "drill_step",
+    "drill_complete",
+    "drill_abort",
     "OpsWorklogService",
     "AutomationEffectTracker",
     "OpsAgendaService",
     "OpsDrillService",
+    "OpsWorklogEntry",
 ]
 
 DEFAULT_GATE_STATE_PATH = Path("snapshots/latest/gate_state.json")
@@ -145,6 +165,68 @@ def degraded_ack(
     }
     _append_jsonl(ops_worklog_path, entry)
     return {"status": "ok", "worklog": entry, "ops_worklog_path": str(ops_worklog_path)}
+
+
+def worklog_add(
+    *,
+    task: str,
+    owner: str,
+    duration_min: int = 0,
+    mode: str = "normal",
+    source: str = "cli",
+    related_artifacts: Iterable[str] | None = None,
+    health_state: str = "ok",
+    board_mode: str = "normal",
+    notes: str | None = None,
+    ops_worklog_path: Path = DEFAULT_OPS_WORKLOG_PATH,
+) -> dict[str, object]:
+    """Record a structured Ops worklog entry."""
+
+    service = OpsWorklogService(ledger_path=ops_worklog_path)
+    entry = OpsWorklogEntry(
+        schema_version="ops.worklog.v1",
+        ts=datetime.now(timezone.utc),
+        task=task,
+        duration_min=duration_min,
+        owner=owner,
+        mode=mode,
+        source=source,
+        related_artifacts=list(related_artifacts or ()),
+        health_state=health_state,
+        board_mode=board_mode,
+        notes=notes,
+    )
+    result = service.record(entry)
+    return {"status": "ok", "path": str(result.path), "entry_hash": result.entry_hash}
+
+
+def worklog_list(
+    *,
+    days: int = 7,
+    task: str | None = None,
+    ops_worklog_path: Path = DEFAULT_OPS_WORKLOG_PATH,
+) -> dict[str, object]:
+    """List Ops worklog entries within the specified window."""
+
+    service = OpsWorklogService(ledger_path=ops_worklog_path)
+    window = timedelta(days=days)
+    entries = [
+        {
+            "schema_version": entry.schema_version,
+            "ts": entry.ts.isoformat().replace("+00:00", "Z"),
+            "task": entry.task,
+            "duration_min": entry.duration_min,
+            "owner": entry.owner,
+            "mode": entry.mode,
+            "source": entry.source,
+            "related_artifacts": list(entry.related_artifacts),
+            "health_state": entry.health_state,
+            "board_mode": entry.board_mode,
+            "notes": entry.notes,
+        }
+        for entry in service.query(window=window, task=task)
+    ]
+    return {"status": "ok", "count": len(entries), "entries": entries}
 
 
 def readiness(
@@ -333,18 +415,34 @@ def _render_markdown(payload: dict[str, object]) -> str:
     return "\n".join(lines)
 
 
-def agenda(date: str, *, out: str | None = None) -> str:
+def agenda(
+    date: str,
+    *,
+    out: str | None = None,
+    persist: bool = True,
+) -> dict[str, object]:
     """Generate an Ops agenda using the template."""
 
     target_date = datetime.fromisoformat(date).date() if date else datetime.utcnow().date()
     service = OpsAgendaService()
-    path = service.generate(target_date=target_date, force=bool(out and Path(out).exists()))
+    rendered, _ = service.render(target_date=target_date)
+    path: Path | None = None
+    if persist:
+        path = service.generate(
+            target_date=target_date,
+            force=bool(out and Path(out).exists()),
+        )
     if out:
         dest = Path(out)
         dest.parent.mkdir(parents=True, exist_ok=True)
-        dest.write_text(Path(path).read_text(encoding="utf-8"), encoding="utf-8")
-        return str(dest)
-    return str(path)
+        dest.write_text(rendered, encoding="utf-8")
+        path = dest
+    return {
+        "status": "ok",
+        "date": str(target_date),
+        "path": str(path) if path else None,
+        "content": None if path else rendered,
+    }
 
 
 def automation_log(*, task: str, before: int | None = None, after: int | None = None) -> None:
@@ -353,6 +451,39 @@ def automation_log(*, task: str, before: int | None = None, after: int | None = 
     tracker = AutomationEffectTracker()
     tracker.apply(AutomationEffectDelta(task=task, before_min=before, after_min=after))
     logger.info("cli.ops.automation.completed", extra={"task": task})
+
+
+def automation_add(
+    *,
+    task: str,
+    before: int | None = None,
+    after: int | None = None,
+    effective_date: str | None = None,
+    runbook_ref: str | None = None,
+    evidence: Iterable[str] | None = None,
+) -> dict[str, object]:
+    """Record automation effect delta and return the persisted entry."""
+
+    tracker = AutomationEffectTracker()
+    parsed_date = None
+    if effective_date:
+        parsed_date = datetime.fromisoformat(effective_date).date()
+    entry = tracker.apply(
+        AutomationEffectDelta(
+            task=task,
+            before_min=before,
+            after_min=after,
+            effective_date=parsed_date,
+            runbook_ref=runbook_ref,
+            evidence=list(evidence or ()),
+        )
+    )
+    return {
+        "status": "ok",
+        "task": entry.task,
+        "gain_min": entry.gain_min,
+        "effective_date": entry.effective_date.isoformat(),
+    }
 
 
 def action_item_sync(
@@ -373,3 +504,159 @@ def action_item_sync(
         )
     except ActionSyncError as exc:
         raise RuntimeError(str(exc)) from exc
+
+
+def drill_catalog(*, include_tags: list[str] | None = None) -> dict[str, object]:
+    """List drill scenarios from the catalog."""
+
+    service = OpsDrillService()
+    scenarios = []
+    tag_filter = {tag for tag in (include_tags or []) if tag}
+    for scenario in service.list_scenarios():
+        if tag_filter and not (scenario.impact_tags & tag_filter):
+            continue
+        scenarios.append(
+            {
+                "scenario_id": scenario.scenario_id,
+                "title": scenario.title,
+                "runbook_refs": list(scenario.runbook_refs),
+                "validation_playbook_ids": list(scenario.validation_playbook_ids),
+                "trigger": scenario.trigger,
+                "expected_duration_min": scenario.expected_duration_min,
+                "impact_tags": sorted(scenario.impact_tags),
+            }
+        )
+    return {"status": "ok", "scenarios": scenarios}
+
+
+def drill_schedule(
+    *,
+    scenario_id: str,
+    scheduled_for: str,
+    owner: str,
+    participants: Iterable[str] | None = None,
+    board_mode: str = "guarded",
+    acceptance_conditions: Iterable[str] | None = None,
+) -> dict[str, object]:
+    """Schedule a drill plan for the given scenario."""
+
+    service = OpsDrillService()
+    when = datetime.fromisoformat(scheduled_for.replace("Z", "+00:00"))
+    plan = service.schedule(
+        plan=DrillPlan(
+            plan_id=f"{scenario_id}-{when:%Y%m%d%H%M}",
+            scenario_id=scenario_id,
+            scheduled_for=when,
+            owner=owner,
+            participants=list(participants or ()),
+            board_mode_on_start=board_mode,
+            acceptance_conditions=list(acceptance_conditions or ()),
+        )
+    )
+    return {
+        "status": "ok",
+        "plan_id": plan.plan_id,
+        "scenario_id": plan.scenario_id,
+        "scheduled_for": plan.scheduled_for.isoformat().replace("+00:00", "Z"),
+        "participants": list(plan.participants),
+        "board_mode": plan.board_mode_on_start,
+    }
+
+
+def drill_start(*, plan_id: str, actor: str) -> dict[str, object]:
+    """Start a drill execution for the given plan."""
+
+    service = OpsDrillService()
+    execution = service.start(plan_id, actor=actor)
+    return {
+        "status": "ok",
+        "execution_id": execution.execution_id,
+        "plan_id": execution.plan_id,
+        "board_mode": execution.board_mode,
+    }
+
+
+def drill_step(
+    *,
+    execution_id: str,
+    runbook_step: str,
+    duration_min: int,
+    comment: str | None = None,
+    evidence_paths: Iterable[str] | None = None,
+    metrics: Iterable[str] | None = None,
+) -> dict[str, object]:
+    """Record a drill step for an active execution."""
+
+    service = OpsDrillService()
+    parsed_metrics: dict[str, object] = {}
+    for entry in metrics or ():
+        if "=" not in entry:
+            continue
+        key, value = entry.split("=", 1)
+        parsed_metrics[key.strip()] = value.strip()
+    service.record_step(
+        execution_id,
+        DrillStep(
+            runbook_step=runbook_step,
+            duration_min=duration_min,
+            comment=comment,
+            evidence_paths=list(evidence_paths or ()),
+            metrics=parsed_metrics,
+        ),
+    )
+    return {"status": "ok", "execution_id": execution_id, "runbook_step": runbook_step}
+
+
+def drill_complete(
+    *,
+    execution_id: str,
+    success: bool,
+    evidence_paths: Iterable[str] | None = None,
+    follow_up_tickets: Iterable[str] | None = None,
+    minutes_saved_estimate: int | None = None,
+    sign_offs: Iterable[str] | None = None,
+) -> dict[str, object]:
+    """Complete a drill execution and write the report evidence."""
+
+    service = OpsDrillService()
+    signoff_entries = []
+    for entry in sign_offs or ():
+        parts = entry.split(":")
+        if len(parts) < 2:
+            continue
+        role = parts[0]
+        actor = parts[1]
+        status = parts[2] if len(parts) > 2 else "ok"
+        signoff_entries.append(
+            SignOff(role=role, actor=actor, status=status, timestamp=datetime.now(timezone.utc))
+        )
+    outcome = DrillOutcome(
+        execution_id=execution_id,
+        success=success,
+        metrics={"minutes_saved_estimate": minutes_saved_estimate},
+        follow_up_tickets=list(follow_up_tickets or ()),
+        evidence_paths=list(evidence_paths or ()),
+        sign_offs=signoff_entries,
+    )
+    result = service.complete(execution_id, outcome)
+    return {
+        "status": "ok" if result.success else "failed",
+        "execution_id": execution_id,
+        "evidence_paths": list(result.evidence_paths),
+        "sign_offs": [
+            {"role": s.role, "actor": s.actor, "status": s.status} for s in result.sign_offs
+        ],
+    }
+
+
+def drill_abort(*, execution_id: str, reason: str, actor: str) -> dict[str, object]:
+    """Abort a drill execution."""
+
+    service = OpsDrillService()
+    execution = service.abort(execution_id, reason=reason, actor=actor)
+    return {
+        "status": execution.status,
+        "execution_id": execution.execution_id,
+        "plan_id": execution.plan_id,
+        "notes": execution.notes,
+    }

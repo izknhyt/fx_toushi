@@ -982,7 +982,7 @@ class DefaultSessionManager:
         reason = "data_latency_catch_up"
         if lag_minutes >= 30:
             monitor.raise_condition(
-                "critical",
+                "degraded",
                 reason,
                 detail=f"catch_up_lag_minutes={lag_minutes}",
                 recommended_action="runbook:RUN-DATA-06#guarded_checklist",

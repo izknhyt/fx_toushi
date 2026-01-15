@@ -86,6 +86,32 @@ def test_ticket_approve_uses_gate_state_hash_when_missing_guardrails(
     assert audit_entry["data_hash"] == "sha256:" + ("d" * 64)
 
 
+def test_ticket_approve_preserves_explicit_determinism_hash(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(tickets, "METRICS_PATH", tmp_path / "metrics.jsonl")
+    monkeypatch.setattr(tickets, "AUDIT_PATH", tmp_path / "audit.jsonl")
+    guardrails = {
+        "kill_switch": "none",
+        "spread_status": "normal",
+        "reduce_only": False,
+        "cfg_hash": "sha256:" + ("a" * 64),
+        "data_hash": "sha256:" + ("b" * 64),
+        "determinism_hash": "sha256:guardrails",
+    }
+    result = tickets.approve(
+        "t-det",
+        user="alice",
+        guardrails=guardrails,
+        determinism_hash="sha256:explicit",
+        determinism_version=2,
+    )
+    assert result["status"] == "ok"
+    audit_entry = json.loads((tmp_path / "audit.jsonl").read_text(encoding="utf-8").strip())
+    assert audit_entry["determinism_hash"] == "sha256:explicit"
+    assert audit_entry["determinism_version"] == 2
+
+
 def test_ticket_edit_requires_lock_and_records_diff(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -104,6 +130,13 @@ def test_ticket_edit_requires_lock_and_records_diff(
 def test_ticket_approve_requires_double_entry_when_flagged() -> None:
     with pytest.raises(ValueError):
         tickets.approve("t3", require_double_entry=True)
+
+
+def test_ticket_approve_requires_double_entry_when_gate_state_requires() -> None:
+    gate_state = GateState()
+    gate_state.human.double_entry_required = True
+    with pytest.raises(ValueError):
+        tickets.approve("t3", gate_state=gate_state)
 
 
 def test_ticket_approve_requires_consent_when_enforced(

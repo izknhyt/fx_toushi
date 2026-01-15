@@ -1,5 +1,8 @@
 # RUN-OPS-AGENDA-01: 日次Opsアジェンダ生成・承認手順
 
+> **最終更新日**: 2026-01-12
+> **最終更新者**: Codex (Doc Maintainer)
+
 > **参照**: [詳細設計 §52.3 OpsAgendaService](../../detailed_design_fx_signal_tool_v1.md#523-opsagendaservice-srcopsagendapy), [§52.4 CLI & Workflow統合](../../detailed_design_fx_signal_tool_v1.md#524-cli--workflow統合-srcinterfacescliopspy), [§52.5 テレメトリ・監査・受入基準](../../detailed_design_fx_signal_tool_v1.md#525-テレメトリ監査受入基準)
 > **関連テンプレート**: [docs/templates/daily_agenda.md](../templates/daily_agenda.md)
 > **成果物保管先**: `reports/ops/daily_agenda/`

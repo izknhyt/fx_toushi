@@ -1,5 +1,8 @@
 # RUN-ALPHA-FEEDBACK-01 — Alpha Feedback / Scoreboard Activation
 
+> **最終更新日**: 2026-01-12
+> **最終更新者**: Codex (Doc Maintainer)
+
 ## 目的
 - `alpha.profit_loop_enabled`, `alpha.dynamic_sizing`, `alpha.playbook_override` をLiveプロファイルで有効化する。
 - Profit Loopメトリクス (`metrics/profit_loop.jsonl`) とScoreboard Bridge/Alphaスナップショットを生成し、Watchlistフリーの状態を証跡化する。

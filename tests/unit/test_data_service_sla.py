@@ -42,6 +42,7 @@ def test_fetch_latest_logs_retry_and_fallback(tmp_path: Path) -> None:
         retries=1,
         metrics_path=metrics_path,
         provider_handlers={"primary": failing, "secondary": slow_ok},
+        provider_profiles={"defaults": {"retry": {"max_attempts": 2, "backoff_sec": 0.0}}},
     )
 
     assert len(frames) == 1
@@ -67,6 +68,7 @@ def test_fetch_latest_all_providers_fail_logs_error(tmp_path: Path) -> None:
         retries=1,
         metrics_path=metrics_path,
         provider_handlers={"primary": failing},
+        provider_profiles={"defaults": {"retry": {"max_attempts": 2, "backoff_sec": 0.0}}},
     )
 
     assert frames == []
@@ -95,6 +97,30 @@ def test_fetch_latest_applies_provider_specific_threshold(tmp_path: Path) -> Non
     assert len(frames) == 1
     entries = [entry for entry in _read_jsonl(metrics_path) if entry.get("phase") == "fetch"]
     assert entries[-1]["latency_status"] == "watch"
+
+
+def test_fetch_latest_respects_provider_profile_retry_override(tmp_path: Path) -> None:
+    metrics_path = tmp_path / "metrics" / "data_ingestion_sla.jsonl"
+    attempts = {"count": 0}
+
+    def failing(_symbols: list[str], _tf: str) -> ProviderResult:
+        attempts["count"] += 1
+        raise ProviderError("down")
+
+    frames = fetch_latest(
+        symbols=["EURUSD"],
+        timeframe="M5",
+        provider_priority=["primary"],
+        retries=3,
+        metrics_path=metrics_path,
+        provider_handlers={"primary": failing},
+        provider_profiles={"defaults": {"retry": {"max_attempts": 1, "backoff_sec": 0.0}}},
+    )
+
+    assert frames == []
+    assert attempts["count"] == 1
+    entries = [entry for entry in _read_jsonl(metrics_path) if entry.get("phase") == "fetch"]
+    assert len(entries) == 2
 
 
 def test_parquet_provider_integration(tmp_path: Path) -> None:

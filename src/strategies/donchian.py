@@ -132,7 +132,7 @@ class DonchianBreakoutStrategy(StrategyPluginProtocol):
                 breakout = "lower"
                 level = lower_v
                 rationale = "breakout_lower"
-            elif abs(close_v - mid_v) <= atr_v * 0.1:
+            elif mid_v is not None and abs(close_v - mid_v) <= atr_v * 0.1:
                 # avoid mid-chop
                 continue
             else:
