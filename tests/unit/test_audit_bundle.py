@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 
@@ -39,15 +40,26 @@ def test_audit_bundle_generate_and_verify(tmp_path: Path, monkeypatch: object) -
     assert result.bundle_path.exists()
     assert result.manifest_path.exists()
     assert result.signature_path.exists()
+    assert result.report_path.exists()
     assert result.manifest.missing == ()
     assert result.manifest.summary["signals"] == 1
     assert result.manifest.summary["tickets"] == 3
     assert result.manifest.summary["fills"] == 2
     assert result.manifest.summary["config"] == 1
     assert result.manifest.summary["risk_disclosure"] == 2
+    manifest_payload = result.manifest.to_dict()
+    manifest_payload["signature"] = ""
+    manifest_sha = hashlib.sha256(
+        json.dumps(manifest_payload, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    assert result.manifest.signature == hashlib.sha256(f"{manifest_sha}:local".encode()).hexdigest()
+    signature_payload = json.loads(result.signature_path.read_text(encoding="utf-8"))
+    assert signature_payload["manifest_sha256"] == manifest_sha
 
     payload = service.verify(bundle_path=result.bundle_path)
     assert payload["status"] == "ok"
+    assert payload["hash_match"] is True
+    assert payload["signature_match"] is True
 
 
 def test_audit_bundle_verify_detects_mismatch(tmp_path: Path, monkeypatch: object) -> None:
@@ -64,3 +76,5 @@ def test_audit_bundle_verify_detects_mismatch(tmp_path: Path, monkeypatch: objec
     payload = service.verify(bundle_path=result.bundle_path)
     assert payload["status"] == "error"
     assert payload["mismatches"]
+    assert payload["hash_match"] is True
+    assert payload["signature_match"] is True

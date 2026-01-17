@@ -43,6 +43,7 @@ from .alpha import AlphaReviewError, AlphaWatchlistAlertError, review as alpha_r
 from .backtest import run_backtest, run_paper_poc, run_paper_poc_all, walk_forward_backtest
 from .benchmark import (
     BenchmarkGapError,
+    BenchmarkReplayGapError,
     compare as benchmark_compare,
     ingest as benchmark_ingest,
     validate_manual as benchmark_validate_manual,
@@ -103,9 +104,16 @@ from .kill_switch import (
     review as kill_switch_review,
     set_state as kill_switch_set_state,
 )
+from .journal import journal_add_note, journal_list, journal_review, journal_stats
 from .liquidity import compare as liquidity_compare
 from .liquidity import ingest as liquidity_ingest
 from .liquidity import status as liquidity_status
+from .model_risk import (
+    artifact_add as model_risk_artifact_add,
+    escalate as model_risk_escalate,
+    review as model_risk_review,
+    status as model_risk_status,
+)
 from .metrics import report as metrics_report
 from .ops import (
     action_item_sync,
@@ -122,6 +130,17 @@ from .ops import (
     worklog_add,
     worklog_list,
 )
+from .research_drift import scan as research_drift_scan
+from .research_idea import advance_stage as research_idea_stage
+from .research_idea import checklist as research_idea_checklist
+from .research_idea import evidence_bundle as research_idea_evidence_bundle
+from .research_idea import list_ideas as research_idea_list
+from .research_idea import pipeline_report as research_idea_pipeline_report
+from .research_idea import show_idea as research_idea_show
+from .research_idea import update_checklist as research_idea_checklist_update
+from .research_pipeline import generate_manifest as research_generate_manifest
+from .research_pipeline import validate_strategy as research_validate_strategy
+from .research_promote import promote as research_promote
 from .ops_dashboard import render_dashboard as ops_dashboard_render
 from .ops_incident import (
     incident_close,
@@ -156,12 +175,21 @@ from .spread import (
     DEFAULT_SPREAD_METRICS,
     inspect as spread_inspect,
 )
+from .strategy_manifest import list_entries as strategy_manifest_list
+from .strategy_manifest import renew as strategy_manifest_renew
+from .strategy_manifest import validate as strategy_manifest_validate
+from .strategy_scoring import report_scores as strategy_score_report
+from .strategy_scoring import update_scores as strategy_score_update
 from .status import (
     DEFAULT_GUARDRAILS_METRICS,
     DEFAULT_HEALTH_ACTION_AUDIT,
     DEFAULT_KILL_SWITCH_STATE_PATH,
     status,
 )
+from .accounts import aggregate as accounts_aggregate
+from .accounts import alerts as accounts_alerts
+from .accounts import ingest as accounts_ingest
+from .accounts import status as accounts_status
 from .validation import playbook_sync as validation_playbook_sync
 
 logger = logging.getLogger(__name__)
@@ -944,7 +972,9 @@ def create_cli_app() -> typer.Typer:
         note: str = typer.Option(..., "--note", help="Journal note"),
         week: str | None = typer.Option(None, "--week", help="ISO week (e.g. 2025-W12)"),
         path: Path = typer.Option(
-            Path("logs/journal/entries.jsonl"), "--path", help="Journal file path"
+            Path("logs/journal/journal_entries.db"),
+            "--path",
+            help="Journal SQLite DB path",
         ),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
@@ -1267,7 +1297,23 @@ def create_cli_app() -> typer.Typer:
             Path("reports") / "stress", "--stress-dir", help="Stress run artifacts directory"
         ),
         journal_path: Path = typer.Option(
-            Path("logs") / "journal" / "entries.jsonl", "--journal-path", help="Journal JSONL path"
+            Path("logs") / "journal" / "journal_entries.db",
+            "--journal-path",
+            help="Journal SQLite DB path",
+        ),
+        with_benchmark: bool = typer.Option(
+            False, "--with-benchmark", help="Include benchmark comparison block"
+        ),
+        with_attribution: bool = typer.Option(
+            False, "--with-attribution", help="Include attribution summary block"
+        ),
+        attribution_window: str = typer.Option(
+            "7d", "--attribution-window", help="Attribution lookback window"
+        ),
+        attribution_metrics: Path = typer.Option(
+            Path("metrics") / "reports_attribution.jsonl",
+            "--attribution-metrics",
+            help="Attribution metrics JSONL path",
         ),
         dry_run: bool = typer.Option(False, "--dry-run", help="Render without writing output"),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
@@ -1282,6 +1328,10 @@ def create_cli_app() -> typer.Typer:
             journal_path=journal_path,
             output_path=out,
             dry_run=dry_run,
+            with_benchmark=with_benchmark,
+            with_attribution=with_attribution,
+            attribution_window=attribution_window,
+            attribution_metrics_path=attribution_metrics,
         )
         _render_payload(console, payload, json_output=effective_json)
 
@@ -1353,31 +1403,38 @@ def create_cli_app() -> typer.Typer:
         file: Path = typer.Option(..., "--file", help="Benchmark CSV/Parquet path"),
         mode: str = typer.Option("paper", "--mode", help="Target mode (backtest|paper|live)"),
         symbol: str | None = typer.Option(None, "--symbol", help="Symbol filter"),
+        timeframe: str | None = typer.Option(None, "--timeframe", help="Bar timeframe (e.g. 1h)"),
+        validate_only: bool = typer.Option(False, "--validate-only", help="Validate without writing"),
         email: str | None = typer.Option(None, "--email", help="Notification email (optional)"),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
         ctx_obj = ctx.obj or {"json": False}
         effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
         try:
-            benchmark_ingest(
+            result = benchmark_ingest(
                 provider=provider,
                 file=str(file),
                 mode=mode,
                 symbol=symbol,
                 email=email,
+                timeframe=timeframe,
+                validate_only=validate_only,
             )
-        except NotImplementedError as exc:
+        except Exception as exc:  # noqa: BLE001
             typer.echo(str(exc), err=True)
             raise typer.Exit(code=1) from exc
         _render_payload(
             console,
             {
-                "status": "ok",
+                "status": getattr(result, "status", "ok"),
                 "provider": provider,
                 "file": str(file),
                 "mode": mode,
                 "symbol": symbol,
                 "email": email,
+                "timeframe": timeframe,
+                "validate_only": validate_only,
+                "result": result.to_dict() if hasattr(result, "to_dict") else result,
             },
             json_output=effective_json,
         )
@@ -1390,7 +1447,8 @@ def create_cli_app() -> typer.Typer:
         provider: list[str] = typer.Option(
             [], "--provider", help="Providers to compare", show_default=False
         ),
-        export: Path | None = typer.Option(None, "--export", help="Optional export path"),
+        export_md: Path | None = typer.Option(None, "--export", help="Optional Markdown export"),
+        export_json: Path | None = typer.Option(None, "--export-json", help="Optional JSON export"),
         fail_on_gap: bool = typer.Option(False, "--fail-on-gap", help="Fail if gaps are detected"),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
@@ -1402,11 +1460,12 @@ def create_cli_app() -> typer.Typer:
                 window=window,
                 mode=mode,
                 providers=list(provider) or None,
-                export=str(export) if export else None,
+                export_md=str(export_md) if export_md else None,
+                export_json=str(export_json) if export_json else None,
                 fail_on_gap=fail_on_gap,
             )
-        except BenchmarkGapError as exc:
-            result = exc.result
+        except (BenchmarkGapError, BenchmarkReplayGapError) as exc:
+            result = getattr(exc, "result", None) or {"status": "gap"}
             if fail_on_gap:
                 exit_code = 21
         except NotImplementedError as exc:
@@ -1419,7 +1478,8 @@ def create_cli_app() -> typer.Typer:
                 "window": window,
                 "mode": mode,
                 "providers": list(provider),
-                "export": getattr(result, "export_path", str(export) if export else None),
+                "export_md": getattr(result, "report_path", str(export_md) if export_md else None),
+                "export_json": str(export_json) if export_json else None,
                 "result": result.to_dict() if hasattr(result, "to_dict") else result,
             },
             json_output=effective_json,
@@ -1436,11 +1496,12 @@ def create_cli_app() -> typer.Typer:
         ctx_obj = ctx.obj or {"json": False}
         effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
         try:
-            benchmark_validate_manual(str(path))
-        except NotImplementedError as exc:
+            payload = benchmark_validate_manual(str(path))
+        except Exception as exc:  # noqa: BLE001
+            exit_code = getattr(exc, "exit_code", 1)
             typer.echo(str(exc), err=True)
-            raise typer.Exit(code=1) from exc
-        _render_payload(console, {"status": "ok", "path": str(path)}, json_output=effective_json)
+            raise typer.Exit(code=exit_code) from exc
+        _render_payload(console, {"status": "ok", "path": str(path), **payload}, json_output=effective_json)
 
     app.add_typer(benchmark_app, name="benchmark")
 
@@ -1501,6 +1562,8 @@ def create_cli_app() -> typer.Typer:
             "bundle_path": str(result.bundle_path),
             "manifest_path": str(result.manifest_path),
             "signature_path": str(result.signature_path),
+            "report_path": str(result.report_path),
+            "bundle_hash": result.manifest.hash,
             "summary": result.manifest.summary,
             "missing": list(result.manifest.missing),
         }
@@ -1584,12 +1647,13 @@ def create_cli_app() -> typer.Typer:
     def release_prepare_command(
         ctx: typer.Context,
         version: str = typer.Option(..., "--version", help="Release version identifier"),
+        dry_run: bool = typer.Option(False, "--dry-run", help="Preview without writing files"),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
         ctx_obj = ctx.obj or {"json": False}
         effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
         service = ReleaseGateService()
-        checklist = service.prepare(version=version)
+        checklist = service.prepare(version=version, dry_run=dry_run)
         _render_payload(
             console, {"status": "ok", **checklist.to_dict()}, json_output=effective_json
         )
@@ -1640,6 +1704,85 @@ def create_cli_app() -> typer.Typer:
         _render_payload(console, payload, json_output=effective_json)
         if payload.get("status") != "ok":
             raise typer.Exit(code=1)
+
+    model_risk_app = typer.Typer(help="Model risk register utilities")
+
+    @model_risk_app.command("status")
+    def model_risk_status_command(
+        ctx: typer.Context,
+        strategy: str = typer.Option(..., "--strategy", help="Strategy identifier"),
+        profile: str | None = typer.Option(None, "--profile", help="Feature flag profile"),
+        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
+    ) -> None:
+        ctx_obj = ctx.obj or {"json": False}
+        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        payload = model_risk_status(strategy_id=strategy, profile=profile)
+        _render_payload(console, payload, json_output=effective_json)
+
+    @model_risk_app.command("review")
+    def model_risk_review_command(
+        ctx: typer.Context,
+        strategy: str = typer.Option(..., "--strategy", help="Strategy identifier"),
+        approve: bool = typer.Option(True, "--approve/--reject", help="Approve or reject"),
+        reviewer: str = typer.Option(..., "--reviewer", help="Reviewer name"),
+        evidence: list[Path] = typer.Option(
+            [], "--evidence", help="Evidence paths", show_default=False
+        ),
+        profile: str | None = typer.Option(None, "--profile", help="Feature flag profile"),
+        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
+    ) -> None:
+        ctx_obj = ctx.obj or {"json": False}
+        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        payload = model_risk_review(
+            strategy_id=strategy,
+            approve=approve,
+            reviewer=reviewer,
+            evidence=[str(path) for path in evidence],
+            profile=profile,
+        )
+        _render_payload(console, payload, json_output=effective_json)
+
+    @model_risk_app.command("artifact-add")
+    def model_risk_artifact_add_command(
+        ctx: typer.Context,
+        strategy: str = typer.Option(..., "--strategy", help="Strategy identifier"),
+        artifact_type: str = typer.Option(..., "--type", help="Artifact type"),
+        path: Path = typer.Option(..., "--path", help="Artifact path"),
+        dataset_hash: str = typer.Option(..., "--dataset-hash", help="Dataset hash"),
+        tool_version: str = typer.Option("explainability-stub-v1", "--tool-version"),
+        manifest: Path | None = typer.Option(None, "--manifest", help="Manifest path override"),
+        profile: str | None = typer.Option(None, "--profile", help="Feature flag profile"),
+        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
+    ) -> None:
+        ctx_obj = ctx.obj or {"json": False}
+        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        payload = model_risk_artifact_add(
+            strategy_id=strategy,
+            artifact_type=artifact_type,
+            path=path,
+            dataset_hash=dataset_hash,
+            tool_version=tool_version,
+            manifest_path=manifest,
+            profile=profile,
+        )
+        _render_payload(console, payload, json_output=effective_json)
+
+    @model_risk_app.command("escalate")
+    def model_risk_escalate_command(
+        ctx: typer.Context,
+        strategy: str = typer.Option(..., "--strategy", help="Strategy identifier"),
+        severity: str = typer.Option("medium", "--severity", help="Issue severity"),
+        profile: str | None = typer.Option(None, "--profile", help="Feature flag profile"),
+        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
+    ) -> None:
+        ctx_obj = ctx.obj or {"json": False}
+        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        payload = model_risk_escalate(
+            strategy_id=strategy,
+            severity=severity,
+            profile=profile,
+        )
+        _render_payload(console, payload, json_output=effective_json)
 
     @spread_app.command("inspect")
     def spread_inspect_command(
@@ -1766,7 +1909,9 @@ def create_cli_app() -> typer.Typer:
         note: str = typer.Option(..., "--note", help="Journal note"),
         week: str | None = typer.Option(None, "--week", help="Week label (e.g. 2025-W12)"),
         path: Path = typer.Option(
-            Path("logs/journal/entries.jsonl"), "--path", help="Journal file path"
+            Path("logs/journal/journal_entries.db"),
+            "--path",
+            help="Journal SQLite DB path",
         ),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
@@ -1783,20 +1928,29 @@ def create_cli_app() -> typer.Typer:
     def journal_list_command(
         ctx: typer.Context,
         week: str | None = typer.Option(None, "--week", help="Week label filter"),
+        strategy: str | None = typer.Option(None, "--strategy", help="Filter by strategy id"),
+        regime: str | None = typer.Option(None, "--regime", help="Filter by regime"),
+        mode: str | None = typer.Option(None, "--mode", help="Filter by mode"),
+        board_mode: str | None = typer.Option(None, "--board-mode", help="Filter by board mode"),
         path: Path = typer.Option(
-            Path("logs/journal/entries.jsonl"), "--path", help="Journal file path"
+            Path("logs/journal/journal_entries.db"),
+            "--path",
+            help="Journal SQLite DB path",
         ),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
         ctx_obj = ctx.obj or {"json": False}
         effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
         service = TradeJournalService(path=path)
-        entries = service.list(week=week)
-        _render_payload(
-            console,
-            {"status": "ok", "entries": entries, "count": len(entries)},
-            json_output=effective_json,
+        payload = journal_list(
+            service=service,
+            week=week,
+            strategy=strategy,
+            regime=regime,
+            mode=mode,
+            board_mode=board_mode,
         )
+        _render_payload(console, payload, json_output=effective_json)
 
     @journal_app.command("export-weekly")
     def journal_export_weekly_command(
@@ -1813,6 +1967,89 @@ def create_cli_app() -> typer.Typer:
         path = service.export_weekly(week=week, output_dir=output_dir)
         _render_payload(console, {"status": "ok", "path": str(path)}, json_output=effective_json)
 
+    @journal_app.command("add-note")
+    def journal_add_note_command(
+        ctx: typer.Context,
+        ticket_id: str | None = typer.Option(None, "--ticket-id", help="Ticket identifier"),
+        entry_id: str | None = typer.Option(None, "--entry-id", help="Journal entry id"),
+        author: str = typer.Option(..., "--author", help="Author name"),
+        note: str | None = typer.Option(None, "--note", help="Note content"),
+        note_file: Path | None = typer.Option(
+            None, "--note-file", help="Markdown note file path"
+        ),
+        tags: list[str] | None = typer.Option(None, "--tag", help="Tag name"),
+        path: Path = typer.Option(
+            Path("logs/journal/journal_entries.db"),
+            "--path",
+            help="Journal SQLite DB path",
+        ),
+        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
+    ) -> None:
+        ctx_obj = ctx.obj or {"json": False}
+        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        service = TradeJournalService(path=path)
+        try:
+            payload = journal_add_note(
+                service=service,
+                entry_id=entry_id,
+                ticket_id=ticket_id,
+                author=author,
+                note=note,
+                note_file=note_file,
+                tags=tags or [],
+            )
+        except Exception as exc:  # noqa: BLE001
+            typer.echo(f"[journal.add-note] {exc}", err=True)
+            raise typer.Exit(code=1) from exc
+        _render_payload(console, payload, json_output=effective_json)
+
+    @journal_app.command("review")
+    def journal_review_command(
+        ctx: typer.Context,
+        week: str = typer.Option(..., "--week", help="Week label (e.g. 2025-W12)"),
+        include_notes: bool = typer.Option(True, "--include-notes", help="Include notes"),
+        export_path: Path | None = typer.Option(
+            None, "--export", help="Optional markdown export path"
+        ),
+        path: Path = typer.Option(
+            Path("logs/journal/journal_entries.db"),
+            "--path",
+            help="Journal SQLite DB path",
+        ),
+        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
+    ) -> None:
+        ctx_obj = ctx.obj or {"json": False}
+        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        service = TradeJournalService(path=path)
+        payload = journal_review(
+            service=service, week=week, include_notes=include_notes, export_path=export_path
+        )
+        _render_payload(console, payload, json_output=effective_json)
+
+    @journal_app.command("stats")
+    def journal_stats_command(
+        ctx: typer.Context,
+        window: str = typer.Option("90d", "--window", help="Lookback window (e.g. 90d, 4w)"),
+        group_by: str = typer.Option(
+            "strategy_id", "--by", help="Group by (strategy_id|regime|board_mode)"
+        ),
+        path: Path = typer.Option(
+            Path("logs/journal/journal_entries.db"),
+            "--path",
+            help="Journal SQLite DB path",
+        ),
+        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
+    ) -> None:
+        ctx_obj = ctx.obj or {"json": False}
+        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        service = TradeJournalService(path=path)
+        try:
+            payload = journal_stats(service=service, window=window, group_by=group_by)
+        except ValueError as exc:
+            typer.echo(f"[journal.stats] {exc}", err=True)
+            raise typer.Exit(code=1) from exc
+        _render_payload(console, payload, json_output=effective_json)
+
     @liquidity_app.command("status")
     def liquidity_status_command(
         ctx: typer.Context,
@@ -1821,7 +2058,7 @@ def create_cli_app() -> typer.Typer:
     ) -> None:
         ctx_obj = ctx.obj or {"json": False}
         effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
-        payload = liquidity_status(symbol=symbol, json_output=effective_json, console=console)
+        payload = liquidity_status(symbol=symbol)
         _render_payload(console, payload, json_output=effective_json)
 
     @liquidity_app.command("compare")
@@ -1842,8 +2079,6 @@ def create_cli_app() -> typer.Typer:
             source_to=source_to,
             symbol=symbol,
             export_md=export_md,
-            json_output=effective_json,
-            console=console,
         )
         _render_payload(console, payload, json_output=effective_json)
 
@@ -1854,6 +2089,9 @@ def create_cli_app() -> typer.Typer:
         path: Path = typer.Option(..., "--path", help="CSV file path"),
         symbol: str = typer.Option(..., "--symbol", help="Symbol name"),
         weight: float | None = typer.Option(None, "--weight", help="Source weight"),
+        window_sec: int = typer.Option(
+            300, "--window", help="Evaluation window in seconds"
+        ),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
         ctx_obj = ctx.obj or {"json": False}
@@ -1863,12 +2101,12 @@ def create_cli_app() -> typer.Typer:
             path=path,
             symbol=symbol,
             weight=weight,
-            json_output=effective_json,
-            console=console,
+            window_sec=window_sec,
         )
         _render_payload(console, payload, json_output=effective_json)
 
     app.add_typer(release_app, name="release")
+    app.add_typer(model_risk_app, name="model-risk")
     app.add_typer(spread_app, name="spread")
     app.add_typer(journal_app, name="journal")
     app.add_typer(liquidity_app, name="liquidity")
@@ -3153,6 +3391,202 @@ def create_cli_app() -> typer.Typer:
 
     app.add_typer(scoring_app, name="scoring")
 
+    strategy_app = typer.Typer(help="Strategy governance utilities")
+    strategy_manifest_app = typer.Typer(help="Strategy manifest utilities")
+    strategy_score_app = typer.Typer(help="Strategy scoring utilities")
+
+    @strategy_manifest_app.command("validate")
+    def strategy_manifest_validate_command(
+        ctx: typer.Context,
+        strategy_id: str | None = typer.Option(
+            None, "--id", help="Limit validation to a single strategy id."
+        ),
+        manifest_path: Path = typer.Option(
+            Path("config") / "strategy_manifest.yaml",
+            "--manifest",
+            help="Override strategy manifest path",
+        ),
+        playbook_dir: Path = typer.Option(
+            Path("docs") / "validation_playbook",
+            "--playbook-dir",
+            help="Validation playbook directory",
+        ),
+        data_manifest_path: Path = typer.Option(
+            Path("reports") / "data_manifest.json",
+            "--data-manifest",
+            help="Data manifest path",
+        ),
+        feature_config_path: Path = typer.Option(
+            Path("config") / "feature_pipeline.yaml",
+            "--feature-config",
+            help="Feature pipeline config path",
+        ),
+        metrics_path: Path = typer.Option(
+            Path("metrics") / "strategy_manifest.jsonl",
+            "--metrics-path",
+            help="Strategy manifest metrics JSONL path",
+        ),
+        fix_expiry: bool = typer.Option(
+            False, "--fix-expiry", help="Renew stale entries for the target strategy."
+        ),
+        force_status: str | None = typer.Option(
+            None, "--force-status", help="Override lifecycle status on renewal."
+        ),
+        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
+    ) -> None:
+        ctx_obj = ctx.obj or {"json": False}
+        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        payload = strategy_manifest_validate(
+            manifest_path=manifest_path,
+            playbook_dir=playbook_dir,
+            data_manifest_path=data_manifest_path,
+            feature_config_path=feature_config_path,
+            metrics_path=metrics_path,
+        )
+        result = payload.get("result", {})
+        if strategy_id:
+            entries = [
+                entry
+                for entry in result.get("entries", [])
+                if entry.get("strategy_id") == strategy_id
+            ]
+            result = dict(result)
+            result["entries"] = entries
+            payload["result"] = result
+        if fix_expiry:
+            if not strategy_id:
+                typer.echo("[strategy.manifest.validate] --fix-expiry requires --id", err=True)
+                raise typer.Exit(2)
+            renewal = strategy_manifest_renew(
+                strategy_id=strategy_id,
+                manifest_path=manifest_path,
+                force_status=force_status,
+            )
+            payload["renewal"] = renewal
+        _render_payload(console, payload, json_output=effective_json)
+        if payload.get("status") != "ok":
+            raise typer.Exit(1)
+
+    @strategy_manifest_app.command("list")
+    def strategy_manifest_list_command(
+        ctx: typer.Context,
+        status: str | None = typer.Option(None, "--status", help="Filter by status"),
+        sort_by: str | None = typer.Option(
+            None, "--sort", help="Sort key (expires_at)", show_default=False
+        ),
+        manifest_path: Path = typer.Option(
+            Path("config") / "strategy_manifest.yaml",
+            "--manifest",
+            help="Override strategy manifest path",
+        ),
+        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
+    ) -> None:
+        ctx_obj = ctx.obj or {"json": False}
+        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        payload = strategy_manifest_list(
+            manifest_path=manifest_path, status=status, sort_by=sort_by
+        )
+        _render_payload(console, payload, json_output=effective_json)
+
+    @strategy_manifest_app.command("renew")
+    def strategy_manifest_renew_command(
+        ctx: typer.Context,
+        strategy_id: str = typer.Option(..., "--id", help="Strategy identifier"),
+        manifest_path: Path = typer.Option(
+            Path("config") / "strategy_manifest.yaml",
+            "--manifest",
+            help="Override strategy manifest path",
+        ),
+        force_status: str | None = typer.Option(
+            None, "--force-status", help="Override lifecycle status."
+        ),
+        note: str | None = typer.Option(None, "--note", help="Optional renewal note"),
+        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
+    ) -> None:
+        ctx_obj = ctx.obj or {"json": False}
+        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        payload = strategy_manifest_renew(
+            strategy_id=strategy_id,
+            manifest_path=manifest_path,
+            force_status=force_status,
+            note=note,
+        )
+        _render_payload(console, payload, json_output=effective_json)
+
+    @strategy_score_app.command("update")
+    def strategy_score_update_command(
+        ctx: typer.Context,
+        window: str = typer.Option("24w", "--window", help="Lookback window."),
+        manifest_path: Path = typer.Option(
+            Path("config") / "strategy_manifest.yaml",
+            "--manifest",
+            help="Override strategy manifest path",
+        ),
+        metrics_dir: Path = typer.Option(
+            Path("reports") / "research" / "metrics",
+            "--metrics-dir",
+            help="Research metrics directory",
+        ),
+        score_metrics_path: Path = typer.Option(
+            Path("metrics") / "strategy_scores.jsonl",
+            "--scores",
+            help="Strategy score metrics JSONL path",
+        ),
+        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
+    ) -> None:
+        ctx_obj = ctx.obj or {"json": False}
+        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        payload = strategy_score_update(
+            manifest_path=manifest_path,
+            window=window,
+            metrics_dir=metrics_dir,
+            score_metrics_path=score_metrics_path,
+        )
+        _render_payload(console, payload, json_output=effective_json)
+
+    @strategy_score_app.command("report")
+    def strategy_score_report_command(
+        ctx: typer.Context,
+        week: str = typer.Option(..., "--week", help="ISO week (YYYY-Www)."),
+        window: str = typer.Option("24w", "--window", help="Lookback window."),
+        manifest_path: Path = typer.Option(
+            Path("config") / "strategy_manifest.yaml",
+            "--manifest",
+            help="Override strategy manifest path",
+        ),
+        metrics_dir: Path = typer.Option(
+            Path("reports") / "research" / "metrics",
+            "--metrics-dir",
+            help="Research metrics directory",
+        ),
+        score_metrics_path: Path = typer.Option(
+            Path("metrics") / "strategy_scores.jsonl",
+            "--scores",
+            help="Strategy score metrics JSONL path",
+        ),
+        report_dir: Path = typer.Option(
+            Path("reports") / "research" / "alpha_score",
+            "--report-dir",
+            help="Score report output directory",
+        ),
+        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
+    ) -> None:
+        ctx_obj = ctx.obj or {"json": False}
+        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        payload = strategy_score_report(
+            manifest_path=manifest_path,
+            window=window,
+            week=week,
+            metrics_dir=metrics_dir,
+            score_metrics_path=score_metrics_path,
+            report_dir=report_dir,
+        )
+        _render_payload(console, payload, json_output=effective_json)
+
+    strategy_app.add_typer(strategy_manifest_app, name="manifest")
+    strategy_app.add_typer(strategy_score_app, name="score")
+    app.add_typer(strategy_app, name="strategy")
+
     scoreboard_app = typer.Typer(help="Scoreboard utilities")
 
     @scoreboard_app.command("weekly")
@@ -3193,6 +3627,529 @@ def create_cli_app() -> typer.Typer:
         _render_payload(console, payload, json_output=effective_json)
 
     app.add_typer(scoreboard_app, name="scoreboard")
+
+    accounts_app = typer.Typer(help="Account aggregation utilities")
+
+    @accounts_app.command("status")
+    def accounts_status_command(
+        ctx: typer.Context,
+        account: str | None = typer.Option(None, "--account", help="Account id filter"),
+        with_positions: bool = typer.Option(
+            False, "--with-positions", help="Include position details"
+        ),
+        profile_dir: Path = typer.Option(
+            Path("config") / "accounts",
+            "--profile-dir",
+            help="Account profile directory",
+        ),
+        snapshot_dir: Path = typer.Option(
+            Path("reports") / "accounts",
+            "--snapshot-dir",
+            help="Snapshot storage directory",
+        ),
+        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
+    ) -> None:
+        ctx_obj = ctx.obj or {"json": False}
+        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        payload = accounts_status(
+            account=account,
+            with_positions=with_positions,
+            profile_dir=profile_dir,
+            snapshot_dir=snapshot_dir,
+        )
+        _render_payload(console, payload, json_output=effective_json)
+
+    @accounts_app.command("ingest")
+    def accounts_ingest_command(
+        ctx: typer.Context,
+        profile: str = typer.Option(..., "--profile", help="Account profile id"),
+        path: Path = typer.Option(..., "--path", help="Snapshot input path"),
+        fmt: str = typer.Option("json", "--format", help="Input format (json|csv)"),
+        tz: str | None = typer.Option(None, "--tz", help="Timezone hint for timestamps"),
+        append: bool = typer.Option(False, "--append", help="Append to history log"),
+        profile_dir: Path = typer.Option(
+            Path("config") / "accounts",
+            "--profile-dir",
+            help="Account profile directory",
+        ),
+        snapshot_dir: Path = typer.Option(
+            Path("reports") / "accounts",
+            "--snapshot-dir",
+            help="Snapshot storage directory",
+        ),
+        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
+    ) -> None:
+        ctx_obj = ctx.obj or {"json": False}
+        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        payload = accounts_ingest(
+            profile_id=profile,
+            path=path,
+            fmt=fmt,
+            tz=tz,
+            append=append,
+            profile_dir=profile_dir,
+            snapshot_dir=snapshot_dir,
+        )
+        _render_payload(console, payload, json_output=effective_json)
+
+    @accounts_app.command("aggregate")
+    def accounts_aggregate_command(
+        ctx: typer.Context,
+        account_filter: list[str] = typer.Option(
+            [], "--account-filter", help="Account id filter", show_default=False
+        ),
+        export_md: Path | None = typer.Option(
+            None, "--export-md", help="Export aggregate report as markdown"
+        ),
+        profile_dir: Path = typer.Option(
+            Path("config") / "accounts",
+            "--profile-dir",
+            help="Account profile directory",
+        ),
+        snapshot_dir: Path = typer.Option(
+            Path("reports") / "accounts",
+            "--snapshot-dir",
+            help="Snapshot storage directory",
+        ),
+        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
+    ) -> None:
+        ctx_obj = ctx.obj or {"json": False}
+        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        payload = accounts_aggregate(
+            account_filter=account_filter or None,
+            export_md=export_md,
+            profile_dir=profile_dir,
+            snapshot_dir=snapshot_dir,
+        )
+        _render_payload(console, payload, json_output=effective_json)
+
+    @accounts_app.command("alerts")
+    def accounts_alerts_command(
+        ctx: typer.Context,
+        severity: str | None = typer.Option(None, "--severity", help="Filter by severity"),
+        ack: bool = typer.Option(False, "--ack", help="Acknowledge alerts"),
+        profile_dir: Path = typer.Option(
+            Path("config") / "accounts",
+            "--profile-dir",
+            help="Account profile directory",
+        ),
+        snapshot_dir: Path = typer.Option(
+            Path("reports") / "accounts",
+            "--snapshot-dir",
+            help="Snapshot storage directory",
+        ),
+        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
+    ) -> None:
+        ctx_obj = ctx.obj or {"json": False}
+        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        payload = accounts_alerts(
+            severity=severity,
+            ack=ack,
+            profile_dir=profile_dir,
+            snapshot_dir=snapshot_dir,
+        )
+        _render_payload(console, payload, json_output=effective_json)
+
+    app.add_typer(accounts_app, name="accounts")
+
+    research_app = typer.Typer(help="Research utilities")
+    drift_app = typer.Typer(help="Parameter drift monitoring")
+    idea_app = typer.Typer(help="Idea registry utilities")
+
+    @drift_app.command("scan")
+    def research_drift_scan_command(
+        ctx: typer.Context,
+        strategy: str = typer.Option(..., "--strategy", help="Strategy identifier."),
+        mode: str = typer.Option("paper", "--mode", help="Operating mode."),
+        profile: str = typer.Option(
+            "paper", "--profile", help="Feature flag profile (backtest/paper/live)"
+        ),
+        force: bool = typer.Option(False, "--force", help="Bypass feature flag gating"),
+        config_path: Path = typer.Option(
+            Path("config") / "drift_monitor.yaml",
+            "--config",
+            help="Override drift monitor config path",
+            hidden=True,
+        ),
+        manifest_path: Path = typer.Option(
+            Path("config") / "strategy_manifest.yaml",
+            "--manifest",
+            help="Override strategy manifest path",
+            hidden=True,
+        ),
+        opt_run_dir: Path = typer.Option(
+            Path("optimization_runs"),
+            "--opt-run-dir",
+            help="Optimization run directory",
+            hidden=True,
+        ),
+        metrics_path: Path = typer.Option(
+            Path("metrics") / "parameter_drift.jsonl",
+            "--metrics-path",
+            help="Metrics JSONL output path",
+            hidden=True,
+        ),
+        event_log: Path = typer.Option(
+            Path("logs") / "events" / "research_drift.jsonl",
+            "--event-log",
+            help="Event log output path",
+            hidden=True,
+        ),
+        health_state_path: Path = typer.Option(
+            Path("snapshots") / "latest" / "health_state.json",
+            "--health-state-path",
+            help="Health state output path",
+            hidden=True,
+        ),
+        feature_flags_path: Path = typer.Option(
+            Path("config") / "feature_flags.yaml",
+            "--feature-flags",
+            help="Feature flags config path",
+            hidden=True,
+        ),
+        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
+    ) -> None:
+        ctx_obj = ctx.obj or {"json": False}
+        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        payload = research_drift_scan(
+            strategy_id=strategy,
+            mode=mode,
+            profile=profile,
+            force=force,
+            config_path=config_path,
+            manifest_path=manifest_path,
+            opt_run_dir=opt_run_dir,
+            metrics_path=metrics_path,
+            event_log=event_log,
+            feature_flags_path=feature_flags_path,
+            health_state_path=health_state_path,
+        )
+        _render_payload(console, payload, json_output=effective_json)
+
+    @idea_app.command("list")
+    def research_idea_list_command(
+        ctx: typer.Context,
+        stage: str | None = typer.Option(None, "--stage", help="Filter by stage"),
+        owner: str | None = typer.Option(None, "--owner", help="Filter by owner"),
+        root: Path = typer.Option(
+            Path("research") / "ideas",
+            "--root",
+            help="Ideas root directory",
+            hidden=True,
+        ),
+        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
+    ) -> None:
+        ctx_obj = ctx.obj or {"json": False}
+        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        payload = research_idea_list(stage=stage, owner=owner, root=root)
+        _render_payload(console, payload, json_output=effective_json)
+
+    @idea_app.command("show")
+    def research_idea_show_command(
+        ctx: typer.Context,
+        idea_id: str = typer.Option(..., "--id", help="Idea identifier"),
+        root: Path = typer.Option(
+            Path("research") / "ideas",
+            "--root",
+            help="Ideas root directory",
+            hidden=True,
+        ),
+        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
+    ) -> None:
+        ctx_obj = ctx.obj or {"json": False}
+        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        payload = research_idea_show(idea_id=idea_id, root=root)
+        _render_payload(console, payload, json_output=effective_json)
+
+    @idea_app.command("stage")
+    def research_idea_stage_command(
+        ctx: typer.Context,
+        idea_id: str = typer.Option(..., "--id", help="Idea identifier"),
+        target: str = typer.Option(..., "--to", help="Target stage"),
+        note: str | None = typer.Option(None, "--note", help="Optional note"),
+        actor: str | None = typer.Option(None, "--actor", help="Actor name"),
+        force: bool = typer.Option(False, "--force", help="Bypass checklist requirements"),
+        root: Path = typer.Option(
+            Path("research") / "ideas",
+            "--root",
+            help="Ideas root directory",
+            hidden=True,
+        ),
+        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
+    ) -> None:
+        ctx_obj = ctx.obj or {"json": False}
+        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        payload = research_idea_stage(
+            idea_id=idea_id,
+            target_stage=target,
+            note=note,
+            actor=actor,
+            force=force,
+            root=root,
+        )
+        _render_payload(console, payload, json_output=effective_json)
+        if payload.get("status") != "ok":
+            raise typer.Exit(code=2)
+
+    @idea_app.command("checklist")
+    def research_idea_checklist_command(
+        ctx: typer.Context,
+        idea_id: str = typer.Option(..., "--id", help="Idea identifier"),
+        stage: str | None = typer.Option(None, "--stage", help="Stage override"),
+        root: Path = typer.Option(
+            Path("research") / "ideas",
+            "--root",
+            help="Ideas root directory",
+            hidden=True,
+        ),
+        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
+    ) -> None:
+        ctx_obj = ctx.obj or {"json": False}
+        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        payload = research_idea_checklist(idea_id=idea_id, stage=stage, root=root)
+        _render_payload(console, payload, json_output=effective_json)
+
+    @idea_app.command("checklist-update")
+    def research_idea_checklist_update_command(
+        ctx: typer.Context,
+        idea_id: str = typer.Option(..., "--id", help="Idea identifier"),
+        stage: str = typer.Option(..., "--stage", help="Checklist stage"),
+        item: str = typer.Option(..., "--item", help="Checklist item id"),
+        status: str = typer.Option(..., "--status", help="Checklist status"),
+        evidence: Path | None = typer.Option(None, "--evidence", help="Evidence path"),
+        root: Path = typer.Option(
+            Path("research") / "ideas",
+            "--root",
+            help="Ideas root directory",
+            hidden=True,
+        ),
+        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
+    ) -> None:
+        ctx_obj = ctx.obj or {"json": False}
+        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        payload = research_idea_checklist_update(
+            idea_id=idea_id,
+            stage=stage,
+            item_id=item,
+            status=status,
+            evidence_path=evidence,
+            root=root,
+        )
+        _render_payload(console, payload, json_output=effective_json)
+
+    @idea_app.command("evidence-bundle")
+    def research_idea_evidence_bundle_command(
+        ctx: typer.Context,
+        idea_id: str = typer.Option(..., "--id", help="Idea identifier"),
+        stage: str = typer.Option(..., "--stage", help="Stage"),
+        profile_id: str = typer.Option(
+            "research_board",
+            "--profile",
+            help="SecureShare profile id",
+        ),
+        period: str | None = typer.Option(
+            None,
+            "--period",
+            help="Reporting period (YYYY-WW) override",
+        ),
+        out_dir: Path = typer.Option(
+            Path("reports") / "research" / "idea_evidence",
+            "--out",
+            help="Output directory",
+        ),
+        root: Path = typer.Option(
+            Path("research") / "ideas",
+            "--root",
+            help="Ideas root directory",
+            hidden=True,
+        ),
+        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
+    ) -> None:
+        ctx_obj = ctx.obj or {"json": False}
+        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        payload = research_idea_evidence_bundle(
+            idea_id=idea_id,
+            stage=stage,
+            output_dir=out_dir,
+            profile_id=profile_id,
+            period=period,
+            root=root,
+        )
+        _render_payload(console, payload, json_output=effective_json)
+
+    @idea_app.command("report")
+    def research_idea_report_command(
+        ctx: typer.Context,
+        week: str = typer.Option(..., "--week", help="ISO week (YYYY-WW)"),
+        out_dir: Path = typer.Option(
+            Path("reports") / "research",
+            "--out",
+            help="Output directory",
+        ),
+        root: Path = typer.Option(
+            Path("research") / "ideas",
+            "--root",
+            help="Ideas root directory",
+            hidden=True,
+        ),
+        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
+    ) -> None:
+        ctx_obj = ctx.obj or {"json": False}
+        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        payload = research_idea_pipeline_report(week=week, output_dir=out_dir, root=root)
+        _render_payload(console, payload, json_output=effective_json)
+
+    @research_app.command("validate")
+    def research_validate_command(
+        ctx: typer.Context,
+        strategy: str = typer.Option(..., "--strategy", help="Strategy identifier"),
+        window: str = typer.Option("90d", "--window", help="Validation window"),
+        mode: str = typer.Option("paper", "--mode", help="Mode (backtest|paper|live)"),
+        suite_path: Path = typer.Option(
+            Path("config") / "research_validation.yaml",
+            "--suite",
+            help="Validation suite path",
+            hidden=True,
+        ),
+        metrics_path: Path | None = typer.Option(
+            None,
+            "--metrics",
+            help="Metrics JSON path",
+            hidden=True,
+        ),
+        export_path: Path | None = typer.Option(
+            None,
+            "--export-md",
+            help="Optional markdown output path",
+        ),
+        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
+    ) -> None:
+        ctx_obj = ctx.obj or {"json": False}
+        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        payload = research_validate_strategy(
+            strategy_id=strategy,
+            window=window,
+            mode=mode,
+            suite_path=suite_path,
+            metrics_path=metrics_path,
+            export_path=export_path,
+        )
+        _render_payload(console, payload, json_output=effective_json)
+        status = payload.get("status")
+        if status == "fail":
+            raise typer.Exit(code=2)
+        if status == "missing":
+            raise typer.Exit(code=3)
+
+    @research_app.command("manifest")
+    def research_manifest_command(
+        ctx: typer.Context,
+        strategy: str = typer.Option(..., "--strategy", help="Strategy identifier"),
+        idea_id: str | None = typer.Option(None, "--idea-id", help="Idea identifier"),
+        validation_playbook_id: str | None = typer.Option(
+            None,
+            "--validation-playbook",
+            help="Validation playbook id to embed in the research manifest.",
+        ),
+        suite_path: Path = typer.Option(
+            Path("config") / "research_validation.yaml",
+            "--suite",
+            help="Validation suite path",
+            hidden=True,
+        ),
+        metrics_path: Path | None = typer.Option(
+            None,
+            "--metrics",
+            help="Metrics JSON path",
+            hidden=True,
+        ),
+        data_manifest_path: Path = typer.Option(
+            Path("reports") / "data_manifest.json",
+            "--data-manifest",
+            help="Data manifest path",
+            hidden=True,
+        ),
+        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
+    ) -> None:
+        ctx_obj = ctx.obj or {"json": False}
+        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        payload = research_generate_manifest(
+            strategy_id=strategy,
+            idea_id=idea_id,
+            suite_path=suite_path,
+            metrics_path=metrics_path,
+            data_manifest_path=data_manifest_path,
+            validation_playbook_id=validation_playbook_id,
+        )
+        _render_payload(console, payload, json_output=effective_json)
+
+    @research_app.command("promote")
+    def research_promote_command(
+        ctx: typer.Context,
+        strategy: str = typer.Option(..., "--strategy", help="Strategy identifier"),
+        target: str = typer.Option("paper", "--to", help="Target stage"),
+        window: str = typer.Option("90d", "--window", help="Validation window"),
+        mode: str = typer.Option("paper", "--mode", help="Mode (backtest|paper|live)"),
+        note: str | None = typer.Option(None, "--note", help="Optional note"),
+        attach: list[Path] = typer.Option(
+            [], "--attach", help="Evidence attachments", show_default=False
+        ),
+        dry_run: bool = typer.Option(False, "--dry-run", help="Simulate promotion"),
+        suite_path: Path = typer.Option(
+            Path("config") / "research_validation.yaml",
+            "--suite",
+            help="Validation suite path",
+            hidden=True,
+        ),
+        metrics_path: Path | None = typer.Option(
+            None,
+            "--metrics",
+            help="Metrics JSON path",
+            hidden=True,
+        ),
+        output_dir: Path = typer.Option(
+            Path("reports") / "research" / "promotion",
+            "--output-dir",
+            help="Promotion output directory",
+            hidden=True,
+        ),
+        event_log: Path = typer.Option(
+            Path("logs") / "events" / "research_promotion.jsonl",
+            "--event-log",
+            help="Promotion event log path",
+            hidden=True,
+        ),
+        audit_log: Path = typer.Option(
+            Path("logs") / "audit" / "research_promotion.jsonl",
+            "--audit-log",
+            help="Promotion audit log path",
+            hidden=True,
+        ),
+        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
+    ) -> None:
+        ctx_obj = ctx.obj or {"json": False}
+        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        payload = research_promote(
+            strategy_id=strategy,
+            target_stage=target,
+            window=window,
+            mode=mode,
+            suite_path=suite_path,
+            metrics_path=metrics_path,
+            note=note,
+            attachments=attach,
+            dry_run=dry_run,
+            output_dir=output_dir,
+            event_log=event_log,
+            audit_log=audit_log,
+        )
+        _render_payload(console, payload, json_output=effective_json)
+        if payload.get("status") != "pass":
+            raise typer.Exit(code=2)
+
+    research_app.add_typer(drift_app, name="drift")
+    research_app.add_typer(idea_app, name="idea")
+    app.add_typer(research_app, name="research")
 
     alpha_app = typer.Typer(help="Alpha feedback utilities")
 

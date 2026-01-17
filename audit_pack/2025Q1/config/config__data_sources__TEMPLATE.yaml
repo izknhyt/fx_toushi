@@ -1,0 +1,13 @@
+# Template for data source configuration (M1 scaffold)
+# Schema: schema/data_source.schema.json
+
+schema_version: data_source.v1
+provider: example
+endpoint: https://api.example.com
+rate_limit:
+  requests_per_minute: 60
+  burst: 90
+backfill:
+  max_days: 30
+  max_symbols: 8
+notes: "override in local secrets or profile-specific config"

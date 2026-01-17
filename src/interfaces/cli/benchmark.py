@@ -6,11 +6,27 @@ import json
 import logging
 from pathlib import Path
 
-from src.reporter.benchmark import BenchmarkComparator, BenchmarkGapError, BenchmarkResult
+from src.benchmark import (
+    BenchmarkComparisonResult,
+    BenchmarkIngestError,
+    BenchmarkIngestResult,
+    BenchmarkIngestor,
+    BenchmarkManualValidationError,
+    BenchmarkReplayGapError,
+    BenchmarkReplayService,
+    validate_manual as run_manual_validation,
+)
+from src.reporter.benchmark import BenchmarkGapError
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["ingest", "compare", "validate_manual", "BenchmarkGapError"]
+__all__ = [
+    "ingest",
+    "compare",
+    "validate_manual",
+    "BenchmarkGapError",
+    "BenchmarkReplayGapError",
+]
 
 
 def ingest(
@@ -20,14 +36,32 @@ def ingest(
     mode: str,
     symbol: str | None = None,
     email: str | None = None,
-) -> None:
-    """Stub for benchmark ingestion."""
+    timeframe: str | None = None,
+    validate_only: bool = False,
+) -> BenchmarkIngestResult:
+    """Ingest benchmark feeds from CSV/Parquet."""
 
+    ingestor = BenchmarkIngestor()
+    try:
+        result = ingestor.ingest(
+            provider=provider,
+            path=Path(file),
+            mode=mode,
+            symbol=symbol,
+            timeframe=timeframe,
+            validate_only=validate_only,
+        )
+    except BenchmarkIngestError as exc:
+        logger.error(
+            "cli.benchmark.ingest.failed",
+            extra={"provider": provider, "file": file, "mode": mode, "error": str(exc)},
+        )
+        raise
     logger.info(
-        "cli.benchmark.ingest.stub",
-        extra={"provider": provider, "file": file, "mode": mode, "symbol": symbol, "email": email},
+        "cli.benchmark.ingest.completed",
+        extra={**result.to_dict(), "file": file, "email": email},
     )
-    raise NotImplementedError("tradectl benchmark ingest is not implemented in the M1 scaffold")
+    return result
 
 
 def compare(
@@ -35,29 +69,37 @@ def compare(
     window: str,
     mode: str,
     providers: list[str] | None = None,
-    export: str | None = None,
+    export_md: str | None = None,
+    export_json: str | None = None,
     fail_on_gap: bool = False,
-) -> BenchmarkResult:
+) -> BenchmarkComparisonResult:
     """Compare benchmark data against strategy performance."""
-    comparator = BenchmarkComparator()
     try:
-        result = comparator.compare(window=window, mode=mode, providers=providers)
-    except BenchmarkGapError as exc:
+        result = BenchmarkReplayService().replay(
+            window=window,
+            mode=mode,
+            providers=providers,
+            export_path=Path(export_md) if export_md else None,
+            fail_on_gap=fail_on_gap,
+        )
+    except BenchmarkReplayGapError as exc:
         result = exc.result
         if fail_on_gap:
             raise
-    if export:
-        export_path = Path(export)
+    if export_json:
+        export_path = Path(export_json)
         export_path.parent.mkdir(parents=True, exist_ok=True)
-        export_path.write_text(json.dumps(result.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8")
-        result.export_path = str(export_path)
+        export_path.write_text(
+            json.dumps(result.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8"
+        )
     logger.info(
         "cli.benchmark.compare.completed",
         extra={
             "window": window,
             "mode": mode,
             "providers": providers or [],
-            "export": export,
+            "export_md": export_md,
+            "export_json": export_json,
             "status": result.status,
             "missing_ratio": result.missing_ratio,
         },
@@ -65,10 +107,13 @@ def compare(
     return result
 
 
-def validate_manual(path: str) -> None:
-    """Stub for validating manual benchmark CSV files."""
+def validate_manual(path: str) -> dict[str, object]:
+    """Validate manual benchmark CSV files."""
 
-    logger.info("cli.benchmark.validate_manual.stub", extra={"path": path})
-    raise NotImplementedError(
-        "tradectl benchmark validate-manual is not implemented in the M1 scaffold"
-    )
+    try:
+        payload = run_manual_validation(Path(path))
+    except BenchmarkManualValidationError as exc:
+        logger.error("cli.benchmark.validate_manual.failed", extra={"path": path, "error": str(exc)})
+        raise
+    logger.info("cli.benchmark.validate_manual.completed", extra=payload)
+    return payload

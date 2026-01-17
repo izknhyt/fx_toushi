@@ -10,7 +10,7 @@ from typer.testing import CliRunner
 def test_journal_cli_add_and_list(tmp_path: Path) -> None:
     app = create_cli_app()
     runner = CliRunner()
-    journal_path = tmp_path / "journal.jsonl"
+    journal_path = tmp_path / "journal_entries.db"
 
     add_result = runner.invoke(
         app,
@@ -49,3 +49,57 @@ def test_journal_cli_add_and_list(tmp_path: Path) -> None:
     assert list_result.exit_code == 0
     list_payload = json.loads(list_result.stdout)
     assert list_payload["count"] == 1
+
+
+def test_journal_cli_add_note_and_stats(tmp_path: Path) -> None:
+    app = create_cli_app()
+    runner = CliRunner()
+    journal_path = tmp_path / "journal_entries.db"
+
+    add_result = runner.invoke(
+        app,
+        [
+            "journal",
+            "add",
+            "--ticket-id",
+            "T2",
+            "--user",
+            "alice",
+            "--note",
+            "approved",
+            "--week",
+            "2025-W12",
+            "--path",
+            str(journal_path),
+            "--json",
+        ],
+    )
+    assert add_result.exit_code == 0
+
+    note_result = runner.invoke(
+        app,
+        [
+            "journal",
+            "add-note",
+            "--ticket-id",
+            "T2",
+            "--author",
+            "ops",
+            "--note",
+            "reviewed",
+            "--path",
+            str(journal_path),
+            "--json",
+        ],
+    )
+    assert note_result.exit_code == 0
+    note_payload = json.loads(note_result.stdout)
+    assert note_payload["status"] == "ok"
+
+    stats_result = runner.invoke(
+        app,
+        ["journal", "stats", "--window", "365d", "--path", str(journal_path), "--json"],
+    )
+    assert stats_result.exit_code == 0
+    stats_payload = json.loads(stats_result.stdout)
+    assert stats_payload["status"] == "ok"

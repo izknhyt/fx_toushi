@@ -1,0 +1,5 @@
+# Idea registry scaffold
+# Schema: schema/ideas.schema.json
+
+schema_version: ideas.v1
+ideas: []

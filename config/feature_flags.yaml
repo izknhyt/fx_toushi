@@ -14,8 +14,15 @@ defaults:
     risk_disclosure_enforce: false
     reporter.enable_extended_blocks: false
     reports.performance.enable: false
+    journal.enabled: false
+    journal.weekly_summary: false
+    benchmark.replay: false
+    benchmark.latency_analysis: false
+    research.parameter_drift: false
     data.paid_feed: false
     data.rate_limit_auto_stage: false
+    governance.model_risk_register_enabled: false
+    governance.idea_pipeline_enabled: false
     alpha.profit_loop_enabled: true
     alpha.dynamic_sizing: false
     alpha.auto_execute: false
@@ -25,8 +32,15 @@ defaults:
     risk_disclosure_enforce: false
     reporter.enable_extended_blocks: false
     reports.performance.enable: false
+    journal.enabled: false
+    journal.weekly_summary: false
+    benchmark.replay: false
+    benchmark.latency_analysis: false
+    research.parameter_drift: false
     data.paid_feed: false
     data.rate_limit_auto_stage: false
+    governance.model_risk_register_enabled: false
+    governance.idea_pipeline_enabled: false
     alpha.profit_loop_enabled: true
     alpha.dynamic_sizing: false
     alpha.auto_execute: false
@@ -36,8 +50,15 @@ defaults:
     risk_disclosure_enforce: false
     reporter.enable_extended_blocks: false
     reports.performance.enable: false
+    journal.enabled: false
+    journal.weekly_summary: false
+    benchmark.replay: false
+    benchmark.latency_analysis: false
+    research.parameter_drift: false
     data.paid_feed: false
     data.rate_limit_auto_stage: false
+    governance.model_risk_register_enabled: false
+    governance.idea_pipeline_enabled: false
     alpha.profit_loop_enabled: false
     alpha.dynamic_sizing: false
     alpha.auto_execute: false
@@ -91,6 +112,34 @@ definitions:
     telemetry_checks:
       - "logs/audit/risk_disclosure_*.jsonl"
       - "metrics/risk_disclosure.jsonl"
+  governance.model_risk_register_enabled:
+    description: "Model Risk Register とExplainability証跡のレビューを有効化する。"
+    milestone: "M2"
+    owner: compliance
+    category: guarded
+    runbook_ref: "GOV-STRAT-01"
+    enable_conditions:
+      - "docs/governance/model_risk_register.md が初期化済み"
+      - "reports/model_risk/<strategy>/manifest.yaml が作成済み"
+    rollback:
+      - "tradectl config flags --set governance.model_risk_register_enabled=false --profile <mode>"
+    telemetry_checks:
+      - "metrics/model_risk.jsonl"
+      - "logs/audit/model_risk_*.jsonl"
+  governance.idea_pipeline_enabled:
+    description: "Idea Pipeline Managerとステージガバナンスを有効化する。"
+    milestone: "M2"
+    owner: governance
+    category: guarded
+    runbook_ref: "GOV-IDEA-01"
+    enable_conditions:
+      - "config/idea_pipeline.yaml が更新済み"
+      - "docs/templates/idea_checklists/* が初期化済み"
+    rollback:
+      - "tradectl config flags --set governance.idea_pipeline_enabled=false --profile <mode>"
+    telemetry_checks:
+      - "metrics/idea_pipeline.jsonl"
+      - "logs/audit/idea_pipeline.jsonl"
   data.rate_limit_auto_stage:
     description: "RateLimitGuard のステージ自動適用。Stage候補を自動適用し、監査ログへ記録する。"
     milestone: "M1.1"
@@ -136,6 +185,84 @@ definitions:
     telemetry_checks:
       - "metrics/performance_snapshot.jsonl"
       - "reports/performance/"
+  journal.enabled:
+    description: "TradeJournalService を有効化し、SQLiteのジャーナルDBを運用に使う。"
+    milestone: "M1.1"
+    owner: ops_manager
+    category: safe
+    runbook_ref: "RUN-FEATURE-FLAG-01 §5.8"
+    enable_conditions:
+      - "journal_entries.db が書き込み可能であること"
+      - "tradectl journal list が正常に応答すること"
+    rollback:
+      - "defaults.<mode>.journal.enabled=false に戻す"
+      - "journal CLI の出力が空になることを確認"
+    telemetry_checks:
+      - "metrics/trade_journal.jsonl"
+      - "logs/audit/journal_*.jsonl"
+  journal.weekly_summary:
+    description: "週次レポートに Trade Journal セクションを埋め込み、週次サマリを書き出す。"
+    milestone: "M1.1"
+    owner: ops_manager
+    category: safe
+    runbook_ref: "RUN-FEATURE-FLAG-01 §5.9"
+    enable_conditions:
+      - "journal.enabled=true のプロファイルで週次レポート生成が成功"
+      - "reports/journal/<YYYY-WW>.md の書き出しを確認"
+    rollback:
+      - "defaults.<mode>.journal.weekly_summary=false に戻す"
+      - "reports/journal の生成が停止することを確認"
+    telemetry_checks:
+      - "reports/journal/"
+      - "metrics/trade_journal.jsonl"
+    dependencies:
+      - "journal.enabled"
+  benchmark.replay:
+    description: "BenchmarkReplayService の比較結果を週次レポートに組み込む。"
+    milestone: "M1.1"
+    owner: ops_manager
+    category: guarded
+    runbook_ref: "RUN-FEATURE-FLAG-01 §5.10"
+    enable_conditions:
+      - "benchmark ingestが正常に完了すること"
+      - "`tradectl benchmark compare --window 90d` が成功すること"
+    rollback:
+      - "defaults.<mode>.benchmark.replay=false に戻す"
+      - "週次レポートからベンチマーク比較が消えることを確認"
+    telemetry_checks:
+      - "benchmark_runs/"
+      - "reports/benchmark/"
+  benchmark.latency_analysis:
+    description: "ベンチマーク比較にレイテンシ差分を含める。"
+    milestone: "M1.1"
+    owner: ops_manager
+    category: safe
+    runbook_ref: "RUN-FEATURE-FLAG-01 §5.11"
+    enable_conditions:
+      - "execution_latency.yaml が最新であること"
+      - "benchmark.replay=true の環境で影響がないことを確認"
+    rollback:
+      - "defaults.<mode>.benchmark.latency_analysis=false に戻す"
+    telemetry_checks:
+      - "execution_latency.yaml"
+    dependencies:
+      - "benchmark.replay"
+  research.parameter_drift:
+    description: "ParameterDriftMonitor による研究系パラメータドリフト監視を有効化する。"
+    milestone: "M2"
+    owner: research
+    category: guarded
+    runbook_ref: "RUN-FEATURE-FLAG-01 §5.12"
+    enable_conditions:
+      - "optimization_runs/<strategy>/*.json に parameter_stats が存在"
+      - "config/strategy_manifest.yaml が更新済み"
+      - "tradectl research drift scan --strategy <id> が成功"
+    rollback:
+      - "defaults.<mode>.research.parameter_drift=false に戻す"
+      - "metrics/parameter_drift.jsonl が追記停止することを確認"
+    telemetry_checks:
+      - "metrics/parameter_drift.jsonl"
+      - "logs/events/research_drift.jsonl"
   data.paid_feed:
     description: "有償マーケットデータフィード (Refinitiv / dxFeed 等) を使用する。"
     milestone: "M1.2"

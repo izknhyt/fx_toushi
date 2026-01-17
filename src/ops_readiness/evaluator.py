@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+import json
+import os
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -32,9 +34,11 @@ class OpsReadinessEvaluator:
         *,
         config_path: Path = Path("config/ops_readiness.yaml"),
         max_age_days: int = 14,
+        idea_metrics_path: Path = Path("metrics/idea_pipeline.jsonl"),
     ) -> None:
         self._config_path = config_path
         self._max_age_days = max_age_days
+        self._idea_metrics_path = idea_metrics_path
 
     def evaluate(self) -> OpsReadinessResult:
         config = _load_config(self._config_path)
@@ -49,6 +53,11 @@ class OpsReadinessEvaluator:
             now=now,
             max_age_days=self._max_age_days,
         )
+        idea_entry = _evaluate_idea_pipeline(self._idea_metrics_path)
+        if idea_entry is not None:
+            evidence.append(idea_entry)
+            if idea_entry.get("issue"):
+                missing.append(idea_entry)
         score = _compute_weighted_score(weights, evidence)
         status = _score_to_status(score, thresholds)
         exit_code = 0 if status == "ok" else 21 if status == "warn" else 62
@@ -134,6 +143,66 @@ def _compute_weighted_score(weights: Mapping[str, Any], evidence: list[dict[str,
     if total_weight <= 0:
         return 0.0
     return round(score / total_weight, 2)
+
+
+def _evaluate_idea_pipeline(path: Path) -> dict[str, object] | None:
+    if not _idea_pipeline_enabled():
+        return None
+    if not path.exists():
+        return {"key": "idea_pipeline", "issue": "missing"}
+    records: list[dict[str, object]] = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        try:
+            payload = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(payload, dict):
+            records.append(payload)
+    if not records:
+        return {"key": "idea_pipeline", "issue": "empty"}
+    latest_by_idea: dict[str, dict[str, object]] = {}
+    for record in records:
+        idea_id = record.get("idea_id")
+        if not idea_id:
+            continue
+        latest_by_idea[str(idea_id)] = record
+    completion_values = [
+        float(entry.get("checklist_completion_pct", 0)) for entry in latest_by_idea.values()
+    ]
+    avg_completion = round(sum(completion_values) / len(completion_values), 2) if completion_values else 0.0
+    stalled_count = sum(
+        1
+        for entry in latest_by_idea.values()
+        if float(entry.get("weeks_in_stage", 0)) >= 6
+    )
+    entry: dict[str, object] = {
+        "key": "idea_pipeline",
+        "avg_completion_pct": avg_completion,
+        "stalled_count": stalled_count,
+    }
+    if stalled_count > 0:
+        entry["issue"] = f"stalled({stalled_count})"
+    return entry
+
+
+def _idea_pipeline_enabled() -> bool:
+    flag_path = Path("config") / "feature_flags.yaml"
+    if not flag_path.exists():
+        return False
+    try:
+        payload = yaml.safe_load(flag_path.read_text(encoding="utf-8")) or {}
+    except Exception:
+        return False
+    defaults = payload.get("defaults") if isinstance(payload, Mapping) else None
+    if not isinstance(defaults, Mapping):
+        return False
+    profile = os.getenv("TRADECTL_PROFILE", "live")
+    profile_defaults = defaults.get(profile)
+    if not isinstance(profile_defaults, Mapping):
+        return False
+    return bool(profile_defaults.get("governance.idea_pipeline_enabled", False))
 
 
 def _score_to_status(score: float, thresholds: Mapping[str, Any]) -> str:

@@ -1,0 +1,7 @@
+# Broker sandbox config (scaffold)
+# Schema: schema/broker_sandbox.schema.json
+
+schema_version: broker_sandbox.v1
+adapter: sandbox
+endpoint: http://localhost:9000
+simulated_latency_ms: 200

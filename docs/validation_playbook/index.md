@@ -10,8 +10,11 @@ FXシグナル運用で扱うクリティカルなデータセットを一元管
 ## 対象データセットとレビューマトリクス
 | Playbook ID | Dataset | ストレージ | 初期配置 | 主要エビデンス | 責任者 | レビュー頻度 |
 | --- | --- | --- | --- | --- | --- | --- |
+| AC-01 | Strategy Data Manifest | `reports/data_manifest.json` | `reports/data_manifest.json` | `reports/validation_log/AC-01_<date>.md` | Research Lead（一次） / Ops Manager（二次） | 週次レビュー（JST 日曜） |
 | AC-09_correlation_bootstrap | 為替主要4ペアの30営業日相関行列 | `data/correlation/` | `data/correlation/initial/bootstrap.parquet` | `reports/validation_log/AC-09_<date>.md` | Risk Manager（一次） / Ops Manager（二次） | 日次健全性ウォッチ、週次フルレビュー（JST 日曜） |
 | AC-45_latency_guard | DataIngestion SLAスナップショット | `metrics/data_ingestion_sla.jsonl`<br>`reports/validation_log/AC-45_sla_<date>.md` | 初期ブートストラップ：`reports/validation_log/AC-45_sla_20250220.md` | `tradectl data benchmark --window 30d` 実行ログ / SLAグラフ | Ops Lead（一次） / Trader Commander（二次） | 日次アラート確認、週次レビュー、ローリング30日サイン |
+| AC-37_journal | Trade Journal週次レビュー | `logs/journal/journal_entries.db`<br>`reports/journal/`<br>`metrics/trade_journal.jsonl` | 初期ブートストラップ：`reports/journal/<YYYY-WW>.md` | `reports/validation_log/AC-37_<date>.md` | Ops Manager（一次） / Trader Commander（二次） | 週次レビュー（JST 日曜） |
+| AC-46_promotion_gate | Research promotion gate | `reports/research/promotion/`<br>`logs/audit/research_promotion.jsonl` | `reports/research/promotion/<strategy_id>_<YYYYMMDD>_dryrun.json` | `reports/validation_log/AC-46_<date>.md` | Research Lead（一次） / Risk Manager（二次） | 週次レビュー（JST 日曜） |
 
 ### レビュー時の必須チェック
 - [ ] `docs/validation_playbook/dataset_template.md` をコピーし、現行ハッシュとRunbook参照を更新した

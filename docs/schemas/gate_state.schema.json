@@ -38,8 +38,7 @@
       "required": [
         "news",
         "calendar",
-        "spread",
-        "liquidity"
+        "spread"
       ],
       "additionalProperties": false,
       "properties": {

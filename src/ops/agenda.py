@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
@@ -165,6 +166,7 @@ class OpsAgendaService:
             self._ops_worklog_path,
             target_date=target_date,
         )
+        idea_tasks = _collect_idea_pipeline_tasks(target_date=target_date)
         return AgendaContext(
             target_date=target_date,
             health_state=health_snapshot["status"],
@@ -172,7 +174,7 @@ class OpsAgendaService:
             workload_total_min=workload_total_min,
             automation_gain_min=automation_gain_min,
             critical_first=critical_first,
-            operational_tasks=[],
+            operational_tasks=idea_tasks,
             runbook_reviews=runbook_reviews,
             validation_pending=validation_pending,
             drill_pending=drill_pending,
@@ -648,6 +650,57 @@ def _collect_validation_pending(path: Path) -> list[dict[str, object]]:
             }
         )
     return pending
+
+
+def _collect_idea_pipeline_tasks(target_date: date) -> list[dict[str, object]]:
+    if not _idea_pipeline_enabled():
+        return []
+    from src.ideas.manager import IdeaPipelineManager
+
+    manager = IdeaPipelineManager()
+    summary = manager.summarize_pipeline()
+    tasks: list[dict[str, object]] = []
+    for idea_id in summary.get("stalled", []):
+        tasks.append(
+            {
+                "task": f"Review stalled idea {idea_id}",
+                "owner": "research",
+                "due": str(target_date),
+                "estimate_min": 45,
+                "last_worklog": "n/a",
+                "notes": "Idea pipeline stalled >=6w",
+            }
+        )
+    for idea_id in summary.get("checklist_pending", []):
+        tasks.append(
+            {
+                "task": f"Complete checklist for {idea_id}",
+                "owner": "research",
+                "due": str(target_date),
+                "estimate_min": 30,
+                "last_worklog": "n/a",
+                "notes": "Checklist incomplete",
+            }
+        )
+    return tasks
+
+
+def _idea_pipeline_enabled() -> bool:
+    path = Path("config") / "feature_flags.yaml"
+    if not path.exists():
+        return False
+    try:
+        payload = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    except Exception:
+        return False
+    defaults = payload.get("defaults") if isinstance(payload, dict) else None
+    if not isinstance(defaults, dict):
+        return False
+    profile = os.getenv("TRADECTL_PROFILE", "live")
+    profile_defaults = defaults.get(profile)
+    if not isinstance(profile_defaults, dict):
+        return False
+    return bool(profile_defaults.get("governance.idea_pipeline_enabled", False))
 
 
 def _hash_text(text: str) -> str:

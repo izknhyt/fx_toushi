@@ -1,0 +1,10 @@
+stage: draft
+items:
+  - item_id: hypothesis_defined
+    description: Hypothesis documented and scoped
+    owner_role: research_checklist_editors
+    status: todo
+  - item_id: data_sources_listed
+    description: Data sources and access notes recorded
+    owner_role: research_checklist_editors
+    status: todo

@@ -1,0 +1,2 @@
+{"ts": "2026-01-17T12:17:37Z", "event": "audit_bundle_generated", "period": "2025Q1", "bundle_path": "audit_pack/2025Q1", "files_count": 72, "bundle_size_mb": 0.436, "generation_time_sec": 0.027, "verification_failures": 0, "dry_run": false}
+{"ts": "2026-01-17T12:17:44Z", "event": "audit_bundle_verified", "bundle_path": "audit_pack/2025Q1", "status": "ok", "files_count": 72, "bundle_size_mb": 0.436, "verification_time_sec": 0.002, "verification_failures": 0}

@@ -1,0 +1,10 @@
+# Pre-trade compliance rules template
+# Schema: schema/compliance_pretrade_rules.schema.json
+
+schema_version: compliance_pretrade.v1
+rules:
+  - id: MAX_SPREAD
+    severity: warn
+    threshold: 2.5
+    unit: pips
+    enabled: true

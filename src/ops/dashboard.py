@@ -48,6 +48,40 @@ def _read_last_jsonl(path: Path) -> Mapping[str, Any] | None:
     return None
 
 
+def _read_recent_diagnostics(path: Path, *, limit: int = 2) -> list[list[str]]:
+    if not path.exists():
+        return []
+    try:
+        lines = [line for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    except Exception:
+        return []
+    recent = []
+    for raw in lines[-limit:]:
+        try:
+            record = json.loads(raw)
+        except json.JSONDecodeError:
+            continue
+        diagnostics = record.get("diagnostics_raw", record.get("diagnostics"))
+        if isinstance(diagnostics, list):
+            recent.append([str(item) for item in diagnostics])
+    return recent
+
+
+def _filter_diagnostics(
+    diagnostics: list[str], recent: list[list[str]], *, missing_threshold: int = 3
+) -> list[str]:
+    if not diagnostics:
+        return []
+    filtered: list[str] = []
+    for code in diagnostics:
+        if not code.endswith("_missing"):
+            filtered.append(code)
+            continue
+        if len(recent) >= missing_threshold - 1 and all(code in entry for entry in recent):
+            filtered.append(code)
+    return filtered
+
+
 @dataclass(slots=True)
 class OpsHealthDashboard:
     status: str
@@ -84,7 +118,7 @@ class OpsHealthDashboardService:
         gate_state_path: Path = DEFAULT_GATE_STATE,
         benchmark_gap_log: Path = DEFAULT_BENCHMARK_GAP_LOG,
         metrics_path: Path = DEFAULT_METRICS_PATH,
-        journal_path: Path | str = "logs/journal/entries.jsonl",
+        journal_path: Path | str = "logs/journal/journal_entries.db",
     ) -> None:
         self._event_bus = event_bus
         self._health_state_path = health_state_path
@@ -122,6 +156,9 @@ class OpsHealthDashboardService:
         if not journal_highlights:
             diagnostics.append("journal_missing")
 
+        raw_diagnostics = list(diagnostics)
+        recent = _read_recent_diagnostics(self._metrics_path, limit=2)
+        diagnostics = _filter_diagnostics(raw_diagnostics, recent)
         status = "ok" if not diagnostics else "degraded"
         payload = OpsHealthDashboard(
             status=status,
@@ -133,17 +170,18 @@ class OpsHealthDashboardService:
             journal_highlights=journal_highlights,
             diagnostics=diagnostics,
         )
-        self._append_metrics(payload)
+        self._append_metrics(payload, raw_diagnostics=raw_diagnostics)
         self._emit_event(payload)
         return payload
 
-    def _append_metrics(self, payload: OpsHealthDashboard) -> None:
+    def _append_metrics(self, payload: OpsHealthDashboard, *, raw_diagnostics: list[str]) -> None:
         self._metrics_path.parent.mkdir(parents=True, exist_ok=True)
         record = {
             "ts": payload.generated_at,
             "event": "ops.dashboard",
             "status": payload.status,
             "diagnostics": payload.diagnostics,
+            "diagnostics_raw": list(raw_diagnostics),
         }
         with self._metrics_path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(record, ensure_ascii=False))

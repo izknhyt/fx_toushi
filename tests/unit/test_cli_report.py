@@ -27,7 +27,7 @@ def test_weekly_writes_summary(tmp_path: Path) -> None:
         tickets=tickets,
         stress_runs=[],
         journal_entries=[],
-        journal_path=tmp_path / "journal.jsonl",
+        journal_path=tmp_path / "journal_entries.db",
         journal_export_dir=tmp_path / "journal",
         returns_path=tmp_path / "returns.csv",
         output_path=output_path,
@@ -80,6 +80,21 @@ def _write_reporter_flags(base: Path, *, profile: str, enabled: bool) -> None:
             "defaults:",
             f"  {profile}:",
             f"    reporter.enable_extended_blocks: {value}",
+        ]
+    )
+    (config_dir / "feature_flags.yaml").write_text(content + "\n", encoding="utf-8")
+
+
+def _write_benchmark_flags(base: Path, *, profile: str, enabled: bool) -> None:
+    config_dir = base / "config"
+    config_dir.mkdir(parents=True, exist_ok=True)
+    value = "true" if enabled else "false"
+    content = "\n".join(
+        [
+            'schema_version: "feature_flags.v1"',
+            "defaults:",
+            f"  {profile}:",
+            f"    benchmark.replay: {value}",
         ]
     )
     (config_dir / "feature_flags.yaml").write_text(content + "\n", encoding="utf-8")
@@ -231,7 +246,7 @@ def test_weekly_extended_blocks_risk_summary(tmp_path: Path, monkeypatch) -> Non
         tickets=[],
         stress_runs=[],
         journal_entries=[],
-        journal_path=tmp_path / "journal.jsonl",
+        journal_path=tmp_path / "journal_entries.db",
         journal_export_dir=tmp_path / "journal",
         returns_path=tmp_path / "returns.csv",
         output_path=output_path,
@@ -243,3 +258,55 @@ def test_weekly_extended_blocks_risk_summary(tmp_path: Path, monkeypatch) -> Non
     content = output_path.read_text(encoding="utf-8")
     assert "Status: alert" in content
     assert "kill_switch_last=soft_stop" in content
+
+
+def test_weekly_benchmark_summary(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    _write_benchmark_flags(tmp_path, profile="m1", enabled=True)
+    strategy_path = tmp_path / "reports" / "performance" / "paper" / "returns.csv"
+    strategy_path.parent.mkdir(parents=True, exist_ok=True)
+    pd.DataFrame(
+        {
+            "timestamp": ["2025-01-01T00:00:00Z", "2025-01-02T00:00:00Z"],
+            "return": [0.01, -0.005],
+        }
+    ).to_csv(strategy_path, index=False)
+    benchmark_path = tmp_path / "benchmark_runs" / "raw" / "tradingview" / "20250101.csv"
+    benchmark_path.parent.mkdir(parents=True, exist_ok=True)
+    pd.DataFrame(
+        {
+            "timestamp": ["2025-01-01T00:00:00Z", "2025-01-02T00:00:00Z"],
+            "close": [1.0, 1.02],
+        }
+    ).to_csv(benchmark_path, index=False)
+    template_path = tmp_path / "src" / "reporter" / "templates" / "weekly_m1_core.md"
+    template_path.parent.mkdir(parents=True, exist_ok=True)
+    template_path.write_text(
+        "\n".join(
+            [
+                "# Weekly Report",
+                "## Benchmark Comparison",
+                "{benchmark_summary}",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    output_path = tmp_path / "weekly.md"
+    payload = weekly(
+        profile="m1",
+        week="2025-W12",
+        tickets=[],
+        stress_runs=[],
+        journal_entries=[],
+        journal_path=tmp_path / "journal_entries.db",
+        journal_export_dir=tmp_path / "journal",
+        returns_path=strategy_path,
+        output_path=output_path,
+        dry_run=False,
+        kpi={"sharpe": "1.23", "max_dd": "0.05", "win_rate": "0.55", "cum_r": "1.8"},
+        with_benchmark=True,
+    )
+    assert payload["benchmark_summary"] != "deferred"
+    content = output_path.read_text(encoding="utf-8")
+    assert "Benchmark Comparison" in content

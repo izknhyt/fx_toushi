@@ -1,0 +1,14 @@
+stage: screening
+items:
+  - item_id: data_sources_verified
+    description: Data sources verified and logged
+    owner_role: research_checklist_editors
+    status: todo
+  - item_id: baseline_metrics
+    description: Baseline metrics computed (Sharpe/MaxDD)
+    owner_role: research_checklist_editors
+    status: todo
+  - item_id: risk_flags_reviewed
+    description: Risk flags reviewed with Ops
+    owner_role: ops_managers
+    status: todo

@@ -1,0 +1,11 @@
+schema_version: provider_sla.v1
+providers:
+  yfinance:
+    warn_ms: 1500
+    breach_ms: 2500
+  dukascopy:
+    warn_ms: 1200
+    breach_ms: 2000
+  local:
+    warn_ms: 800
+    breach_ms: 1500

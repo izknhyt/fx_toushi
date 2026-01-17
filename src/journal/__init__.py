@@ -1,5 +1,5 @@
 """Trade journal scaffolding."""
 
-from .service import JournalEntry, TradeJournalService
+from .service import JournalEntry, JournalValidationError, TradeJournalService
 
-__all__ = ["JournalEntry", "TradeJournalService"]
+__all__ = ["JournalEntry", "JournalValidationError", "TradeJournalService"]

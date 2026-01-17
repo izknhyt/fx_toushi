@@ -1,0 +1,9 @@
+# EventBus runtime settings (optional for M1 defaults)
+# Schema: schema/event_bus.schema.json
+
+schema_version: event_bus.v1
+queue_maxsize: 512
+backpressure_policy: block
+retention_days: 7
+archive_compression: gz
+metrics_path: metrics/event_bus_queue.jsonl

@@ -17,6 +17,9 @@
 - Status: {risk_summary_status}
 - Summary: {risk_summary}
 
+## Model Risk
+{model_risk_summary}
+
 ## Kill Switch & Spread
 - Kill Switch history: {kill_switch_history}
 - Spread cooldown summary: {spread_cooldown_summary}
@@ -37,6 +40,9 @@
 
 ## Trade Journal
 {trade_journal}
+
+## Benchmark Comparison
+{benchmark_summary}
 
 ## Sign-off
 - Prepared by:

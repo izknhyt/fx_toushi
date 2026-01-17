@@ -8,6 +8,7 @@ weights:
   runbook_updates: 0.20
   drills_completed: 0.30
   incident_followup: 0.20
+  idea_pipeline: 0.10
 evidence_paths:
   backups: reports/drill/backup_integrity.md    # TODO: 実際の証跡パスに合わせて更新。
   runbooks: docs/runbooks/

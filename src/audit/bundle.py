@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import shutil
+import time
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -34,8 +36,11 @@ class AuditBundleManifest:
     generated_at: str
     generator_version: str
     files: tuple[AuditBundleFile, ...]
+    hash: str
+    signature: str
     missing: tuple[str, ...] = ()
     summary: Mapping[str, int] = field(default_factory=dict)
+    notes: str | None = None
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -44,8 +49,11 @@ class AuditBundleManifest:
             "generated_at": self.generated_at,
             "generator_version": self.generator_version,
             "files": [file.__dict__ for file in self.files],
+            "hash": self.hash,
+            "signature": self.signature,
             "missing": list(self.missing),
             "summary": dict(self.summary),
+            "notes": self.notes,
         }
 
 
@@ -54,14 +62,25 @@ class AuditBundleResult:
     bundle_path: Path
     manifest_path: Path
     signature_path: Path
+    report_path: Path
     manifest: AuditBundleManifest
 
 
 class AuditBundleService:
     """Generate audit bundles for external review."""
 
-    def __init__(self, *, base_dir: Path = Path("audit_pack")) -> None:
+    def __init__(
+        self,
+        *,
+        base_dir: Path = Path("audit_pack"),
+        metrics_path: Path = Path("metrics/audit_bundle.jsonl"),
+        report_dir: Path = Path("reports/audit/audit_pack"),
+        event_bus: object | None = None,
+    ) -> None:
         self._base_dir = base_dir
+        self._metrics_path = metrics_path
+        self._report_dir = report_dir
+        self._event_bus = event_bus
 
     def generate(
         self,
@@ -70,6 +89,7 @@ class AuditBundleService:
         signer: str = "local",
         dry_run: bool = False,
     ) -> AuditBundleResult:
+        started_at = time.monotonic()
         bundle_root = self._base_dir / period
         files, missing = self._collect_sources(period)
         materialized: list[AuditBundleFile] = []
@@ -82,15 +102,13 @@ class AuditBundleService:
             "manifest": 0,
         }
 
-        if not dry_run:
-            bundle_root.mkdir(parents=True, exist_ok=True)
-
         for kind, source_path in files:
             digest = sha256_path(source_path)
             counts[kind] = counts.get(kind, 0) + 1
             safe_name = _safe_name(source_path)
             dest = bundle_root / kind / safe_name
             if not dry_run:
+                bundle_root.mkdir(parents=True, exist_ok=True)
                 dest.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(source_path, dest)
             materialized.append(
@@ -102,30 +120,88 @@ class AuditBundleService:
                 )
             )
 
+        materialized_sorted = tuple(sorted(materialized, key=lambda entry: entry.path))
+        bundle_hash = _bundle_hash(materialized_sorted)
         manifest = AuditBundleManifest(
             schema_version="audit.bundle.v1",
             period=period,
             generated_at=_utcnow_iso(),
             generator_version="m1.1-minimal",
-            files=tuple(materialized),
+            files=materialized_sorted,
+            hash=bundle_hash,
+            signature="",
             missing=tuple(missing),
             summary=counts,
         )
+        manifest_sha = _manifest_sha256(manifest)
+        signature = _signature_for_hash(manifest_sha, signer)
+        manifest = AuditBundleManifest(
+            schema_version=manifest.schema_version,
+            period=manifest.period,
+            generated_at=manifest.generated_at,
+            generator_version=manifest.generator_version,
+            files=manifest.files,
+            hash=manifest.hash,
+            signature=signature,
+            missing=manifest.missing,
+            summary=manifest.summary,
+            notes=manifest.notes,
+        )
         manifest_path = bundle_root / "audit_manifest.json"
         signature_path = bundle_root / "audit_manifest.sig"
+        report_path = self._report_dir / f"{period}.md"
         if not dry_run:
             manifest_path.write_text(
                 json.dumps(manifest.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8"
             )
-            _write_signature(manifest_path, signature_path, signer=signer)
+            _write_signature(signature_path, manifest_sha, signer=signer)
+            report_path.parent.mkdir(parents=True, exist_ok=True)
+            report_path.write_text(
+                _render_report(
+                    period=period,
+                    generated_at=manifest.generated_at,
+                    bundle_path=bundle_root,
+                    manifest_path=manifest_path,
+                    signature_path=signature_path,
+                    missing=missing,
+                    summary=counts,
+                ),
+                encoding="utf-8",
+            )
+        duration_sec = round(time.monotonic() - started_at, 3)
+        bundle_size_mb = _bundle_size_mb(bundle_root) if bundle_root.exists() else 0.0
+        if not dry_run:
+            self._append_metrics(
+                {
+                    "ts": _utcnow_iso(),
+                    "event": "audit_bundle_generated",
+                    "period": period,
+                    "bundle_path": str(bundle_root),
+                    "files_count": len(materialized_sorted),
+                    "bundle_size_mb": bundle_size_mb,
+                    "generation_time_sec": duration_sec,
+                    "verification_failures": 0,
+                    "dry_run": dry_run,
+                }
+            )
+            self._emit_event(
+                {
+                    "event": "audit.bundle.generated",
+                    "period": period,
+                    "files": len(materialized_sorted),
+                    "hash": bundle_hash,
+                }
+            )
         return AuditBundleResult(
             bundle_path=bundle_root,
             manifest_path=manifest_path,
             signature_path=signature_path,
+            report_path=report_path,
             manifest=manifest,
         )
 
     def verify(self, *, bundle_path: Path) -> Mapping[str, object]:
+        started_at = time.monotonic()
         manifest_path = bundle_path / "audit_manifest.json"
         signature_path = bundle_path / "audit_manifest.sig"
         if not manifest_path.exists():
@@ -146,15 +222,57 @@ class AuditBundleService:
             actual = sha256_path(target)
             if expected and actual != expected:
                 mismatches.append({"path": rel_path, "expected": expected, "actual": actual})
-        sig_status = _verify_signature(manifest_path, signature_path)
+        computed_hash = _bundle_hash_from_manifest(files)
+        manifest_hash = manifest.get("hash")
+        hash_match = manifest_hash == computed_hash
+        manifest_signature = manifest.get("signature")
+        manifest_sha = _manifest_sha256_from_mapping(manifest)
+        sig_status = _verify_signature(signature_path, manifest_sha=manifest_sha)
+        signature_match = (
+            isinstance(manifest_signature, str)
+            and manifest_signature == sig_status.get("signature")
+            and sig_status.get("status") == "ok"
+        )
         status = (
-            "ok" if not mismatches and not missing and sig_status["status"] == "ok" else "error"
+            "ok"
+            if not mismatches
+            and not missing
+            and sig_status["status"] == "ok"
+            and hash_match
+            and signature_match
+            else "error"
+        )
+        verification_failures = 0
+        if mismatches:
+            verification_failures += len(mismatches)
+        if missing:
+            verification_failures += len(missing)
+        if not hash_match:
+            verification_failures += 1
+        if sig_status["status"] != "ok":
+            verification_failures += 1
+        if not signature_match:
+            verification_failures += 1
+        duration_sec = round(time.monotonic() - started_at, 3)
+        self._append_metrics(
+            {
+                "ts": _utcnow_iso(),
+                "event": "audit_bundle_verified",
+                "bundle_path": str(bundle_path),
+                "status": status,
+                "files_count": len(files),
+                "bundle_size_mb": _bundle_size_mb(bundle_path),
+                "verification_time_sec": duration_sec,
+                "verification_failures": verification_failures,
+            }
         )
         return {
             "status": status,
             "bundle_path": str(bundle_path),
             "missing": missing,
             "mismatches": mismatches,
+            "hash_match": hash_match,
+            "signature_match": signature_match,
             "signature": sig_status,
         }
 
@@ -196,6 +314,27 @@ class AuditBundleService:
                 missing.append(kind)
         return sources, missing
 
+    def _append_metrics(self, payload: Mapping[str, object]) -> None:
+        self._metrics_path.parent.mkdir(parents=True, exist_ok=True)
+        with self._metrics_path.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(payload, ensure_ascii=False))
+            handle.write("\n")
+
+    def _emit_event(self, payload: Mapping[str, object]) -> None:
+        if self._event_bus is None:
+            return
+        publish = getattr(self._event_bus, "publish", None)
+        if publish is None:
+            return
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+        if loop and loop.is_running():
+            loop.create_task(publish(payload, event_type="audit.bundle.generated"))
+        else:
+            asyncio.run(publish(payload, event_type="audit.bundle.generated"))
+
 
 def _collect_glob(kind: str, base: Path, pattern: str) -> list[tuple[str, Path]]:
     if not base.exists():
@@ -211,11 +350,30 @@ def _safe_name(path: Path) -> str:
 def _utcnow_iso() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
+def _bundle_hash(entries: tuple[AuditBundleFile, ...]) -> str:
+    parts = [f"{entry.path}:{entry.sha256}" for entry in entries]
+    seed = "\n".join(parts).encode()
+    return hashlib.sha256(seed).hexdigest()
 
-def _write_signature(manifest_path: Path, signature_path: Path, *, signer: str) -> None:
-    manifest_sha = sha256_path(manifest_path)
-    signature_seed = f"{manifest_sha}:{signer}".encode()
-    signature = hashlib.sha256(signature_seed).hexdigest()
+
+def _bundle_hash_from_manifest(files: list[Mapping[str, object]]) -> str:
+    parts = []
+    for entry in sorted(files, key=lambda item: str(item.get("path", ""))):
+        path = entry.get("path")
+        sha = entry.get("sha256")
+        if not path or not sha:
+            continue
+        parts.append(f"{path}:{sha}")
+    seed = "\n".join(parts).encode()
+    return hashlib.sha256(seed).hexdigest()
+
+
+def _signature_for_hash(value: str, signer: str) -> str:
+    return hashlib.sha256(f"{value}:{signer}".encode()).hexdigest()
+
+
+def _write_signature(signature_path: Path, manifest_sha: str, *, signer: str) -> None:
+    signature = _signature_for_hash(manifest_sha, signer)
     payload = {
         "schema_version": "audit.manifest.sig.v1",
         "manifest_sha256": manifest_sha,
@@ -226,7 +384,7 @@ def _write_signature(manifest_path: Path, signature_path: Path, *, signer: str) 
     signature_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
-def _verify_signature(manifest_path: Path, signature_path: Path) -> Mapping[str, object]:
+def _verify_signature(signature_path: Path, *, manifest_sha: str) -> Mapping[str, object]:
     if not signature_path.exists():
         return {"status": "missing", "path": str(signature_path)}
     try:
@@ -234,8 +392,7 @@ def _verify_signature(manifest_path: Path, signature_path: Path) -> Mapping[str,
     except json.JSONDecodeError as exc:
         return {"status": "error", "error": str(exc), "path": str(signature_path)}
     signer = payload.get("signer", "local")
-    manifest_sha = sha256_path(manifest_path)
-    expected = hashlib.sha256(f"{manifest_sha}:{signer}".encode()).hexdigest()
+    expected = _signature_for_hash(manifest_sha, signer)
     status = (
         "ok"
         if payload.get("manifest_sha256") == manifest_sha and payload.get("signature") == expected
@@ -246,4 +403,67 @@ def _verify_signature(manifest_path: Path, signature_path: Path) -> Mapping[str,
         "path": str(signature_path),
         "manifest_sha256": manifest_sha,
         "signer": signer,
+        "signature": payload.get("signature"),
     }
+
+
+def _manifest_sha256(manifest: AuditBundleManifest) -> str:
+    payload = manifest.to_dict()
+    payload["signature"] = ""
+    encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _manifest_sha256_from_mapping(manifest: Mapping[str, object]) -> str:
+    payload = dict(manifest)
+    payload["signature"] = ""
+    encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _bundle_size_mb(bundle_root: Path) -> float:
+    if not bundle_root.exists():
+        return 0.0
+    total_bytes = 0
+    for path in bundle_root.rglob("*"):
+        if path.is_file():
+            total_bytes += path.stat().st_size
+    return round(total_bytes / (1024 * 1024), 4)
+
+
+def _render_report(
+    *,
+    period: str,
+    generated_at: str,
+    bundle_path: Path,
+    manifest_path: Path,
+    signature_path: Path,
+    missing: list[str],
+    summary: Mapping[str, int],
+) -> str:
+    lines = [
+        f"# Audit Bundle Report ({period})",
+        "",
+        f"- Generated at: {generated_at}",
+        f"- Bundle path: {bundle_path}",
+        f"- Manifest path: {manifest_path}",
+        f"- Signature path: {signature_path}",
+        "",
+        "## Summary",
+        "",
+        f"- signals: {summary.get('signals', 0)}",
+        f"- tickets: {summary.get('tickets', 0)}",
+        f"- fills: {summary.get('fills', 0)}",
+        f"- config: {summary.get('config', 0)}",
+        f"- risk_disclosure: {summary.get('risk_disclosure', 0)}",
+        f"- manifest: {summary.get('manifest', 0)}",
+        "",
+        "## Missing",
+        "",
+    ]
+    if missing:
+        lines.extend([f"- {entry}" for entry in missing])
+    else:
+        lines.append("- none")
+    lines.append("")
+    return "\n".join(lines)

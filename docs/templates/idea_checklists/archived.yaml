@@ -1,0 +1,6 @@
+stage: archived
+items:
+  - item_id: archive_reason
+    description: Archive reason documented
+    owner_role: research_stage_approvers
+    status: todo

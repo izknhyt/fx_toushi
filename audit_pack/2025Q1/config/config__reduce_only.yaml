@@ -1,0 +1,35 @@
+# config/reduce_only.yaml -- CONFIG-SCAFF-01 scaffold
+# 詳細設計 §3.5.6 / §5.12 に基づき、Human Gate と Reduce-Only Advisor の既定値を定義する。
+# Schema: docs/schemas/human_gate_config.schema.json
+
+schema_version: "human_gate_config.v1"
+human_gate:
+  double_ack_roles:
+    - risk_officer
+    - secondary_operator
+  required_roles:
+    - primary_operator
+    - risk_officer
+    - secondary_operator
+  manual_comment_required: true
+  comment_min_length: 40
+  comment_max_length: 600
+  ack_deadline_minutes_default: 15
+  ticket_comment_hint: "RUN-RISK-02 のチェックリストに沿って市場トリガーと緩和策を記述する。"
+reduce_only:
+  weights:
+    risk: 0.55
+    correlation: 0.2
+    margin: 0.15
+    swap: 0.1
+  max_reduce_per_step: 0.35
+  target_r_eff: 1.25
+  disable_symbols:
+    - USDTRY
+    - GBPZAR
+  board_banner_copy:
+    title: "Reduce-Only Mode Active"
+    body: "Acceptable Degradation 対応中です。新規エントリーは禁止され、縮小提案のみが許可されます。"
+    runbook_ref: RUN-RISK-02#step4
+  ops_worklog_default_min: 12
+  runbook_ref: RUN-RISK-02#overview

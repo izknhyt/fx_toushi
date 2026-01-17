@@ -1,0 +1,10 @@
+schema_version: data_source.v1
+provider: paid_feed
+endpoint: file://data/paid_feed/paid_feed.parquet
+rate_limit:
+  requests_per_minute: 120
+  burst: 240
+backfill:
+  max_days: 365
+  max_symbols: 12
+notes: "local paid feed source"

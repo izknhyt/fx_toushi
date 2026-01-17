@@ -1,0 +1,21 @@
+# JSON
+{
+  "schema_version": "research.manifest.v1",
+  "strategy_id": "m1_baseline_ma_rsi",
+  "idea_id": null,
+  "generated_at": "2026-01-17T04:17:57Z",
+  "validation_playbook_id": "AC-01",
+  "datasets": [
+    {
+      "id": "m1_baseline_ma_rsi",
+      "path": "data/research/curated/usdjpy/usdjpy_m5_20220101_20251219_merged.parquet",
+      "sha256": "369c2425406b581f38bffaad38e63d6d0423de35256cae74aa0d3dd7fd2401d4",
+      "window": {
+        "from": "2022-01-01",
+        "to": "2025-12-19"
+      }
+    }
+  ],
+  "metrics": {},
+  "status": "draft"
+}

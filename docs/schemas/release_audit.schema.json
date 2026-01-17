@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "release.audit.v1.schema.json",
+  "title": "Release Audit Log",
+  "type": "object",
+  "required": ["ts", "schema_version", "event", "version"],
+  "properties": {
+    "ts": { "type": "string" },
+    "schema_version": { "type": "string" },
+    "event": { "type": "string" },
+    "version": { "type": "string" },
+    "task_id": { "type": "string" },
+    "status": { "type": "string" },
+    "evidence_path": { "type": ["string", "null"] },
+    "pending": { "type": "array" },
+    "details": { "type": "object" }
+  },
+  "additionalProperties": true
+}

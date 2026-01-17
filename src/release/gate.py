@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 from collections.abc import Mapping
@@ -10,6 +11,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from src.compliance import RiskDisclosureService
+from src.persistence.release_audit import ReleaseAuditLogger
 
 __all__ = ["ReleaseGateService", "ReleaseChecklist", "ReleaseTask"]
 
@@ -53,25 +55,44 @@ class ReleaseGateService:
         base_dir: Path = Path("reports/audit/release"),
         template_path: Path = Path("docs/release_checklist.md"),
         guardrails_metrics_path: Path = Path("metrics/guardrails.jsonl"),
+        metrics_path: Path = Path("metrics/release_gate.jsonl"),
+        audit_log_dir: Path = Path("logs/audit"),
+        event_bus: object | None = None,
     ) -> None:
         self._base_dir = base_dir
         self._template_path = template_path
         self._guardrails_metrics_path = guardrails_metrics_path
+        self._metrics_path = metrics_path
+        self._audit_log_dir = audit_log_dir
+        self._event_bus = event_bus
 
-    def prepare(self, *, version: str) -> ReleaseChecklist:
+    def prepare(self, *, version: str, dry_run: bool = False) -> ReleaseChecklist:
         tasks = self._load_template_tasks() or self._default_tasks()
         checklist = ReleaseChecklist(
             version=version,
             generated_at=_utcnow_iso(),
             tasks=tuple(tasks),
         )
-        self._base_dir.mkdir(parents=True, exist_ok=True)
-        checklist_path = self._base_dir / f"{version}.md"
-        state_path = self._base_dir / f"{version}.json"
-        checklist_path.write_text(self._render_markdown(checklist), encoding="utf-8")
-        state_path.write_text(
-            json.dumps(checklist.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8"
-        )
+        if not dry_run:
+            self._base_dir.mkdir(parents=True, exist_ok=True)
+            checklist_path = self._base_dir / f"{version}.md"
+            state_path = self._base_dir / f"{version}.json"
+            checklist_path.write_text(self._render_markdown(checklist), encoding="utf-8")
+            state_path.write_text(
+                json.dumps(checklist.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8"
+            )
+            self._append_metrics(
+                {
+                    "ts": _utcnow_iso(),
+                    "event": "release_gate_prepared",
+                    "version": version,
+                    "tasks_total": len(checklist.tasks),
+                    "tasks_completed": 0,
+                    "blocked_reason": None,
+                    "time_to_release_minutes": 0,
+                }
+            )
+            self._emit_event({"event": "release.gate.prepared", "version": version})
         return checklist
 
     def record_result(
@@ -115,6 +136,16 @@ class ReleaseGateService:
             json.dumps(next_state.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8"
         )
         self._update_markdown(version=version, checklist=next_state)
+        self._append_audit_log(
+            {
+                "ts": _utcnow_iso(),
+                "event": "release.task.recorded",
+                "version": version,
+                "task_id": task_id,
+                "status": status,
+                "evidence_path": evidence_path,
+            }
+        )
         return next_state
 
     def verify_completion(self, *, version: str) -> Mapping[str, object]:
@@ -125,8 +156,38 @@ class ReleaseGateService:
             "version": version,
             "pending": [task.to_dict() for task in pending],
         }
+        tasks_completed = len(checklist.tasks) - len(pending)
+        blocked_reason = "release_blocked" if pending else None
+        self._append_metrics(
+            {
+                "ts": _utcnow_iso(),
+                "event": "release_gate_verified",
+                "version": version,
+                "tasks_total": len(checklist.tasks),
+                "tasks_completed": tasks_completed,
+                "blocked_reason": blocked_reason,
+                "time_to_release_minutes": _minutes_since(checklist.generated_at),
+            }
+        )
         if pending:
+            self._append_audit_log(
+                {
+                    "ts": _utcnow_iso(),
+                    "event": "release.blocked",
+                    "version": version,
+                    "pending": [task.to_dict() for task in pending],
+                }
+            )
+            self._emit_event(
+                {
+                    "event": "release.gate.blocked",
+                    "version": version,
+                    "pending": [task.to_dict() for task in pending],
+                }
+            )
             self._emit_guardrails_block(reason="release_blocked")
+        else:
+            self._emit_event({"event": "release.gate.completed", "version": version})
         return payload
 
     def tag_release(self, *, version: str) -> Mapping[str, object]:
@@ -225,6 +286,36 @@ class ReleaseGateService:
             handle.write(json.dumps(payload, ensure_ascii=False))
             handle.write("\n")
 
+    def _append_metrics(self, payload: Mapping[str, object]) -> None:
+        self._metrics_path.parent.mkdir(parents=True, exist_ok=True)
+        with self._metrics_path.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(payload, ensure_ascii=False))
+            handle.write("\n")
+
+    def _append_audit_log(self, payload: Mapping[str, object]) -> None:
+        log_path = self._audit_log_path()
+        logger = ReleaseAuditLogger(path=log_path)
+        logger.record(payload)
+
+    def _audit_log_path(self) -> Path:
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%d")
+        return self._audit_log_dir / f"release_{stamp}.jsonl"
+
+    def _emit_event(self, payload: Mapping[str, object]) -> None:
+        if self._event_bus is None:
+            return
+        publish = getattr(self._event_bus, "publish", None)
+        if publish is None:
+            return
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+        if loop and loop.is_running():
+            loop.create_task(publish(payload, event_type=payload.get("event")))
+        else:
+            asyncio.run(publish(payload, event_type=payload.get("event")))
+
 
 def _slugify(text: str) -> str:
     lowered = text.strip().lower()
@@ -234,3 +325,12 @@ def _slugify(text: str) -> str:
 
 def _utcnow_iso() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def _minutes_since(iso_ts: str) -> int:
+    try:
+        created = datetime.fromisoformat(iso_ts.replace("Z", "+00:00"))
+    except ValueError:
+        created = datetime.now(timezone.utc)
+    delta = datetime.now(timezone.utc) - created
+    return max(0, int(delta.total_seconds() // 60))

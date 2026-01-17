@@ -97,15 +97,17 @@ def ingest(
     weight: float | None = None,
     thresholds: LiquidityThresholds | None = None,
     service: LiquidityMonitorService | None = None,
+    window_sec: int = 300,
 ) -> Mapping[str, Any]:
     samples = _load_samples_from_csv(path, source=source, symbol=symbol)
     service = service or LiquidityMonitorService()
-    snapshot = service.update(samples, thresholds=thresholds)
+    snapshot = service.update(samples, thresholds=thresholds, window_sec=window_sec)
     payload = {
         "status": "ok",
         "source": source,
         "symbol": symbol,
         "weight": weight,
+        "window_sec": window_sec,
         "samples": len(samples),
         "snapshot": snapshot.to_dict(),
         "snapshot_path": str(DEFAULT_LIQUIDITY_SNAPSHOT),

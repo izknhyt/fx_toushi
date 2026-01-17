@@ -1,0 +1,6 @@
+# Resource budget scaffold
+# Schema: schema/resource_budget.schema.json
+
+schema_version: resource_budget.v1
+cpu_cores: 4
+memory_gb: 16

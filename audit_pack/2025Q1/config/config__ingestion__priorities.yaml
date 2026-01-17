@@ -1,0 +1,11 @@
+# Fetch priority weights referenced by detailed design §3.1
+# Schema: schema/ingestion_priorities.schema.json
+
+schema_version: ingestion_priorities.v1
+symbol_weight:
+  USDJPY: 1.0
+  EURUSD: 1.0
+timeframe_weight:
+  5m: 1.0
+  1h: 0.7
+  1d: 0.3

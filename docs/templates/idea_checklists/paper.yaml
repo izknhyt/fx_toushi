@@ -1,0 +1,14 @@
+stage: paper
+items:
+  - item_id: validation_report
+    description: Validation report prepared
+    owner_role: research_checklist_editors
+    status: todo
+  - item_id: risk_review
+    description: Risk review completed
+    owner_role: ops_managers
+    status: todo
+  - item_id: backtest_windows
+    description: Backtest windows logged and reproduced
+    owner_role: research_checklist_editors
+    status: todo

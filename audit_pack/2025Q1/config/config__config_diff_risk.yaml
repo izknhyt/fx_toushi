@@ -1,0 +1,10 @@
+# config_diff_risk.yaml -- stub
+version: 1
+critical_paths:
+  - risk.max_r
+  - kill_switch.*
+  - execution.spread_guard
+risk_paths:
+  - risk.*
+  - execution.*
+notes: "stub patterns; refine before enforcement"

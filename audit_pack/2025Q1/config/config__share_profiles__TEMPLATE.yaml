@@ -1,0 +1,6 @@
+# Share profile template
+# Schema: schema/share_profiles.schema.json
+
+schema_version: share_profiles.v1
+profile_id: example
+recipients: []

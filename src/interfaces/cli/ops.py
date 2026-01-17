@@ -35,7 +35,7 @@ from src.ops.profit_readiness import (
     record_readiness,
     verify_profit_readiness,
 )
-from src.ops_readiness import OpsReadinessEvaluator
+from src.ops.readiness import OpsReadinessService
 
 logger = logging.getLogger(__name__)
 
@@ -271,24 +271,17 @@ def readiness(
     }
 
     if include_ops:
-        evaluator = OpsReadinessEvaluator(
+        service = OpsReadinessService(
             config_path=ops_config_path,
+            metrics_path=ops_metrics_path,
             max_age_days=ops_max_age_days,
         )
-        result = evaluator.evaluate()
-        ops_payload = {
-            "score": result.score,
-            "status": result.status,
-            "notes": result.notes,
-            "evidence": result.evidence,
-            "missing": result.missing,
-            "thresholds": dict(result.thresholds),
-            "runbook_ref": result.runbook_ref,
-            "generated_at": result.generated_at,
-            "exit_code": result.exit_code,
-        }
+        snapshot = service.evaluate()
+        alerted = service.raise_alert(snapshot)
+        service.record_metrics(snapshot, alerts_triggered=1 if alerted else 0)
+        ops_payload = snapshot.to_payload()
+        ops_payload["alerted"] = alerted
         payload["ops_readiness"] = ops_payload
-        _append_jsonl(ops_metrics_path, ops_payload)
 
     if include_profit:
         recorded_entry = None

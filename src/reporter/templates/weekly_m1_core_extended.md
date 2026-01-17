@@ -16,6 +16,9 @@
 - Status: {risk_summary_status}
 - Summary: {risk_summary}
 
+## Model Risk
+{model_risk_summary}
+
 ## Extended Guardrails
 - Reduce-Only advisor: {reduce_only_advisor_summary}
 - Kill Switch history: {kill_switch_history}
@@ -32,6 +35,9 @@
 
 ## Trade Journal
 {trade_journal}
+
+## Benchmark Comparison
+{benchmark_summary}
 
 ## Sign-off
 - Prepared by:

@@ -12,8 +12,12 @@ def test_ops_dashboard_handles_missing_inputs(tmp_path: Path) -> None:
         gate_state_path=tmp_path / "gate_state.json",
         benchmark_gap_log=tmp_path / "benchmark_gap.jsonl",
         metrics_path=tmp_path / "metrics.jsonl",
-        journal_path=tmp_path / "journal.jsonl",
+        journal_path=tmp_path / "journal_entries.db",
     )
+    for _ in range(2):
+        payload = service.build().to_dict()
+        assert payload["status"] == "ok"
+        assert "health_state_missing" not in payload["diagnostics"]
     payload = service.build().to_dict()
     assert payload["status"] == "degraded"
     assert "health_state_missing" in payload["diagnostics"]

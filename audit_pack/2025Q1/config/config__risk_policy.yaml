@@ -1,0 +1,112 @@
+# risk_policy.yaml -- CONFIG-SCAFF-01 scaffold
+# このファイルはリスク管理パラメータの雛形です。実際の運用値を入力する際は
+# docs/runbooks/RUN-RISK-01.md や detailed_design_fx_signal_tool_v1.md §5.2 を参照してください。
+# スキーマ更新時は schema_version を更新し、RiskPolicy マイグレーションを用意します。
+
+schema_version: 1  # TODO: RiskPolicy モデル更新時にインクリメント（詳細: detailed_design_fx_signal_tool_v1.md §5.2）
+metadata:
+  policy_name: "M1 Core Risk Policy"  # 運用名。`reports/governance/risk_policy_changes/` で参照されます。
+  base_capital_jpy: 12000000  # 要件定義 v1 §FR-05 に基づく初期資本。実績に合わせて更新してください。
+  trade_frequency_estimate_per_year: 280  # 想定取引件数。キャピタル整合性シミュレーションで参照します。
+  notes: |
+    初期化時の参考値:
+      - per_trade=0.75%, daily=-2.5%, weekly=-5% （要件定義v1 §FR-05, docs/runbooks/RUN-RISK-01.md）
+      - Reduce-Only/BoardMode切替要件（docs/runbooks/RUN-SPREAD-03.md, RUN-DATA-05.md）
+    変更時は `reports/risk/threshold_change_<YYYYMMDD>.md` に承認ログを残してください。
+
+profiles:
+  m1_baseline:
+    description: |
+      M1 Core 基準プロファイル。Paper/Live 双方で Risk Manager が参照（要件定義v1 §FR-05, detailed_design_fx_signal_tool_v1.md §6）。
+      変更時は `tradectl config diff --profile prod` の差分レビューを必須とします。
+
+    risk_limits:
+      per_trade_risk_pct: 0.75  # 1トレード最大損失[%]（要件定義v1 §FR-05, docs/review_log.md CONFIG-SCAFF-01）。
+      total_open_risk_pct:
+        soft: 1.5   # 全ポジ合計リスクのソフト上限[% of equity]
+        hard: 2.0   # 全ポジ合計リスクのハード上限[% of equity]
+      bucket_open_risk_pct: 1.0  # 通貨バケット（base/quote共有）のオープンリスク上限[% of equity]
+      correlation_group_risk_pct: 1.0  # 高相関(ρ>=0.7)グループの合計オープンリスク上限[% of equity]
+      max_concurrent_positions:
+        overall: 4        # 同時保有上限。コンプライアンス層で broker_rules.yaml と照合。
+        per_currency_bucket: 2  # 通貨バケット上限（detailed_design_fx_signal_tool_v1.md Table FR-06）。
+      exposure_r_eff_soft_stop: 2.0  # R_eff 警戒値。閾値超過時は reduce_only を推奨（detailed_design_fx_signal_tool_v1.md §9.2）。
+      exposure_r_eff_hard_stop: 2.5  # R_eff Kill Switch 閾値（docs/runbooks/RUN-RISK-01.md 手順2）。
+      streak_adjustments:
+        losing:
+          threshold_trades: 2       # 連敗2でリスク縮小
+          per_trade_risk_pct: 0.2   # 縮小後のリスク
+          reset_after_profitable: 1 # 1勝で標準リスクへ戻す
+        winning:
+          threshold_trades: 2       # 連勝2でリスク拡大を開始
+          step_increment_pct: 0.1   # 0.1%刻みで加算
+          cap_per_trade_pct: 1.0    # 上限
+          reset_on_loss: true
+      per_strategy_limits:
+        m1_baseline_ma_rsi:
+          per_trade_risk_pct: 0.5
+          max_concurrent_positions:
+            overall: 3
+            per_currency_bucket: 2
+          exposure_r_eff_soft_stop: 1.8
+          exposure_r_eff_hard_stop: 2.2
+        m1_baseline_donchian:
+          per_trade_risk_pct: 0.75
+          max_concurrent_positions:
+            overall: 2
+            per_currency_bucket: 1
+          exposure_r_eff_soft_stop: 1.8
+          exposure_r_eff_hard_stop: 2.0
+
+    kill_switch:
+      drawdown_threshold_pct:
+        daily: 2.5   # 日次ドローダウン停止（docs/runbooks/RUN-RISK-01.md チェックリスト, 要件定義v1 §FR-05）。
+        weekly: 5.0  # 週次ドローダウン停止。Runbook とレポートテンプレ参照。
+      capital_floor_pct_of_base: 80  # Equity がベース資本の何%で警告するか（要件定義v1 §FR-05 の資本整合性条件）。
+      release_requirements:
+        - "docs/runbooks/RUN-RISK-01.md#kill-switch"  # 手動解除チェックリスト。
+        - "reports/audit/drawdown_guard/<date>.md"      # Runbook で要求される監査レポート。
+
+    spread_guard:
+      warning_spread_pips: 1.2  # Spread警戒値。RUN-SPREAD-03.md のReduce-Only運用参照。
+      critical_spread_pips: 2.0  # Kill Switch 審査対象。Spread Monitor 連携（detailed_design_fx_signal_tool_v1.md §7）。
+      cooldown_minutes: 10      # 解除前に連続正常バーが必要な時間（RUN-SPREAD-03.md）。
+
+    board_mode_overrides:
+      degrade_on_soft_stop: guarded  # health.status=degraded 時の推奨 BoardMode（detailed_design_fx_signal_tool_v1.md §2.5）。
+      halt_on_kill_switch: halted     # Kill Switch 発火時の BoardMode（docs/templates/reports/daily_m1_core.md）。
+
+    reduce_only_policy:
+      enabled: true  # soft_stop 時に Reduce-Only を強制（detailed_design_fx_signal_tool_v1.md Table FR-05）。
+      exit_after_minutes: 120  # Reduce-Only 継続時間目安。延長時は RUN-RISK-01.md へ記録。
+
+    lot_ladder:
+      # Hands-off/auto_execute時のロット階段。PF/Sharpe/MaxDD/Watchlistに連動。
+      - pf_min: 1.30
+        sharpe_min: 1.10
+        maxdd_max: 7.0
+        watchlist_max: 0
+        size_factor: 1.15  # +15%
+        notes: "Hands-off昇格と同時に適用"
+      - pf_min: 1.20
+        sharpe_min: 1.00
+        maxdd_max: 8.0
+        watchlist_max: 0
+        size_factor: 1.10
+        notes: "基本拡張"
+      - pf_min: 1.15
+        sharpe_min: 0.90
+        maxdd_max: 9.0
+        watchlist_max: 0
+        size_factor: 0.85  # -15%
+        notes: "Guardedへ降格"
+      - maxdd_max: 9.1
+        watchlist_max: 1
+        size_factor: 0.70  # -30%
+        notes: "即時縮退、HITL必須"
+
+    reporting:
+      metrics_snapshot_path: "metrics/risk.jsonl"  # RiskSummaryBuilder 参照（detailed_design_fx_signal_tool_v1.md §9.2）。
+      audit_targets:
+        - "logs/risk/kill_switch_events.jsonl"  # docs/templates/reports/daily_m1_core.md で参照。
+        - "reports/governance/risk_policy_changes/"  # 閾値変更ログ配置先。

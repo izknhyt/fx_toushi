@@ -1,0 +1,68 @@
+{
+  "version": "2025-12-20",
+  "generated_at": "2025-12-20T00:00:00Z",
+  "strategies": {
+    "m1_baseline_ma_rsi": {
+      "dataset_path": "data/research/curated/usdjpy/usdjpy_m5_20220101_20251219_merged.parquet",
+      "dataset_sha256": "369c2425406b581f38bffaad38e63d6d0423de35256cae74aa0d3dd7fd2401d4",
+      "dataset_window": {
+        "from": "2022-01-01",
+        "to": "2025-12-19"
+      },
+      "notes": "USDJPY 5m 2022-2025 merged (dukascopy base + 2025 CSV + yahoo 2025-10..11 + dukascopy gap fills + local ingestion)",
+      "watchlist_datasets": {
+        "USDJPY": {
+          "path": "data/research/curated/usdjpy/usdjpy_m5_20220101_20251219_merged.parquet",
+          "sha256": "369c2425406b581f38bffaad38e63d6d0423de35256cae74aa0d3dd7fd2401d4"
+        },
+        "EURUSD": {
+          "path": "data/research/curated/eurusd/eurusd_m5_20220101_20251219_merged.parquet",
+          "sha256": "a9502e59d7bb7a9e387b9b0a6c0db04fa4d7d1d8b1d40b20f694bea1391b8d7a"
+        },
+        "GBPUSD": {
+          "path": "data/research/curated/gbpusd/gbpusd_m5_20220101_20251219_merged.parquet",
+          "sha256": "e96921dd112b5fb68605cc16fd65282f9a7d7067645d70a0849dc8e67f46f527"
+        },
+        "EURJPY": {
+          "path": "data/research/curated/eurjpy/eurjpy_m5_20220101_20251219_merged.parquet",
+          "sha256": "a1f1ac2f06e7ddd976ab020cf056923cd42c745354119f8bfe144470351bd0d0"
+        },
+        "AUDUSD": {
+          "path": "data/research/curated/audusd/audusd_m5_20220101_20251219_merged.parquet",
+          "sha256": "bcfc642091535bc1d73ac7b68d449eb27d04ace3aedb50f063fa4227ab5bc73b"
+        }
+      }
+    },
+    "m1_baseline_donchian": {
+      "dataset_path": "data/research/curated/usdjpy/usdjpy_m5_20220101_20251219_merged.parquet",
+      "dataset_sha256": "369c2425406b581f38bffaad38e63d6d0423de35256cae74aa0d3dd7fd2401d4",
+      "dataset_window": {
+        "from": "2022-01-01",
+        "to": "2025-12-19"
+      },
+      "notes": "USDJPY 5m 2022-2025 merged (dukascopy base + 2025 CSV + yahoo 2025-10..11 + dukascopy gap fills + local ingestion)",
+      "watchlist_datasets": {
+        "USDJPY": {
+          "path": "data/research/curated/usdjpy/usdjpy_m5_20220101_20251219_merged.parquet",
+          "sha256": "369c2425406b581f38bffaad38e63d6d0423de35256cae74aa0d3dd7fd2401d4"
+        },
+        "EURUSD": {
+          "path": "data/research/curated/eurusd/eurusd_m5_20220101_20251219_merged.parquet",
+          "sha256": "a9502e59d7bb7a9e387b9b0a6c0db04fa4d7d1d8b1d40b20f694bea1391b8d7a"
+        },
+        "GBPUSD": {
+          "path": "data/research/curated/gbpusd/gbpusd_m5_20220101_20251219_merged.parquet",
+          "sha256": "e96921dd112b5fb68605cc16fd65282f9a7d7067645d70a0849dc8e67f46f527"
+        },
+        "EURJPY": {
+          "path": "data/research/curated/eurjpy/eurjpy_m5_20220101_20251219_merged.parquet",
+          "sha256": "a1f1ac2f06e7ddd976ab020cf056923cd42c745354119f8bfe144470351bd0d0"
+        },
+        "AUDUSD": {
+          "path": "data/research/curated/audusd/audusd_m5_20220101_20251219_merged.parquet",
+          "sha256": "bcfc642091535bc1d73ac7b68d449eb27d04ace3aedb50f063fa4227ab5bc73b"
+        }
+      }
+    }
+  }
+}

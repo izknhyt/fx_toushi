@@ -15,6 +15,7 @@ from rich.table import Table
 
 from src.compliance import RiskDisclosureService
 from src.interfaces.cli.board_diagnostics import board_diagnostics
+from src.strategies.scoring import DEFAULT_SCORE_METRICS
 
 logger = logging.getLogger(__name__)
 
@@ -81,6 +82,7 @@ def board(
     diagnostics_log: Path | None = None,
     diagnostics_limit: int = 50,
     diagnostics_strategy: str | None = None,
+    score_metrics_path: Path = DEFAULT_SCORE_METRICS,
 ) -> dict[str, object]:
     """Render a lightweight board payload and optionally persist a JSON snapshot."""
 
@@ -117,6 +119,7 @@ def board(
         logger.info("cli.board.rendered", extra={"view": view, "snapshot": str(save_snapshot or "")})
         return payload
     manifest_entry = _load_manifest_entry(manifest_path)
+    score_entry = _load_latest_score(score_metrics_path, strategy_id="m1_baseline_ma_rsi")
     effective_kill_switch = kill_switch_state or ("guarded" if guarded else "none")
     rd_status, rd_consent_id = _resolve_risk_disclosure_status(risk_disclosure_status)
     ticket_rows = [dict(ticket) for ticket in (tickets or ())]
@@ -153,6 +156,11 @@ def board(
             "pf_all": 1.24,
             "sharpe_oos": 0.92,
             "acceptable_degradation": guarded,
+            "alpha_score": score_entry.get("alpha_score") if score_entry else None,
+            "decay_score": score_entry.get("decay_score") if score_entry else None,
+            "score_window": score_entry.get("window") if score_entry else None,
+            "score_watchlist_flags": score_entry.get("watchlist_flags") if score_entry else None,
+            "score_runbook": "docs/runbooks/RES-SCORE-01.md",
         },
         "badges": {
             "profit_readiness": profit_readiness_status,
@@ -622,6 +630,27 @@ def _summarize_audit_refs(ticket: Mapping[str, object]) -> str:
     if det_hash:
         parts.append(f"det={det_hash}")
     return ", ".join(parts) if parts else "—"
+
+
+def _load_latest_score(path: Path, *, strategy_id: str) -> dict[str, object] | None:
+    if not path.exists():
+        return None
+    latest: dict[str, object] | None = None
+    try:
+        with path.open("r", encoding="utf-8") as handle:
+            for line in handle:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    payload = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if payload.get("strategy_id") == strategy_id:
+                    latest = payload
+    except OSError:
+        return None
+    return latest
 
 
 def _fmt_number(value: object) -> str:

@@ -1,0 +1,6 @@
+# Risk disclosure enforcement template
+# Schema: schema/compliance_risk_disclosure.schema.json
+
+schema_version: compliance_risk_disclosure.v1
+required: true
+banner_text: "Trading involves risk."

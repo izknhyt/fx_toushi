@@ -13,10 +13,13 @@ import yaml
 import pandas as pd
 
 from src.interfaces.cli import tickets as tickets_actions
+from src.benchmark import BenchmarkReplayService
 from src.journal import TradeJournalService
+from src.reporter.attribution import AttributionEngine, DEFAULT_ATTRIBUTION_METRICS
 from src.reporter.generator import ManualCsvSummary, ReportGenerator, RiskSummaryStub
 from src.funding import load_funding_csv
 from src.reporter.kpi import compute_kpi_from_equity, compute_kpi_from_returns
+from src.governance.model_risk import ModelRiskRegisterService, ModelRiskSchemaError
 
 logger = logging.getLogger(__name__)
 
@@ -176,6 +179,29 @@ def _summarize_resync(path: Path = DEFAULT_RESYNC_LOG) -> str:
     if resync_latency_ratio is not None:
         summary.append(f"ratio={resync_latency_ratio:.2f}")
     return ", ".join(summary)
+
+
+def _summarize_model_risk(*, profile: str) -> str:
+    if not _read_feature_flag("governance.model_risk_register_enabled", profile=profile):
+        return "deferred"
+    service = ModelRiskRegisterService()
+    try:
+        register = service.load(Path("docs/governance/model_risk_register.md"))
+    except ModelRiskSchemaError:
+        return "model risk register unreadable"
+    if not register.entries:
+        return "- No model risk entries"
+    pending = [entry.strategy_id for entry in register.entries if entry.status == "pending"]
+    expired = [entry.strategy_id for entry in register.entries if entry.status == "expired"]
+    blocked = [entry.strategy_id for entry in register.entries if entry.status == "blocked"]
+    lines = []
+    if pending:
+        lines.append(f"- Pending: {', '.join(pending)}")
+    if expired:
+        lines.append(f"- Expired: {', '.join(expired)}")
+    if blocked:
+        lines.append(f"- Blocked: {', '.join(blocked)}")
+    return "\n".join(lines) if lines else "- Approved only"
 
 
 def _summarize_manual_csv(path: Path = DEFAULT_MANUAL_CSV_JOBS) -> str:
@@ -501,6 +527,37 @@ def _summarize_funding(
     return "\n".join(lines)
 
 
+def _summarize_benchmark(*, profile: str, with_benchmark: bool) -> str:
+    if not with_benchmark and not _read_feature_flag("benchmark.replay", profile=profile):
+        return "deferred"
+    try:
+        result = BenchmarkReplayService().replay(
+            window="90d",
+            mode="paper" if profile != "live" else "live",
+            providers=None,
+            export_path=None,
+            fail_on_gap=False,
+        )
+    except Exception as exc:  # noqa: BLE001
+        return f"benchmark replay failed: {exc}"
+    lines = [
+        f"- Status: {result.status}",
+        f"- Provider: {result.symbol or 'unknown'}",
+        f"- Missing Ratio: {result.missing_ratio:.2%}",
+    ]
+    diff = result.diff_metrics
+    if diff:
+        lines.append(
+            "- Diff: "
+            + ", ".join(
+                f"{key}={value}" for key, value in diff.items() if value is not None
+            )
+        )
+    if result.recommendations:
+        lines.append("- Recommendations: " + "; ".join(result.recommendations))
+    return "\n".join(lines)
+
+
 def weekly(
     profile: str,
     *,
@@ -509,7 +566,7 @@ def weekly(
     stress_runs: Sequence[Mapping[str, object]] | None = None,
     stress_dir: Path = Path("reports") / "stress",
     journal_entries: Sequence[Mapping[str, object]] | None = None,
-    journal_path: Path = Path("logs") / "journal" / "entries.jsonl",
+    journal_path: Path = Path("logs") / "journal" / "journal_entries.db",
     dry_run: bool = False,
     output_path: Path | None = None,
     kpi: Mapping[str, object] | None = None,
@@ -518,6 +575,11 @@ def weekly(
     equity_path: Path = DEFAULT_EQUITY_PATH,
     journal_export_dir: Path | None = None,
     tickets: Sequence[Mapping[str, object]] | None = None,
+    with_benchmark: bool = False,
+    with_attribution: bool = False,
+    attribution_window: str = "7d",
+    attribution_metrics_path: Path = DEFAULT_ATTRIBUTION_METRICS,
+    attribution_report_dir: Path = Path("reports") / "attribution",
 ) -> dict[str, object]:
     """Generate a weekly report with the M1 Core template."""
 
@@ -534,18 +596,23 @@ def weekly(
             effective_template = extended_candidate
         elif docs_extended.exists():
             effective_template = docs_extended
-    tickets_payload = list(
-        tickets or tickets_actions.list_tickets(include_history=False, json_output=False)
+    tickets_payload = (
+        list(tickets)
+        if tickets is not None
+        else list(tickets_actions.list_tickets(include_history=False, json_output=False))
     )
     stress_payload = list(stress_runs) if stress_runs is not None else _load_stress_runs(stress_dir)
     journal_service = TradeJournalService(path=journal_path)
-    journal_payload = (
-        list(journal_entries)
-        if journal_entries is not None
-        else journal_service.list(week=iso_week)
-    )
+    journal_enabled = _read_feature_flag("journal.enabled", profile=profile)
+    journal_weekly_summary = _read_feature_flag("journal.weekly_summary", profile=profile)
+    if journal_entries is not None:
+        journal_payload = list(journal_entries)
+    elif journal_enabled and journal_weekly_summary:
+        journal_payload = journal_service.list(week=iso_week)
+    else:
+        journal_payload = []
     journal_export: str | None = None
-    if not dry_run:
+    if not dry_run and journal_enabled and journal_weekly_summary:
         export_path = journal_service.export_weekly(
             week=iso_week, output_dir=journal_export_dir or DEFAULT_JOURNAL_EXPORT_DIR
         )
@@ -582,8 +649,22 @@ def weekly(
     extra_context = {}
     extra_context.update(risk_summary.to_context())
     extra_context.update(manual_csv.to_context())
+    extra_context["model_risk_summary"] = _summarize_model_risk(profile=profile)
     extra_context["ops_worklog_excerpt"] = _summarize_ops_worklog()
     extra_context["funding_summary"] = _summarize_funding()
+    extra_context["benchmark_summary"] = _summarize_benchmark(
+        profile=profile,
+        with_benchmark=with_benchmark,
+    )
+    attribution_summary = "deferred"
+    if with_attribution:
+        engine = AttributionEngine(
+            metrics_path=attribution_metrics_path,
+            report_dir=attribution_report_dir,
+        )
+        attribution = engine.evaluate(window=attribution_window)
+        attribution_summary = attribution.render_markdown(include_header=False)
+    extra_context["attribution_summary"] = attribution_summary
     if extended_blocks:
         extra_context.update(
             {
@@ -612,6 +693,18 @@ def weekly(
             equity_path=equity_path,
             dry_run=dry_run,
         )
+    if with_attribution and template_path is None:
+        attribution_template = (
+            Path("src") / "reporter" / "templates" / "weekly_m1_core_attribution.md"
+        )
+        if extended_blocks:
+            extended_attribution = (
+                Path("src") / "reporter" / "templates" / "weekly_m1_core_extended_attribution.md"
+            )
+            if extended_attribution.exists():
+                effective_template = extended_attribution
+        elif attribution_template.exists():
+            effective_template = attribution_template
     summary = ReportGenerator().render_weekly_report(
         week=iso_week,
         tickets=tickets_payload,
@@ -634,6 +727,8 @@ def weekly(
         "stress_runs": stress_payload,
         "journal_entries": journal_payload,
         "journal_export": journal_export,
+        "benchmark_summary": extra_context.get("benchmark_summary"),
+        "attribution_summary": extra_context.get("attribution_summary"),
         "kpi": kpi_payload,
         "kpi_source": str(kpi_source) if kpi_source else None,
         "performance_snapshot": performance_snapshot,

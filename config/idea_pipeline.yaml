@@ -1,9 +1,70 @@
-# Idea pipeline scaffold
+# Idea pipeline configuration
 # Schema: schema/idea_pipeline.schema.json
 
 schema_version: idea_pipeline.v1
-stages:
+stage_order:
   - draft
   - screening
   - paper
   - ready
+  - archived
+allow_force_roles:
+  - ops_managers
+  - research_stage_approvers
+stages:
+  draft:
+    checklist_template: docs/templates/idea_checklists/draft.yaml
+    required_evidence: []
+    minimum_metrics: {}
+    min_weeks_at_stage: 0
+    feature_flags: []
+  screening:
+    checklist_template: docs/templates/idea_checklists/screening.yaml
+    required_evidence:
+      - id: data_sources_verified
+        path: evidence/data_sources.md
+        hash_required: true
+        validation_playbook_id: AC-50
+        expires_in_days: 180
+    minimum_metrics:
+      sharpe: 0.6
+      max_dd: 0.15
+    min_weeks_at_stage: 0
+    feature_flags: []
+  paper:
+    checklist_template: docs/templates/idea_checklists/paper.yaml
+    required_evidence:
+      - id: validation_report
+        path: evidence/validation_report.md
+        hash_required: true
+        validation_playbook_id: AC-50
+        expires_in_days: 90
+      - id: risk_review
+        path: evidence/risk_review.md
+        hash_required: true
+        validation_playbook_id: AC-52
+        expires_in_days: 90
+    minimum_metrics:
+      sharpe: 0.9
+      max_dd: 0.12
+    min_weeks_at_stage: 0
+    feature_flags: []
+  ready:
+    checklist_template: docs/templates/idea_checklists/ready.yaml
+    required_evidence:
+      - id: ops_signoff
+        path: evidence/ops_signoff.md
+        hash_required: true
+        validation_playbook_id: AC-55
+        expires_in_days: 60
+    minimum_metrics:
+      sharpe: 1.1
+      max_dd: 0.1
+    min_weeks_at_stage: 4
+    feature_flags: []
+  archived:
+    checklist_template: docs/templates/idea_checklists/archived.yaml
+    required_evidence: []
+    minimum_metrics: {}
+    min_weeks_at_stage: 0
+    feature_flags: []

@@ -1,0 +1,14 @@
+stage: ready
+items:
+  - item_id: ops_signoff
+    description: Ops sign-off recorded
+    owner_role: ops_managers
+    status: todo
+  - item_id: model_risk_review
+    description: Model risk review approved
+    owner_role: research_stage_approvers
+    status: todo
+  - item_id: runbook_checklist
+    description: Runbook checklist completed
+    owner_role: ops_managers
+    status: todo

@@ -1,0 +1,452 @@
+{
+  "schema_version": "audit.bundle.v1",
+  "period": "2025Q1",
+  "generated_at": "2026-01-17T12:17:37Z",
+  "generator_version": "m1.1-minimal",
+  "files": [
+    {
+      "path": "config/config__alpha_profiles.yaml",
+      "sha256": "sha256:74d989c5f77ecdd5122f57d22862fbac893fd69b0f7767f09eda3561ab70e958",
+      "kind": "config",
+      "source": "config/alpha_profiles.yaml"
+    },
+    {
+      "path": "config/config__board_modes.yaml",
+      "sha256": "sha256:a210bcd00c4aeb883711e84bd24ee3cd2756f70c84d9cf721de984b7a30a2d6d",
+      "kind": "config",
+      "source": "config/board_modes.yaml"
+    },
+    {
+      "path": "config/config__broker_rules.yaml",
+      "sha256": "sha256:9db062cd6c593c8c32e134e9a1aa518ff953972baab9c28a79a3a9537f7ab691",
+      "kind": "config",
+      "source": "config/broker_rules.yaml"
+    },
+    {
+      "path": "config/config__brokers__error_map.yaml",
+      "sha256": "sha256:a1efb2c7900cc2ebe8339b11f72c63db288a7e55e7f0e84d8feadae15666ddc0",
+      "kind": "config",
+      "source": "config/brokers/error_map.yaml"
+    },
+    {
+      "path": "config/config__brokers__sandbox.yaml",
+      "sha256": "sha256:6b40a211fa29403c9eb80489ad79797d05722acdf9f30ed8a2e49cc84b830ac7",
+      "kind": "config",
+      "source": "config/brokers/sandbox.yaml"
+    },
+    {
+      "path": "config/config__brokers__slo.yaml",
+      "sha256": "sha256:ac270dba69b3db4b4814da439a68035ccb23d46f7d3ff87d5b271f775f574e80",
+      "kind": "config",
+      "source": "config/brokers/slo.yaml"
+    },
+    {
+      "path": "config/config__calendar__business_days.yaml",
+      "sha256": "sha256:11930a2da7aca38fedac0daff5c6b36368f1886d5b59d3f3a0a15c967b21c74b",
+      "kind": "config",
+      "source": "config/calendar/business_days.yaml"
+    },
+    {
+      "path": "config/config__coaching_thresholds.yaml",
+      "sha256": "sha256:69345e1d2def1cf2108a44aea5ca16da43830c7a40d6dd7e7f3657f4cbefe82c",
+      "kind": "config",
+      "source": "config/coaching_thresholds.yaml"
+    },
+    {
+      "path": "config/config__compliance__pretrade_rules_TEMPLATE.yaml",
+      "sha256": "sha256:6f17f7f7c610008e237845fa7d6e0cd35b931af4ad0c7544305f1233504d5591",
+      "kind": "config",
+      "source": "config/compliance/pretrade_rules_TEMPLATE.yaml"
+    },
+    {
+      "path": "config/config__compliance__risk_disclosure_TEMPLATE.yaml",
+      "sha256": "sha256:1f43dbfc6e0af78cbd0687b1acae7481a44a3f77cd77e73b587636d159abe370",
+      "kind": "config",
+      "source": "config/compliance/risk_disclosure_TEMPLATE.yaml"
+    },
+    {
+      "path": "config/config__concurrency_profiles.yaml",
+      "sha256": "sha256:c2fc63d336583f52e93afa44754c69b3435e91624229487fb1dd09cdb7732f4e",
+      "kind": "config",
+      "source": "config/concurrency_profiles.yaml"
+    },
+    {
+      "path": "config/config__config_diff_risk.yaml",
+      "sha256": "sha256:805e56e1c31123b7d01552a08bc8b3d0dd1cc64db9aac931ad8a8959c8c9e37b",
+      "kind": "config",
+      "source": "config/config_diff_risk.yaml"
+    },
+    {
+      "path": "config/config__data_sources__TEMPLATE.yaml",
+      "sha256": "sha256:15dd5fa14c30d5649a5158229f425b2ee9f1dd6f699cc8270fec8685202bfdf8",
+      "kind": "config",
+      "source": "config/data_sources/TEMPLATE.yaml"
+    },
+    {
+      "path": "config/config__data_sources__dukascopy.yaml",
+      "sha256": "sha256:e10d5d779bdedd95533d2602ba53833b24aa205840c95572e37968e7252898fc",
+      "kind": "config",
+      "source": "config/data_sources/dukascopy.yaml"
+    },
+    {
+      "path": "config/config__data_sources__paid_feed.yaml",
+      "sha256": "sha256:e8ec9f9b871f3acb970a892829cd522d614b983a1c329ff146e6de0e68f96c78",
+      "kind": "config",
+      "source": "config/data_sources/paid_feed.yaml"
+    },
+    {
+      "path": "config/config__data_sources__yfinance.yaml",
+      "sha256": "sha256:711a9529935f4f45c6c7bf900b8105e938af60aa74fa8912705739945c1240d0",
+      "kind": "config",
+      "source": "config/data_sources/yfinance.yaml"
+    },
+    {
+      "path": "config/config__drift_monitor.yaml",
+      "sha256": "sha256:a2de743e27b376c35aaef447d75404c2dfa0600da3cce55f6e8e263b1bd3ff6b",
+      "kind": "config",
+      "source": "config/drift_monitor.yaml"
+    },
+    {
+      "path": "config/config__emergency.yaml",
+      "sha256": "sha256:797f1f655c9ea4f768e0d894c67c9a477190e04bfcdc606be868695506221c32",
+      "kind": "config",
+      "source": "config/emergency.yaml"
+    },
+    {
+      "path": "config/config__event_bus.yaml",
+      "sha256": "sha256:cc10e1a043593036b08f2ac09b4b0b3cf900a2bcbf4597f81113753961ad48ab",
+      "kind": "config",
+      "source": "config/event_bus.yaml"
+    },
+    {
+      "path": "config/config__execution_model.yaml",
+      "sha256": "sha256:6c3af9b85089def57293f4563ad2c7c575b77e5ca2af4b28a79ef23757898440",
+      "kind": "config",
+      "source": "config/execution_model.yaml"
+    },
+    {
+      "path": "config/config__feature_flags.yaml",
+      "sha256": "sha256:caaef105d3ab959b913b814eab2a79ba6f281fa0b74ac9bfcdf9000400c2fb95",
+      "kind": "config",
+      "source": "config/feature_flags.yaml"
+    },
+    {
+      "path": "config/config__feature_pipeline.yaml",
+      "sha256": "sha256:fb33c76254b22efc9dafd5f964ffa568ae65e935b9d8df1da83fc96a73a66056",
+      "kind": "config",
+      "source": "config/feature_pipeline.yaml"
+    },
+    {
+      "path": "config/config__features__feature_versions.yaml",
+      "sha256": "sha256:5841548e6820943b16c61b48b3d9dcc8133c640edfff0c2503054e71eb78db8a",
+      "kind": "config",
+      "source": "config/features/feature_versions.yaml"
+    },
+    {
+      "path": "config/config__hedge_routes.yaml",
+      "sha256": "sha256:87e06555f09170dfd9af78d9f2fd355badc32534dbfef00378a36e0e7ece95fb",
+      "kind": "config",
+      "source": "config/hedge_routes.yaml"
+    },
+    {
+      "path": "config/config__idea_pipeline.yaml",
+      "sha256": "sha256:a11daeb270e9cf0c6f5ba5a1d1d996cb66a58feaf4eb32f45cb543b3c0f76315",
+      "kind": "config",
+      "source": "config/idea_pipeline.yaml"
+    },
+    {
+      "path": "config/config__ideas.yaml",
+      "sha256": "sha256:ffbcaaa5542b53c8d5756f5c4ecfbc61a51d22fab73a6bdec639b850b1155fa4",
+      "kind": "config",
+      "source": "config/ideas.yaml"
+    },
+    {
+      "path": "config/config__ingestion__priorities.yaml",
+      "sha256": "sha256:8ccbc22a40fa8c63b2b9adb6a63b1f9a9ca5ed99f36c00a9ad22c1b0e36f56d2",
+      "kind": "config",
+      "source": "config/ingestion/priorities.yaml"
+    },
+    {
+      "path": "config/config__model_risk.yaml",
+      "sha256": "sha256:1cb3e4e63e1eb8ac77cf5ee20cd18f510f2b925b1ae4c992f28ed9740413a417",
+      "kind": "config",
+      "source": "config/model_risk.yaml"
+    },
+    {
+      "path": "config/config__ops.yaml",
+      "sha256": "sha256:58814e9f643aac19e8d99c0f4ecc8023c32dd4f45c9c6a1c87ce4ada2c2bac43",
+      "kind": "config",
+      "source": "config/ops.yaml"
+    },
+    {
+      "path": "config/config__ops__drill_scenarios.yaml",
+      "sha256": "sha256:94ac56e3c81adaa91f1beac698e84bbe5e63b2d7ca0758434f6590c2cc83f57a",
+      "kind": "config",
+      "source": "config/ops/drill_scenarios.yaml"
+    },
+    {
+      "path": "config/config__ops__workload_defaults.yaml",
+      "sha256": "sha256:88da20e2d379aca71271492312a20452fb0ff52b8517ae8ddd665468f66d34cd",
+      "kind": "config",
+      "source": "config/ops/workload_defaults.yaml"
+    },
+    {
+      "path": "config/config__ops_readiness.yaml",
+      "sha256": "sha256:da86376cb36d282454d1edec3489d7a01efcba808a099387c2e8c4d1a5e415d1",
+      "kind": "config",
+      "source": "config/ops_readiness.yaml"
+    },
+    {
+      "path": "config/config__pipeline__m1_core.yaml",
+      "sha256": "sha256:1814ed2d7d4eb2caabef59eb0902b1b0f24e5aa34e21c825b28f12aaf3df13b3",
+      "kind": "config",
+      "source": "config/pipeline/m1_core.yaml"
+    },
+    {
+      "path": "config/config__profiles__backtest.yaml",
+      "sha256": "sha256:25d648568f0c5a974daa24a2264fb17037af3e9925eee6ea6459c46014a3c362",
+      "kind": "config",
+      "source": "config/profiles/backtest.yaml"
+    },
+    {
+      "path": "config/config__profiles__live.yaml",
+      "sha256": "sha256:e9c14188d7e7e92ea918a1373326de7949060c6e49250a47fc41102ca34a5805",
+      "kind": "config",
+      "source": "config/profiles/live.yaml"
+    },
+    {
+      "path": "config/config__profiles__paper.yaml",
+      "sha256": "sha256:54d860c160b0bba77394b5012587626d2a8c33cacb04f12dec86e1b2f0e67aca",
+      "kind": "config",
+      "source": "config/profiles/paper.yaml"
+    },
+    {
+      "path": "config/config__provider_priority.yaml",
+      "sha256": "sha256:d7c33871502466788b067fc391222bc00f2ef5330ed7eea782c3600f9bf29eb2",
+      "kind": "config",
+      "source": "config/provider_priority.yaml"
+    },
+    {
+      "path": "config/config__provider_profiles__local.yaml",
+      "sha256": "sha256:36179c75335cdb57286229a0ba9f48ce6a9c76eb3ae48f8932d38c876a8ed77e",
+      "kind": "config",
+      "source": "config/provider_profiles/local.yaml"
+    },
+    {
+      "path": "config/config__provider_sla.yaml",
+      "sha256": "sha256:efddf4b7c7aed3dcc76e1a82ec5474335a372012c9b984b0d864425c4ac39454",
+      "kind": "config",
+      "source": "config/provider_sla.yaml"
+    },
+    {
+      "path": "config/config__providers__real_time_candidates.yaml",
+      "sha256": "sha256:5be7a68fc3fa91e51e8a240fb44def01db3382c610f89e3a3d25a21572f92307",
+      "kind": "config",
+      "source": "config/providers/real_time_candidates.yaml"
+    },
+    {
+      "path": "config/config__reconciliation.yaml",
+      "sha256": "sha256:648a03961f50d5a3c3154ef0344bdd01f9d5590e3a927c16ac5e2f494c7e7d03",
+      "kind": "config",
+      "source": "config/reconciliation.yaml"
+    },
+    {
+      "path": "config/config__reduce_only.yaml",
+      "sha256": "sha256:85a7e8f6ccffd1ff1912b25a3ebfd504eabe8f7a120c55f327448eaad0ebddff",
+      "kind": "config",
+      "source": "config/reduce_only.yaml"
+    },
+    {
+      "path": "config/config__regression.yaml",
+      "sha256": "sha256:16496005627781e3ef9a50798df5f14f235ee54ec180ead799a8adf158a7ca42",
+      "kind": "config",
+      "source": "config/regression.yaml"
+    },
+    {
+      "path": "config/config__reports__kpi.yaml",
+      "sha256": "sha256:d1a7d3c38ca189925d2dacbed0271e40b3264c36ca03dd6749e38aacf67d7d90",
+      "kind": "config",
+      "source": "config/reports/kpi.yaml"
+    },
+    {
+      "path": "config/config__research_validation.yaml",
+      "sha256": "sha256:10b2581445ee995fc05101006299fb438da8a07fc279c49d31edf6ea44033e41",
+      "kind": "config",
+      "source": "config/research_validation.yaml"
+    },
+    {
+      "path": "config/config__resource_budget.yaml",
+      "sha256": "sha256:d810df139572aea7a99e958c6c04f87687be1fc654727c6b59a625d49b3d4367",
+      "kind": "config",
+      "source": "config/resource_budget.yaml"
+    },
+    {
+      "path": "config/config__risk__margin_stress_presets.yaml",
+      "sha256": "sha256:b57eee7f5c5976f754b0c50c10fb7344657d50fd0e26e18905551e1fb680ec58",
+      "kind": "config",
+      "source": "config/risk/margin_stress_presets.yaml"
+    },
+    {
+      "path": "config/config__risk_live_guard.yaml",
+      "sha256": "sha256:330dfb2cc90ba8fa72a3dd25f65ae06ddd485905d551cc5c85de145b2f53a76a",
+      "kind": "config",
+      "source": "config/risk_live_guard.yaml"
+    },
+    {
+      "path": "config/config__risk_policy.yaml",
+      "sha256": "sha256:f411b83733510aef02054e2599bb1e5ec630b96b049446b5071181ab7e12f822",
+      "kind": "config",
+      "source": "config/risk_policy.yaml"
+    },
+    {
+      "path": "config/config__roles.yaml",
+      "sha256": "sha256:c2e2c8f9f2ea0e7bb49d5628c2feb95e9090d50ffa02efbd6abfdfc274421400",
+      "kind": "config",
+      "source": "config/roles.yaml"
+    },
+    {
+      "path": "config/config__scoreboard.yaml",
+      "sha256": "sha256:1f6a17fab9f2e8d5a139445b2f6acbcea2985f155f8a590cfdd65a83416ec8f8",
+      "kind": "config",
+      "source": "config/scoreboard.yaml"
+    },
+    {
+      "path": "config/config__scoring.yaml",
+      "sha256": "sha256:6190c078513ac1d80c426748981d5e6524d67f6ebeef0dcf5e683294263882b2",
+      "kind": "config",
+      "source": "config/scoring.yaml"
+    },
+    {
+      "path": "config/config__secret__metadata.json",
+      "sha256": "sha256:26534f4d0630391693dd90489da131fccfca2670404d07386b4c9a60e257a00a",
+      "kind": "config",
+      "source": "config/secret/metadata.json"
+    },
+    {
+      "path": "config/config__shadow__channels.yaml",
+      "sha256": "sha256:c00d169808e2d8f202923ce524e403be07b61069153aaf72fd7959798093d109",
+      "kind": "config",
+      "source": "config/shadow/channels.yaml"
+    },
+    {
+      "path": "config/config__shadow__tokens.yaml",
+      "sha256": "sha256:ea4983f9ad4b1920aa20b69009448c227a371b040ad7b20bc6582c93d81d9325",
+      "kind": "config",
+      "source": "config/shadow/tokens.yaml"
+    },
+    {
+      "path": "config/config__share_profiles__TEMPLATE.yaml",
+      "sha256": "sha256:02609b740c1701d3ad821bfeaf94abe6af411cbdbafd312ab17dac73c60e40cf",
+      "kind": "config",
+      "source": "config/share_profiles/TEMPLATE.yaml"
+    },
+    {
+      "path": "config/config__signatures__index.json",
+      "sha256": "sha256:86151e3f27533b1b045a6a634cff58ddae42628f5d8cb01f8394d27c711478b3",
+      "kind": "config",
+      "source": "config/signatures/index.json"
+    },
+    {
+      "path": "config/config__sla_thresholds__active.yaml",
+      "sha256": "sha256:cb95c124f8f43903bfa8741b731971f2f2308b1ff9b46ba62fb0e4c33549bc3e",
+      "kind": "config",
+      "source": "config/sla_thresholds/active.yaml"
+    },
+    {
+      "path": "config/config__sla_thresholds__candidate_template.yaml",
+      "sha256": "sha256:c0c5faf78f4dcd6959ce186ebf9e03828e2dbe62fe997f09f8efc0e8cd04d8e8",
+      "kind": "config",
+      "source": "config/sla_thresholds/candidate_template.yaml"
+    },
+    {
+      "path": "config/config__sla_thresholds__default.yaml",
+      "sha256": "sha256:03184ac3a57cbfc2060fbab7b07a521c5e0718b4dbea827ff6a88fda7fc49c40",
+      "kind": "config",
+      "source": "config/sla_thresholds/default.yaml"
+    },
+    {
+      "path": "config/config__strategy_manifest.yaml",
+      "sha256": "sha256:250bc91985476a7d66c60390a361ef5a0d8e567d151aa8b75478d3670710bb48",
+      "kind": "config",
+      "source": "config/strategy_manifest.yaml"
+    },
+    {
+      "path": "fills/reports__audit__order_trace__TKT-AC06.md",
+      "sha256": "sha256:99c64cfff34f3677dea2770d0a3b5cd50a928cc802456cd9e53f1fca435bf42b",
+      "kind": "fills",
+      "source": "reports/audit/order_trace/TKT-AC06.md"
+    },
+    {
+      "path": "fills/reports__execution__live_bridge_20251119.md",
+      "sha256": "sha256:72b1080ec355c32099d263d5e9c0dbc515ee05de1ea9f42f39d2a43df7449ac6",
+      "kind": "fills",
+      "source": "reports/execution/live_bridge_20251119.md"
+    },
+    {
+      "path": "fills/reports__execution__live_bridge_20251219.md",
+      "sha256": "sha256:b1065f504ba5d93909edea71dd2a3cadf1cbcff621149bdd63fd36c0cd668556",
+      "kind": "fills",
+      "source": "reports/execution/live_bridge_20251219.md"
+    },
+    {
+      "path": "fills/reports__execution__live_bridge_20260110.md",
+      "sha256": "sha256:b14ab229943f91f9a7ab712aec381a58dc3e999f8f24b8d4998071ddd8c2b5d3",
+      "kind": "fills",
+      "source": "reports/execution/live_bridge_20260110.md"
+    },
+    {
+      "path": "fills/reports__execution__live_bridge_TEMPLATE.md",
+      "sha256": "sha256:82b2b24a9350867cfeadb5499680b68261e2ac00e6a1e04cd10f831ebcdb72ef",
+      "kind": "fills",
+      "source": "reports/execution/live_bridge_TEMPLATE.md"
+    },
+    {
+      "path": "manifest/reports__data_manifest.json",
+      "sha256": "sha256:d1cef360c94c4bad403306dc07bf2e9e2b5d5b2f3c8cec71a59647dacdd1e2ec",
+      "kind": "manifest",
+      "source": "reports/data_manifest.json"
+    },
+    {
+      "path": "risk_disclosure/data__compliance__risk_disclosure_state.json",
+      "sha256": "sha256:d01974ef36393e0a4308a7803023f906fe98841e4bc87733ae877548d91b98a2",
+      "kind": "risk_disclosure",
+      "source": "data/compliance/risk_disclosure_state.json"
+    },
+    {
+      "path": "signals/logs__events__signals_2025Q1.jsonl",
+      "sha256": "sha256:ced42a36aa9dd20b2e459273dd3e6fdf043d6aad3d9126142a86589c9110197b",
+      "kind": "signals",
+      "source": "logs/events/signals_2025Q1.jsonl"
+    },
+    {
+      "path": "tickets/logs__audit__hitl.jsonl",
+      "sha256": "sha256:739d8e610f976733460e0f6c2312e92fb3c5bfa2bf031a3898ddb2fbed3f3520",
+      "kind": "tickets",
+      "source": "logs/audit/hitl.jsonl"
+    },
+    {
+      "path": "tickets/metrics__tickets.jsonl",
+      "sha256": "sha256:2ffad7aa52b4e04210c288b3d61d039b6de9d6ff8310a82a4ab885bd884c08f8",
+      "kind": "tickets",
+      "source": "metrics/tickets.jsonl"
+    },
+    {
+      "path": "tickets/snapshots__tickets__ticket_records.jsonl",
+      "sha256": "sha256:32b83ae4d0ae013656cdb432d96138328890ec1e5e82e2fc79b918364adfe2d2",
+      "kind": "tickets",
+      "source": "snapshots/tickets/ticket_records.jsonl"
+    }
+  ],
+  "hash": "78b417700d5c8a9d1e641112f0b726196a35eef9faadbdf34f9b0a5e4e64ba99",
+  "signature": "72698ac52bc8b4062a6debb96f64964241f1bba563541760eae9b51380841d57",
+  "missing": [],
+  "summary": {
+    "signals": 1,
+    "tickets": 3,
+    "fills": 5,
+    "config": 61,
+    "risk_disclosure": 1,
+    "manifest": 1
+  },
+  "notes": null
+}

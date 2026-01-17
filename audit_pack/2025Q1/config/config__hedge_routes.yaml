@@ -1,0 +1,5 @@
+# Hedge routing scaffold
+# Schema: schema/hedge_routes.schema.json
+
+schema_version: hedge_routes.v1
+routes: []

@@ -1,0 +1,15 @@
+# config/risk_live_guard.yaml -- CONFIG-SCAFF-01 scaffold
+# ライブ性能ガードの閾値・通知設定。変更時は docs/runbooks/RUN-RISK-07.md と
+# detailed_design_fx_signal_tool_v1.md §4.4.3 を参照してください。
+
+version: 1
+window_days: 28             # ローリング評価日数（14〜60 の範囲で調整）。
+warmup_trades: 30
+pf_threshold: 1.08
+sharpe_threshold: 0.90
+latency_p75_threshold: 120  # 秒単位。Reduce-Only 推奨の境界値。
+live_guard_mode: paper      # TODO: Paper/Live 切替時は ModeContext と同期する。
+notify:
+  kill_switch_review: true
+  ops_agenda_task: true
+runbook_ref: RUN-RISK-07

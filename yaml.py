@@ -16,6 +16,14 @@ class _Line:
 def safe_load(text: str | Any) -> Any:
     if hasattr(text, "read"):
         text = text.read()
+    text = str(text)
+    if text.lstrip().startswith("# JSON"):
+        import json
+
+        payload = text.split("\n", 1)[1] if "\n" in text else ""
+        if not payload.strip():
+            return None
+        return json.loads(payload)
     lines = _tokenise(text)
     if not lines:
         return None

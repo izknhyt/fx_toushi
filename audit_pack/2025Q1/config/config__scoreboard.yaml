@@ -1,0 +1,21 @@
+# config/scoreboard.yaml -- CONFIG-SCAFF-01 scaffold
+# Strategy Scoreboard Service と Reporter 週次レビューで使用する閾値・重み設定。
+# 変更時は付録G.1および docs/runbooks/RUN-GOV-BOARD-01.md, RUN-RISK-07.md を確認し、
+# ガバナンスレビューでダブルサインを取得してください。
+
+version: 1
+thresholds:
+  alpha: 75                 # TODO: StrategyScoringService の監視メトリクスと整合させる。
+  decay: 35
+  watchlist_cooldown_weeks: 4
+weights:
+  profit_factor: 0.35
+  sharpe: 0.30
+  stability_index: 0.20
+  regime_fit: 0.15
+watchlist_rules:
+  min_consecutive_breaches: 2  # 閾値逸脱が連続 N 週でウォッチリスト追加。
+  review_window_weeks: 4
+runbook_refs:
+  watchlist: RUN-GOV-BOARD-01
+  escalation: RUN-RISK-07

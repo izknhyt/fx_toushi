@@ -1,0 +1,9 @@
+schema_version: research.validation.v1
+runbook: "docs/runbooks/RES-IDEA-01.md"
+metrics:
+  pf:
+    min: 1.1
+  sharpe:
+    min: 0.9
+  max_dd:
+    max: 0.3
