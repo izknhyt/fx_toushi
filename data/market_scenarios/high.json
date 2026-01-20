@@ -1,0 +1,5 @@
+{
+  "scenario": "high",
+  "spread_pips": [0.2, 0.6],
+  "atr_pips": [0.9, 1.6]
+}

@@ -12,22 +12,29 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import yaml
 
-DEFAULT_PROFILE_DIR = Path("config") / "accounts"
+DEFAULT_PROFILE_DIR = Path("accounts")
 DEFAULT_SNAPSHOT_DIR = Path("reports") / "accounts"
 DEFAULT_METRICS_PATH = Path("metrics") / "accounts_aggregator.jsonl"
+DEFAULT_PORTFOLIO_DIR = Path("reports") / "performance" / "portfolio"
+DEFAULT_PORTFOLIO_LOG = Path("jsonl") / "accounts" / "portfolio_state.jsonl"
+DEFAULT_STATE_TEMPLATE = DEFAULT_PORTFOLIO_DIR / "templates" / "state.md"
 
 
 @dataclass(slots=True)
 class AccountProfile:
-    broker_id: str
     account_id: str
+    broker: str
     mode: str
     base_currency: str
-    leverage: float
-    status: str
-    data_source: str | None = None
-    update_interval: int | None = None
+    weight: float
+    margin_mode: str
+    max_leverage: float
+    is_hedge: bool
+    statement_path: str
+    import_schedule_cron: str
+    tags: list[str] | None = None
     notes: str | None = None
+    status: str | None = None
 
 
 @dataclass(slots=True)
@@ -39,6 +46,17 @@ class PositionRecord:
     unrealized_pnl: float | None = None
     open_ts: str | None = None
     tags: list[str] | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "symbol": self.symbol,
+            "side": self.side,
+            "lots": self.lots,
+            "avg_price": self.avg_price,
+            "unrealized_pnl": self.unrealized_pnl,
+            "open_ts": self.open_ts,
+            "tags": list(self.tags or []),
+        }
 
 
 @dataclass(slots=True)
@@ -67,7 +85,7 @@ class AccountSnapshot:
             "floating_pnl": self.floating_pnl,
             "swap": self.swap,
             "status": self.status,
-            "positions": [pos.__dict__ for pos in self.positions or []],
+            "positions": [pos.to_dict() for pos in self.positions or []],
         }
 
 
@@ -98,20 +116,29 @@ class AccountAlert:
 @dataclass(slots=True)
 class AggregatedState:
     ts: str
+    base_currency: str
     total_equity: float
-    total_margin: float
+    total_margin_used: float
     r_eff_total: float
     account_breakdown: list[Mapping[str, Any]]
     alerts: list[AccountAlert]
+    variance_flags: list[Mapping[str, Any]] | None = None
+
+    @property
+    def total_margin(self) -> float:
+        return self.total_margin_used
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "ts": self.ts,
+            "base_currency": self.base_currency,
             "total_equity": self.total_equity,
-            "total_margin": self.total_margin,
+            "total_margin": self.total_margin_used,
+            "total_margin_used": self.total_margin_used,
             "r_eff_total": self.r_eff_total,
             "account_breakdown": list(self.account_breakdown),
             "alerts": [alert.to_dict() for alert in self.alerts],
+            "variance_flags": list(self.variance_flags or []),
         }
 
 
@@ -122,16 +149,23 @@ class AccountAggregator:
         profile_dir: Path = DEFAULT_PROFILE_DIR,
         snapshot_dir: Path = DEFAULT_SNAPSHOT_DIR,
         metrics_path: Path = DEFAULT_METRICS_PATH,
+        portfolio_dir: Path = DEFAULT_PORTFOLIO_DIR,
+        portfolio_log: Path = DEFAULT_PORTFOLIO_LOG,
+        state_template: Path = DEFAULT_STATE_TEMPLATE,
     ) -> None:
         self._profile_dir = profile_dir
         self._snapshot_dir = snapshot_dir
         self._metrics_path = metrics_path
+        self._portfolio_dir = portfolio_dir
+        self._portfolio_log = portfolio_log
+        self._state_template = state_template
 
     def load_profiles(self) -> list[AccountProfile]:
-        if not self._profile_dir.exists():
+        profile_root = _resolve_profile_root(self._profile_dir)
+        if not profile_root.exists():
             return []
         profiles: list[AccountProfile] = []
-        for path in sorted(self._profile_dir.glob("*.yaml")):
+        for path in sorted(profile_root.rglob("*.yaml")):
             payload = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
             if not isinstance(payload, Mapping):
                 continue
@@ -145,7 +179,7 @@ class AccountAggregator:
         for profile in self.load_profiles():
             if profile.account_id == profile_id:
                 return profile
-            if profile.broker_id == profile_id:
+            if profile.broker == profile_id:
                 return profile
             if profile_id == _slugify(profile.account_id):
                 return profile
@@ -197,7 +231,13 @@ class AccountAggregator:
         return snapshots
 
     def aggregate(
-        self, *, account_filter: Iterable[str] | None = None
+        self,
+        *,
+        account_filter: Iterable[str] | None = None,
+        portfolio_currency: str | None = None,
+        persist: bool = False,
+        date_tag: str | None = None,
+        include_variance: bool = False,
     ) -> AggregatedState:
         snapshots = self.latest_snapshots()
         if account_filter:
@@ -205,27 +245,70 @@ class AccountAggregator:
             snapshots = [snap for snap in snapshots if snap.account_id in allowed]
         alerts = self.generate_alerts(snapshots)
         total_equity = sum(snap.equity for snap in snapshots)
-        total_margin = sum(snap.margin_used for snap in snapshots)
-        r_eff_total = total_margin / total_equity if total_equity else 0.0
+        total_margin_used = sum(snap.margin_used for snap in snapshots)
+        r_eff_total = total_margin_used / total_equity if total_equity else 0.0
         breakdown = [_snapshot_summary(snap) for snap in snapshots]
+        base_currency = portfolio_currency or _resolve_base_currency(self.load_profiles())
         state = AggregatedState(
             ts=_utcnow_iso(),
+            base_currency=base_currency,
             total_equity=round(total_equity, 2),
-            total_margin=round(total_margin, 2),
+            total_margin_used=round(total_margin_used, 2),
             r_eff_total=round(r_eff_total, 4),
             account_breakdown=breakdown,
             alerts=alerts,
+            variance_flags=[],
         )
+        if include_variance:
+            try:
+                from src.risk.portfolio_exposure import PortfolioExposureAnalyzer
+
+                analyzer = PortfolioExposureAnalyzer()
+                state_payload = state.to_dict()
+                state.variance_flags = analyzer.detect_variance(state_payload)
+            except Exception:
+                state.variance_flags = []
         self._append_metrics(
             {
                 "event": "accounts.aggregate.updated",
                 "total_equity": state.total_equity,
-                "total_margin": state.total_margin,
+                "total_margin": state.total_margin_used,
                 "r_eff_total": state.r_eff_total,
                 "alerts_count": len(alerts),
             }
         )
+        if persist:
+            self._persist_state(state, date_tag=date_tag)
         return state
+
+    def diff(self, *, period_a: str, period_b: str) -> dict[str, Any]:
+        state_a = self._load_state(period_a)
+        state_b = self._load_state(period_b)
+        total_margin_a = state_a.get("total_margin_used", state_a.get("total_margin", 0.0))
+        total_margin_b = state_b.get("total_margin_used", state_b.get("total_margin", 0.0))
+        delta_equity = round(state_b["total_equity"] - state_a["total_equity"], 2)
+        delta_margin = round(total_margin_b - total_margin_a, 2)
+        payload = {
+            "period_a": period_a,
+            "period_b": period_b,
+            "delta_equity": delta_equity,
+            "delta_margin": delta_margin,
+            "base_currency": state_b.get("base_currency"),
+        }
+        diff_path = self._portfolio_dir / f"diff_{period_a}_{period_b}.md"
+        diff_path.parent.mkdir(parents=True, exist_ok=True)
+        diff_path.write_text(_render_diff_markdown(payload), encoding="utf-8")
+        self._append_metrics(
+            {
+                "event": "accounts.diff.generated",
+                "period_a": period_a,
+                "period_b": period_b,
+                "delta_equity": delta_equity,
+                "delta_margin": delta_margin,
+            }
+        )
+        payload["diff_path"] = str(diff_path)
+        return payload
 
     def generate_alerts(self, snapshots: Iterable[AccountSnapshot]) -> list[AccountAlert]:
         alerts: list[AccountAlert] = []
@@ -288,29 +371,56 @@ class AccountAggregator:
             handle.write(json.dumps(record, ensure_ascii=False))
             handle.write("\n")
 
+    def _persist_state(self, state: AggregatedState, *, date_tag: str | None) -> None:
+        date_token = date_tag or datetime.now(timezone.utc).strftime("%Y%m%d")
+        self._portfolio_dir.mkdir(parents=True, exist_ok=True)
+        json_path = self._portfolio_dir / f"portfolio_state_{date_token}.json"
+        json_path.write_text(json.dumps(state.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8")
+        report_path = self._portfolio_dir / f"portfolio_state_{date_token}.md"
+        report_path.write_text(_render_state_markdown(state, date_token, self._state_template), encoding="utf-8")
+        self._portfolio_log.parent.mkdir(parents=True, exist_ok=True)
+        with self._portfolio_log.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(state.to_dict(), ensure_ascii=False))
+            handle.write("\n")
+
+    def _load_state(self, date_tag: str) -> dict[str, Any]:
+        path = self._portfolio_dir / f"portfolio_state_{date_tag}.json"
+        if not path.exists():
+            raise FileNotFoundError(str(path))
+        return json.loads(path.read_text(encoding="utf-8"))
+
 
 def _profile_from_payload(payload: Mapping[str, Any], *, fallback_id: str) -> AccountProfile:
     account_id = str(payload.get("account_id") or payload.get("id") or fallback_id)
-    broker_id = str(payload.get("broker_id") or payload.get("broker") or "unknown")
+    broker = str(payload.get("broker") or payload.get("broker_id") or "unknown")
     mode = str(payload.get("mode") or "paper")
     base_currency = str(payload.get("base_currency") or "JPY")
-    leverage = float(payload.get("leverage") or 1.0)
+    weight = float(payload.get("weight") or 1.0)
+    margin_mode = str(payload.get("margin_mode") or "netting")
+    max_leverage = float(payload.get("max_leverage") or payload.get("leverage") or 1.0)
+    is_hedge = bool(payload.get("is_hedge", False))
+    statement_path = str(payload.get("statement_path") or payload.get("data_source") or "")
+    import_schedule_cron = str(payload.get("import_schedule_cron") or _cron_from_interval(payload.get("update_interval")))
     status = str(payload.get("status") or "active")
-    data_source = payload.get("data_source")
-    update_interval = payload.get("update_interval")
     notes = payload.get("notes")
+    if not statement_path:
+        raise ValueError("statement_path missing")
     if not account_id:
         raise ValueError("account_id missing")
     return AccountProfile(
-        broker_id=broker_id,
         account_id=account_id,
+        broker=broker,
         mode=mode,
         base_currency=base_currency,
-        leverage=leverage,
-        status=status,
-        data_source=str(data_source) if data_source is not None else None,
-        update_interval=int(update_interval) if update_interval is not None else None,
+        weight=weight,
+        margin_mode=margin_mode,
+        max_leverage=max_leverage,
+        is_hedge=is_hedge,
+        statement_path=statement_path,
+        import_schedule_cron=import_schedule_cron,
+        tags=list(payload.get("tags") or []),
         notes=str(notes) if notes is not None else None,
+        status=status,
     )
 
 
@@ -446,6 +556,73 @@ def _resolve_tz(tz: str | None) -> timezone:
 
 def _utcnow_iso() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def _resolve_profile_root(profile_dir: Path) -> Path:
+    if profile_dir.exists():
+        return profile_dir
+    fallback = Path("config") / "accounts"
+    return fallback if fallback.exists() else profile_dir
+
+
+def _resolve_base_currency(profiles: Iterable[AccountProfile]) -> str:
+    for profile in profiles:
+        if profile.base_currency:
+            return profile.base_currency
+    return "JPY"
+
+
+def _cron_from_interval(interval: Any) -> str:
+    if interval is None:
+        return "0 0 * * *"
+    try:
+        minutes = int(interval)
+    except (TypeError, ValueError):
+        return "0 0 * * *"
+    if minutes <= 0:
+        return "0 0 * * *"
+    return f"*/{minutes} * * * *"
+
+
+def _render_state_markdown(state: AggregatedState, date_tag: str, template_path: Path) -> str:
+    if template_path.exists():
+        template = template_path.read_text(encoding="utf-8")
+    else:
+        template = (
+            "# Portfolio State ({date})\n"
+            "- base_currency: {base_currency}\n"
+            "- total_equity: {total_equity}\n"
+            "- total_margin_used: {total_margin_used}\n"
+            "\n## Accounts\n{accounts}\n\n## Alerts\n{alerts}\n"
+        )
+    accounts_block = "\n".join(
+        [f"- {entry['account_id']}: equity={entry['equity']}" for entry in state.account_breakdown]
+    ) or "- n/a"
+    alerts_block = "\n".join(
+        [f"- {alert.account_id}: {alert.reason}" for alert in state.alerts]
+    ) or "- n/a"
+    return (
+        template.format(
+            date=date_tag,
+            base_currency=state.base_currency,
+            total_equity=state.total_equity,
+            total_margin_used=state.total_margin_used,
+            accounts=accounts_block,
+            alerts=alerts_block,
+        )
+        + "\n"
+    )
+
+
+def _render_diff_markdown(payload: Mapping[str, Any]) -> str:
+    lines = [
+        "# Portfolio Diff",
+        f"- period_a: {payload['period_a']}",
+        f"- period_b: {payload['period_b']}",
+        f"- delta_equity: {payload['delta_equity']}",
+        f"- delta_margin: {payload['delta_margin']}",
+    ]
+    return "\n".join(lines) + "\n"
 
 
 __all__ = [

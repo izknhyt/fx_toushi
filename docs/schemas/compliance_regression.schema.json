@@ -1,0 +1,30 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ComplianceRegression",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "generated_at",
+    "profile",
+    "tickets_tested",
+    "min_distance_violations",
+    "freeze_level_violations",
+    "rounding_issues",
+    "throttle_triggered",
+    "proposal_drop_pct",
+    "cooldown_recovered_minutes"
+  ],
+  "properties": {
+    "schema_version": {"type": "string"},
+    "generated_at": {"type": "string"},
+    "profile": {"type": "string"},
+    "tickets_tested": {"type": "integer", "minimum": 0},
+    "min_distance_violations": {"type": "integer", "minimum": 0},
+    "freeze_level_violations": {"type": "integer", "minimum": 0},
+    "rounding_issues": {"type": "integer", "minimum": 0},
+    "throttle_triggered": {"type": "boolean"},
+    "proposal_drop_pct": {"type": "number", "minimum": 0},
+    "cooldown_recovered_minutes": {"type": "integer", "minimum": 0}
+  },
+  "additionalProperties": false
+}

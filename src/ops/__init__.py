@@ -61,6 +61,7 @@ from .worklog import (
     RecordResult,
 )
 from .readiness import OpsReadinessService, OpsReadinessSnapshot
+from .coaching import CoachingInsight, CoachingPlaybook
 
 __all__ = [
     "OPS_WORKLOG_FLUSH_FAILED_EVENT",
@@ -114,4 +115,6 @@ __all__ = [
     "TradeForensicsAnalyzer",
     "OpsReadinessService",
     "OpsReadinessSnapshot",
+    "CoachingInsight",
+    "CoachingPlaybook",
 ]

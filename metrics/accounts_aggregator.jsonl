@@ -1,3 +1,19 @@
 {"ts": "2026-01-17T05:21:51Z", "event": "accounts.snapshot.updated", "account_id": "demo", "ingest_latency_ms": 0, "source": "/private/var/folders/dw/m9d1g10x7pdbzl7zrfnvwk7w0000gn/T/pytest-of-izumimotohayato/pytest-21/test_accounts_status_cli0/snapshot.json"}
 {"ts": "2026-01-17T05:22:05Z", "event": "accounts.snapshot.updated", "account_id": "demo", "ingest_latency_ms": 2, "source": "/private/var/folders/dw/m9d1g10x7pdbzl7zrfnvwk7w0000gn/T/pytest-of-izumimotohayato/pytest-22/test_accounts_status_cli0/snapshot.json"}
 {"ts": "2026-01-17T05:30:57Z", "event": "accounts.snapshot.updated", "account_id": "demo", "ingest_latency_ms": 0, "source": "/private/var/folders/dw/m9d1g10x7pdbzl7zrfnvwk7w0000gn/T/pytest-of-izumimotohayato/pytest-23/test_accounts_status_cli0/snapshot.json"}
+{"ts": "2026-01-18T02:31:15Z", "event": "accounts.snapshot.updated", "account_id": "demo", "ingest_latency_ms": 0, "source": "/private/var/folders/dw/m9d1g10x7pdbzl7zrfnvwk7w0000gn/T/pytest-of-izumimotohayato/pytest-8/test_accounts_status_cli0/snapshot.json"}
+{"ts": "2026-01-18T02:31:16Z", "event": "accounts.snapshot.updated", "account_id": "demo", "ingest_latency_ms": 0, "source": "/private/var/folders/dw/m9d1g10x7pdbzl7zrfnvwk7w0000gn/T/pytest-of-izumimotohayato/pytest-8/test_account_aggregate_and_dif0/snapshot.json"}
+{"ts": "2026-01-18T02:31:16Z", "event": "accounts.alert.raised", "alerts_count": 1, "severity": ["warn"]}
+{"ts": "2026-01-18T02:31:16Z", "event": "accounts.aggregate.updated", "total_equity": 1000.0, "total_margin": 100.0, "r_eff_total": 0.1, "alerts_count": 1}
+{"ts": "2026-01-18T02:31:16Z", "event": "accounts.diff.generated", "period_a": "20260118", "period_b": "20260118", "delta_equity": 0.0, "delta_margin": 0.0}
+{"ts": "2026-01-18T02:33:51Z", "event": "accounts.aggregate.updated", "total_equity": 0, "total_margin": 0, "r_eff_total": 0.0, "alerts_count": 0}
+{"ts": "2026-01-18T02:34:25Z", "event": "accounts.snapshot.updated", "account_id": "demo", "ingest_latency_ms": 0, "source": "/private/var/folders/dw/m9d1g10x7pdbzl7zrfnvwk7w0000gn/T/pytest-of-izumimotohayato/pytest-10/test_accounts_status_cli0/snapshot.json"}
+{"ts": "2026-01-18T02:34:25Z", "event": "accounts.snapshot.updated", "account_id": "demo", "ingest_latency_ms": 0, "source": "/private/var/folders/dw/m9d1g10x7pdbzl7zrfnvwk7w0000gn/T/pytest-of-izumimotohayato/pytest-10/test_account_aggregate_and_dif0/snapshot.json"}
+{"ts": "2026-01-18T02:34:25Z", "event": "accounts.alert.raised", "alerts_count": 1, "severity": ["warn"]}
+{"ts": "2026-01-18T02:34:25Z", "event": "accounts.aggregate.updated", "total_equity": 1000.0, "total_margin": 100.0, "r_eff_total": 0.1, "alerts_count": 1}
+{"ts": "2026-01-18T02:34:26Z", "event": "accounts.diff.generated", "period_a": "20260118", "period_b": "20260118", "delta_equity": 0.0, "delta_margin": 0.0}
+{"ts": "2026-01-18T13:52:13Z", "event": "accounts.snapshot.updated", "account_id": "demo", "ingest_latency_ms": 0, "source": "/private/var/folders/dw/m9d1g10x7pdbzl7zrfnvwk7w0000gn/T/pytest-of-izumimotohayato/pytest-42/test_accounts_status_cli0/snapshot.json"}
+{"ts": "2026-01-18T13:52:13Z", "event": "accounts.snapshot.updated", "account_id": "demo", "ingest_latency_ms": 0, "source": "/private/var/folders/dw/m9d1g10x7pdbzl7zrfnvwk7w0000gn/T/pytest-of-izumimotohayato/pytest-42/test_account_aggregate_and_dif0/snapshot.json"}
+{"ts": "2026-01-18T13:52:14Z", "event": "accounts.alert.raised", "alerts_count": 1, "severity": ["warn"]}
+{"ts": "2026-01-18T13:52:14Z", "event": "accounts.aggregate.updated", "total_equity": 1000.0, "total_margin": 100.0, "r_eff_total": 0.1, "alerts_count": 1}
+{"ts": "2026-01-18T13:52:14Z", "event": "accounts.diff.generated", "period_a": "20260118", "period_b": "20260118", "delta_equity": 0.0, "delta_margin": 0.0}

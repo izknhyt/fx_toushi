@@ -23,6 +23,10 @@ defaults:
     data.rate_limit_auto_stage: false
     governance.model_risk_register_enabled: false
     governance.idea_pipeline_enabled: false
+    finance.backoffice_enabled: false
+    governance.secure_share_cli: false
+    accounts.multi_portfolio: false
+    shadow.slack_enabled: false
     alpha.profit_loop_enabled: true
     alpha.dynamic_sizing: false
     alpha.auto_execute: false
@@ -41,6 +45,10 @@ defaults:
     data.rate_limit_auto_stage: false
     governance.model_risk_register_enabled: false
     governance.idea_pipeline_enabled: false
+    finance.backoffice_enabled: false
+    governance.secure_share_cli: false
+    accounts.multi_portfolio: false
+    shadow.slack_enabled: false
     alpha.profit_loop_enabled: true
     alpha.dynamic_sizing: false
     alpha.auto_execute: false
@@ -59,6 +67,10 @@ defaults:
     data.rate_limit_auto_stage: false
     governance.model_risk_register_enabled: false
     governance.idea_pipeline_enabled: false
+    finance.backoffice_enabled: false
+    governance.secure_share_cli: false
+    accounts.multi_portfolio: false
+    shadow.slack_enabled: false
     alpha.profit_loop_enabled: false
     alpha.dynamic_sizing: false
     alpha.auto_execute: false
@@ -96,6 +108,32 @@ definitions:
     telemetry_checks:
       - "metrics/spread_guard.jsonl"
       - "reports/ops/degradation_log/"
+  accounts.multi_portfolio:
+    description: "複数口座のポートフォリオ集計と差分/リバランスを有効化する。"
+    milestone: "M2"
+    owner: ops_manager
+    category: guarded
+    runbook_ref: "RUN-ACCOUNT-02"
+    enable_conditions:
+      - "account aggregation CLI で portfolio_state が生成されることを確認"
+      - "Validation Playbook M2_account_aggregation が用意されていること"
+    rollback:
+      - "tradectl config flags --set accounts.multi_portfolio=false --profile <mode>"
+    telemetry_checks:
+      - "metrics/accounts_aggregator.jsonl"
+  shadow.slack_enabled:
+    description: "Slack Shadowブリッジを有効化し、Shadowチャンネルへ通知する。"
+    milestone: "M2"
+    owner: ops_manager
+    category: guarded
+    runbook_ref: "RUN-SHADOW-01"
+    enable_conditions:
+      - "config/shadow/channels.yaml と config/shadow/tokens.yaml が更新済み"
+      - "tradectl shadow test が正常に実行できる"
+    rollback:
+      - "tradectl config flags --set shadow.slack_enabled=false --profile <mode>"
+    telemetry_checks:
+      - "metrics/shadow_bridge.jsonl"
   risk_disclosure_enforce:
     description: "リスク開示プロンプトの強制モード。承諾なしでは危険操作をブロックする。"
     milestone: "M1.1"
@@ -140,6 +178,33 @@ definitions:
     telemetry_checks:
       - "metrics/idea_pipeline.jsonl"
       - "logs/audit/idea_pipeline.jsonl"
+  finance.backoffice_enabled:
+    description: "BackOffice ledger/tax snapshotsの生成を有効化する。"
+    milestone: "M2"
+    owner: finance_ops
+    category: guarded
+    runbook_ref: "RUN-TAX-01"
+    enable_conditions:
+      - "Ledger event sources (ticket/execution/funding/reconciliation) が揃っている"
+      - "Tax ledger snapshotの出力先が確保済み"
+    rollback:
+      - "tradectl config flags --set finance.backoffice_enabled=false --profile <mode>"
+    telemetry_checks:
+      - "metrics/backoffice_ledger.jsonl"
+      - "reports/tax/"
+  governance.secure_share_cli:
+    description: "SecureShare CLIとEvidence bundle配布を有効化する。"
+    milestone: "M2"
+    owner: governance
+    category: guarded
+    runbook_ref: "RUN-GOV-02"
+    enable_conditions:
+      - "config/share_profiles/<profile>.yaml が整備済み"
+      - "reports/secure_share/<profile>/<period>/ が出力可能"
+    rollback:
+      - "tradectl config flags --set governance.secure_share_cli=false --profile <mode>"
+    telemetry_checks:
+      - "metrics/secure_share.jsonl"
   data.rate_limit_auto_stage:
     description: "RateLimitGuard のステージ自動適用。Stage候補を自動適用し、監査ログへ記録する。"
     milestone: "M1.1"

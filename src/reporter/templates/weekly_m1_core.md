@@ -38,6 +38,9 @@
 ## Stress Runs
 {stress_runs}
 
+## Risk Envelope Delta
+{risk_envelope_delta}
+
 ## Trade Journal
 {trade_journal}
 

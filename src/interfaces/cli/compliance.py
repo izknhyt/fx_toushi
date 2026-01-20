@@ -7,10 +7,20 @@ import os
 from pathlib import Path
 
 from src.compliance import RiskDisclosureService, RiskDisclosureState
+from tools.compliance_ticket_generator import TicketScenarioGenerator
+from tools.compliance_regression import diff_regression, run_regression
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["status", "ack", "refresh", "DEFAULT_RISK_STATE"]
+__all__ = [
+    "status",
+    "ack",
+    "refresh",
+    "regression_generate",
+    "regression_run",
+    "regression_diff",
+    "DEFAULT_RISK_STATE",
+]
 
 DEFAULT_RISK_STATE = Path("data/compliance/risk_disclosure_state.json")
 
@@ -82,3 +92,47 @@ def refresh() -> dict[str, object]:
         state = service.fetch_state()
     logger.info("cli.compliance.refresh.completed", extra={"status": state.status})
     return state.to_dict()
+
+
+def regression_generate(
+    *,
+    per_pair: int,
+    profile: str,
+    out_dir: Path | None = None,
+    seed: int = 7,
+) -> dict[str, object]:
+    generator = TicketScenarioGenerator()
+    output = generator.write(per_pair=per_pair, mode=profile, seed=seed, out_dir=out_dir)
+    return {"status": "ok", "output_dir": str(output)}
+
+
+def regression_run(
+    *,
+    profile: str,
+    scenarios: Path,
+    rules_path: Path | None = None,
+    capitalsim: str = "baseline",
+    dry_run: bool = False,
+    actor: str | None = None,
+    output_dir: Path | None = None,
+    metrics_path: Path | None = None,
+) -> dict[str, object]:
+    return run_regression(
+        profile=profile,
+        scenarios_path=scenarios,
+        rules_path=rules_path or Path("config/broker_rules.yaml"),
+        capitalsim=capitalsim,
+        dry_run=dry_run,
+        actor=actor,
+        output_dir=output_dir or Path("reports/compliance/regression"),
+        metrics_path=metrics_path or Path("metrics/compliance_regression.json"),
+    )
+
+
+def regression_diff(
+    *,
+    current: Path,
+    against: Path,
+    threshold: float = 0.02,
+) -> dict[str, object]:
+    return diff_regression(current=current, against=against, threshold=threshold)

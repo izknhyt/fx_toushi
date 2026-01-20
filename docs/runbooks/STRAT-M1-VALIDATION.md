@@ -1,8 +1,8 @@
 # STRAT-M1-VALIDATION: M1ベース戦略データ再承認フロー
 
 > **ACカバレッジ**: AC-01, AC-07
-> **Runbook版数**: v1.2
-> **最終更新日**: 2026-01-12
+> **Runbook版数**: v1.3
+> **最終更新日**: 2026-01-19
 > **最終更新者**: Codex (Doc Maintainer)
 
 ## 目的
@@ -56,6 +56,11 @@
 2. `logs/strategy/registry.log`またはPacket Evidence（例: `reports/implementation/20250315_pkg-strat-registry-01/logs/determinism_event_<date>.jsonl`）から直近の`strategy.determinism`イベントを抽出し、`strategy_id`/`determinism_key`/`deterministic_hash`/`watchlist`/`required_features`がManifestと一致しているか確認する。
 3. HashドリフトやWatchlist不整合を検知した場合は、Manifest／FeaturePipeline差分をレビューし、対象コミットを`git revert`または`StrategyEngine`プラグイン修正で巻き戻す。Rollback後に再度`poetry run pytest -k "strategy_registry"`と`tradectl board --view diagnostics`でハッシュが一致することを証跡に残す。
 4. Fail-Fastにより`StrategyRegistrationError`や`ManifestValidationError`が発生した場合は`docs/development_plan.md#update-log-utc`へ切り戻し手順を記録し、Opsへ共有する。
+
+### 3.3 Regression Backtest（Quant Lead）
+1. `make regression-backtest` を実行し、回帰サマリが `reports/regression/backtest/<run_id>/summary.md` に出力されることを確認。
+2. 逸脱が出た場合は `reports/validation_log/AC-13_regression_<date>.md` を参照し、差分理由をチケットへ記録。
+3. 必要に応じて `tradectl backtest regression list` / `tradectl backtest regression run --scenario <id>` で再実行。
 
 ### 4. レビューボード承認（Ops Manager主導）
 1. Ops Managerが`tickets/runbooks/STRAT-M1-VALIDATION/<date>.md`（テンプレートは`docs/runbooks/STRAT-M1-VALIDATION.md#チェックリスト`を参照）を起票。

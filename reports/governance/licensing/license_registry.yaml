@@ -1,0 +1,5 @@
+# License registry scaffold
+# Schema: docs/schemas/license_registry.schema.json
+
+schema_version: license_registry.v1
+records: []

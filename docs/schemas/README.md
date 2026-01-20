@@ -52,6 +52,10 @@ materials stored here serve as the authoritative source for governance reviews a
   lives in `tests/contracts/test_performance_snapshot_schema.py`.
 - `risk_live_guard.schema.json` – Live Guard PF/Sharpe/latency guardrails and notification toggles
   (§3.8/§4.4.3). Governs `config/risk_live_guard.yaml`.
+- `compliance_regression.schema.json` – Compliance regression metrics (`metrics/compliance_regression.json`)
+  for Stop/Freeze & Capital Guard checks (§61.3).
+- `degradation_playbook.schema.json` – Degradation playbook metrics (`metrics/degradation_playbook.jsonl`)
+  for Acceptable Degradation orchestration (§66.3).
 - `ops_readiness.schema.json` – Ops readiness score weights, evidence paths, and governance thresholds
   (§3.27/§4.4.6). Governs `config/ops_readiness.yaml`.
 - `config_bundle.schema.json` – Aggregate schema ensuring the full config scaffolding is present and

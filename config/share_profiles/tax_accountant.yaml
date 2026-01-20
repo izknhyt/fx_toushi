@@ -1,0 +1,19 @@
+schema_version: share_profile.v1
+profile_id: tax_accountant
+recipient: tax_accountant
+purpose: tax
+allowed_paths:
+  - "reports/tax"
+  - "parquet/backoffice"
+  - "jsonl/backoffice"
+  - "audit_pack"
+retention_days: 90
+public_key_path: null
+contact: "tax@example.com"
+runbook_refs:
+  - "RUN-TAX-01"
+  - "RUN-GOV-02"
+encryption_method: "none"
+require_risk_disclosure: true
+channels:
+  - "local"

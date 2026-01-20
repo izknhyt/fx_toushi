@@ -263,7 +263,7 @@ def evidence_bundle(
     sources.append(bundle_path)
     effective_period = period or date.today().strftime("%G-W%V")
     share_service = SecureShareService()
-    package = share_service.prepare_package(
+    package, manifest_path = share_service.prepare_package(
         profile_id=profile_id,
         period=effective_period,
         sources=sources,
@@ -276,7 +276,7 @@ def evidence_bundle(
         "stage": stage,
         "bundle_path": str(bundle_path),
         "missing": missing,
-        "share_manifest": str(package.manifest_path),
+        "share_manifest": str(manifest_path),
     }
 
 

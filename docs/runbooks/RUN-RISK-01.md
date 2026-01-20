@@ -1,10 +1,10 @@
 # RUN-RISK-01: Kill Switch・リスク監視運用手順
 
 > **ACカバレッジ**: AC-03, AC-09
-> **Runbook版数**: v1.4
-> **最終更新日**: 2026-01-12
+> **Runbook版数**: v1.5
+> **最終更新日**: 2026-01-18
 > **最終更新者**: Codex (Doc Maintainer)
-> **関連CLI**: `tradectl status`, `tradectl kill-switch engage`, `tradectl kill-switch release`, `tradectl ticket approve/reject/edit`, `tradectl compliance status`
+> **関連CLI**: `tradectl status`, `tradectl kill-switch engage`, `tradectl kill-switch release`, `tradectl ticket approve/reject/edit`, `tradectl compliance status`, `tradectl risk stress run`, `tradectl risk stress compare`, `tradectl risk envelope apply`
 > **イベントログ**: `logs/events/risk.assessment.jsonl`, `logs/risk/kill_switch_events.jsonl`
 
 ## 目的
@@ -38,6 +38,12 @@
 ### 1. 日次リスクサマリ確認（平常時）
 1. `tradectl status --history kill-switch --limit 7` を実行し、直近7日間のKill Switchイベントを確認。`state=armed`のままになっていないかチェックする。
 2. `tradectl diagnostics risk --from -7d --mode paper` を実行し、`per_trade_R_stdev`が`0.70〜0.80`に収まっているか、`max_concurrent`違反が0件かを確認する。
+
+### 2. マージンストレス実行と閾値レビュー
+1. `tradectl risk stress run --profile m1_baseline --presets brexit_20160624 --presets covid_202003` を実行し、`reports/risk/envelopes/`に出力を残す。
+2. `reports/risk/envelopes/envelope_<YYYYMMDD>.yaml` の推奨閾値を確認し、現行閾値との差分をレビューする。
+3. 差分が許容範囲なら、`tradectl risk envelope apply --profile m1_baseline --source reports/risk/envelopes/envelope_<YYYYMMDD>.yaml --require-signoff --signoff <name>` で反映する。
+4. Validation Data Playbook `AC32_margin_stress` にレビューエントリが追記されていることを確認する。
 3. `tradectl metrics latency --mode paper --from -1d`で承認→OCOレイテンシの中央値/p90を確認し、AC-09の閾値内であることを記録する。
 4. 結果を`reports/validation_log/AC-09_<date>.md`へ追記し、担当者サインを残す。
 

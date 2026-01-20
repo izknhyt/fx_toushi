@@ -2,4 +2,6 @@
 # Schema: schema/regression.schema.json
 
 schema_version: regression.v1
+max_concurrency: 2
+max_runtime_per_scenario_min: 20
 scenarios: []

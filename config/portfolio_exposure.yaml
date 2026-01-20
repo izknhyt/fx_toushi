@@ -1,0 +1,10 @@
+# Portfolio exposure thresholds scaffold
+# Schema: docs/schemas/portfolio_exposure.schema.json (planned)
+
+schema_version: portfolio_exposure.v1
+thresholds:
+  margin_utilization_warn: 0.45
+  margin_utilization_critical: 0.60
+  hedge_ratio_warn: 0.30
+  net_r_eff_warn: 0.8
+  net_r_eff_critical: 1.2

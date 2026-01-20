@@ -1,0 +1,1 @@
+{"ts":"2026-01-01T00:00:00Z","provider_id":"example","window_hours":24,"fetch_p95_ms":8500.0,"fetch_p99_ms":11000.0,"processing_p95_ms":1200.0,"uptime_pct":99.9,"rate_limit_hits":0,"cost_per_hour_jpy":1500.0,"comparison_gap_p95_pips":0.12,"decision":"candidate","notes":"template"}

@@ -68,6 +68,12 @@
 - `gate_state.schema.json` を `market`/`risk`/`human` のネスト構造に更新し、ニュース/カレンダー/Spread/Reduce-Only/ダブルエントリー要件を個別プロパティへ分割。
   `required_roles`・`acknowledged_roles`・`comment_min_length` を追記し、`schema/gate_state.sample.json` を v2 レイアウトへ更新した。
 
+## 2026-01-18
+- Added `compliance_regression.schema.json` to capture Stop/Freeze & Capital Guard regression metrics
+  in `metrics/compliance_regression.json` (detailed design §61.3).
+- Added `degradation_playbook.schema.json` to capture Acceptable Degradation playbook metrics in
+  `metrics/degradation_playbook.jsonl` (detailed design §66.3).
+
 ## 2025-03-14
 - Added configuration schema set for Codex scaffolds: `strategy_manifest`, `feature_pipeline`,
   `board_modes`, `cfg`, `sla_threshold_profile`, and the operational `gate_state` snapshot. These

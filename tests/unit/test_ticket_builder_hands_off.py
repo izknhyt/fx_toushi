@@ -54,6 +54,55 @@ def test_hands_off_sizing_uses_fallback_bridge_metrics(tmp_path: Path, monkeypat
     assert meta["auto_execute_factor"] >= 1.0
 
 
+def test_hands_off_sizing_prefers_matching_strategy(tmp_path: Path, monkeypatch) -> None:
+    bridge_dir = tmp_path / "scoreboard" / "bridge"
+    bridge_dir.mkdir(parents=True)
+    sample_bridge = {
+        "week": "2025-W01",
+        "strategies": [
+            {
+                "id": "alpha",
+                "pf_all": 0.8,
+                "sharpe": 0.5,
+                "maxdd": 12.0,
+                "watchlist_reasons": [],
+            },
+            {
+                "id": "beta",
+                "pf_all": 1.4,
+                "sharpe": 1.2,
+                "maxdd": 6.0,
+                "watchlist_reasons": [],
+            },
+        ],
+    }
+    (bridge_dir / "2025-W01.json").write_text(json.dumps(sample_bridge), encoding="utf-8")
+    monkeypatch.setenv("TRADECTL_BRIDGE_DIR", str(bridge_dir))
+
+    gate_state = GateState()
+    gate_state.auto_execute = True
+    builder = DefaultTicketBuilder()
+    builder._lot_ladder = [  # type: ignore[attr-defined]
+        builder._lot_ladder[0]
+    ] if builder._lot_ladder else []
+    if not builder._lot_ladder:
+        from src.execution.alpha_overlay import LotLadderRule
+
+        builder._lot_ladder = [
+            LotLadderRule(
+                pf_min=1.2,
+                sharpe_min=1.0,
+                maxdd_max=8.0,
+                watchlist_max=0,
+                size_factor=1.1,
+            )
+        ]  # type: ignore[attr-defined]
+
+    artifact = builder.build(_make_draft({"strategy_id": "beta"}), gate_state)
+    meta = artifact.payload["metadata"]
+    assert meta["auto_execute_factor"] > 1.0
+
+
 def test_hands_off_sizing_skips_when_auto_execute_off() -> None:
     gate_state = GateState()
     gate_state.auto_execute = False

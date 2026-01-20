@@ -1,0 +1,6 @@
+schema_version: "tax_config.v1"
+jurisdiction: "jp"
+fx_conversion_rate: 110.0
+withholding_rate: 0.0
+notes:
+  - "Default FX conversion rate is placeholder; update per year."

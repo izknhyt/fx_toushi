@@ -1,0 +1,5 @@
+# Regression backtest scenarios
+# Schema: docs/schemas/regression.schema.json
+
+schema_version: regression.scenario.v1
+scenarios: []

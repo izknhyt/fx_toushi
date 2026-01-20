@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "degradation.playbook.v1.schema.json",
+  "title": "Degradation Playbook Metrics",
+  "type": "object",
+  "required": ["metric", "ts", "instance_id", "scenario_id", "status"],
+  "properties": {
+    "metric": { "type": "string" },
+    "ts": { "type": "string" },
+    "instance_id": { "type": "string" },
+    "scenario_id": { "type": "string" },
+    "severity": { "type": "string" },
+    "status": { "type": "string" },
+    "node_completed": { "type": "integer" },
+    "nodes_total": { "type": "integer" }
+  },
+  "additionalProperties": true
+}

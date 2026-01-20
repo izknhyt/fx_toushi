@@ -4,6 +4,8 @@ import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+import pytest
+
 from src.accounts.aggregator import AccountAggregator
 
 
@@ -12,11 +14,17 @@ def _write_profile(path: Path) -> None:
     path.write_text(
         "\n".join(
             [
+                "schema_version: accounts.profile.v1",
                 "account_id: demo",
-                "broker_id: demo_broker",
+                "broker: demo_broker",
                 "mode: paper",
                 "base_currency: JPY",
-                "leverage: 25",
+                "weight: 1.0",
+                "margin_mode: netting",
+                "max_leverage: 25",
+                "is_hedge: false",
+                "statement_path: reports/accounts/demo_latest.json",
+                "import_schedule_cron: \"0 0 * * *\"",
                 "status: active",
             ]
         )
@@ -67,6 +75,49 @@ def test_account_aggregator_ingest_and_aggregate(tmp_path: Path) -> None:
     assert aggregate.total_equity == 1000.0
     assert aggregate.total_margin == 100.0
     assert aggregate.account_breakdown[0]["account_id"] == "demo"
+
+
+def test_account_aggregator_include_variance_uses_mapping(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    profiles = tmp_path / "config" / "accounts"
+    snapshots = tmp_path / "reports" / "accounts"
+    metrics = tmp_path / "metrics" / "accounts_aggregator.jsonl"
+    profile_path = profiles / "demo.yaml"
+    snapshot_input = tmp_path / "snapshot.json"
+
+    _write_profile(profile_path)
+    _write_snapshot(
+        snapshot_input,
+        ts=datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        equity=1000.0,
+        balance=1200.0,
+        margin_used=100.0,
+    )
+
+    calls: dict[str, object] = {}
+
+    class StubAnalyzer:
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            pass
+
+        def detect_variance(self, state: object) -> list[dict[str, object]]:
+            calls["state_type"] = type(state)
+            return [{"kind": "stub"}]
+
+    import src.risk.portfolio_exposure as exposure
+
+    monkeypatch.setattr(exposure, "PortfolioExposureAnalyzer", StubAnalyzer)
+
+    service = AccountAggregator(
+        profile_dir=profiles,
+        snapshot_dir=snapshots,
+        metrics_path=metrics,
+    )
+    service.ingest_snapshot(profile_id="demo", source_path=snapshot_input)
+    aggregate = service.aggregate(include_variance=True)
+    assert calls["state_type"] is dict
+    assert aggregate.variance_flags == [{"kind": "stub"}]
 
 
 def test_account_aggregator_alerts(tmp_path: Path) -> None:

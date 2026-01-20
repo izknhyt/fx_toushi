@@ -43,6 +43,10 @@ DEFAULT_INGESTION_METRICS = Path("metrics/data_ingestion_sla.jsonl")
 DEFAULT_RESYNC_LOG = Path("logs/resync/resync_events.jsonl")
 DEFAULT_MANUAL_CSV_JOBS = Path("data/manual_fallback/jobs/jobs.jsonl")
 DEFAULT_OPS_WORKLOG = Path("ops_worklog.jsonl")
+DEFAULT_WORKFLOW_METRICS = Path("metrics/trader_workflow.jsonl")
+DEFAULT_COACHING_INSIGHTS = Path("metrics/coaching_insights.jsonl")
+DEFAULT_COMPLIANCE_REGRESSION = Path("metrics/compliance_regression.json")
+DEFAULT_DEGRADATION_METRICS = Path("metrics/degradation_playbook.jsonl")
 DEFAULT_FUNDING_STATE = Path("data") / "state" / "funding_state.json"
 DEFAULT_RISK_POLICY = Path("config") / "risk_policy.yaml"
 DEFAULT_RISK_METRICS = Path("metrics/risk.jsonl")
@@ -149,6 +153,26 @@ def _summarize_data_quality(path: Path = DEFAULT_INGESTION_METRICS) -> str:
     return f"last={last_flag} ({last_label}); flagged={flagged}/{len(flags)}"
 
 
+def _summarize_degradation_playbook(
+    path: Path = DEFAULT_DEGRADATION_METRICS,
+) -> str:
+    entries = _read_jsonl_tail(path, limit=200)
+    if not entries:
+        return "n/a"
+    counts: dict[str, int] = {}
+    for entry in entries:
+        status = entry.get("status")
+        if status is None:
+            continue
+        status_text = str(status)
+        counts[status_text] = counts.get(status_text, 0) + 1
+    last = entries[-1]
+    last_status = last.get("status") or "unknown"
+    last_scenario = last.get("scenario_id") or "unknown"
+    counts_str = ", ".join(f"{key}={counts[key]}" for key in sorted(counts))
+    return f"last={last_scenario}:{last_status}; counts: {counts_str}"
+
+
 def _summarize_resync(path: Path = DEFAULT_RESYNC_LOG) -> str:
     entries = _read_jsonl_tail(path, limit=200)
     if not entries:
@@ -233,6 +257,68 @@ def _summarize_ops_worklog(path: Path = DEFAULT_OPS_WORKLOG, *, limit: int = 5) 
         suffix = f" ({note})" if note else ""
         lines.append(f"- {ts} {task} {actor}{suffix}")
     return "\n".join(lines)
+
+
+def _summarize_coaching(
+    metrics_path: Path = DEFAULT_WORKFLOW_METRICS,
+    insights_path: Path = DEFAULT_COACHING_INSIGHTS,
+) -> str:
+    summary = _read_last_event(metrics_path, "trader_workflow.summary")
+    if not summary:
+        return "n/a"
+    parts: list[str] = []
+    latency = summary.get("avg_approval_latency_sec")
+    if latency is not None:
+        parts.append(f"approval_latency_sec={latency:.1f}")
+    checklist = summary.get("checklist_completion_rate")
+    if checklist is not None:
+        parts.append(f"checklist_completion_rate={checklist:.2f}")
+    guarded = summary.get("guarded_time_ratio")
+    if guarded is not None:
+        parts.append(f"guarded_time_ratio={guarded:.2f}")
+    mistake = summary.get("mistake_rate")
+    if mistake is not None:
+        parts.append(f"mistake_rate={mistake:.2f}")
+    if insights_path.exists():
+        entries = _read_jsonl_tail(insights_path, limit=200)
+        over_threshold = sum(1 for entry in entries if entry.get("status") == "over_threshold")
+        parts.append(f"over_threshold={over_threshold}")
+    return "; ".join(parts) if parts else "n/a"
+
+
+def _summarize_compliance_regression(path: Path = DEFAULT_COMPLIANCE_REGRESSION) -> str:
+    if not path.exists():
+        return "n/a"
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return "n/a"
+    return (
+        "violations={min_distance_violations}/{freeze_level_violations}, "
+        "drop_pct={proposal_drop_pct}, throttle={throttle_triggered}".format(
+            min_distance_violations=payload.get("min_distance_violations", "n/a"),
+            freeze_level_violations=payload.get("freeze_level_violations", "n/a"),
+            proposal_drop_pct=payload.get("proposal_drop_pct", "n/a"),
+            throttle_triggered=payload.get("throttle_triggered", "n/a"),
+        )
+    )
+
+
+def _read_last_event(path: Path, event_name: str) -> Mapping[str, object] | None:
+    if not path.exists():
+        return None
+    try:
+        lines = [line for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    except OSError:
+        return None
+    for raw in reversed(lines):
+        try:
+            payload = json.loads(raw)
+        except json.JSONDecodeError:
+            continue
+        if payload.get("event") == event_name:
+            return payload
+    return None
 
 
 def _load_risk_thresholds(
@@ -431,6 +517,50 @@ def _load_stress_runs(stress_dir: Path) -> list[Mapping[str, object]]:
             {"scenario": scenario, "status": "ok", "summary": summary, "artifacts": [str(path)]}
         )
     return runs
+
+
+def _summarize_risk_envelope_delta(
+    *,
+    envelope_dir: Path = Path("reports") / "risk" / "envelopes",
+    policy_path: Path = Path("config") / "risk_policy.yaml",
+) -> str:
+    if not envelope_dir.exists():
+        return "no envelope updates"
+    candidates = sorted(envelope_dir.glob("envelope_*.yaml"), reverse=True)
+    if not candidates:
+        return "no envelope updates"
+    try:
+        envelope = yaml.safe_load(candidates[0].read_text(encoding="utf-8")) or {}
+    except Exception:
+        return "envelope unreadable"
+    if not policy_path.exists():
+        return "risk policy missing"
+    try:
+        policy = yaml.safe_load(policy_path.read_text(encoding="utf-8")) or {}
+    except Exception:
+        return "risk policy unreadable"
+    profile = "m1_baseline"
+    profiles = policy.get("profiles") if isinstance(policy, dict) else None
+    profile_cfg = profiles.get(profile, {}) if isinstance(profiles, dict) else {}
+    risk_limits = profile_cfg.get("risk_limits", {}) if isinstance(profile_cfg, dict) else {}
+    kill_switch = profile_cfg.get("kill_switch", {}) if isinstance(profile_cfg, dict) else {}
+    drawdown = kill_switch.get("drawdown_threshold_pct", {}) if isinstance(kill_switch, dict) else {}
+    current = {
+        "daily_loss": drawdown.get("daily"),
+        "weekly_loss": drawdown.get("weekly"),
+        "margin_warn": risk_limits.get("margin_warn"),
+        "margin_throttle": risk_limits.get("margin_throttle"),
+    }
+    recommended = envelope.get("recommended_thresholds") or {}
+    lines = []
+    for key, value in recommended.items():
+        if key not in current:
+            continue
+        lines.append(f"- {key}: {current.get(key)} -> {value}")
+    if not lines:
+        return "no threshold deltas"
+    banner = "[RISK ENVELOPE UPDATED]"
+    return "\n".join([banner, *lines])
 
 
 def _format_kpi_value(value: object) -> str:
@@ -651,11 +781,15 @@ def weekly(
     extra_context.update(manual_csv.to_context())
     extra_context["model_risk_summary"] = _summarize_model_risk(profile=profile)
     extra_context["ops_worklog_excerpt"] = _summarize_ops_worklog()
+    extra_context["coaching_summary"] = _summarize_coaching()
+    extra_context["compliance_regression_summary"] = _summarize_compliance_regression()
+    extra_context["degradation_summary"] = _summarize_degradation_playbook()
     extra_context["funding_summary"] = _summarize_funding()
     extra_context["benchmark_summary"] = _summarize_benchmark(
         profile=profile,
         with_benchmark=with_benchmark,
     )
+    extra_context["risk_envelope_delta"] = _summarize_risk_envelope_delta()
     attribution_summary = "deferred"
     if with_attribution:
         engine = AttributionEngine(

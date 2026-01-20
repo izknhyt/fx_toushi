@@ -679,7 +679,10 @@ def _apply_hands_off_sizing(
         else 0
     )
     if pf is None or sharpe is None or maxdd_pct is None:
-        fallback = _load_fallback_metrics()
+        strategy_id = meta.get("strategy_id") or meta.get("strategy")
+        if not isinstance(strategy_id, str):
+            strategy_id = None
+        fallback = _load_fallback_metrics(strategy_id)
         pf = pf if pf is not None else fallback.get("pf_all")
         sharpe = sharpe if sharpe is not None else fallback.get("sharpe")
         maxdd_pct = maxdd_pct if maxdd_pct is not None else fallback.get("maxdd_pct")
@@ -716,7 +719,7 @@ def _apply_hands_off_sizing(
     return adjusted_size, ladder_factor, dynamic_applied
 
 
-def _load_fallback_metrics() -> dict[str, float | int]:
+def _load_fallback_metrics(strategy_id: str | None = None) -> dict[str, float | int]:
     """Load coarse PF/Sharpe/MaxDD/watchlist metrics from latest bridge snapshot."""
 
     bridge_dir = Path(os.getenv("TRADECTL_BRIDGE_DIR", Path("scoreboard") / "bridge"))
@@ -733,7 +736,9 @@ def _load_fallback_metrics() -> dict[str, float | int]:
     strategies = data.get("strategies") or []
     if not strategies:
         return {}
-    entry = strategies[0]  # TODO: choose strategy-specific entry when drafts carry strategy_id
+    entry = _select_bridge_entry(strategies, strategy_id=strategy_id)
+    if not entry:
+        return {}
     try:
         return {
             "pf_all": float(entry.get("pf_all")) if entry.get("pf_all") is not None else None,
@@ -743,3 +748,21 @@ def _load_fallback_metrics() -> dict[str, float | int]:
         }
     except Exception:
         return {}
+
+
+def _select_bridge_entry(
+    strategies: list[object],
+    *,
+    strategy_id: str | None,
+) -> dict[str, object] | None:
+    if strategy_id:
+        for raw in strategies:
+            if not isinstance(raw, dict):
+                continue
+            entry_id = raw.get("id") or raw.get("strategy_id") or raw.get("strategy")
+            if entry_id == strategy_id:
+                return raw
+        return None
+    if len(strategies) != 1:
+        return None
+    return strategies[0] if isinstance(strategies[0], dict) else None

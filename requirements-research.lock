@@ -1,0 +1,4 @@
+nbconvert==7.16.0
+nbformat==5.9.2
+papermill==2.6.0
+python-dateutil==2.9.0

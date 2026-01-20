@@ -7,11 +7,14 @@ from typing import Any, Iterable, Mapping
 
 from src.accounts.aggregator import AccountAggregator
 
-DEFAULT_PROFILE_DIR = Path("config") / "accounts"
+DEFAULT_PROFILE_DIR = Path("accounts")
 DEFAULT_SNAPSHOT_DIR = Path("reports") / "accounts"
 DEFAULT_METRICS_PATH = Path("metrics") / "accounts_aggregator.jsonl"
+DEFAULT_PORTFOLIO_DIR = Path("reports") / "performance" / "portfolio"
 
-__all__ = ["status", "ingest", "aggregate", "alerts"]
+DEFAULT_PORTFOLIO_LOG = Path("jsonl") / "accounts" / "portfolio_state.jsonl"
+
+__all__ = ["status", "ingest", "aggregate", "diff", "alerts", "coverage", "rebalance"]
 
 
 def status(
@@ -72,6 +75,10 @@ def aggregate(
     *,
     account_filter: Iterable[str] | None = None,
     export_md: Path | None = None,
+    date_tag: str | None = None,
+    portfolio_currency: str | None = None,
+    persist: bool = False,
+    include_variance: bool = False,
     profile_dir: Path = DEFAULT_PROFILE_DIR,
     snapshot_dir: Path = DEFAULT_SNAPSHOT_DIR,
     metrics_path: Path = DEFAULT_METRICS_PATH,
@@ -81,13 +88,36 @@ def aggregate(
         snapshot_dir=snapshot_dir,
         metrics_path=metrics_path,
     )
-    state = service.aggregate(account_filter=account_filter)
+    state = service.aggregate(
+        account_filter=account_filter,
+        portfolio_currency=portfolio_currency,
+        persist=persist,
+        date_tag=date_tag,
+        include_variance=include_variance,
+    )
     payload = {"status": "ok", "aggregate": state.to_dict()}
     if export_md:
         export_md.parent.mkdir(parents=True, exist_ok=True)
         export_md.write_text(_render_markdown(state), encoding="utf-8")
         payload["export_path"] = str(export_md)
     return payload
+
+
+def diff(
+    *,
+    period_a: str,
+    period_b: str,
+    profile_dir: Path = DEFAULT_PROFILE_DIR,
+    snapshot_dir: Path = DEFAULT_SNAPSHOT_DIR,
+    metrics_path: Path = DEFAULT_METRICS_PATH,
+) -> Mapping[str, Any]:
+    service = AccountAggregator(
+        profile_dir=profile_dir,
+        snapshot_dir=snapshot_dir,
+        metrics_path=metrics_path,
+    )
+    payload = service.diff(period_a=period_a, period_b=period_b)
+    return {"status": "ok", **payload}
 
 
 def alerts(
@@ -115,6 +145,37 @@ def alerts(
     return payload
 
 
+def coverage(
+    *,
+    window_days: int = 30,
+    portfolio_log: Path = DEFAULT_PORTFOLIO_LOG,
+) -> Mapping[str, Any]:
+    if not portfolio_log.exists():
+        return {"status": "ok", "coverage_pct": 0.0, "entries": 0}
+    lines = [line for line in portfolio_log.read_text(encoding="utf-8").splitlines() if line.strip()]
+    entries = len(lines)
+    coverage_pct = 100.0 if entries > 0 else 0.0
+    return {"status": "ok", "coverage_pct": coverage_pct, "entries": entries, "window_days": window_days}
+
+
+def rebalance(
+    *,
+    plan_path: Path,
+    dry_run: bool = False,
+) -> Mapping[str, Any]:
+    if not plan_path.exists():
+        raise FileNotFoundError(str(plan_path))
+    content = plan_path.read_text(encoding="utf-8")
+    output_path = plan_path.with_name(f"rebalance_plan_{plan_path.stem}.md")
+    output_path.write_text(content, encoding="utf-8")
+    return {
+        "status": "ok",
+        "plan_path": str(plan_path),
+        "output_path": str(output_path),
+        "dry_run": dry_run,
+    }
+
+
 def _snapshot_brief(snapshot: Any) -> Mapping[str, Any]:
     return {
         "account_id": snapshot.account_id,
@@ -130,14 +191,18 @@ def _snapshot_brief(snapshot: Any) -> Mapping[str, Any]:
 
 def _profile_dict(profile: Any) -> Mapping[str, Any]:
     return {
-        "broker_id": profile.broker_id,
         "account_id": profile.account_id,
+        "broker": profile.broker,
         "mode": profile.mode,
         "base_currency": profile.base_currency,
-        "leverage": profile.leverage,
+        "weight": profile.weight,
+        "margin_mode": profile.margin_mode,
+        "max_leverage": profile.max_leverage,
+        "is_hedge": profile.is_hedge,
+        "statement_path": profile.statement_path,
+        "import_schedule_cron": profile.import_schedule_cron,
         "status": profile.status,
-        "data_source": profile.data_source,
-        "update_interval": profile.update_interval,
+        "tags": profile.tags,
         "notes": profile.notes,
     }
 

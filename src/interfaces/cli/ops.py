@@ -22,6 +22,7 @@ from src.ops import (
 )
 from src.ops.action_sync import ActionSyncError, sync_action_items
 from src.ops.automation import AutomationEffectDelta
+from src.ops.coaching import CoachingPlaybook
 from src.ops.profit_readiness import (
     DEFAULT_PROFIT_READINESS_PATH,
     EXIT_GUARDED,
@@ -36,6 +37,7 @@ from src.ops.profit_readiness import (
     verify_profit_readiness,
 )
 from src.ops.readiness import OpsReadinessService
+from src.telemetry.trader_workflow import TraderWorkflowTelemetryService
 
 logger = logging.getLogger(__name__)
 
@@ -54,6 +56,10 @@ __all__ = [
     "drill_step",
     "drill_complete",
     "drill_abort",
+    "coaching_summary",
+    "coaching_insight_create",
+    "coaching_review",
+    "coaching_simulate",
     "OpsWorklogService",
     "AutomationEffectTracker",
     "OpsAgendaService",
@@ -85,6 +91,24 @@ def _load_gate_state(path: Path) -> GateState:
         except Exception:  # pragma: no cover - defensive against malformed snapshots
             return GateState()
     return GateState()
+
+
+def _parse_window(value: str) -> timedelta:
+    if not value:
+        raise ValueError("window must be a duration like 90d/4w/24h")
+    unit = value[-1]
+    amount = value[:-1]
+    try:
+        qty = int(amount)
+    except ValueError as exc:
+        raise ValueError("window must be a duration like 90d/4w/24h") from exc
+    if unit == "d":
+        return timedelta(days=qty)
+    if unit == "w":
+        return timedelta(weeks=qty)
+    if unit == "h":
+        return timedelta(hours=qty)
+    raise ValueError("window must be a duration like 90d/4w/24h")
 
 
 def _apply_auto_execute_lifecycle(
@@ -653,3 +677,61 @@ def drill_abort(*, execution_id: str, reason: str, actor: str) -> dict[str, obje
         "plan_id": execution.plan_id,
         "notes": execution.notes,
     }
+
+
+def coaching_summary(
+    *,
+    window: str,
+    export_md: Path | None = None,
+    metrics_path: Path = Path("metrics/trader_workflow.jsonl"),
+) -> dict[str, object]:
+    telemetry = TraderWorkflowTelemetryService(metrics_path=metrics_path)
+    playbook = CoachingPlaybook(telemetry=telemetry)
+    return playbook.summary(window=_parse_window(window), export_md=export_md)
+
+
+def coaching_insight_create(
+    *,
+    window: str,
+    threshold_config: Path = Path("config/coaching_thresholds.yaml"),
+    export_md: Path | None = None,
+    dry_run: bool = False,
+    tag: str | None = None,
+    metrics_path: Path = Path("metrics/trader_workflow.jsonl"),
+    insights_log: Path = Path("metrics/coaching_insights.jsonl"),
+) -> dict[str, object]:
+    telemetry = TraderWorkflowTelemetryService(metrics_path=metrics_path)
+    playbook = CoachingPlaybook(
+        telemetry=telemetry,
+        thresholds_path=threshold_config,
+        insights_log_path=insights_log,
+    )
+    return playbook.create_insights(
+        window=_parse_window(window),
+        threshold_path=threshold_config,
+        export_md=export_md,
+        dry_run=dry_run,
+        tag=tag,
+    )
+
+
+def coaching_review(
+    *,
+    week: str,
+    diff: bool = False,
+    export_md: Path | None = None,
+    insights_log: Path = Path("metrics/coaching_insights.jsonl"),
+) -> dict[str, object]:
+    playbook = CoachingPlaybook(insights_log_path=insights_log)
+    return playbook.review(week=week, diff=diff, export_md=export_md)
+
+
+def coaching_simulate(
+    *,
+    scenario: str,
+    window: str,
+    metrics_path: Path = Path("metrics/trader_workflow.jsonl"),
+) -> dict[str, object]:
+    telemetry = TraderWorkflowTelemetryService(metrics_path=metrics_path)
+    playbook = CoachingPlaybook(telemetry=telemetry)
+    return playbook.simulate(scenario=scenario, window=_parse_window(window))

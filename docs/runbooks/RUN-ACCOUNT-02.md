@@ -1,24 +1,19 @@
-# RUN-ACCOUNT-02: マルチ口座運用・調整手順（ドラフト）
+# RUN-ACCOUNT-02: 複数口座集計・リバランス手順
 
-> **ACカバレッジ**: FR-58（M2想定）
-> **Runbook版数**: v0.1
-> **最終更新日**: 2025-03-10
-> **最終更新者**: Ops Manager (Doc Maintainer)
+> **ACカバレッジ**: M2_account_aggregation  
+> **Runbook版数**: v0.1  
+> **最終更新日**: 2026-01-18  
+> **最終更新者**: Ops Manager / Codex Liaison
 
 ## 目的
-- 複数口座を対象としたポジション調整、資金移動、監査証跡の確立に向けた暫定フレームワークを提供する。
-- M2スプリントで詳細化する前提で、依存データや必要なCLIフローのToDoを整理する。
+- 複数口座のポートフォリオ集計を実行し、Variance発生時にリバランス判断を行う。
 
-## 適用範囲・トリガー
-- Paper運用を複数口座へ拡張する準備が開始されたとき。
-- Back Officeから複数口座の照合作業を依頼されたとき。
+## 手順
+1. `tradectl account aggregate --date <YYYYMMDD> --persist --include-variance`を実行し、`reports/performance/portfolio/`に出力を残す。
+2. `portfolio_state_<date>.md`でVarianceがないことを確認する。
+3. Varianceがある場合は`portfolio_state_<date>.md`を添付してレビューする。
+4. `tradectl account diff --from <YYYYMMDD> --to <YYYYMMDD>`で差分を確認する。
+5. リバランス計画が必要な場合は`docs/rebalance/<date>.md`へ計画を記載する（P3でCLI追加予定）。
 
-## 現状タスク
-- `AccountRegistry`のマルチ口座対応（`account_id`列の追加、`account_config.yaml`の分離）。
-- `reports/audit/reconciliation/<date>.md`への口座別証跡フォーマット定義。
-- `tradectl account sync --account <id>`コマンドの仕様策定。
-
-## 次ステップ
-- M2計画時に正式なRunbook版を作成し、チェックリスト/エスカレーション/承認フローを追加。
-- 詳細化後はValidation Data Playbookおよび設計書を更新する。
-- M1〜M2移行期間の実運用については`RUN-ACC-01`のチェックリスト/証跡テンプレートを併用し、差分が発生した場合は本Runbookへフィードバックする。
+## 関連リンク
+- `docs/validation_playbook/M2_account_aggregation.yaml`

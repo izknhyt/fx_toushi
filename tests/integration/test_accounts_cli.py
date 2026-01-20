@@ -14,11 +14,17 @@ def _write_profile(path: Path) -> None:
     path.write_text(
         "\n".join(
             [
+                "schema_version: accounts.profile.v1",
                 "account_id: demo",
-                "broker_id: demo_broker",
+                "broker: demo_broker",
                 "mode: paper",
                 "base_currency: JPY",
-                "leverage: 25",
+                "weight: 1.0",
+                "margin_mode: netting",
+                "max_leverage: 25",
+                "is_hedge: false",
+                "statement_path: reports/accounts/demo_latest.json",
+                "import_schedule_cron: \"0 0 * * *\"",
                 "status: active",
             ]
         )
@@ -44,7 +50,7 @@ def _write_snapshot(path: Path) -> None:
 def test_accounts_status_cli(tmp_path: Path) -> None:
     app = create_cli_app()
     runner = CliRunner()
-    profile_dir = tmp_path / "config" / "accounts"
+    profile_dir = tmp_path / "accounts"
     snapshot_dir = tmp_path / "reports" / "accounts"
     profile_path = profile_dir / "demo.yaml"
     snapshot_input = tmp_path / "snapshot.json"
@@ -55,7 +61,7 @@ def test_accounts_status_cli(tmp_path: Path) -> None:
     result = runner.invoke(
         app,
         [
-            "accounts",
+            "account",
             "ingest",
             "--profile",
             "demo",
@@ -73,7 +79,7 @@ def test_accounts_status_cli(tmp_path: Path) -> None:
     result = runner.invoke(
         app,
         [
-            "accounts",
+            "account",
             "status",
             "--profile-dir",
             str(profile_dir),
@@ -87,3 +93,68 @@ def test_accounts_status_cli(tmp_path: Path) -> None:
     assert payload["status"] == "ok"
     assert payload["profiles"]
     assert payload["snapshots"]
+
+
+def test_account_aggregate_and_diff(tmp_path: Path) -> None:
+    app = create_cli_app()
+    runner = CliRunner()
+    profile_dir = tmp_path / "accounts"
+    snapshot_dir = tmp_path / "reports" / "accounts"
+    profile_path = profile_dir / "demo.yaml"
+    snapshot_input = tmp_path / "snapshot.json"
+
+    _write_profile(profile_path)
+    _write_snapshot(snapshot_input)
+
+    runner.invoke(
+        app,
+        [
+            "account",
+            "ingest",
+            "--profile",
+            "demo",
+            "--path",
+            str(snapshot_input),
+            "--profile-dir",
+            str(profile_dir),
+            "--snapshot-dir",
+            str(snapshot_dir),
+        ],
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "account",
+            "aggregate",
+            "--profile-dir",
+            str(profile_dir),
+            "--snapshot-dir",
+            str(snapshot_dir),
+            "--persist",
+            "--date",
+            "20260118",
+            "--json",
+        ],
+    )
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["aggregate"]["total_equity"] == 1000.0
+
+    result = runner.invoke(
+        app,
+        [
+            "account",
+            "diff",
+            "--from",
+            "20260118",
+            "--to",
+            "20260118",
+            "--profile-dir",
+            str(profile_dir),
+            "--snapshot-dir",
+            str(snapshot_dir),
+            "--json",
+        ],
+    )
+    assert result.exit_code == 0, result.stdout

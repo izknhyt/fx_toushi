@@ -1,7 +1,8 @@
-# coaching_thresholds.yaml -- stub
+# coaching_thresholds.yaml -- trader workflow coaching thresholds
 version: 1
 thresholds:
-  attention_rate: 0.2
-  intervention_rate: 0.1
-  max_queue_days: 7
-notes: "stub values; update before use"
+  avg_approval_latency_sec: 45
+  checklist_completion_rate_min: 0.95
+  guarded_time_ratio_max: 0.2
+  mistake_rate_max: 0.05
+notes: "update thresholds before live coaching reviews"

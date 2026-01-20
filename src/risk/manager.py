@@ -329,6 +329,23 @@ class RiskManager:
         )
         return decision
 
+    def simulate_losses(
+        self,
+        *,
+        drawdown_pct: float,
+        weekly_drawdown_pct: float,
+        loss_streak: int,
+    ) -> str | None:
+        """Simulate loss outcomes for stress scenarios."""
+
+        if weekly_drawdown_pct >= self._weekly_stop_pct:
+            return "soft_stop"
+        if drawdown_pct >= self._daily_stop_pct:
+            return "soft_stop"
+        if loss_streak >= 5:
+            return "soft_stop"
+        return None
+
     def _evaluate_reduce_only_advisor(
         self,
         *,

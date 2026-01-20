@@ -1,0 +1,14 @@
+schema_version: accounts.profile.v1
+account_id: demo_account
+broker: demo_broker
+mode: paper
+base_currency: JPY
+weight: 1.0
+margin_mode: netting
+max_leverage: 25
+is_hedge: false
+statement_path: reports/accounts/demo_account_latest.json
+import_schedule_cron: "0 0 * * *"
+tags:
+  - demo
+notes: "Sample account profile for aggregation."

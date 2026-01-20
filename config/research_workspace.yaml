@@ -1,0 +1,6 @@
+schema_version: "research_workspace.v1"
+workspace_root: "research_workspace"
+required_paths:
+  - "research_workspace/notebooks"
+  - "reports/research"
+  - "reports/research/artifacts"

@@ -1,6 +1,7 @@
 ARGS ?=
 
-.PHONY: config-init schema-validate check-ops-readiness contract-performance-snapshot check-doc-sync check-doc-refs config-evidence verify-config-evidence edge-watch-report check-profit-readiness check-alpha-profiles check-profit-readiness-hands-off check-profit-readiness-hands-off-all sla-report automation-report
+.PHONY: config-init schema-validate check-ops-readiness contract-performance-snapshot check-doc-sync check-doc-refs check-runbooks check-validation docs docs-serve config-evidence verify-config-evidence edge-watch-report check-profit-readiness check-alpha-profiles check-profit-readiness-hands-off check-profit-readiness-hands-off-all sla-report automation-report
+.PHONY: regression-backtest
 .PHONY: update-log
 
 config-init:
@@ -46,6 +47,41 @@ check-doc-refs:
 		poetry run python tools/check_doc_refs.py; \
 	else \
 		python3 tools/check_doc_refs.py; \
+	fi
+
+check-runbooks:
+	@if command -v poetry >/dev/null 2>&1; then \
+		poetry run python tools/check_runbooks.py $(ARGS); \
+	else \
+		PYTHONPATH=src python3 tools/check_runbooks.py $(ARGS); \
+	fi
+
+check-validation:
+	@if command -v poetry >/dev/null 2>&1; then \
+		poetry run python tools/check_validation_playbook.py $(ARGS); \
+	else \
+		python3 tools/check_validation_playbook.py $(ARGS); \
+	fi
+
+regression-backtest:
+	@if command -v poetry >/dev/null 2>&1; then \
+		poetry run python -m tools.regression.backtest $(ARGS); \
+	else \
+		PYTHONPATH=src python3 -m tools.regression.backtest $(ARGS); \
+	fi
+
+docs:
+	@if command -v poetry >/dev/null 2>&1; then \
+		poetry run python tools/docbuild.py build $(ARGS); \
+	else \
+		PYTHONPATH=src python3 tools/docbuild.py build $(ARGS); \
+	fi
+
+docs-serve:
+	@if command -v poetry >/dev/null 2>&1; then \
+		poetry run python tools/docbuild.py build --serve $(ARGS); \
+	else \
+		PYTHONPATH=src python3 tools/docbuild.py build --serve $(ARGS); \
 	fi
 
 update-log:

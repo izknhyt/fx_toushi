@@ -1,6 +1,19 @@
 # Share profile template
-# Schema: schema/share_profiles.schema.json
+# Schema: docs/schemas/share_profiles.schema.json
 
-schema_version: share_profiles.v1
+schema_version: share_profile.v1
 profile_id: example
-recipients: []
+recipient: external_auditor
+purpose: audit
+allowed_paths:
+  - "audit_pack"
+  - "reports/tax"
+retention_days: 30
+public_key_path: "config/share_profiles/keys/example.pub"
+contact: "audit@example.com"
+runbook_refs:
+  - "RUN-GOV-02"
+encryption_method: "none"
+require_risk_disclosure: true
+channels:
+  - "local"

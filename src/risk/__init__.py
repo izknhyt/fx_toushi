@@ -9,6 +9,15 @@ from src.risk.liquidity_monitor import (
     LiquidityThresholds,
 )
 from src.risk.manager import RiskAssessment, RiskManager, RiskSnapshot
+from src.risk.capital_guard import CapitalAllocationGuard, CapitalGuardSnapshot
+from src.risk.stress_lab import (
+    MarginStressLab,
+    RiskEnvelope,
+    StressCampaignResult,
+    StressInputBundle,
+    StressScenario,
+    StressResult,
+)
 
 __all__ = [
     "BrokerRules",
@@ -18,9 +27,17 @@ __all__ = [
     "RiskAssessment",
     "RiskManager",
     "RiskSnapshot",
+    "CapitalAllocationGuard",
+    "CapitalGuardSnapshot",
     "LiquidityAlert",
     "LiquidityMonitorService",
     "LiquiditySample",
     "LiquiditySnapshot",
     "LiquidityThresholds",
+    "MarginStressLab",
+    "RiskEnvelope",
+    "StressCampaignResult",
+    "StressInputBundle",
+    "StressScenario",
+    "StressResult",
 ]

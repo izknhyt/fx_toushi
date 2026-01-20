@@ -1,0 +1,15 @@
+profile_id: research_validation
+recipient: External Auditor
+purpose: Regression backtest evidence sharing
+allowed_paths:
+  - reports/regression/backtest
+  - reports/validation_log
+retention_days: 30
+public_key_path: null
+contact: audit@codex.example
+runbook_refs:
+  - STRAT-M1-VALIDATION
+encryption_method: none
+require_risk_disclosure: false
+channels:
+  - local

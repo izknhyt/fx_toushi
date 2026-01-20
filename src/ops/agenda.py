@@ -49,6 +49,21 @@ OPS_AGENDA_METRICS_PATH = Path("metrics/ops_agenda.jsonl")
 OPS_AGENDA_AUDIT_PATH = Path("logs/audit/ops_agenda_generated.jsonl")
 """Audit trail for Ops agenda generation."""
 
+COACHING_INSIGHTS_LOG_PATH = Path("metrics/coaching_insights.jsonl")
+"""Metrics log for coaching insight tasks."""
+
+COMPLIANCE_REGRESSION_METRICS_PATH = Path("metrics/compliance_regression.json")
+"""Latest compliance regression metrics snapshot."""
+
+EXPERIMENT_TRACKER_EVENT_LOG_PATH = Path("logs/events/experiment_tracker.jsonl")
+"""Experiment tracker event log for failed/mismatch runs."""
+
+REGRESSION_BACKTEST_METRICS_PATH = Path("metrics/regression_backtest.jsonl")
+"""Regression backtest summary metrics."""
+
+ACCESS_REVIEW_REGISTRY_PATH = Path("reports/governance/access/reviews.jsonl")
+"""Access review registry for governance review tasks."""
+
 RUNBOOK_INVENTORY_PATH = Path("reports/governance/runbook_inventory_status.json")
 """Runbook review inventory exported by DocOps."""
 
@@ -104,6 +119,7 @@ class OpsAgendaService:
         health_state_path: Path = HEALTH_STATE_PATH,
         runbook_inventory_path: Path = RUNBOOK_INVENTORY_PATH,
         validation_playbook_dir: Path = VALIDATION_PLAYBOOK_DIR,
+        access_review_registry_path: Path = ACCESS_REVIEW_REGISTRY_PATH,
         event_log_path: Path = OPS_AGENDA_EVENT_LOG_PATH,
         metrics_path: Path = OPS_AGENDA_METRICS_PATH,
         audit_path: Path = OPS_AGENDA_AUDIT_PATH,
@@ -121,6 +137,7 @@ class OpsAgendaService:
         self._health_state_path = health_state_path
         self._runbook_inventory_path = runbook_inventory_path
         self._validation_playbook_dir = validation_playbook_dir
+        self._access_review_registry_path = access_review_registry_path
         self._event_log_path = event_log_path
         self._metrics_path = metrics_path
         self._audit_path = audit_path
@@ -167,6 +184,26 @@ class OpsAgendaService:
             target_date=target_date,
         )
         idea_tasks = _collect_idea_pipeline_tasks(target_date=target_date)
+        coaching_tasks = _collect_coaching_tasks(
+            target_date=target_date,
+            insights_log=COACHING_INSIGHTS_LOG_PATH,
+        )
+        compliance_tasks = _collect_compliance_regression_tasks(
+            target_date=target_date,
+            metrics_path=COMPLIANCE_REGRESSION_METRICS_PATH,
+        )
+        regression_tasks = _collect_regression_backtest_tasks(
+            target_date=target_date,
+            metrics_path=REGRESSION_BACKTEST_METRICS_PATH,
+        )
+        access_review_tasks = _collect_access_review_tasks(
+            target_date=target_date,
+            reviews_path=self._access_review_registry_path,
+        )
+        experiment_tasks = _collect_experiment_tracker_tasks(
+            target_date=target_date,
+            event_log=EXPERIMENT_TRACKER_EVENT_LOG_PATH,
+        )
         return AgendaContext(
             target_date=target_date,
             health_state=health_snapshot["status"],
@@ -174,7 +211,14 @@ class OpsAgendaService:
             workload_total_min=workload_total_min,
             automation_gain_min=automation_gain_min,
             critical_first=critical_first,
-            operational_tasks=idea_tasks,
+            operational_tasks=(
+                idea_tasks
+                + coaching_tasks
+                + compliance_tasks
+                + regression_tasks
+                + access_review_tasks
+                + experiment_tasks
+            ),
             runbook_reviews=runbook_reviews,
             validation_pending=validation_pending,
             drill_pending=drill_pending,
@@ -522,7 +566,9 @@ def _build_critical_first(
     reasons = health_snapshot.get("reasons") or []
     if status == "ok" and not reasons:
         return []
-    completed_codes = _load_completed_health_codes(worklog_path, days=7)
+    completed_codes = _load_completed_health_codes(
+        worklog_path, days=7, reference_date=target_date
+    )
     items: list[dict[str, object]] = []
     for reason in reasons:
         if not isinstance(reason, dict):
@@ -549,10 +595,17 @@ def _build_critical_first(
     return items
 
 
-def _load_completed_health_codes(path: Path, *, days: int) -> set[str]:
+def _load_completed_health_codes(
+    path: Path, *, days: int, reference_date: date | None = None
+) -> set[str]:
     if not path.exists():
         return set()
-    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+    if reference_date is None:
+        cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+    else:
+        cutoff = datetime.combine(reference_date, datetime.min.time(), tzinfo=timezone.utc) - timedelta(
+            days=days
+        )
     codes: set[str] = set()
     for line in path.read_text(encoding="utf-8").splitlines():
         if not line.strip():
@@ -683,6 +736,184 @@ def _collect_idea_pipeline_tasks(target_date: date) -> list[dict[str, object]]:
             }
         )
     return tasks
+
+
+def _collect_coaching_tasks(
+    *, target_date: date, insights_log: Path = COACHING_INSIGHTS_LOG_PATH
+) -> list[dict[str, object]]:
+    if not insights_log.exists():
+        return []
+    tasks: list[dict[str, object]] = []
+    for line in insights_log.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        try:
+            record = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if record.get("status") != "over_threshold":
+            continue
+        due = record.get("due_date") or str(target_date)
+        tasks.append(
+            {
+                "task": f"Coaching: {record.get('bottleneck_metric')}",
+                "owner": "ops",
+                "due": due,
+                "estimate_min": 60,
+                "last_worklog": record.get("insight_id", "n/a"),
+                "notes": record.get("recommendation") or "Review coaching insight",
+            }
+        )
+    return tasks
+
+
+def _collect_compliance_regression_tasks(
+    *, target_date: date, metrics_path: Path = COMPLIANCE_REGRESSION_METRICS_PATH
+) -> list[dict[str, object]]:
+    if not metrics_path.exists():
+        return []
+    try:
+        payload = json.loads(metrics_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return []
+    violations = int(payload.get("min_distance_violations", 0)) + int(
+        payload.get("freeze_level_violations", 0)
+    )
+    drop_pct = float(payload.get("proposal_drop_pct", 1.0) or 1.0)
+    if violations == 0 and drop_pct >= 0.5:
+        return []
+    return [
+        {
+            "task": "Review compliance regression results",
+            "owner": "compliance",
+            "due": str(target_date),
+            "estimate_min": 45,
+            "last_worklog": payload.get("generated_at", "n/a"),
+            "notes": f"violations={violations}, drop_pct={drop_pct}",
+        }
+    ]
+
+
+def _collect_experiment_tracker_tasks(
+    *,
+    target_date: date,
+    event_log: Path = EXPERIMENT_TRACKER_EVENT_LOG_PATH,
+) -> list[dict[str, object]]:
+    if not event_log.exists():
+        return []
+    tasks: list[dict[str, object]] = []
+    for line in event_log.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        try:
+            record = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        event = record.get("event")
+        if event not in {"experiment.run_failed", "experiment.data_mismatch_detected"}:
+            continue
+        run_id = record.get("run_id", "n/a")
+        task = "Investigate experiment run failure"
+        if event == "experiment.data_mismatch_detected":
+            task = "Investigate experiment data mismatch"
+        tasks.append(
+            {
+                "task": task,
+                "owner": "research",
+                "due": str(target_date),
+                "estimate_min": 45,
+                "last_worklog": run_id,
+                "notes": record.get("reason") or record.get("event"),
+            }
+        )
+    return tasks
+
+
+def _collect_regression_backtest_tasks(
+    *, target_date: date, metrics_path: Path = REGRESSION_BACKTEST_METRICS_PATH
+) -> list[dict[str, object]]:
+    if not metrics_path.exists():
+        return []
+    latest: dict[str, object] | None = None
+    for line in metrics_path.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        try:
+            latest = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+    if not latest:
+        return []
+    status = latest.get("status")
+    if status == "pass":
+        return []
+    return [
+        {
+            "task": "Review regression backtest drift",
+            "owner": "research",
+            "due": str(target_date),
+            "estimate_min": 60,
+            "last_worklog": latest.get("run_id", "n/a"),
+            "notes": f"status={status} drift_count={latest.get('drift_count', 0)}",
+        }
+    ]
+
+
+def _collect_access_review_tasks(
+    *, target_date: date, reviews_path: Path = ACCESS_REVIEW_REGISTRY_PATH
+) -> list[dict[str, object]]:
+    if not reviews_path.exists():
+        return []
+    latest: dict[str, dict[str, object]] = {}
+    for line in reviews_path.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        try:
+            record = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        review_id = record.get("review_id")
+        if not review_id:
+            continue
+        latest[str(review_id)] = record
+    tasks: list[dict[str, object]] = []
+    for review_id, record in latest.items():
+        status = record.get("status") or "unknown"
+        if status == "completed":
+            continue
+        due_at = _parse_due_date(record.get("due_at"))
+        due_missing = False
+        if due_at is None:
+            due_at = target_date
+            due_missing = True
+        if due_at > target_date:
+            continue
+        notes = f"scope={record.get('scope') or 'n/a'} status={status}"
+        if due_missing:
+            notes = f"{notes} due_at=missing"
+        tasks.append(
+            {
+                "task": f"Complete access review {review_id}",
+                "owner": record.get("initiated_by") or "security",
+                "due": due_at.isoformat(),
+                "estimate_min": 60,
+                "last_worklog": record.get("initiated_at", "n/a"),
+                "notes": notes,
+            }
+        )
+    return tasks
+
+
+def _parse_due_date(value: object) -> date | None:
+    if not value:
+        return None
+    text = str(value)
+    try:
+        if text.endswith("Z"):
+            text = text.replace("Z", "+00:00")
+        return datetime.fromisoformat(text).date()
+    except ValueError:
+        return None
 
 
 def _idea_pipeline_enabled() -> bool:

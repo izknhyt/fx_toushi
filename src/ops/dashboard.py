@@ -18,6 +18,8 @@ DEFAULT_KILL_SWITCH_STATE = Path("snapshots/latest/kill_switch_state.json")
 DEFAULT_GATE_STATE = Path("snapshots/latest/gate_state.json")
 DEFAULT_BENCHMARK_GAP_LOG = Path("logs/events/benchmark_gap.jsonl")
 DEFAULT_METRICS_PATH = Path("metrics/ops_dashboard.jsonl")
+DEFAULT_WORKFLOW_METRICS = Path("metrics/trader_workflow.jsonl")
+DEFAULT_COACHING_INSIGHTS = Path("metrics/coaching_insights.jsonl")
 
 
 def _utcnow_iso() -> str:
@@ -46,6 +48,49 @@ def _read_last_jsonl(path: Path) -> Mapping[str, Any] | None:
         except json.JSONDecodeError:
             continue
     return None
+
+
+def _read_last_event(path: Path, event_name: str) -> Mapping[str, Any] | None:
+    if not path.exists():
+        return None
+    try:
+        lines = [line for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    except Exception:
+        return None
+    for raw in reversed(lines):
+        try:
+            payload = json.loads(raw)
+        except json.JSONDecodeError:
+            continue
+        if payload.get("event") == event_name:
+            return payload
+    return None
+
+
+def _summarize_coaching_insights(path: Path) -> Mapping[str, Any] | None:
+    if not path.exists():
+        return None
+    try:
+        lines = [line for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    except Exception:
+        return None
+    total = 0
+    over_threshold = 0
+    last_ts = None
+    for raw in lines:
+        try:
+            payload = json.loads(raw)
+        except json.JSONDecodeError:
+            continue
+        total += 1
+        if payload.get("status") == "over_threshold":
+            over_threshold += 1
+        last_ts = payload.get("ts") or last_ts
+    return {
+        "total": total,
+        "over_threshold": over_threshold,
+        "last_ts": last_ts,
+    }
 
 
 def _read_recent_diagnostics(path: Path, *, limit: int = 2) -> list[list[str]]:
@@ -91,6 +136,8 @@ class OpsHealthDashboard:
     gate_state: Mapping[str, Any] | None
     benchmark_gap: Mapping[str, Any] | None
     journal_highlights: list[Mapping[str, Any]]
+    workflow_summary: Mapping[str, Any] | None
+    coaching_insights: Mapping[str, Any] | None
     diagnostics: list[str]
 
     def to_dict(self) -> dict[str, Any]:
@@ -102,6 +149,8 @@ class OpsHealthDashboard:
             "gate_state": self.gate_state,
             "benchmark_gap": self.benchmark_gap,
             "journal_highlights": list(self.journal_highlights),
+            "workflow_summary": self.workflow_summary,
+            "coaching_insights": self.coaching_insights,
             "diagnostics": list(self.diagnostics),
         }
 
@@ -119,6 +168,8 @@ class OpsHealthDashboardService:
         benchmark_gap_log: Path = DEFAULT_BENCHMARK_GAP_LOG,
         metrics_path: Path = DEFAULT_METRICS_PATH,
         journal_path: Path | str = "logs/journal/journal_entries.db",
+        workflow_metrics_path: Path = DEFAULT_WORKFLOW_METRICS,
+        coaching_insights_path: Path = DEFAULT_COACHING_INSIGHTS,
     ) -> None:
         self._event_bus = event_bus
         self._health_state_path = health_state_path
@@ -127,6 +178,8 @@ class OpsHealthDashboardService:
         self._benchmark_gap_log = benchmark_gap_log
         self._metrics_path = metrics_path
         self._journal_path = journal_path
+        self._workflow_metrics_path = workflow_metrics_path
+        self._coaching_insights_path = coaching_insights_path
 
     def build(self) -> OpsHealthDashboard:
         diagnostics: list[str] = []
@@ -156,6 +209,9 @@ class OpsHealthDashboardService:
         if not journal_highlights:
             diagnostics.append("journal_missing")
 
+        workflow_summary = _read_last_event(self._workflow_metrics_path, "trader_workflow.summary")
+        coaching_insights = _summarize_coaching_insights(self._coaching_insights_path)
+
         raw_diagnostics = list(diagnostics)
         recent = _read_recent_diagnostics(self._metrics_path, limit=2)
         diagnostics = _filter_diagnostics(raw_diagnostics, recent)
@@ -168,6 +224,8 @@ class OpsHealthDashboardService:
             gate_state=gate_state,
             benchmark_gap=benchmark_gap,
             journal_highlights=journal_highlights,
+            workflow_summary=workflow_summary,
+            coaching_insights=coaching_insights,
             diagnostics=diagnostics,
         )
         self._append_metrics(payload, raw_diagnostics=raw_diagnostics)

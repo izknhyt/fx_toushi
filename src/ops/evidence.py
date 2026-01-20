@@ -168,7 +168,8 @@ class OpsEvidenceStore:
 
     def _update_playbook(self, entry: EvidenceEntry) -> None:
         self._playbook_dir.mkdir(parents=True, exist_ok=True)
-        playbook_path = self._playbook_dir / f"{entry.validation_playbook_id}_drill.yaml"
+        suffix = "_drill" if entry.category == "drill" else ""
+        playbook_path = self._playbook_dir / f"{entry.validation_playbook_id}{suffix}.yaml"
         data = {}
         if playbook_path.exists():
             try:

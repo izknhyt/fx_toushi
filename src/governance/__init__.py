@@ -11,7 +11,21 @@ from .model_risk import (
     RiskIssue,
     ValidationChecklist,
 )
-from .secure_share import EvidencePackage, SecureShareService
+from .secure_share import (
+    SecureShareService,
+    ShareProfile,
+    EvidenceFile,
+    EvidencePackage,
+    DeliveryRecord,
+    RevocationReceipt,
+    ShareProfileNotFound,
+    ShareProfileInvalid,
+    EvidenceScopeError,
+    EvidenceManifestError,
+    EvidenceEncryptionError,
+    EvidenceDeliveryError,
+    EvidenceRevocationError,
+)
 
 __all__ = [
     "ModelRiskRegisterStub",
@@ -25,5 +39,16 @@ __all__ = [
     "ValidationChecklist",
     "ModelRiskSchemaError",
     "SecureShareService",
+    "ShareProfile",
+    "EvidenceFile",
     "EvidencePackage",
+    "DeliveryRecord",
+    "RevocationReceipt",
+    "ShareProfileNotFound",
+    "ShareProfileInvalid",
+    "EvidenceScopeError",
+    "EvidenceManifestError",
+    "EvidenceEncryptionError",
+    "EvidenceDeliveryError",
+    "EvidenceRevocationError",
 ]

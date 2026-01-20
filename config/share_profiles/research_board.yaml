@@ -1,0 +1,18 @@
+schema_version: share_profile.v1
+profile_id: research_board
+recipient: research_board
+purpose: research
+allowed_paths:
+  - "research"
+  - "reports/research"
+  - "reports/validation_log"
+retention_days: 30
+public_key_path: null
+contact: "research@example.com"
+runbook_refs:
+  - "GOV-IDEA-01"
+  - "RUN-GOV-02"
+encryption_method: "none"
+require_risk_disclosure: false
+channels:
+  - "local"

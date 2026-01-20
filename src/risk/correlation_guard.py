@@ -21,5 +21,14 @@ class CorrelationGuard:
     def evaluate(self, snapshot: CorrelationSnapshot) -> list[str]:
         return snapshot.breaches(self._threshold)
 
+    def simulate(self, *, corr_hotness: float) -> str:
+        """Return a status string after applying stress correlation hotness."""
+
+        if corr_hotness >= self._threshold:
+            return "hot"
+        if corr_hotness >= self._threshold * 0.9:
+            return "warm"
+        return "ok"
+
 
 __all__ = ["CorrelationGuard", "CorrelationSnapshot"]

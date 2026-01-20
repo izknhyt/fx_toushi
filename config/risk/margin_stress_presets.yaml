@@ -1,7 +1,28 @@
-# Margin stress presets scaffold
-# Schema: schema/margin_stress_presets.schema.json
-
 schema_version: margin_stress_presets.v1
 presets:
-  conservative:
-    shock_pct: 10
+  - id: brexit_20160624
+    kind: historical
+    duration: "1d"
+    confidence_level: 0.95
+    ref_events:
+      - "GBP flash crash"
+    shock_profile:
+      drawdown_pct: 6.5
+      weekly_drawdown_pct: 8.0
+      margin_peak: 0.72
+      r_eff_peak: 2.1
+      loss_streak: 4
+      corr_hotness: 0.9
+  - id: covid_202003
+    kind: historical
+    duration: "1w"
+    confidence_level: 0.95
+    ref_events:
+      - "Risk-off shock"
+    shock_profile:
+      drawdown_pct: 9.5
+      weekly_drawdown_pct: 12.0
+      margin_peak: 0.85
+      r_eff_peak: 2.4
+      loss_streak: 6
+      corr_hotness: 0.95

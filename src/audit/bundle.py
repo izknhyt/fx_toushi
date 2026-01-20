@@ -13,6 +13,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from src.utils.hashing import sha256_path
+from src.data.manifest import DataManifestService
 
 __all__ = [
     "AuditBundleService",
@@ -38,6 +39,8 @@ class AuditBundleManifest:
     files: tuple[AuditBundleFile, ...]
     hash: str
     signature: str
+    ledger_hashes: Mapping[str, str] = field(default_factory=dict)
+    tax_report_hashes: Mapping[str, str] = field(default_factory=dict)
     missing: tuple[str, ...] = ()
     summary: Mapping[str, int] = field(default_factory=dict)
     notes: str | None = None
@@ -51,6 +54,8 @@ class AuditBundleManifest:
             "files": [file.__dict__ for file in self.files],
             "hash": self.hash,
             "signature": self.signature,
+            "ledger_hashes": dict(self.ledger_hashes),
+            "tax_report_hashes": dict(self.tax_report_hashes),
             "missing": list(self.missing),
             "summary": dict(self.summary),
             "notes": self.notes,
@@ -88,10 +93,11 @@ class AuditBundleService:
         period: str,
         signer: str = "local",
         dry_run: bool = False,
+        include_finance: bool = False,
     ) -> AuditBundleResult:
         started_at = time.monotonic()
         bundle_root = self._base_dir / period
-        files, missing = self._collect_sources(period)
+        files, missing = self._collect_sources(period, include_finance=include_finance)
         materialized: list[AuditBundleFile] = []
         counts: dict[str, int] = {
             "signals": 0,
@@ -100,6 +106,7 @@ class AuditBundleService:
             "config": 0,
             "risk_disclosure": 0,
             "manifest": 0,
+            "finance": 0,
         }
 
         for kind, source_path in files:
@@ -122,6 +129,7 @@ class AuditBundleService:
 
         materialized_sorted = tuple(sorted(materialized, key=lambda entry: entry.path))
         bundle_hash = _bundle_hash(materialized_sorted)
+        ledger_hashes, tax_report_hashes = _extract_finance_hashes(materialized_sorted)
         manifest = AuditBundleManifest(
             schema_version="audit.bundle.v1",
             period=period,
@@ -130,6 +138,8 @@ class AuditBundleService:
             files=materialized_sorted,
             hash=bundle_hash,
             signature="",
+            ledger_hashes=ledger_hashes,
+            tax_report_hashes=tax_report_hashes,
             missing=tuple(missing),
             summary=counts,
         )
@@ -143,6 +153,8 @@ class AuditBundleService:
             files=manifest.files,
             hash=manifest.hash,
             signature=signature,
+            ledger_hashes=manifest.ledger_hashes,
+            tax_report_hashes=manifest.tax_report_hashes,
             missing=manifest.missing,
             summary=manifest.summary,
             notes=manifest.notes,
@@ -168,6 +180,8 @@ class AuditBundleService:
                 ),
                 encoding="utf-8",
             )
+            if include_finance:
+                _record_finance_manifest(materialized_sorted)
         duration_sec = round(time.monotonic() - started_at, 3)
         bundle_size_mb = _bundle_size_mb(bundle_root) if bundle_root.exists() else 0.0
         if not dry_run:
@@ -281,7 +295,9 @@ class AuditBundleService:
             return []
         return sorted([path.name for path in self._base_dir.iterdir() if path.is_dir()])
 
-    def _collect_sources(self, period: str) -> tuple[list[tuple[str, Path]], list[str]]:
+    def _collect_sources(
+        self, period: str, *, include_finance: bool
+    ) -> tuple[list[tuple[str, Path]], list[str]]:
         sources: list[tuple[str, Path]] = []
         missing: list[str] = []
 
@@ -300,6 +316,8 @@ class AuditBundleService:
         sources.extend(
             _collect_glob("risk_disclosure", Path("data/compliance"), "risk_disclosure_state.json")
         )
+        if include_finance:
+            sources.extend(_collect_finance_sources(period))
 
         required = {
             "signals",
@@ -312,6 +330,8 @@ class AuditBundleService:
         for kind in sorted(required):
             if kind not in present_kinds:
                 missing.append(kind)
+        if include_finance and "finance" not in present_kinds:
+            missing.append("finance")
         return sources, missing
 
     def _append_metrics(self, payload: Mapping[str, object]) -> None:
@@ -340,6 +360,56 @@ def _collect_glob(kind: str, base: Path, pattern: str) -> list[tuple[str, Path]]
     if not base.exists():
         return []
     return [(kind, path) for path in base.glob(pattern) if path.is_file()]
+
+
+def _collect_finance_sources(period: str) -> list[tuple[str, Path]]:
+    sources: list[tuple[str, Path]] = []
+    sources.extend(_collect_glob("finance", Path("parquet/backoffice"), f"ledger_*_{period}.parquet"))
+    sources.extend(_collect_glob("finance", Path("jsonl/backoffice"), f"ledger_*_{period}.jsonl"))
+    sources.extend(_collect_glob("finance", Path("jsonl/backoffice"), f"taxlots_{period}.jsonl"))
+    sources.extend(_collect_glob("finance", Path("reports/tax"), f"ledger_summary_{period}.md"))
+    year = _extract_year(period)
+    if year:
+        sources.extend(_collect_glob("finance", Path("reports/tax") / str(year), "*_tax_report.*"))
+    return sources
+
+
+def _extract_finance_hashes(
+    entries: tuple[AuditBundleFile, ...],
+) -> tuple[dict[str, str], dict[str, str]]:
+    ledger_hashes: dict[str, str] = {}
+    tax_report_hashes: dict[str, str] = {}
+    for entry in entries:
+        if entry.kind != "finance":
+            continue
+        if "ledger_" in entry.path and entry.path.endswith(".parquet"):
+            ledger_hashes[entry.path] = entry.sha256
+        if "tax_report" in entry.path:
+            tax_report_hashes[entry.path] = entry.sha256
+    return ledger_hashes, tax_report_hashes
+
+
+def _extract_year(period: str) -> int | None:
+    if len(period) >= 4 and period[:4].isdigit():
+        return int(period[:4])
+    return None
+
+
+def _record_finance_manifest(entries: tuple[AuditBundleFile, ...]) -> None:
+    service = DataManifestService()
+    existing_paths = {entry.path for entry in service.entries}
+    for entry in entries:
+        if entry.kind != "finance":
+            continue
+        path = Path(entry.source)
+        if not path.exists():
+            continue
+        if str(path) in existing_paths:
+            continue
+        try:
+            service.record(path=path, kind="finance", owner="backoffice", playbook_id="FR-59")
+        except (FileNotFoundError, ValueError):
+            continue
 
 
 def _safe_name(path: Path) -> str:
@@ -457,6 +527,7 @@ def _render_report(
         f"- config: {summary.get('config', 0)}",
         f"- risk_disclosure: {summary.get('risk_disclosure', 0)}",
         f"- manifest: {summary.get('manifest', 0)}",
+        f"- finance: {summary.get('finance', 0)}",
         "",
         "## Missing",
         "",

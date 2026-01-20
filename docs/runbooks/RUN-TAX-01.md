@@ -1,8 +1,8 @@
 # RUN-TAX-01: 税務レポート生成・提出手順
 
 > **ACカバレッジ**: FR-59, FR-64, NFR-05  
-> **Runbook版数**: v1.1  
-> **最終更新日**: 2026-01-07  
+> **Runbook版数**: v1.2  
+> **最終更新日**: 2026-01-17  
 > **最終更新者**: Back Office Lead (Doc Maintainer)  
 > **仕様参照**: detailed_design_fx_signal_tool_v1.md §47.1-47.4, §48.2-48.4; basic_design_fx_signal_tool_v1.md:278,313; 要件定義（テンプレ形式）v_1.md:183  
 > **運用シナリオID**: DRILL-tax_reconciliation (Tax readiness drill)  
@@ -44,7 +44,7 @@
    - 生成されたMarkdown/CSVを確認し、`income`, `expenses`, `withholding`, `swap_income`セクションの数値がLedgerと一致していることを検証。
    - `audit.tax_report_generated`イベントが`logs/audit/backoffice_<timestamp>.jsonl`に記録されているか確認。
 3. **監査パック連携**
-   - `tradectl audit bundle generate --period 2025Q4`を実行し、`audit_pack/2025Q4/finance/`へLedger/Taxレポートを手動で取り込む。
+   - `tradectl audit bundle generate --period 2025Q4 --with-finance`を実行し、`audit_pack/2025Q4/finance/`へLedger/Taxレポートが自動添付されることを確認。
    - `audit_pack/2025Q4/audit_manifest.json`に`tax_report_hash`, `ledger_hash`が追加されたことを確認。
    - Validation Data Playbook (`validation_playbook/FR-59_audit_bundle.md`)へハッシュ/署名/提出先を追記。
 4. **SecureShare送付**
@@ -93,3 +93,4 @@
 | 版 | 日付 | 概要 | 編集者 |
 | --- | --- | --- | --- |
 | v1.0 | 2025-11-03 | 初版作成（Taxレポート生成・共有フロー定義） | Back Office Lead |
+| v1.2 | 2026-01-17 | Audit bundleのfinance自動添付手順を追加 | Back Office Lead |

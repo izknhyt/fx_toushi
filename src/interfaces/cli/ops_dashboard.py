@@ -35,6 +35,8 @@ def render_dashboard(
 def _render_markdown(payload: Mapping[str, Any]) -> str:
     gate_state = payload.get("gate_state") or {}
     market = gate_state.get("market") or {}
+    workflow = payload.get("workflow_summary") or {}
+    coaching = payload.get("coaching_insights") or {}
     lines = [
         "# Ops Dashboard",
         "",
@@ -46,6 +48,8 @@ def _render_markdown(payload: Mapping[str, Any]) -> str:
         f"| Kill Switch | {(payload.get('kill_switch') or {}).get('state', 'none')} |",
         f"| Spread | {(market.get('spread') or {}).get('state', 'unknown')} |",
         f"| Liquidity | {(market.get('liquidity') or {}).get('state', 'unknown')} |",
+        f"| Coaching Insights | {coaching.get('over_threshold', 'n/a')} over threshold |",
+        f"| Approval Latency (sec) | {workflow.get('avg_approval_latency_sec', 'n/a')} |",
         f"| Diagnostics | {', '.join(payload.get('diagnostics') or [])} |",
         "",
     ]

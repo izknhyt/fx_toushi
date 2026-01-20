@@ -30,8 +30,17 @@
 ## Ops Worklog (latest)
 {ops_worklog_excerpt}
 
+## Coaching Summary
+{coaching_summary}
+
+## Compliance Regression
+{compliance_regression_summary}
+
 ## Stress Runs
 {stress_runs}
+
+## Risk Envelope Delta
+{risk_envelope_delta}
 
 ## Trade Journal
 {trade_journal}
