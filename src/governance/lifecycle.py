@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -337,9 +338,12 @@ def _optional_float(value: object | None) -> float | None:
     if value is None:
         return None
     try:
-        return float(value)
+        parsed = float(value)
     except (TypeError, ValueError):
         return None
+    if not math.isfinite(parsed):
+        return None
+    return parsed
 
 
 def _utcnow_iso() -> str:

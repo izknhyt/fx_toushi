@@ -1,0 +1,5 @@
+validation_playbook_id: AC41_broker_orders
+category: broker_orders
+owner: ops_manager
+description: Broker API order lifecycle evidence (OrderLifecycle/RecoveryPlan/FillShadow).
+entries: []

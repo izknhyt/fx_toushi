@@ -1,0 +1,1 @@
+{"schema_version": "access.principal.v1", "principal_id": "user:smoke", "type": "user", "display_name": "Smoke Tester", "roles": ["ops_managers"], "status": "active", "last_reviewed_at": "2026-01-24T09:48:45Z", "mfa_enrolled": true, "notes": "EP17 broker smoke verification"}

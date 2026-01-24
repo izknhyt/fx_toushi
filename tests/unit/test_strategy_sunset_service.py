@@ -79,3 +79,12 @@ def test_strategy_sunset_rejects_missing_evidence(tmp_path: Path) -> None:
             evidence_path=tmp_path / "missing.md",
             note="missing",
         )
+
+    with pytest.raises(StrategySunsetError):
+        service.execute_step(
+            plan.plan_id,
+            step_id=step_id,
+            executed_by="ops",
+            evidence_path=None,
+            note="missing",
+        )

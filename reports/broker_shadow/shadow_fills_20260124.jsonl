@@ -1,0 +1,2 @@
+{"ticket_id": "ticket-1", "signal_id": null, "fill_ts": "2026-01-24T09:32:37Z", "fill_price": 1.2345, "lots": null, "slippage": null, "pnl": null, "swap": null, "symbol": null, "side": null}
+{"ticket_id": "fault", "signal_id": null, "fill_ts": "2026-01-24T09:32:42Z", "fill_price": null, "lots": null, "slippage": null, "pnl": null, "swap": null, "symbol": null, "side": null}

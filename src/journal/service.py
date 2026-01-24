@@ -140,12 +140,13 @@ class TradeJournalService:
         )
         self._repo.upsert_entry(record)
         note_id = _uuid7()
+        note_created_ts = entry.ts.astimezone(timezone.utc).isoformat()
         self._repo.add_note(
             note_id=note_id,
             entry_id=record.entry_id,
             author=entry.user,
             note_md=entry.note,
-            created_ts=record.created_ts,
+            created_ts=note_created_ts,
             tags=[],
         )
         self._audit_event(

@@ -207,8 +207,10 @@ def _resolve_pair(path: Path) -> tuple[Path, Path]:
         op_path = path.with_name(path.name.replace("_review.csv", "_op.csv"))
         review_path = path
     else:
-        op_path = path
-        review_path = path
+        raise ManualCsvError(
+            f"Expected _op/_review CSV suffix, got: {path.name}",
+            code="invalid_pair",
+        )
     if not review_path.exists():
         raise ManualCsvError(f"Missing twin CSV: {review_path}", code="missing_review")
     return op_path, review_path

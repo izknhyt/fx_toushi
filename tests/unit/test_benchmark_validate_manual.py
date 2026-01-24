@@ -5,6 +5,7 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
+from src.benchmark import ingest as ingest_module
 from src.benchmark.ingest import BenchmarkManualValidationError, validate_manual
 
 
@@ -46,3 +47,24 @@ def test_validate_manual_picks_matching_pair(tmp_path: Path) -> None:
     _write_manual_file(tmp_path / "pair2_review.csv", 1.2)
     payload = validate_manual(tmp_path)
     assert payload["status"] == "ok"
+    assert len(payload["pairs"]) == 2
+    for entry in payload["pairs"]:
+        assert Path(entry["output_path"]).exists()
+        assert Path(entry["signoff_path"]).exists()
+
+
+def test_validate_manual_does_not_write_partial_outputs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    raw_dir = tmp_path / "raw"
+    signoff_dir = tmp_path / "signoff"
+    monkeypatch.setattr(ingest_module, "DEFAULT_RAW_DIR", raw_dir)
+    monkeypatch.setattr(ingest_module, "DEFAULT_SIGNOFF_DIR", signoff_dir)
+    _write_manual_file(tmp_path / "pair1_op.csv", 1.0)
+    _write_manual_file(tmp_path / "pair1_review.csv", 1.0)
+    _write_manual_file(tmp_path / "pair2_op.csv", 1.0)
+    _write_manual_file(tmp_path / "pair2_review.csv", 1.5)
+
+    with pytest.raises(BenchmarkManualValidationError):
+        validate_manual(tmp_path)
+
+    assert not list(raw_dir.glob("**/*.parquet"))
+    assert not list(signoff_dir.glob("**/*.md"))

@@ -1,0 +1,127 @@
+{
+  "stage": "manual_only",
+  "updated_at": "2026-01-24T10:08:00Z",
+  "updated_by": "system",
+  "history": [
+    {
+      "from_stage": "partial_auto",
+      "to_stage": "reduce_only",
+      "actor": "system",
+      "reason": "fault",
+      "ts": "2026-01-24T09:32:42Z"
+    },
+    {
+      "from_stage": "reduce_only",
+      "to_stage": "manual_only",
+      "actor": "system",
+      "reason": "fault",
+      "ts": "2026-01-24T09:32:42Z"
+    },
+    {
+      "from_stage": "partial_auto",
+      "to_stage": "reduce_only",
+      "actor": "system",
+      "reason": "partial_fill",
+      "ts": "2026-01-24T09:32:42Z"
+    },
+    {
+      "from_stage": "partial_auto",
+      "to_stage": "reduce_only",
+      "actor": "system",
+      "reason": "fault",
+      "ts": "2026-01-24T09:32:42Z"
+    },
+    {
+      "from_stage": "reduce_only",
+      "to_stage": "manual_only",
+      "actor": "system",
+      "reason": "fault",
+      "ts": "2026-01-24T09:32:42Z"
+    },
+    {
+      "from_stage": "partial_auto",
+      "to_stage": "reduce_only",
+      "actor": "system",
+      "reason": "fault",
+      "ts": "2026-01-24T10:05:46Z"
+    },
+    {
+      "from_stage": "reduce_only",
+      "to_stage": "manual_only",
+      "actor": "system",
+      "reason": "fault",
+      "ts": "2026-01-24T10:05:46Z"
+    },
+    {
+      "from_stage": "partial_auto",
+      "to_stage": "reduce_only",
+      "actor": "system",
+      "reason": "fault",
+      "ts": "2026-01-24T10:07:26Z"
+    },
+    {
+      "from_stage": "reduce_only",
+      "to_stage": "manual_only",
+      "actor": "system",
+      "reason": "fault",
+      "ts": "2026-01-24T10:07:26Z"
+    },
+    {
+      "from_stage": "partial_auto",
+      "to_stage": "reduce_only",
+      "actor": "system",
+      "reason": "partial_fill",
+      "ts": "2026-01-24T10:07:26Z"
+    },
+    {
+      "from_stage": "partial_auto",
+      "to_stage": "reduce_only",
+      "actor": "system",
+      "reason": "fault",
+      "ts": "2026-01-24T10:07:26Z"
+    },
+    {
+      "from_stage": "reduce_only",
+      "to_stage": "manual_only",
+      "actor": "system",
+      "reason": "fault",
+      "ts": "2026-01-24T10:07:26Z"
+    },
+    {
+      "from_stage": "partial_auto",
+      "to_stage": "reduce_only",
+      "actor": "system",
+      "reason": "fault",
+      "ts": "2026-01-24T10:08:00Z"
+    },
+    {
+      "from_stage": "reduce_only",
+      "to_stage": "manual_only",
+      "actor": "system",
+      "reason": "fault",
+      "ts": "2026-01-24T10:08:00Z"
+    },
+    {
+      "from_stage": "partial_auto",
+      "to_stage": "reduce_only",
+      "actor": "system",
+      "reason": "partial_fill",
+      "ts": "2026-01-24T10:08:00Z"
+    },
+    {
+      "from_stage": "partial_auto",
+      "to_stage": "reduce_only",
+      "actor": "system",
+      "reason": "fault",
+      "ts": "2026-01-24T10:08:00Z"
+    },
+    {
+      "from_stage": "reduce_only",
+      "to_stage": "manual_only",
+      "actor": "system",
+      "reason": "fault",
+      "ts": "2026-01-24T10:08:00Z"
+    }
+  ],
+  "requests": []
+}

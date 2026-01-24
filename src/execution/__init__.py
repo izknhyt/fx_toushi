@@ -18,7 +18,7 @@ from .model import (
     FillPolicy,
     FillStyle,
 )
-from .order_router import OrderRouterProtocol
+from .order_router import OrderDispatchRejected, OrderRouter, OrderRouterProtocol
 from .reduce_only import ReduceOnlyAdvisorProtocol
 from .spread import (
     SpreadCooldownState,
@@ -36,6 +36,8 @@ __all__ = [
     "ExecutionRuleViolationError",
     "FillPolicy",
     "FillStyle",
+    "OrderDispatchRejected",
+    "OrderRouter",
     "OrderRouterProtocol",
     "ReduceOnlyAdvisorProtocol",
     "SpreadCooldownState",

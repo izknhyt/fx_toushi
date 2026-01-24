@@ -1,0 +1,5 @@
+validation_playbook_id: AC43_api_fault
+category: api_fault
+owner: ops_manager
+description: Broker API fault lab evidence (fault run logs, health events, ops follow-ups).
+entries: []

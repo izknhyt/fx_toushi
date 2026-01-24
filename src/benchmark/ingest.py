@@ -156,47 +156,65 @@ def validate_manual(path: Path) -> dict[str, object]:
     pairs = _pair_manual_files(directory)
     if not pairs:
         raise BenchmarkManualValidationError("manual files (_op.csv/_review.csv) not found")
-    op_file, review_file = pairs[0]
-    op_frame = _normalize_frame(_load_frame(op_file)).sort_values("ts").reset_index(drop=True)
-    review_frame = _normalize_frame(_load_frame(review_file)).sort_values("ts").reset_index(drop=True)
-    if len(op_frame) != len(review_frame):
-        raise BenchmarkManualValidationError("manual files have different row counts")
-    diff = (op_frame[["ts", "open", "high", "low", "close"]].round(6) !=
-            review_frame[["ts", "open", "high", "low", "close"]].round(6)).any(axis=None)
-    if diff:
-        raise BenchmarkManualValidationError("manual files do not match")
-    stamped = datetime.now(timezone.utc).strftime("%Y%m%d")
     output_dir = DEFAULT_RAW_DIR / "manual"
     output_dir.mkdir(parents=True, exist_ok=True)
-    output_path = output_dir / f"{stamped}.parquet"
-    op_frame.to_parquet(output_path, index=False)
     signoff_dir = DEFAULT_SIGNOFF_DIR
     signoff_dir.mkdir(parents=True, exist_ok=True)
-    signoff_path = signoff_dir / f"{stamped}.md"
-    op_hash = hashlib.sha256(op_file.read_bytes()).hexdigest()
-    review_hash = hashlib.sha256(review_file.read_bytes()).hexdigest()
-    signoff_path.write_text(
-        "\n".join(
-            [
-                "# Benchmark Manual Validation Signoff",
-                f"- ts: {datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace('+00:00', 'Z')}",
-                f"- op_file: {op_file}",
-                f"- review_file: {review_file}",
-                f"- op_sha256: {op_hash}",
-                f"- review_sha256: {review_hash}",
-                f"- output: {output_path}",
-            ]
+    stamped = datetime.now(timezone.utc).strftime("%Y%m%d")
+    multiple = len(pairs) > 1
+    outputs: list[dict[str, object]] = []
+    validated: list[tuple[Path, Path, str]] = []
+    for op_file, review_file in pairs:
+        op_frame = _normalize_frame(_load_frame(op_file)).sort_values("ts").reset_index(drop=True)
+        review_frame = _normalize_frame(_load_frame(review_file)).sort_values("ts").reset_index(drop=True)
+        if len(op_frame) != len(review_frame):
+            raise BenchmarkManualValidationError(
+                f"manual files have different row counts: {op_file.name}/{review_file.name}"
+            )
+        diff = (
+            op_frame[["ts", "open", "high", "low", "close"]].round(6)
+            != review_frame[["ts", "open", "high", "low", "close"]].round(6)
+        ).any(axis=None)
+        if diff:
+            raise BenchmarkManualValidationError(
+                f"manual files do not match: {op_file.name}/{review_file.name}"
+            )
+        validated.append((op_file, review_file, op_file.name.replace("_op.csv", "")))
+    for op_file, review_file, base in validated:
+        suffix = f"_{base}" if multiple else ""
+        output_path = output_dir / f"{stamped}{suffix}.parquet"
+        op_frame = _normalize_frame(_load_frame(op_file)).sort_values("ts").reset_index(drop=True)
+        op_frame.to_parquet(output_path, index=False)
+        signoff_path = signoff_dir / f"{stamped}{suffix}.md"
+        op_hash = hashlib.sha256(op_file.read_bytes()).hexdigest()
+        review_hash = hashlib.sha256(review_file.read_bytes()).hexdigest()
+        signoff_path.write_text(
+            "\n".join(
+                [
+                    "# Benchmark Manual Validation Signoff",
+                    f"- ts: {datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace('+00:00', 'Z')}",
+                    f"- op_file: {op_file}",
+                    f"- review_file: {review_file}",
+                    f"- op_sha256: {op_hash}",
+                    f"- review_sha256: {review_hash}",
+                    f"- output: {output_path}",
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
         )
-        + "\n",
-        encoding="utf-8",
-    )
-    return {
-        "status": "ok",
-        "op_file": str(op_file),
-        "review_file": str(review_file),
-        "output_path": str(output_path),
-        "signoff_path": str(signoff_path),
-    }
+        outputs.append(
+            {
+                "op_file": str(op_file),
+                "review_file": str(review_file),
+                "output_path": str(output_path),
+                "signoff_path": str(signoff_path),
+            }
+        )
+    if multiple:
+        return {"status": "ok", "pairs": outputs}
+    single = outputs[0]
+    return {"status": "ok", **single}
 
 
 def _output_suffix(*, symbol: str | None, timeframe: str | None, mode: str | None) -> str:

@@ -7,3 +7,15 @@ entries:
     device_id: None
     consent_reference_id: None
     runbook_ref: COMPLIANCE-01
+  - ts: 2026-01-24T09:49:59Z
+    action: access.enforce
+    decision: allow
+    device_id: None
+    consent_reference_id: consent-smoke
+    runbook_ref: COMPLIANCE-01
+  - ts: 2026-01-24T09:51:32Z
+    action: access.enforce
+    decision: allow
+    device_id: None
+    consent_reference_id: consent-smoke
+    runbook_ref: COMPLIANCE-01

@@ -309,6 +309,8 @@ class StrategySunsetService:
                 evidence_hash=None,
             )
         now = _utcnow_iso()
+        if not evidence_path:
+            raise StrategySunsetError("evidence_required")
         if evidence_path and not evidence_path.exists():
             raise StrategySunsetError(f"evidence missing: {evidence_path}")
         evidence_hash = _hash_path(evidence_path) if evidence_path else None
@@ -321,7 +323,6 @@ class StrategySunsetService:
                 category="strategy_sunset",
                 artifact=evidence_path,
                 runbook_refs=[self._runbook_id],
-                validation_playbook_id=self._validation_playbook_path.stem,
                 notes=note or "sunset step evidence",
             )
         self._persist_plan(plan)

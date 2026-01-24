@@ -205,7 +205,6 @@ class DegradationPlaybookOrchestrator:
                 category="acceptable_degradation",
                 artifact=evidence_path,
                 runbook_refs=[node.runbook_ref] if node.runbook_ref else [],
-                validation_playbook_id=self._validation_playbook_path.stem,
                 notes=note or "degradation playbook ack",
             )
         node.status = "completed"
@@ -258,10 +257,23 @@ class DegradationPlaybookOrchestrator:
         instance = self.status(instance_id)
         if not _all_nodes_completed(instance.nodes):
             raise DegradationPlaybookError("incomplete_nodes")
+        if not attach_report:
+            raise DegradationPlaybookError("recovery_report_required")
+        if not attach_report.exists():
+            raise DegradationPlaybookError("recovery_report_missing")
         now = _utcnow_iso()
         instance.status = "completed"
         instance.updated_at = now
-        instance.recovery_report = str(attach_report) if attach_report else None
+        instance.recovery_report = str(attach_report)
+        runbook_refs = []
+        if instance.nodes:
+            runbook_refs = [instance.nodes[0].runbook_ref] if instance.nodes[0].runbook_ref else []
+        self._evidence_store.register(
+            category="acceptable_degradation",
+            artifact=attach_report,
+            runbook_refs=runbook_refs,
+            notes="degradation recovery report",
+        )
         self._persist(instance)
         self._append_event(
             self._event_log,
@@ -281,6 +293,7 @@ class DegradationPlaybookOrchestrator:
                 "scenario_id": instance.scenario_id,
             },
         )
+        evidence_hash = _hash_path(attach_report)
         self._append_audit(
             {
                 "event": "audit.degradation_recovered",
@@ -288,6 +301,7 @@ class DegradationPlaybookOrchestrator:
                 "instance_id": instance_id,
                 "scenario_id": instance.scenario_id,
                 "runbook_ref": instance.nodes[0].runbook_ref if instance.nodes else "n/a",
+                "evidence_hash": evidence_hash,
             }
         )
         self._append_validation_entry(instance, attach_report)

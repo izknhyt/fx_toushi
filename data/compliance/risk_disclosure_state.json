@@ -1,14 +1,14 @@
 {
   "schema_version": "risk_disclosure_state.v2",
-  "status": "pending",
+  "status": "accepted",
   "version": "v1",
-  "consent_reference_id": null,
-  "accepted_at": null,
+  "consent_reference_id": "consent-smoke",
+  "accepted_at": "2026-01-24T09:48:45+00:00",
   "expires_at": null,
   "document_hash": null,
-  "ack_user": null,
-  "ack_source": null,
-  "device_fingerprint": null,
+  "ack_user": "user:smoke",
+  "ack_source": "smoke",
+  "device_fingerprint": "fingerprint-smoke",
   "last_prompted_at": null,
   "grace_window_hours": null
 }

@@ -41,7 +41,7 @@ def test_evidence_bundle_publisher_dry_run(tmp_path: Path, monkeypatch: pytest.M
         json.dumps({"schema_version": "risk_disclosure_state.v2", "status": "accepted"}),
         encoding="utf-8",
     )
-    report_path = Path("reports") / "tax" / "ledger_summary_202601.md"
+    report_path = Path("reports") / "tax" / "ledger_summary_live_202601.md"
     report_path.parent.mkdir(parents=True, exist_ok=True)
     report_path.write_text("ledger summary", encoding="utf-8")
     manifest = DataManifestService(path=Path("reports") / "data_manifest.json")
@@ -54,7 +54,7 @@ def test_evidence_bundle_publisher_dry_run(tmp_path: Path, monkeypatch: pytest.M
         "--period",
         "2026-01",
         "--sources",
-        "path:reports/tax/ledger_summary_202601.md",
+        "path:reports/tax/ledger_summary_live_202601.md",
         "--dry-run",
     ]
     monkeypatch.setattr(sys, "argv", argv)

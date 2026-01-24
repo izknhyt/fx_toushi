@@ -93,3 +93,15 @@ def test_reconciler_approval_emits_audit(tmp_path: Path, monkeypatch: pytest.Mon
     assert audit_path.exists()
     audit_entry = json.loads(audit_path.read_text(encoding="utf-8").splitlines()[0])
     assert audit_entry["approver"] == "ops_manager"
+
+
+def test_reconciler_requires_op_review_suffix(tmp_path: Path) -> None:
+    bad_path = tmp_path / "fallback_provider_USDJPY_5m_20250320.csv"
+    bad_path.write_text(
+        "ts,timestamp_jst,open,high,low,close,volume,spread\n",
+        encoding="utf-8",
+    )
+    reconciler = ManualCsvReconciler()
+    with pytest.raises(ManualCsvError) as excinfo:
+        reconciler.validate_path(bad_path)
+    assert excinfo.value.code == "invalid_pair"

@@ -42,7 +42,7 @@ def test_secure_share_service_prepare_and_publish(tmp_path: Path) -> None:
         json.dumps({"schema_version": "risk_disclosure_state.v2", "status": "accepted"}),
         encoding="utf-8",
     )
-    report_path = tmp_path / "reports" / "tax" / "ledger_summary_202601.md"
+    report_path = tmp_path / "reports" / "tax" / "ledger_summary_live_202601.md"
     report_path.parent.mkdir(parents=True, exist_ok=True)
     report_path.write_text("ledger summary", encoding="utf-8")
     manifest_service = DataManifestService(path=tmp_path / "reports" / "data_manifest.json")

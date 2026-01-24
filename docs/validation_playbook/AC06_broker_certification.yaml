@@ -1,0 +1,9 @@
+validation_playbook_id: AC06_broker_certification
+category: broker_certification
+owner: Ops Manager
+review_frequency: on_demand
+related_runbooks:
+  - docs/runbooks/RUN-BROKER-API-03.md
+  - docs/runbooks/RUN-BROKER-API-01.md
+  - docs/runbooks/RUN-BROKER-API-02.md
+entries: []

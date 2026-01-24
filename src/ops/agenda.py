@@ -48,6 +48,8 @@ OPS_AGENDA_METRICS_PATH = Path("metrics/ops_agenda.jsonl")
 
 OPS_AGENDA_AUDIT_PATH = Path("logs/audit/ops_agenda_generated.jsonl")
 """Audit trail for Ops agenda generation."""
+BROKER_ALERT_EVENT_LOG_PATH = Path("logs/events/broker_alerts.jsonl")
+AUTONOMY_STAGE_EVENT_LOG_PATH = Path("logs/events/autonomy_stage.jsonl")
 
 COACHING_INSIGHTS_LOG_PATH = Path("metrics/coaching_insights.jsonl")
 """Metrics log for coaching insight tasks."""
@@ -204,6 +206,15 @@ class OpsAgendaService:
             target_date=target_date,
             event_log=EXPERIMENT_TRACKER_EVENT_LOG_PATH,
         )
+        broker_monitor_tasks = _collect_broker_monitor_tasks(
+            target_date=target_date, alert_log=BROKER_ALERT_EVENT_LOG_PATH
+        )
+        autonomy_stage_tasks = _collect_autonomy_stage_tasks(
+            target_date=target_date, event_log=AUTONOMY_STAGE_EVENT_LOG_PATH
+        )
+        agenda_events = _collect_ops_agenda_events(
+            target_date=target_date, event_log=self._event_log_path
+        )
         return AgendaContext(
             target_date=target_date,
             health_state=health_snapshot["status"],
@@ -218,6 +229,9 @@ class OpsAgendaService:
                 + regression_tasks
                 + access_review_tasks
                 + experiment_tasks
+                + broker_monitor_tasks
+                + autonomy_stage_tasks
+                + agenda_events
             ),
             runbook_reviews=runbook_reviews,
             validation_pending=validation_pending,
@@ -539,9 +553,12 @@ def _parse_ts(raw: object) -> datetime | None:
     if not raw:
         return None
     try:
-        return datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+        parsed = datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
     except Exception:
         return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed
 
 
 def _load_health_state(path: Path = HEALTH_STATE_PATH) -> dict[str, object]:
@@ -857,6 +874,98 @@ def _collect_regression_backtest_tasks(
             "notes": f"status={status} drift_count={latest.get('drift_count', 0)}",
         }
     ]
+
+
+def _collect_broker_monitor_tasks(
+    *, target_date: date, alert_log: Path = BROKER_ALERT_EVENT_LOG_PATH
+) -> list[dict[str, object]]:
+    if not alert_log.exists():
+        return []
+    tasks: list[dict[str, object]] = []
+    for line in alert_log.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        try:
+            record = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        severity = str(record.get("severity") or "")
+        if severity not in {"warning", "critical"}:
+            continue
+        code = record.get("code", "broker_alert")
+        task = "Review broker API alerts"
+        if severity == "critical":
+            task = "Immediate broker API recovery"
+        tasks.append(
+            {
+                "task": task,
+                "owner": "ops",
+                "due": str(target_date),
+                "estimate_min": 30 if severity == "warning" else 60,
+                "last_worklog": record.get("alert_id", "n/a"),
+                "notes": f"{code}: {record.get('message', '')}",
+            }
+        )
+    return tasks
+
+
+def _collect_autonomy_stage_tasks(
+    *, target_date: date, event_log: Path = AUTONOMY_STAGE_EVENT_LOG_PATH
+) -> list[dict[str, object]]:
+    if not event_log.exists():
+        return []
+    tasks: list[dict[str, object]] = []
+    for line in event_log.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        try:
+            record = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if record.get("event") != "autonomy_stage.review_needed":
+            continue
+        stage = record.get("stage", "unknown")
+        tasks.append(
+            {
+                "task": f"Review autonomy stage ({stage})",
+                "owner": "ops",
+                "due": str(target_date),
+                "estimate_min": 30,
+                "last_worklog": record.get("ts", "n/a"),
+                "notes": "StageGuard review needed",
+            }
+        )
+    return tasks
+
+
+def _collect_ops_agenda_events(
+    *, target_date: date, event_log: Path = OPS_AGENDA_EVENT_LOG_PATH
+) -> list[dict[str, object]]:
+    if not event_log.exists():
+        return []
+    tasks: list[dict[str, object]] = []
+    for line in event_log.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        try:
+            record = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        event = record.get("event")
+        if event not in {"ops.agenda.todo", "ops.agenda.task_added"}:
+            continue
+        due = record.get("due") or str(target_date)
+        tasks.append(
+            {
+                "task": record.get("task") or "Ops follow-up",
+                "owner": record.get("owner") or "ops",
+                "due": due,
+                "estimate_min": int(record.get("estimate_min", 45)),
+                "last_worklog": record.get("ts", "n/a"),
+                "notes": record.get("runbook_ref") or record.get("source") or "ops.agenda",
+            }
+        )
+    return tasks
 
 
 def _collect_access_review_tasks(

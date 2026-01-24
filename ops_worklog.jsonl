@@ -128,3 +128,19 @@
 {"schema_version": "ops.worklog.v1", "ts": "2026-01-18T13:40:24.274685Z", "task": "compliance_regression", "duration_min": 45, "owner": "ops", "mode": "paper", "source": "cli", "related_artifacts": ["metrics/compliance_regression.json"], "health_state": "ok", "board_mode": "normal", "notes": "violations=1"}
 {"schema_version": "ops.worklog.v1", "ts": "2026-01-18T13:40:45.253403Z", "task": "compliance_regression", "duration_min": 45, "owner": "ops", "mode": "paper", "source": "cli", "related_artifacts": ["metrics/compliance_regression.json"], "health_state": "ok", "board_mode": "normal", "notes": "violations=1"}
 {"schema_version": "ops.worklog.v1", "ts": "2026-01-18T13:52:14.165282Z", "task": "compliance_regression", "duration_min": 45, "owner": "ops", "mode": "paper", "source": "cli", "related_artifacts": ["metrics/compliance_regression.json"], "health_state": "ok", "board_mode": "normal", "notes": "violations=1"}
+{"timestamp": "2026-01-24T00:35:25Z", "task": "broker_api_recovery", "status": "pending", "alert_id": "broker-fa0c21b5ebed", "runbook": "RUN-BROKER-API-02"}
+{"timestamp": "2026-01-24T00:35:25Z", "task": "emergency_playbook", "scenario": "api_failover", "runbook": "RUN-BROKER-API-02", "status": "simulated"}
+{"timestamp": "2026-01-24T00:36:15Z", "task": "broker_api_recovery", "status": "pending", "alert_id": "broker-7808fc826b5f", "runbook": "RUN-BROKER-API-02"}
+{"timestamp": "2026-01-24T00:36:15Z", "task": "emergency_playbook", "scenario": "api_failover", "runbook": "RUN-BROKER-API-02", "status": "simulated"}
+{"timestamp": "2026-01-24T09:46:34Z", "task": "broker_api_failover", "status": "triggered", "plan_id": "failover-1769247994", "runbook": "RUN-BROKER-API-02"}
+{"timestamp": "2026-01-24T09:46:34Z", "task": "emergency_playbook", "scenario": "api_failover", "runbook": "RUN-BROKER-API-02", "status": "triggered"}
+{"timestamp": "2026-01-24T09:51:32Z", "task": "broker_api_failover", "status": "triggered", "plan_id": "failover-1769248292", "runbook": "RUN-BROKER-API-02"}
+{"timestamp": "2026-01-24T09:51:32Z", "task": "emergency_playbook", "scenario": "api_failover", "runbook": "RUN-BROKER-API-02", "status": "triggered"}
+{"timestamp": "2026-01-24T09:51:46Z", "task": "autonomy_stage_review", "request_id": "stage-3282608b", "requested_stage": "reduce_only", "status": "pending", "runbook_ref": "RUN-BROKER-API-03"}
+{"timestamp": "2026-01-24T09:53:57Z", "task": "autonomy_stage_review", "request_id": "stage-c56f96e5", "requested_stage": "reduce_only", "status": "pending", "runbook_ref": "RUN-BROKER-API-03"}
+{"timestamp": "2026-01-24T10:07:26Z", "task": "broker_api_recovery", "status": "pending", "alert_id": "broker-41ef84deead1", "runbook": "RUN-BROKER-API-02"}
+{"timestamp": "2026-01-24T10:07:26Z", "task": "emergency_playbook", "scenario": "api_failover", "runbook": "RUN-BROKER-API-02", "status": "simulated"}
+{"timestamp": "2026-01-24T10:07:26Z", "task": "autonomy_stage_review", "request_id": "stage-a0ec9a60", "requested_stage": "reduce_only", "status": "pending", "runbook_ref": "RUN-BROKER-API-03"}
+{"timestamp": "2026-01-24T10:08:00Z", "task": "broker_api_recovery", "status": "pending", "alert_id": "broker-3e2f03791eda", "runbook": "RUN-BROKER-API-02"}
+{"timestamp": "2026-01-24T10:08:00Z", "task": "emergency_playbook", "scenario": "api_failover", "runbook": "RUN-BROKER-API-02", "status": "simulated"}
+{"timestamp": "2026-01-24T10:08:00Z", "task": "autonomy_stage_review", "request_id": "stage-87f1ea38", "requested_stage": "reduce_only", "status": "pending", "runbook_ref": "RUN-BROKER-API-03"}

@@ -24,4 +24,4 @@
 
 ## Supporting Documents
 - Audit pack: (attach after audit bundle generation)
-- Ledger snapshot: reports/tax/ledger_summary_<period>.md
+- Ledger snapshot: reports/tax/ledger_summary_<mode>_<period>.md

@@ -1,0 +1,11 @@
+validation_playbook_id: FR47_shadow_gateway
+category: shadow_gateway
+owner: ops_manager
+description: Shadow Gateway failover/cache replay/chaos evidence tracking.
+required_fields:
+  - session_profile
+  - cache_checksum
+  - failover_timestamp
+  - replay_latency_ms
+  - approvers
+entries: []

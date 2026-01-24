@@ -135,6 +135,31 @@ class ShadowGuiApi:
                 events.append(record)
         return events
 
+    def record_event(
+        self,
+        *,
+        event_type: str,
+        payload: dict[str, Any],
+        token: str | None = None,
+    ) -> dict[str, object]:
+        self._require_token(token)
+        recorded_at = _utcnow_iso()
+        record = {
+            "event_type": event_type,
+            "payload": payload,
+            "ts": recorded_at,
+        }
+        self.event_log.parent.mkdir(parents=True, exist_ok=True)
+        with self.event_log.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(record, ensure_ascii=False))
+            handle.write("\n")
+        self._append_metrics({"ts": recorded_at, "event": event_type})
+        return {
+            "status": "ok",
+            "event_type": event_type,
+            "recorded_at": recorded_at,
+        }
+
     def status(self) -> dict[str, object]:
         tokens = _load_tokens(self.token_path)
         return {

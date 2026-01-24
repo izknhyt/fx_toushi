@@ -47,6 +47,23 @@ def _write_scenarios(
     )
 
 
+def _write_scenarios_empty_metrics(path: Path, bundle_path: Path) -> None:
+    path.write_text(
+        "\n".join(
+            [
+                "schema_version: regression.scenario.v1",
+                "scenarios:",
+                "  - id: scenario-1",
+                "    strategy_id: m1_baseline_ma_rsi",
+                "    window: 2021-01-01/2021-12-31",
+                f"    market_data_bundle: {bundle_path}",
+                "    expected_metrics: []",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+
 def test_regression_suite_runs(tmp_path: Path, monkeypatch: object) -> None:
     bundle_dir = _write_bundle(tmp_path / "bundle", close_values=[100, 101, 102, 103])
     scenarios_path = tmp_path / "scenarios.yaml"
@@ -92,12 +109,10 @@ def test_regression_suite_detects_bundle_mismatch(tmp_path: Path) -> None:
         "schema_version: regression.v1\nmax_concurrency: 1\nmax_runtime_per_scenario_min: 1\nscenarios: []\n",
         encoding="utf-8",
     )
-    try:
-        suite.run_all()
-    except RegressionDataMismatch:
-        assert True
-    else:
-        raise AssertionError("RegressionDataMismatch not raised")
+    summary = suite.run_all()
+    assert summary.status == "fail"
+    assert summary.scenarios[0].status == "error"
+    assert "RegressionDataMismatch" in summary.scenarios[0].metrics.get("error", "")
 
 
 def test_regression_suite_flags_drift(tmp_path: Path) -> None:
@@ -116,3 +131,25 @@ def test_regression_suite_flags_drift(tmp_path: Path) -> None:
     )
     summary = suite.run_all()
     assert summary.status == "fail"
+
+
+def test_regression_suite_requires_expected_metrics(tmp_path: Path) -> None:
+    bundle_dir = _write_bundle(tmp_path / "bundle", close_values=[100, 101, 102, 103])
+    scenarios_path = tmp_path / "scenarios.yaml"
+    _write_scenarios_empty_metrics(scenarios_path, bundle_dir)
+    suite = RegressionBacktestSuite(
+        scenarios_path=scenarios_path,
+        config_path=tmp_path / "regression.yaml",
+        output_root=tmp_path / "reports",
+        metrics_path=tmp_path / "metrics.jsonl",
+    )
+    (tmp_path / "regression.yaml").write_text(
+        "schema_version: regression.v1\nmax_concurrency: 1\nmax_runtime_per_scenario_min: 1\nscenarios: []\n",
+        encoding="utf-8",
+    )
+    try:
+        suite.run_all()
+    except ValueError as exc:
+        assert "missing expected_metrics" in str(exc)
+    else:
+        raise AssertionError("ValueError not raised")

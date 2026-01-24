@@ -454,6 +454,8 @@ class AccessGovernanceService:
         open_actions = [action for action in actions if action.status != "done"]
         if open_actions:
             raise AccessReviewIncomplete("open actions remain")
+        if evidence_path is None:
+            raise EvidenceValidationError("evidence required")
         if evidence_path and not evidence_path.exists():
             raise EvidenceValidationError(f"artifact missing: {evidence_path}")
         updated = AccessReview(
@@ -689,7 +691,8 @@ def _latest_by_key(path: Path, *, key: str) -> dict[str, Mapping[str, object]]:
 def _review_id(scope: str) -> str:
     now = datetime.now(timezone.utc)
     label = scope.replace(" ", "-")
-    return f"access-review-{label}-{now:%Y%m%d}"
+    suffix = uuid.uuid4().hex[:6]
+    return f"access-review-{label}-{now:%Y%m%d}-{suffix}"
 
 
 def _utcnow_iso() -> str:
@@ -700,7 +703,10 @@ def _parse_ts(value: str | None) -> datetime | None:
     if not value:
         return None
     text = value.replace("Z", "+00:00")
-    return datetime.fromisoformat(text)
+    parsed = datetime.fromisoformat(text)
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed
 
 
 def _is_overdue(due_at: str | None) -> bool:

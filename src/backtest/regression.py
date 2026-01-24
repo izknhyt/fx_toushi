@@ -126,13 +126,16 @@ class RegressionBacktestSuite:
     def _run(self, scenarios: list[RegressionScenario]) -> RegressionRunSummary:
         if not scenarios:
             raise ValueError("no regression scenarios configured")
+        _validate_scenarios(scenarios)
         run_id = _run_id()
         started_at = _utcnow_iso()
         output_dir = self._output_root / run_id
         output_dir.mkdir(parents=True, exist_ok=True)
         config = _load_config(self._config_path)
-        max_concurrency = max(1, int(config.get("max_concurrency", 2)))
-        max_runtime_min = max(1, int(config.get("max_runtime_per_scenario_min", 20)))
+        max_concurrency = _coerce_positive_int(config.get("max_concurrency", 2), 2)
+        max_runtime_min = _coerce_positive_int(
+            config.get("max_runtime_per_scenario_min", 20), 20
+        )
         results = asyncio.run(
             _run_scenarios(
                 scenarios,
@@ -178,11 +181,16 @@ async def _run_scenarios(
     semaphore = asyncio.Semaphore(max_concurrency)
 
     async def runner(scenario: RegressionScenario) -> RegressionResult:
-        async with semaphore:
-            return await asyncio.wait_for(
-                asyncio.to_thread(_execute_scenario, scenario, output_dir),
-                timeout=max_runtime_min * 60,
-            )
+        try:
+            async with semaphore:
+                return await asyncio.wait_for(
+                    asyncio.to_thread(_execute_scenario, scenario, output_dir),
+                    timeout=max_runtime_min * 60,
+                )
+        except asyncio.TimeoutError:
+            return _error_result(scenario, "timeout")
+        except Exception as exc:  # pragma: no cover - defensive fallback
+            return _error_result(scenario, f"{type(exc).__name__}: {exc}")
 
     tasks = [asyncio.create_task(runner(scenario)) for scenario in scenarios]
     return list(await asyncio.gather(*tasks))
@@ -209,6 +217,16 @@ def _execute_scenario(scenario: RegressionScenario, output_dir: Path) -> Regress
         metrics=metrics,
         drifts=drifts,
         artifacts=artifacts,
+    )
+
+
+def _error_result(scenario: RegressionScenario, message: str) -> RegressionResult:
+    return RegressionResult(
+        scenario_id=scenario.scenario_id,
+        status="error",
+        metrics={"error": message},
+        drifts=[],
+        artifacts=[],
     )
 
 
@@ -243,16 +261,13 @@ def _write_manifest_override(
     dataset_sha256: str,
 ) -> Path:
     manifest_path = output_dir / f"manifest_{scenario_id}.yaml"
+    payload = {
+        "strategies": {
+            strategy_id: {"dataset_path": dataset_path, "dataset_sha256": dataset_sha256}
+        }
+    }
     manifest_path.write_text(
-        "\n".join(
-            [
-                "strategies:",
-                f"  {strategy_id}:",
-                f"    dataset_path: {dataset_path}",
-                f"    dataset_sha256: {dataset_sha256}",
-            ]
-        )
-        + "\n",
+        yaml.safe_dump(payload, sort_keys=False, default_flow_style=False),
         encoding="utf-8",
     )
     return manifest_path
@@ -276,14 +291,28 @@ def _evaluate_metrics(
                 )
             )
             continue
-        delta = abs(float(actual) - expectation.target)
+        try:
+            actual_value = float(actual)
+        except (TypeError, ValueError):
+            drifts.append(
+                RegressionDrift(
+                    scenario_id=scenario.scenario_id,
+                    metric=expectation.metric,
+                    expected=expectation.target,
+                    actual=None,
+                    tolerance=expectation.tolerance,
+                    notes="non_numeric_metric",
+                )
+            )
+            continue
+        delta = abs(actual_value - expectation.target)
         if delta > expectation.tolerance:
             drifts.append(
                 RegressionDrift(
                     scenario_id=scenario.scenario_id,
                     metric=expectation.metric,
                     expected=expectation.target,
-                    actual=float(actual),
+                    actual=actual_value,
                     tolerance=expectation.tolerance,
                     notes=f"delta={delta:.4f}",
                 )
@@ -306,16 +335,31 @@ def _load_scenarios(path: Path) -> list[RegressionScenario]:
         if not scenario_id or not strategy_id or not bundle:
             continue
         expected_metrics = entry.get("expected_metrics") or []
-        expectations = [
-            RegressionExpectation(
-                metric=str(metric.get("metric")),
-                target=float(metric.get("target")),
-                tolerance=float(metric.get("tolerance", 0)),
-                metric_state=metric.get("metric_state"),
+        expectations: list[RegressionExpectation] = []
+        for metric in expected_metrics:
+            if not isinstance(metric, dict):
+                continue
+            name = metric.get("metric")
+            if name is None:
+                continue
+            target_raw = metric.get("target")
+            try:
+                target = float(target_raw)
+            except (TypeError, ValueError):
+                continue
+            tolerance_raw = metric.get("tolerance", 0)
+            try:
+                tolerance = float(tolerance_raw)
+            except (TypeError, ValueError):
+                tolerance = 0.0
+            expectations.append(
+                RegressionExpectation(
+                    metric=str(name),
+                    target=target,
+                    tolerance=tolerance,
+                    metric_state=metric.get("metric_state"),
+                )
             )
-            for metric in expected_metrics
-            if isinstance(metric, dict) and metric.get("metric") is not None
-        ]
         scenarios.append(
             RegressionScenario(
                 scenario_id=str(scenario_id),
@@ -333,6 +377,22 @@ def _load_config(path: Path) -> dict[str, object]:
         return {}
     payload = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     return payload if isinstance(payload, dict) else {}
+
+
+def _validate_scenarios(scenarios: list[RegressionScenario]) -> None:
+    empty_metrics = [s.scenario_id for s in scenarios if not s.expected_metrics]
+    if empty_metrics:
+        raise ValueError(
+            "regression scenarios missing expected_metrics: "
+            + ", ".join(sorted(empty_metrics))
+        )
+
+
+def _coerce_positive_int(value: object, default: int) -> int:
+    try:
+        return max(1, int(float(value)))
+    except (TypeError, ValueError):
+        return default
 
 
 def _write_summary_markdown(summary: RegressionRunSummary, output_dir: Path) -> Path:

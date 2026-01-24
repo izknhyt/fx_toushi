@@ -212,7 +212,8 @@ class JournalRepository:
     def list_notes(self, *, entry_id: str) -> list[Mapping[str, Any]]:
         cursor = self._conn.cursor()
         rows = cursor.execute(
-            "SELECT * FROM journal_notes WHERE entry_id = ? ORDER BY created_ts", (entry_id,)
+            "SELECT * FROM journal_notes WHERE entry_id = ? ORDER BY created_ts, rowid",
+            (entry_id,),
         ).fetchall()
         notes: list[Mapping[str, Any]] = []
         for row in rows:

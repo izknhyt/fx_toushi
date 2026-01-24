@@ -169,9 +169,10 @@ class ResyncCoordinator:
                     chunk_hours=chunk_hours,
                 )
                 provider_used = result.provider_used
+                job_retry_count = int(result.retry_count)
                 if provider_used and provider_used not in failover_used:
                     failover_used.append(provider_used)
-                total_retries += result.retry_count
+                total_retries += job_retry_count
                 bars = sum(len(frame.bars) for frame in result.frames)
                 jobs_completed += 1
                 self._append_queue_update(
@@ -179,6 +180,7 @@ class ResyncCoordinator:
                     status="completed",
                     provider_used=provider_used,
                     bars=bars,
+                    retry_count=job_retry_count,
                 )
                 results.append(
                     {
@@ -197,6 +199,7 @@ class ResyncCoordinator:
                     job,
                     status="failed",
                     error=str(exc),
+                    retry_count=job.retry_count,
                 )
                 results.append(
                     {
@@ -225,6 +228,7 @@ class ResyncCoordinator:
         provider_used: str | None = None,
         bars: int | None = None,
         error: str | None = None,
+        retry_count: int | None = None,
     ) -> None:
         payload: dict[str, Any] = {
             "ts": _utcnow_iso(),
@@ -239,7 +243,7 @@ class ResyncCoordinator:
             "priority": job.priority,
             "failover_plan": list(job.failover_plan),
             "manual_csv_required": job.manual_csv_required or status == "manual_csv_required",
-            "retry_count": job.retry_count,
+            "retry_count": int(retry_count if retry_count is not None else job.retry_count),
             "status": status,
         }
         if provider_used:

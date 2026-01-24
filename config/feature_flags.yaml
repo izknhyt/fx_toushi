@@ -25,8 +25,16 @@ defaults:
     governance.idea_pipeline_enabled: false
     finance.backoffice_enabled: false
     governance.secure_share_cli: false
+    brokers.api_enabled: false
+    brokers.api_sandbox_only: true
+    brokers.monitor_enabled: false
+    brokers.certification_required: true
+    brokers.autonomy_stage_enabled: false
     accounts.multi_portfolio: false
     shadow.slack_enabled: false
+    shadow.gateway.streaming: false
+    shadow.gateway.offline_cache: true
+    shadow.gateway.force_failover: false
     alpha.profit_loop_enabled: true
     alpha.dynamic_sizing: false
     alpha.auto_execute: false
@@ -47,8 +55,16 @@ defaults:
     governance.idea_pipeline_enabled: false
     finance.backoffice_enabled: false
     governance.secure_share_cli: false
+    brokers.api_enabled: false
+    brokers.api_sandbox_only: true
+    brokers.monitor_enabled: false
+    brokers.certification_required: true
+    brokers.autonomy_stage_enabled: false
     accounts.multi_portfolio: false
     shadow.slack_enabled: false
+    shadow.gateway.streaming: true
+    shadow.gateway.offline_cache: true
+    shadow.gateway.force_failover: false
     alpha.profit_loop_enabled: true
     alpha.dynamic_sizing: false
     alpha.auto_execute: false
@@ -69,8 +85,16 @@ defaults:
     governance.idea_pipeline_enabled: false
     finance.backoffice_enabled: false
     governance.secure_share_cli: false
+    brokers.api_enabled: false
+    brokers.api_sandbox_only: true
+    brokers.monitor_enabled: false
+    brokers.certification_required: true
+    brokers.autonomy_stage_enabled: false
     accounts.multi_portfolio: false
     shadow.slack_enabled: false
+    shadow.gateway.streaming: false
+    shadow.gateway.offline_cache: true
+    shadow.gateway.force_failover: false
     alpha.profit_loop_enabled: false
     alpha.dynamic_sizing: false
     alpha.auto_execute: false
@@ -121,6 +145,22 @@ definitions:
       - "tradectl config flags --set accounts.multi_portfolio=false --profile <mode>"
     telemetry_checks:
       - "metrics/accounts_aggregator.jsonl"
+  brokers.autonomy_stage_enabled:
+    description: "AutonomyStageGuardを有効化し、API自動送信のステージ制御を適用する。"
+    milestone: "M3"
+    owner: ops_manager
+    category: dangerous
+    runbook_ref: "RUN-BROKER-API-03"
+    enable_conditions:
+      - "BrokerCertificationSuite が直近で pass を維持"
+      - "FillShadow 24h アラートゼロ"
+      - "ops_readiness_score >= 70"
+    rollback:
+      - "tradectl config flags --set brokers.autonomy_stage_enabled=false --profile <mode>"
+      - "tradectl broker stage set --stage manual_only --approve ops_manager"
+    telemetry_checks:
+      - "metrics/ops_readiness.jsonl"
+      - "logs/audit/autonomy_stage.jsonl"
   shadow.slack_enabled:
     description: "Slack Shadowブリッジを有効化し、Shadowチャンネルへ通知する。"
     milestone: "M2"
@@ -134,6 +174,47 @@ definitions:
       - "tradectl config flags --set shadow.slack_enabled=false --profile <mode>"
     telemetry_checks:
       - "metrics/shadow_bridge.jsonl"
+  shadow.gateway.streaming:
+    description: "Shadow GatewayのSSE/WSストリーミング経路を有効化する。"
+    milestone: "M3"
+    owner: ops_manager
+    category: guarded
+    runbook_ref: "RUN-SHADOW-GW-01"
+    enable_conditions:
+      - "RUN-SHADOW-GW-01 のフェイルオーバー演習が完了している"
+      - "metrics/shadow_gateway.jsonl の availability が99.5%を維持"
+    rollback:
+      - "tradectl shadow gateway failover --restore --profile <mode>"
+      - "config/feature_flags.yaml で shadow.gateway.streaming=false を確認"
+    telemetry_checks:
+      - "metrics/shadow_gateway.jsonl"
+      - "logs/audit/shadow_gateway.jsonl"
+  shadow.gateway.offline_cache:
+    description: "Shadow Gatewayのオフラインキャッシュ/リプレイ機能を有効化する。"
+    milestone: "M3"
+    owner: ops_manager
+    category: guarded
+    runbook_ref: "RUN-SHADOW-GW-02"
+    enable_conditions:
+      - "RUN-SHADOW-GW-02 のキャッシュリプレイ演習が完了している"
+      - "reports/ops/shadow_gateway/cache_replay.md が生成される"
+    rollback:
+      - "config/feature_flags.yaml で shadow.gateway.offline_cache=false を設定"
+    telemetry_checks:
+      - "metrics/shadow_gateway.jsonl"
+      - "reports/ops/shadow_gateway/cache_replay.md"
+  shadow.gateway.force_failover:
+    description: "Shadow GatewayをSecondaryエンドポイントへ強制切替する。"
+    milestone: "M3"
+    owner: ops_manager
+    category: dangerous
+    runbook_ref: "RUN-SHADOW-GW-01"
+    enable_conditions:
+      - "フェイルオーバードリルの承認が完了している"
+    rollback:
+      - "tradectl shadow gateway failover --restore --profile <mode>"
+    telemetry_checks:
+      - "logs/audit/shadow_gateway.jsonl"
   risk_disclosure_enforce:
     description: "リスク開示プロンプトの強制モード。承諾なしでは危険操作をブロックする。"
     milestone: "M1.1"
@@ -205,6 +286,56 @@ definitions:
       - "tradectl config flags --set governance.secure_share_cli=false --profile <mode>"
     telemetry_checks:
       - "metrics/secure_share.jsonl"
+  brokers.api_enabled:
+    description: "Broker API接続と発注経路を有効化する。"
+    milestone: "M3"
+    owner: ops_manager
+    category: dangerous
+    runbook_ref: "RUN-BROKER-API-01"
+    enable_conditions:
+      - "RUN-BROKER-API-01のsandbox接続検証を完了"
+      - "Access governance enforcementが有効であること"
+    rollback:
+      - "tradectl config flags --set brokers.api_enabled=false --profile <mode>"
+      - "Broker APIがsandboxのみへフォールバックすることを確認"
+    telemetry_checks:
+      - "metrics/broker_api.jsonl"
+      - "logs/audit/broker_orders.jsonl"
+  brokers.api_sandbox_only:
+    description: "Broker APIをsandboxエンドポイントのみに限定する。"
+    milestone: "M3"
+    owner: ops_manager
+    category: guarded
+    runbook_ref: "RUN-BROKER-API-01"
+    enable_conditions:
+      - "Sandbox接続の疎通とSmoke結果が記録済み"
+    rollback:
+      - "tradectl config flags --set brokers.api_sandbox_only=true --profile <mode>"
+    telemetry_checks:
+      - "metrics/broker_api.jsonl"
+  brokers.monitor_enabled:
+    description: "Broker APIの監視とレートリミット監査を有効化する。"
+    milestone: "M3"
+    owner: ops_manager
+    category: guarded
+    runbook_ref: "RUN-BROKER-API-02"
+    enable_conditions:
+      - "Broker API sandbox smokeが完了"
+    rollback:
+      - "tradectl config flags --set brokers.monitor_enabled=false --profile <mode>"
+    telemetry_checks:
+      - "metrics/broker_api.jsonl"
+      - "metrics/broker_rate_limit.jsonl"
+  brokers.certification_required:
+    description: "Broker API認定フローを強制する。"
+    milestone: "M3"
+    owner: ops_manager
+    category: guarded
+    runbook_ref: "RUN-BROKER-API-03"
+    enable_conditions:
+      - "BrokerCertificationSuiteをPassしたこと"
+    rollback:
+      - "tradectl config flags --set brokers.certification_required=false --profile <mode>"
   data.rate_limit_auto_stage:
     description: "RateLimitGuard のステージ自動適用。Stage候補を自動適用し、監査ログへ記録する。"
     milestone: "M1.1"

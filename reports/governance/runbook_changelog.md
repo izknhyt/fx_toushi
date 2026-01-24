@@ -20,3 +20,6 @@
 | 2026-01-18 | STRAT-SUNSET-01 | v0.1 | Added strategy sunset workflow runbook. | Codex |
 | 2026-01-19 | SEC-ACCESS-01 | v0.1 | Added access governance review runbook. | Codex |
 | 2026-01-19 | STRAT-M1-VALIDATION | v1.3 | Added regression backtest review step. | Codex |
+| 2026-01-23 | RUN-BROKER-API-01 | v0.1 | Added broker API sandbox validation runbook. | Codex |
+| 2026-01-24 | RUN-SHADOW-GW-01 | v0.1 | Added Shadow Gateway failover drill runbook. | Codex |
+| 2026-01-24 | RUN-SHADOW-GW-02 | v0.1 | Added Shadow Gateway cache replay drill runbook. | Codex |

@@ -1,0 +1,3 @@
+{"ts": "2026-01-24T09:32:42Z", "metric": "broker_shadow", "drift_count": 1, "severity_counts": {"major": 1}}
+{"ts": "2026-01-24T10:07:26Z", "metric": "broker_shadow", "drift_count": 1, "severity_counts": {"major": 1}}
+{"ts": "2026-01-24T10:08:00Z", "metric": "broker_shadow", "drift_count": 1, "severity_counts": {"major": 1}}

@@ -1,0 +1,23 @@
+schema_version: broker.certification.plan.v1
+plan_id: broker_certification_sandbox
+adapter: sandbox
+profile: paper
+simulate: false
+feature_flags: config/feature_flags.yaml
+rate_limit_path: config/brokers/sandbox.yaml
+slo_path: config/brokers/slo.yaml
+evidence_root: evidence/broker_certification
+metrics_path: metrics/broker_certification.jsonl
+scenarios:
+  - name: sandbox_connectivity
+    type: sandbox_connectivity
+  - name: reduce_only_dispatch
+    type: reduce_only_dispatch
+    symbol: EURUSD
+    side: buy
+    quantity: 0.1
+    entry_price: 1.1000
+  - name: rate_limit_burst
+    type: rate_limit_burst
+  - name: failover_switch
+    type: failover_switch

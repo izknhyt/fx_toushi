@@ -74,6 +74,7 @@ from .board import board as board_view
 from .board_diagnostics import board_diagnostics
 from .broker import (
     emergency_stop as broker_emergency_stop,
+    certify as broker_certify,
     monitor_limit as broker_monitor_limit,
     monitor_report as broker_monitor_report,
     monitor_status as broker_monitor_status,
@@ -82,6 +83,35 @@ from .broker import (
     shadow_export as broker_shadow_export,
     shadow_start as broker_shadow_start,
     shadow_status as broker_shadow_status,
+)
+from .broker_orders import (
+    orders_export as broker_orders_export,
+    orders_list as broker_orders_list,
+    orders_override as broker_orders_override,
+    orders_replay as broker_orders_replay,
+    orders_show as broker_orders_show,
+)
+from .broker_fault import (
+    simulate_fault as broker_simulate_fault,
+    simulate_list as broker_simulate_list,
+    simulate_verify as broker_simulate_verify,
+)
+from .broker_stage import (
+    stage_deny as broker_stage_deny,
+    stage_history as broker_stage_history,
+    stage_request as broker_stage_request,
+    stage_set as broker_stage_set,
+    stage_status as broker_stage_status,
+)
+from .release_cutover import (
+    CutoverBlockedError,
+    broker_cutover_generate,
+    broker_cutover_verify,
+)
+from .supervision import (
+    supervision_approve,
+    supervision_deny,
+    supervision_status,
 )
 from .compliance import (
     ack as compliance_ack,
@@ -150,6 +180,7 @@ from .governance_sunset import (
     plan as governance_sunset_plan,
 )
 from .shadow import shadow_replay, shadow_serve, shadow_status, shadow_test
+from .shadow_gateway import gateway_failover, gateway_status
 from .kill_switch import (
     DEFAULT_KILL_SWITCH_AUDIT,
     DEFAULT_KILL_SWITCH_LOG,
@@ -1830,6 +1861,7 @@ def create_cli_app() -> typer.Typer:
     journal_app = typer.Typer(help="Trade journal utilities")
 
     release_app = typer.Typer(help="Release gate utilities")
+    release_cutover_app = typer.Typer(help="Release cutover utilities")
 
     @release_app.command("prepare")
     def release_prepare_command(
@@ -1892,6 +1924,37 @@ def create_cli_app() -> typer.Typer:
         _render_payload(console, payload, json_output=effective_json)
         if payload.get("status") != "ok":
             raise typer.Exit(code=1)
+
+    @release_cutover_app.command("broker")
+    def release_cutover_broker_command(
+        ctx: typer.Context,
+        profile: str = typer.Option("paper", "--profile", help="Cutover profile"),
+        version: str | None = typer.Option(None, "--version", help="Release version"),
+        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
+    ) -> None:
+        ctx_obj = ctx.obj or {"json": False}
+        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        payload = broker_cutover_generate(profile=profile, version=version)
+        _render_payload(console, payload, json_output=effective_json)
+
+    @release_cutover_app.command("verify")
+    def release_cutover_verify_command(
+        ctx: typer.Context,
+        profile: str = typer.Option("paper", "--profile", help="Cutover profile"),
+        version: str | None = typer.Option(None, "--version", help="Release version"),
+        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
+    ) -> None:
+        ctx_obj = ctx.obj or {"json": False}
+        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        try:
+            payload = broker_cutover_verify(profile=profile, version=version)
+        except CutoverBlockedError as exc:
+            payload = {"status": "blocked", "reason": str(exc)}
+            _render_payload(console, payload, json_output=effective_json)
+            raise typer.Exit(code=86)
+        _render_payload(console, payload, json_output=effective_json)
+
+    release_app.add_typer(release_cutover_app, name="cutover")
 
     model_risk_app = typer.Typer(help="Model risk register utilities")
 
@@ -2908,28 +2971,37 @@ def create_cli_app() -> typer.Typer:
     broker_monitor_app = typer.Typer(help="Broker monitor utilities")
     broker_shadow_app = typer.Typer(help="Broker shadow utilities")
     broker_order_app = typer.Typer(help="Broker order utilities")
+    broker_stage_app = typer.Typer(help="Broker autonomy stage guard")
+    broker_fault_app = typer.Typer(help="Broker fault simulation utilities")
 
     @broker_shadow_app.command("start")
     def broker_shadow_start_command(
         ctx: typer.Context,
+        adapter: str = typer.Option("sandbox", "--broker", help="Broker adapter"),
+        profile: str = typer.Option("paper", "--profile", help="Profile (paper/live)"),
         scenario: str | None = typer.Option(None, "--scenario", help="Scenario identifier"),
         strict: bool = typer.Option(False, "--strict", help="Enable strict mode"),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON."),
     ) -> None:
         ctx_obj = ctx.obj or {"json": False}
         effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
-        payload = broker_shadow_start(scenario=scenario, strict=strict)
+        payload = broker_shadow_start(
+            adapter=adapter, profile=profile, scenario=scenario, strict=strict
+        )
         _render_payload(console, payload, json_output=effective_json)
 
     @broker_shadow_app.command("status")
     def broker_shadow_status_command(
         ctx: typer.Context,
         alerts: bool = typer.Option(False, "--alerts", help="Include alert summary"),
+        window_minutes: int = typer.Option(
+            60, "--window", help="Lookback window in minutes"
+        ),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON."),
     ) -> None:
         ctx_obj = ctx.obj or {"json": False}
         effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
-        payload = broker_shadow_status(alerts=alerts)
+        payload = broker_shadow_status(alerts=alerts, window_minutes=window_minutes)
         _render_payload(console, payload, json_output=effective_json)
 
     @broker_shadow_app.command("export")
@@ -2941,7 +3013,10 @@ def create_cli_app() -> typer.Typer:
     ) -> None:
         ctx_obj = ctx.obj or {"json": False}
         effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
-        payload = {"status": "ok", "path": broker_shadow_export(date=date_value, destination=destination)}
+        payload = {
+            "status": "ok",
+            "path": broker_shadow_export(date=date_value, destination=destination),
+        }
         _render_payload(console, payload, json_output=effective_json)
 
     @broker_monitor_app.command("status")
@@ -2994,15 +3069,159 @@ def create_cli_app() -> typer.Typer:
         payload = broker_monitor_report(window=window, output_dir=output_dir)
         _render_payload(console, payload, json_output=effective_json)
 
+    @broker_stage_app.command("status")
+    def broker_stage_status_command(
+        ctx: typer.Context,
+        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON."),
+    ) -> None:
+        ctx_obj = ctx.obj or {"json": False}
+        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        payload = broker_stage_status()
+        _render_payload(console, payload, json_output=effective_json)
+
+    @broker_stage_app.command("set")
+    def broker_stage_set_command(
+        ctx: typer.Context,
+        request: str = typer.Option(..., "--stage", help="Stage to request/approve"),
+        approve: str | None = typer.Option(None, "--approve", help="Approve as actor"),
+        request_id: str | None = typer.Option(None, "--request-id", help="Request ID to approve"),
+        reason: str | None = typer.Option(None, "--reason", help="Reason for stage change"),
+        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON."),
+    ) -> None:
+        ctx_obj = ctx.obj or {"json": False}
+        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        payload = broker_stage_set(request=request, approve=approve, request_id=request_id, reason=reason)
+        _render_payload(console, payload, json_output=effective_json)
+
+    @broker_stage_app.command("request")
+    def broker_stage_request_command(
+        ctx: typer.Context,
+        stage: str = typer.Option(..., "--stage", help="Stage to request"),
+        reason: str | None = typer.Option(None, "--reason", help="Reason for request"),
+        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON."),
+    ) -> None:
+        ctx_obj = ctx.obj or {"json": False}
+        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        payload = broker_stage_request(stage=stage, reason=reason)
+        _render_payload(console, payload, json_output=effective_json)
+
+    @broker_stage_app.command("deny")
+    def broker_stage_deny_command(
+        ctx: typer.Context,
+        request_id: str = typer.Option(..., "--request-id", help="Request ID to deny"),
+        actor: str = typer.Option("ops_manager", "--actor", help="Actor denying request"),
+        reason: str | None = typer.Option(None, "--reason", help="Reason for denial"),
+        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON."),
+    ) -> None:
+        ctx_obj = ctx.obj or {"json": False}
+        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        payload = broker_stage_deny(request_id=request_id, actor=actor, reason=reason)
+        _render_payload(console, payload, json_output=effective_json)
+
+    @broker_stage_app.command("history")
+    def broker_stage_history_command(
+        ctx: typer.Context,
+        limit: int = typer.Option(20, "--limit", help="History limit"),
+        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON."),
+    ) -> None:
+        ctx_obj = ctx.obj or {"json": False}
+        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        payload = broker_stage_history(limit=limit)
+        _render_payload(console, payload, json_output=effective_json)
+
+    @broker_fault_app.command("fault")
+    def broker_fault_command(
+        ctx: typer.Context,
+        scenario: str = typer.Option(..., "--scenario", help="Fault scenario id"),
+        iterations: int = typer.Option(1, "--iterations", help="Iterations"),
+        auto_stage: bool = typer.Option(True, "--auto-stage/--no-auto-stage", help="Auto stage"),
+        attach_evidence: bool = typer.Option(
+            False, "--attach-evidence", help="Attach evidence artifacts"
+        ),
+        dry_run: bool = typer.Option(True, "--dry-run/--live", help="Dry-run simulation"),
+        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON."),
+    ) -> None:
+        ctx_obj = ctx.obj or {"json": False}
+        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        payload = broker_simulate_fault(
+            scenario=scenario,
+            iterations=iterations,
+            auto_stage=auto_stage,
+            attach_evidence=attach_evidence,
+            dry_run=dry_run,
+        )
+        _render_payload(console, payload, json_output=effective_json)
+
+    @broker_fault_app.command("list")
+    def broker_fault_list_command(
+        ctx: typer.Context,
+        fault_type: str | None = typer.Option(None, "--filter", help="Fault type filter"),
+        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON."),
+    ) -> None:
+        ctx_obj = ctx.obj or {"json": False}
+        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        payload = broker_simulate_list(fault_type=fault_type, json_output=effective_json)
+        _render_payload(console, payload, json_output=effective_json)
+
+    @broker_fault_app.command("verify")
+    def broker_fault_verify_command(
+        ctx: typer.Context,
+        scenario: str = typer.Option(..., "--scenario", help="Fault scenario id"),
+        expected_stage: str | None = typer.Option(None, "--expected-stage", help="Expected stage"),
+        expected_alert: str | None = typer.Option(None, "--expected-alert", help="Expected alert"),
+        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON."),
+    ) -> None:
+        ctx_obj = ctx.obj or {"json": False}
+        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        payload = broker_simulate_verify(
+            scenario=scenario, expected_stage=expected_stage, expected_alert=expected_alert
+        )
+        _render_payload(console, payload, json_output=effective_json)
+
+    @broker_app.command("certify")
+    def broker_certify_command(
+        ctx: typer.Context,
+        plan: Path = typer.Option(
+            Path("config") / "certification" / "sandbox.yaml", "--plan", help="Plan YAML"
+        ),
+        principal_id: str | None = typer.Option(
+            None, "--principal-id", help="Access principal ID"
+        ),
+        device_id: str | None = typer.Option(None, "--device-id", help="Access device ID"),
+        report_dir: Path = typer.Option(
+            Path("reports") / "validation_log", "--report-dir", help="Validation log dir"
+        ),
+        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON."),
+    ) -> None:
+        ctx_obj = ctx.obj or {"json": False}
+        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        payload = broker_certify(
+            plan_path=plan,
+            principal_id=principal_id,
+            device_id=device_id,
+            report_dir=report_dir,
+        )
+        _render_payload(console, payload, json_output=effective_json)
+
     @broker_order_app.command("submit")
     def broker_order_submit_command(
         ctx: typer.Context,
-        symbol: str = typer.Option(..., "--symbol", help="Symbol"),
-        side: str = typer.Option(..., "--side", help="Side (buy/sell)"),
-        quantity: float = typer.Option(..., "--qty", help="Quantity"),
+        symbol: str | None = typer.Option(None, "--symbol", help="Symbol"),
+        side: str | None = typer.Option(None, "--side", help="Side (buy/sell)"),
+        quantity: float | None = typer.Option(None, "--qty", help="Quantity"),
         mode: str = typer.Option("paper", "--mode", help="Mode (paper/live)"),
         price: float | None = typer.Option(None, "--price", help="Optional limit price"),
         reason: str | None = typer.Option(None, "--reason", help="Reason for submission"),
+        ticket_path: Path | None = typer.Option(
+            None, "--ticket", help="Ticket JSON payload to submit"
+        ),
+        adapter: str = typer.Option("sandbox", "--broker", help="Broker adapter"),
+        principal_id: str | None = typer.Option(
+            None, "--principal-id", help="Access principal identifier"
+        ),
+        device_id: str | None = typer.Option(
+            None, "--device-id", help="Access device identifier"
+        ),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON."),
     ) -> None:
         ctx_obj = ctx.obj or {"json": False}
@@ -3015,10 +3234,102 @@ def create_cli_app() -> typer.Typer:
                 mode=mode,
                 price=price,
                 reason=reason,
+                ticket_path=ticket_path,
+                adapter=adapter,
+                principal_id=principal_id,
+                device_id=device_id,
             )
         except Exception as exc:
             typer.echo(f"[broker.order.submit] {exc}", err=True)
             raise typer.Exit(1) from exc
+        _render_payload(console, payload, json_output=effective_json)
+
+    @broker_order_app.command("list")
+    def broker_orders_list_command(
+        ctx: typer.Context,
+        mode: str = typer.Option("paper", "--mode", help="Mode (paper/live)"),
+        status: list[str] = typer.Option(
+            [], "--status", help="Filter by status (repeatable).", show_default=False
+        ),
+        strategy_id: str | None = typer.Option(None, "--strategy", help="Strategy ID filter"),
+        include_recovery: bool = typer.Option(
+            False, "--include-recovery", help="Include recovery plan details"
+        ),
+        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON."),
+    ) -> None:
+        ctx_obj = ctx.obj or {"json": False}
+        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        payload = broker_orders_list(
+            mode=mode, status=status or None, strategy_id=strategy_id, include_recovery=include_recovery
+        )
+        _render_payload(console, payload, json_output=effective_json)
+
+    @broker_order_app.command("show")
+    def broker_orders_show_command(
+        ctx: typer.Context,
+        order_id: str = typer.Option(..., "--order", help="Order ID"),
+        mode: str = typer.Option("paper", "--mode", help="Mode (paper/live)"),
+        include_history: bool = typer.Option(
+            False, "--include-history", help="Include full state history"
+        ),
+        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON."),
+    ) -> None:
+        ctx_obj = ctx.obj or {"json": False}
+        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        payload = broker_orders_show(order_id=order_id, mode=mode, include_history=include_history)
+        _render_payload(console, payload, json_output=effective_json)
+
+    @broker_order_app.command("override")
+    def broker_orders_override_command(
+        ctx: typer.Context,
+        order_id: str = typer.Option(..., "--order", help="Order ID"),
+        action: str = typer.Option(..., "--action", help="retry|abort|manual"),
+        mode: str = typer.Option("paper", "--mode", help="Mode (paper/live)"),
+        note: str | None = typer.Option(None, "--note", help="Operator note"),
+        runbook_step: str | None = typer.Option(None, "--runbook-step", help="Runbook step"),
+        assign: str | None = typer.Option(None, "--assign", help="Assign owner"),
+        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON."),
+    ) -> None:
+        ctx_obj = ctx.obj or {"json": False}
+        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        payload = broker_orders_override(
+            order_id=order_id,
+            action=action,
+            mode=mode,
+            note=note,
+            runbook_step=runbook_step,
+            assign=assign,
+        )
+        _render_payload(console, payload, json_output=effective_json)
+
+    @broker_order_app.command("replay")
+    def broker_orders_replay_command(
+        ctx: typer.Context,
+        order_id: str = typer.Option(..., "--order", help="Order ID"),
+        mode: str = typer.Option("paper", "--mode", help="Mode (paper/live)"),
+        compare_fill_shadow: bool = typer.Option(
+            False, "--compare-fill-shadow", help="Compare FillShadow summary"
+        ),
+        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON."),
+    ) -> None:
+        ctx_obj = ctx.obj or {"json": False}
+        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        payload = broker_orders_replay(
+            order_id=order_id, mode=mode, compare_fill_shadow=compare_fill_shadow
+        )
+        _render_payload(console, payload, json_output=effective_json)
+
+    @broker_order_app.command("export")
+    def broker_orders_export_command(
+        ctx: typer.Context,
+        mode: str = typer.Option("paper", "--mode", help="Mode (paper/live)"),
+        dest: Path = typer.Option(..., "--dest", help="Destination file path"),
+        fmt: str = typer.Option("jsonl", "--format", help="jsonl|csv"),
+        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON."),
+    ) -> None:
+        ctx_obj = ctx.obj or {"json": False}
+        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        payload = broker_orders_export(mode=mode, dest=dest, fmt=fmt)
         _render_payload(console, payload, json_output=effective_json)
 
     @broker_app.command("emergency-stop")
@@ -3036,6 +3347,8 @@ def create_cli_app() -> typer.Typer:
     broker_app.add_typer(broker_order_app, name="order")
     broker_app.add_typer(broker_shadow_app, name="shadow")
     broker_app.add_typer(broker_monitor_app, name="monitor")
+    broker_app.add_typer(broker_stage_app, name="stage")
+    broker_app.add_typer(broker_fault_app, name="simulate")
     app.add_typer(broker_app, name="broker")
 
     shadow_app = typer.Typer(help="Shadow bridge utilities")
@@ -3165,6 +3478,49 @@ def create_cli_app() -> typer.Typer:
             dry_run=dry_run,
         )
         _render_payload(console, payload, json_output=effective_json)
+
+    shadow_gateway_app = typer.Typer(help="Shadow gateway controls")
+
+    @shadow_gateway_app.command("status")
+    def shadow_gateway_status_command(
+        ctx: typer.Context,
+        profile: str = typer.Option("paper", "--profile", help="Feature flag profile"),
+        feature_flags_path: Path = typer.Option(
+            Path("config") / "feature_flags.yaml",
+            "--feature-flags",
+            help="Feature flag config path",
+            hidden=True,
+        ),
+        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
+    ) -> None:
+        ctx_obj = ctx.obj or {"json": False}
+        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        payload = gateway_status(profile=profile, feature_flags_path=feature_flags_path)
+        _render_payload(console, payload, json_output=effective_json)
+
+    @shadow_gateway_app.command("failover")
+    def shadow_gateway_failover_command(
+        ctx: typer.Context,
+        restore: bool = typer.Option(False, "--restore", help="Restore primary endpoint"),
+        profile: str = typer.Option("paper", "--profile", help="Feature flag profile"),
+        feature_flags_path: Path = typer.Option(
+            Path("config") / "feature_flags.yaml",
+            "--feature-flags",
+            help="Feature flag config path",
+            hidden=True,
+        ),
+        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
+    ) -> None:
+        ctx_obj = ctx.obj or {"json": False}
+        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        payload = gateway_failover(
+            profile=profile,
+            restore=restore,
+            feature_flags_path=feature_flags_path,
+        )
+        _render_payload(console, payload, json_output=effective_json)
+
+    shadow_app.add_typer(shadow_gateway_app, name="gateway")
 
     app.add_typer(shadow_app, name="shadow")
 
@@ -8501,7 +8857,50 @@ def create_cli_app() -> typer.Typer:
         payload = drill_abort(execution_id=execution_id, reason=reason, actor=actor)
         _render_payload(console, payload, json_output=effective_json)
 
+    supervision_app = typer.Typer(help="Supervision console utilities")
+
+    @supervision_app.command("status")
+    def supervision_status_command(
+        ctx: typer.Context,
+        limit: int = typer.Option(20, "--limit", help="Audit/event tail length"),
+        refresh_readiness: bool = typer.Option(
+            False, "--refresh-readiness", help="Recompute ops readiness"
+        ),
+        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
+    ) -> None:
+        ctx_obj = ctx.obj or {"json": False}
+        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        payload = supervision_status(limit=limit, refresh_readiness=refresh_readiness)
+        _render_payload(console, payload, json_output=effective_json)
+
+    @supervision_app.command("approve")
+    def supervision_approve_command(
+        ctx: typer.Context,
+        request_id: str = typer.Option(..., "--request-id", help="Stage request ID"),
+        actor: str = typer.Option("ops_manager", "--actor", help="Approver"),
+        reason: str | None = typer.Option(None, "--reason", help="Approval reason"),
+        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
+    ) -> None:
+        ctx_obj = ctx.obj or {"json": False}
+        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        payload = supervision_approve(request_id=request_id, actor=actor, reason=reason)
+        _render_payload(console, payload, json_output=effective_json)
+
+    @supervision_app.command("deny")
+    def supervision_deny_command(
+        ctx: typer.Context,
+        request_id: str = typer.Option(..., "--request-id", help="Stage request ID"),
+        actor: str = typer.Option("ops_manager", "--actor", help="Actor denying request"),
+        reason: str | None = typer.Option(None, "--reason", help="Denial reason"),
+        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
+    ) -> None:
+        ctx_obj = ctx.obj or {"json": False}
+        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        payload = supervision_deny(request_id=request_id, actor=actor, reason=reason)
+        _render_payload(console, payload, json_output=effective_json)
+
     app.add_typer(ops_app, name="ops")
+    app.add_typer(supervision_app, name="supervision")
     app.add_typer(emergency_app, name="emergency")
 
     return app

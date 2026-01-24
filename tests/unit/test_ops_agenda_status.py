@@ -149,3 +149,41 @@ def test_agenda_suppresses_completed_degraded_ack(tmp_path: Path) -> None:
 
     ctx = service.build_context(target_date=date(2026, 1, 12))
     assert ctx.critical_first == []
+
+
+def test_agenda_accepts_naive_worklog_ts(tmp_path: Path) -> None:
+    health_state_path = tmp_path / "snapshots" / "latest" / "health_state.json"
+    _write_health_state(
+        health_state_path,
+        [
+            {
+                "code": "clock_out_of_sync",
+                "detail": "drift_ms=3500",
+                "recommended_action": "runbook:RUN-TIME-01#sync",
+            }
+        ],
+        status="degraded",
+    )
+
+    worklog_path = tmp_path / "ops_worklog.jsonl"
+    worklog_path.write_text(
+        json.dumps(
+            {
+                "ts": "2026-01-12T00:00:00",
+                "task": "degraded_ack.registered",
+                "reason": "clock_out_of_sync",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    service = OpsAgendaService(
+        template_path=tmp_path / "docs" / "templates" / "daily_agenda.md",
+        output_dir=tmp_path / "docs" / "runbooks" / "daily_agenda",
+        health_state_path=health_state_path,
+        ops_worklog_path=worklog_path,
+    )
+
+    ctx = service.build_context(target_date=date(2026, 1, 12))
+    assert ctx.critical_first == []

@@ -1,0 +1,14 @@
+{"ts": "2026-01-24T09:32:42Z", "scenario_id": "latency_spike", "result": "ok", "stage_guard_action": "manual_only", "recovery_plan_id": null, "ops_todo_created": true}
+{"ts": "2026-01-24T09:32:42Z", "scenario_id": "latency_spike", "result": "ok", "stage_guard_action": null, "recovery_plan_id": null, "ops_todo_created": true}
+{"ts": "2026-01-24T09:32:42Z", "scenario_id": "partial_fill_loss", "result": "ok", "stage_guard_action": "reduce_only", "recovery_plan_id": null, "ops_todo_created": true}
+{"ts": "2026-01-24T09:32:42Z", "scenario_id": "latency_spike", "result": "ok", "stage_guard_action": "manual_only", "recovery_plan_id": null, "ops_todo_created": true}
+{"ts": "2026-01-24T09:34:20Z", "scenario_id": "latency_spike", "result": "ok", "stage_guard_action": null, "recovery_plan_id": null, "ops_todo_created": true}
+{"ts": "2026-01-24T10:05:46Z", "scenario_id": "latency_spike", "result": "ok", "stage_guard_action": "manual_only", "recovery_plan_id": null, "ops_todo_created": true}
+{"ts": "2026-01-24T10:07:26Z", "scenario_id": "latency_spike", "result": "ok", "stage_guard_action": "manual_only", "recovery_plan_id": null, "ops_todo_created": true}
+{"ts": "2026-01-24T10:07:26Z", "scenario_id": "latency_spike", "result": "ok", "stage_guard_action": null, "recovery_plan_id": null, "ops_todo_created": true}
+{"ts": "2026-01-24T10:07:26Z", "scenario_id": "partial_fill_loss", "result": "ok", "stage_guard_action": "reduce_only", "recovery_plan_id": null, "ops_todo_created": true}
+{"ts": "2026-01-24T10:07:26Z", "scenario_id": "latency_spike", "result": "ok", "stage_guard_action": "manual_only", "recovery_plan_id": null, "ops_todo_created": true}
+{"ts": "2026-01-24T10:08:00Z", "scenario_id": "latency_spike", "result": "ok", "stage_guard_action": "manual_only", "recovery_plan_id": null, "ops_todo_created": true}
+{"ts": "2026-01-24T10:08:00Z", "scenario_id": "latency_spike", "result": "ok", "stage_guard_action": null, "recovery_plan_id": null, "ops_todo_created": true}
+{"ts": "2026-01-24T10:08:00Z", "scenario_id": "partial_fill_loss", "result": "ok", "stage_guard_action": "reduce_only", "recovery_plan_id": null, "ops_todo_created": true}
+{"ts": "2026-01-24T10:08:00Z", "scenario_id": "latency_spike", "result": "ok", "stage_guard_action": "manual_only", "recovery_plan_id": null, "ops_todo_created": true}

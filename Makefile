@@ -1,6 +1,6 @@
 ARGS ?=
 
-.PHONY: config-init schema-validate check-ops-readiness contract-performance-snapshot check-doc-sync check-doc-refs check-runbooks check-validation docs docs-serve config-evidence verify-config-evidence edge-watch-report check-profit-readiness check-alpha-profiles check-profit-readiness-hands-off check-profit-readiness-hands-off-all sla-report automation-report
+.PHONY: config-init schema-validate check-ops-readiness contract-performance-snapshot check-doc-sync check-doc-refs check-runbooks check-validation docs docs-serve config-evidence verify-config-evidence edge-watch-report check-profit-readiness check-alpha-profiles check-profit-readiness-hands-off check-profit-readiness-hands-off-all sla-report automation-report broker-api-smoke broker-api-monitor-smoke broker-certification-smoke broker-autonomy-smoke broker-fault-smoke broker-shadow-export load-shadow-gateway chaos-shadow-gateway aggregate-shadow-gateway
 .PHONY: regression-backtest
 .PHONY: update-log
 
@@ -62,6 +62,33 @@ check-validation:
 	else \
 		python3 tools/check_validation_playbook.py $(ARGS); \
 	fi
+
+broker-api-smoke:
+	@PYTHONPATH=. python3 tools/broker_api/smoke.py $(ARGS)
+
+broker-api-monitor-smoke:
+	@PYTHONPATH=. python3 tools/broker_api/monitor_smoke.py $(ARGS)
+
+broker-certification-smoke:
+	@PYTHONPATH=. python3 tools/broker_certification/smoke.py $(ARGS)
+
+broker-autonomy-smoke:
+	@PYTHONPATH=. python3 tools/broker_autonomy/smoke.py $(ARGS)
+
+broker-fault-smoke:
+	@PYTHONPATH=. python3 tools/broker_fault/smoke.py $(ARGS)
+
+broker-shadow-export:
+	@PYTHONPATH=. python3 tools/broker_shadow/export.py $(ARGS)
+
+load-shadow-gateway:
+	@PYTHONPATH=. python3 tools/shadow_gateway/load.py $(ARGS)
+
+chaos-shadow-gateway:
+	@PYTHONPATH=. python3 tools/shadow_gateway/chaos.py $(ARGS)
+
+aggregate-shadow-gateway:
+	@PYTHONPATH=. python3 tools/shadow_gateway/aggregate.py $(ARGS)
 
 regression-backtest:
 	@if command -v poetry >/dev/null 2>&1; then \

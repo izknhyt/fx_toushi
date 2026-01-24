@@ -9,8 +9,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from src.brokers.order_lifecycle import OrderLifecycleManager
-from src.brokers.stage_guard import AutonomyStageGuard
+from src.diagnostics.broker.api_fault_lab import ApiFaultInjectionLab
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +25,7 @@ def simulate_fault(
     dry_run: bool = True,
     metrics_path: Path | None = Path("metrics/broker_faults.jsonl"),
 ) -> Mapping[str, Any]:
-    """Stub for running broker fault simulations."""
+    """Run broker fault simulations via the API fault lab."""
 
     logger.info(
         "cli.broker.simulate.fault",
@@ -38,40 +37,17 @@ def simulate_fault(
             "dry_run": dry_run,
         },
     )
-    lifecycle = OrderLifecycleManager()
-    guard = AutonomyStageGuard(stage="live")
-
-    code = _scenario_to_code(scenario)
-    classification = lifecycle.classify_error(code)
-    transition = guard.on_error(classification, actor="system", reason=code)
-    recovery: Mapping[str, object] | None = None
-    if classification == "circuit_breaker" and (auto_stage or scenario.endswith("_recover")):
-        recover_transition = guard.recover(actor="system", reason="circuit_recover")
-        if recover_transition:
-            recovery = {
-                "stage_from": recover_transition.from_stage,
-                "stage_to": recover_transition.to_stage,
-                "ts": recover_transition.ts.isoformat() + "Z",
-            }
-
-    runbook_ref = None
-    if classification == "fatal":
-        runbook_ref = "RUN-BROKER-AUTH"
-    elif classification == "circuit_breaker":
-        runbook_ref = "RUN-BROKER-01"
-
+    lab = ApiFaultInjectionLab()
+    result = lab.run(scenario, iterations=iterations, auto_stage=bool(auto_stage), dry_run=dry_run)
     record = {
         "status": "ok",
         "scenario": scenario,
         "iterations": iterations,
         "dry_run": dry_run,
-        "error_code": code,
-        "error_class": classification,
-        "stage_transition": transition.ts.isoformat() + "Z" if transition else None,
-        "stage_from": transition.from_stage if transition else guard.stage,
-        "stage_to": transition.to_stage if transition else guard.stage,
-        "recovery": recovery,
-        "runbook_ref": runbook_ref,
+        "stage_guard_action": result.stage_guard_action,
+        "recovery_plan_id": result.recovery_plan_id,
+        "report_path": result.report_path,
+        "ops_todo_created": result.ops_todo_created,
         "ts": datetime.utcnow().isoformat() + "Z",
     }
     if metrics_path:
@@ -79,11 +55,9 @@ def simulate_fault(
         sample = {
             "ts": record["ts"],
             "scenario": scenario,
-            "error_class": classification,
-            "stage_from": record["stage_from"],
-            "stage_to": record["stage_to"],
-            "recovery": bool(recovery),
-            "runbook_ref": runbook_ref,
+            "stage_guard_action": record.get("stage_guard_action"),
+            "recovery_plan": bool(record.get("recovery_plan_id")),
+            "ops_todo_created": record.get("ops_todo_created"),
         }
         try:
             with metrics_path.open("a", encoding="utf-8") as handle:
@@ -100,30 +74,20 @@ def simulate_fault(
 def simulate_list(
     *, fault_type: str | None = None, json_output: bool = False
 ) -> list[dict[str, object]]:
-    """Stub for listing broker fault scenarios."""
+    """List available API fault scenarios."""
 
     logger.info("cli.broker.simulate.list", extra={"fault_type": fault_type, "json": json_output})
+    lab = ApiFaultInjectionLab()
     scenarios = [
-        {"name": "timeout", "description": "Provider timeout -> retryable", "class": "retryable"},
-        {"name": "429", "description": "Rate limited -> retryable", "class": "retryable"},
         {
-            "name": "auth_failure",
-            "description": "Auth/permission failure -> fatal",
-            "class": "fatal",
-        },
-        {
-            "name": "venue_halt",
-            "description": "Venue halt -> circuit_breaker rollback",
-            "class": "circuit_breaker",
-        },
-        {
-            "name": "venue_recover",
-            "description": "Venue halt then recover to live",
-            "class": "circuit_breaker",
-        },
+            "name": scenario.scenario_id,
+            "description": scenario.description,
+            "fault_type": scenario.fault_type,
+        }
+        for scenario in lab.list_scenarios()
     ]
     if fault_type:
-        return [s for s in scenarios if s["class"] == fault_type]
+        return [s for s in scenarios if s["fault_type"] == fault_type]
     return scenarios
 
 
@@ -150,13 +114,3 @@ def simulate_verify(
         "expected_alert": expected_alert,
     }
 
-
-def _scenario_to_code(scenario: str) -> str:
-    scenario = scenario.lower()
-    if scenario in {"timeout", "http_timeout"}:
-        return "timeout"
-    if scenario in {"429", "rate_limit", "rate_limit_exceeded"}:
-        return "429"
-    if scenario in {"venue_halt", "circuit_breaker", "venue_recover"}:
-        return "venue_halt"
-    return scenario

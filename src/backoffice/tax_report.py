@@ -75,7 +75,7 @@ class TaxReportGenerator:
         output_path: Path | None = None,
     ) -> TaxReportResult:
         ledger_frame = self._load_ledger(year=year, mode=mode)
-        taxlots_frame = self._load_taxlots(year=year)
+        taxlots_frame = self._load_taxlots(year=year, mode=mode)
         config = self._load_config(jurisdiction)
         totals = _summarize_totals(ledger_frame)
         taxable_income = totals["gross_pnl"] - totals["fees"] + totals["swap"] - totals["adjustments"]
@@ -152,8 +152,10 @@ class TaxReportGenerator:
         frames = [pd.read_parquet(path) for path in paths]
         return pd.concat(frames, ignore_index=True)
 
-    def _load_taxlots(self, *, year: int) -> pd.DataFrame:
-        paths = sorted(self._taxlots_dir.glob(f"taxlots_{year}*.jsonl"))
+    def _load_taxlots(self, *, year: int, mode: str) -> pd.DataFrame:
+        paths = sorted(self._taxlots_dir.glob(f"taxlots_{mode}_{year}*.jsonl"))
+        if not paths:
+            paths = sorted(self._taxlots_dir.glob(f"taxlots_{year}*.jsonl"))
         rows: list[dict[str, Any]] = []
         for path in paths:
             for line in path.read_text(encoding="utf-8").splitlines():
@@ -265,7 +267,7 @@ def _render_markdown(
         "",
         "## Supporting Documents",
         "- Audit pack: (attach after audit bundle generation)",
-        "- Ledger snapshot: reports/tax/ledger_summary_<period>.md",
+        "- Ledger snapshot: reports/tax/ledger_summary_<mode>_<period>.md",
         "",
     ]
     return "\n".join(lines)

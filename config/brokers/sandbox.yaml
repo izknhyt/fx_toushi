@@ -5,3 +5,12 @@ schema_version: broker_sandbox.v1
 adapter: sandbox
 endpoint: http://localhost:9000
 simulated_latency_ms: 200
+rate_limit:
+  burst: 30
+  sustained_per_min: 60
+  reset_sec: 60
+  priority_rules:
+    order.place: high
+    order.modify: high
+    order.cancel: medium
+    account.fetch: low

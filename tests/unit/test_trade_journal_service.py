@@ -70,3 +70,58 @@ def test_trade_journal_event_note_flow(tmp_path: Path) -> None:
     assert entries[0]["note"] == "reviewed"
     assert entries[0]["note_count"] == 1
     assert entries[0]["health_state_snapshot"]["checklist"]["risk"] == "ok"
+
+
+def test_trade_journal_latest_note_uses_note_timestamp(tmp_path: Path) -> None:
+    service = TradeJournalService(
+        path=tmp_path / "journal_entries.db",
+        metrics_path=tmp_path / "metrics.jsonl",
+        audit_log_path=tmp_path / "audit.jsonl",
+    )
+    entry_first = JournalEntry(
+        ts=datetime(2025, 3, 18, 8, 0, tzinfo=timezone.utc),
+        ticket_id="T4",
+        user="alice",
+        note="first",
+    )
+    service.append(entry_first)
+    entry_second = JournalEntry(
+        ts=datetime(2025, 3, 19, 9, 30, tzinfo=timezone.utc),
+        ticket_id="T4",
+        user="alice",
+        note="second",
+    )
+    service.append(entry_second)
+
+    entries = service.list(week="2025-W12")
+    assert entries[0]["note"] == "second"
+    assert entries[0]["note_count"] == 2
+
+
+def test_trade_journal_latest_note_orders_same_timestamp(tmp_path: Path) -> None:
+    service = TradeJournalService(
+        path=tmp_path / "journal_entries.db",
+        metrics_path=tmp_path / "metrics.jsonl",
+        audit_log_path=tmp_path / "audit.jsonl",
+    )
+    same_ts = datetime(2025, 3, 20, 12, 0, tzinfo=timezone.utc)
+    service.append(
+        JournalEntry(
+            ts=same_ts,
+            ticket_id="T5",
+            user="alice",
+            note="first",
+        )
+    )
+    service.append(
+        JournalEntry(
+            ts=same_ts,
+            ticket_id="T5",
+            user="alice",
+            note="second",
+        )
+    )
+
+    entries = service.list(week="2025-W12")
+    assert entries[0]["note"] == "second"
+    assert entries[0]["note_count"] == 2

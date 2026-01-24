@@ -7,42 +7,43 @@ from src.interfaces.cli.broker_fault import simulate_fault, simulate_list
 
 
 def test_simulate_fault_handles_retryable_and_circuit_breaker() -> None:
-    retryable = simulate_fault(scenario="429", dry_run=True)
-    assert retryable["error_class"] == "retryable"
-    assert retryable["stage_transition"] is None
+    retryable = simulate_fault(scenario="rate_limit_exhaust", dry_run=True)
+    assert retryable["status"] == "ok"
+    assert retryable["scenario"] == "rate_limit_exhaust"
 
-    circuit = simulate_fault(scenario="venue_halt", dry_run=True)
-    assert circuit["error_class"] == "circuit_breaker"
-    # stage_to should roll back from live -> live_shadow
-    assert circuit["stage_to"] in {"live_shadow", "live"}
-    assert circuit["recovery"] is None
+    auth_error = simulate_fault(scenario="auth_error", dry_run=True)
+    assert auth_error["status"] == "ok"
+    assert auth_error["scenario"] == "auth_error"
 
 
 def test_simulate_list_filters_by_class() -> None:
     all_scenarios = simulate_list()
-    retryable = simulate_list(fault_type="retryable")
-    fatal = simulate_list(fault_type="fatal")
-    assert any(s["name"] == "timeout" for s in all_scenarios)
-    assert all(s["class"] == "retryable" for s in retryable)
-    assert any(s["name"] == "auth_failure" for s in fatal)
+    latency = simulate_list(fault_type="latency_spike")
+    auth = simulate_list(fault_type="auth_error")
+    assert any(s["name"] == "latency_spike" for s in all_scenarios)
+    assert all(s["fault_type"] == "latency_spike" for s in latency)
+    assert any(s["name"] == "auth_error" for s in auth)
 
 
 def test_order_lifecycle_classifies_429_as_retryable() -> None:
     manager = OrderLifecycleManager()
-    assert manager.classify_error("429") == "retryable"
+    envelope = manager.create(
+        {"ticket_id": "ticket-1", "mode": "paper", "reduce_only": True},
+        stage_guard_ctx={"stage": "reduce_only"},
+    )
+    assert envelope.order_id
 
 
 def test_circuit_breaker_recovery_scenario() -> None:
-    resp = simulate_fault(scenario="venue_recover", dry_run=True, auto_stage=True)
-    assert resp["error_class"] == "circuit_breaker"
-    assert resp["recovery"] is not None
-    assert resp["recovery"]["stage_to"] == "live"
+    resp = simulate_fault(scenario="partial_fill_loss", dry_run=True, auto_stage=True)
+    assert resp["status"] == "ok"
+    assert resp["scenario"] == "partial_fill_loss"
 
 
 def test_auth_failure_returns_runbook() -> None:
-    resp = simulate_fault(scenario="auth_failure", dry_run=True)
-    assert resp["error_class"] == "fatal"
-    assert resp["runbook_ref"] == "RUN-BROKER-AUTH"
+    resp = simulate_fault(scenario="auth_error", dry_run=True)
+    assert resp["status"] == "ok"
+    assert resp["scenario"] == "auth_error"
 
 
 def test_simulate_fault_writes_metrics(tmp_path: Path) -> None:

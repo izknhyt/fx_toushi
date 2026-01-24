@@ -284,6 +284,9 @@ def _parse_sources(spec: str, *, period: str) -> list[Path]:
         elif kind == "ledger":
             sources.append(Path("parquet") / "backoffice" / f"ledger_{value}.parquet")
             sources.append(Path("jsonl") / "backoffice" / f"ledger_{value}.jsonl")
+            mode = _parse_ledger_mode(value)
+            if mode:
+                sources.append(Path("reports") / "tax" / f"ledger_summary_{mode}_{period}.md")
             sources.append(Path("reports") / "tax" / f"ledger_summary_{period}.md")
         elif kind == "tax":
             sources.append(Path("reports") / "tax" / value)
@@ -294,6 +297,16 @@ def _parse_sources(spec: str, *, period: str) -> list[Path]:
         else:
             sources.append(Path(value))
     return sources
+
+
+def _parse_ledger_mode(value: str) -> str | None:
+    if "_" not in value:
+        return None
+    parts = value.split("_")
+    tail = parts[-1]
+    if not tail.isdigit():
+        return None
+    return "_".join(parts[:-1]) if len(parts) > 1 else None
 
 
 __all__ = [

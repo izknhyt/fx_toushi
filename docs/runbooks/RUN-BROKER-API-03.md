@@ -1,5 +1,8 @@
 # RUN-BROKER-API-03: ブローカー・コンプライアンス調査 & リカバリ
 
+> **Runbook版数**: v0.3  
+> **最終更新日**: 2026-01-24  
+> **最終更新者**: Codex (Doc Maintainer)  
 > **参照**: [詳細設計 §84 API注文ライフサイクル](../../detailed_design_fx_signal_tool_v1.md#84-api注文ライフサイクルエラー回復設計fr-07fr-39fr-58-ac-03ac-06ac-32ac-41-nfr-02nfr-05nfr-19), [§85 フォールトインジェクション](../../detailed_design_fx_signal_tool_v1.md#85-apiフォールトインジェクション演習ラボfr-47fr-63-ac-34ac-43-nfr-02nfr-28), [§7 エラーハンドリング表 ERROR-B03](../../detailed_design_fx_signal_tool_v1.md#7-エラーハンドリング--フェイルセーフ)
 >
 > **関連CLI**: `tradectl broker compliance`, `tradectl broker orders`, `tradectl ops agenda`, `tradectl emergency close-all`
@@ -52,3 +55,26 @@
 - [RUN-BROKER-API-02](RUN-BROKER-API-02.md)
 - [RUN-RISK-03](RUN-RISK-03.md)
 - [RUN-EMER-UNWIND-01](RUN-EMER-UNWIND-01.md)
+
+## Cutover/認定連携
+- 認定実行: `tradectl broker certify --plan config/certification/sandbox.yaml --report-dir reports/validation_log`
+- Cutoverチェック: `tradectl release cutover broker --profile paper --version <release>`
+- 未達項目がある場合は `tradectl release cutover verify --profile paper --version <release>` が Exit code 86 で失敗するため、Ops/Complianceで対応を完了させる。
+
+## Autonomy StageGuard（段階的自動化）
+1. **ステージ確認**  
+   - `tradectl broker stage status --json` で現在ステージとブロック理由を確認。  
+   - `pending_requests` がある場合は `tradectl supervision status` で承認待ち一覧を確認。
+2. **ステージ申請**  
+   - `tradectl broker stage request --stage reduce_only --reason "cert pass"` で申請。  
+   - Ops Managerが `tradectl supervision approve --request-id <id> --actor ops_manager` を実行。
+3. **降格対応**  
+   - Emergency/Fault発生時は `tradectl broker stage set --stage manual_only --approve ops_manager` で即時降格。  
+   - 降格後は `BrokerCertificationSuite` 再実行が必要。
+
+## Supervision Console
+- `tradectl supervision status` にて以下を確認。  
+  - `autonomy_stage`: 現在ステージと次遷移条件  
+  - `ops_readiness`: readinessスコア推移  
+  - `emergency_status`: Failover状態  
+  - `audit_trail`: Stage変更/緊急プランの履歴

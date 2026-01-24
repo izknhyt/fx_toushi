@@ -1,9 +1,50 @@
-# Broker error map (scaffold)
-# Schema: schema/broker_error_map.schema.json
-
-schema_version: broker_error_map.v1
-errors:
+error_map:
+  RATE_LIMIT_EXCEEDED:
+    trigger_reason: rate_limit
+    audit_event_id: audit.order_recovery_planned.rate_limit
+    runbook_ref: RUN-BROKER-API-02#RL-01
+    retry_policy:
+      mode: auto
+      max_attempts: 3
+      backoff_sec: [60, 120, 240]
+    evidence_path_template: evidence/broker/<order_id>/rate_limit/
+    required_context: [retry_after_sec]
+  GATEWAY_TIMEOUT:
+    trigger_reason: timeout
+    audit_event_id: audit.order_recovery_planned.timeout
+    runbook_ref: RUN-BROKER-API-02#TO-02
+    retry_policy:
+      mode: manual
+      max_attempts: 1
+      handoff_role: ops_manager
+    evidence_path_template: evidence/broker/<order_id>/timeout/
+    required_context: [http_status]
+  PARTIAL_FILL_STALE:
+    trigger_reason: partial_fill_timeout
+    audit_event_id: audit.order_recovery_planned.partial_fill
+    runbook_ref: RUN-BROKER-API-02#PF-03
+    retry_policy:
+      mode: manual
+      max_attempts: 0
+    evidence_path_template: evidence/broker/<order_id>/partial_fill/
+    required_context: [remaining_qty]
+  ORDER_REJECT_COMPLIANCE:
+    trigger_reason: broker_reject
+    audit_event_id: audit.order_recovery_planned.reject
+    runbook_ref: RUN-BROKER-API-02#RJ-04
+    retry_policy:
+      mode: manual
+      max_attempts: 0
+      handoff_role: compliance
+    evidence_path_template: evidence/broker/<order_id>/reject/
+    required_context: [policy_snapshot]
   UNKNOWN:
-    code: UNKNOWN
-    retryable: false
-    action: investigate
+    trigger_reason: unknown_error
+    audit_event_id: audit.order_recovery_planned.unknown
+    runbook_ref: RUN-BROKER-API-02#UN-05
+    retry_policy:
+      mode: manual
+      max_attempts: 0
+      handoff_role: ops_manager
+    evidence_path_template: evidence/broker/<order_id>/unknown/
+    required_context: []

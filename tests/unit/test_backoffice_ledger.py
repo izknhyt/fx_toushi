@@ -91,6 +91,7 @@ def test_backoffice_ledger_snapshot_generation(tmp_path: Path) -> None:
     assert Path(snapshot.snapshot_path).exists()
     assert Path(snapshot.summary_path).exists()
     assert snapshot.jsonl_path.endswith("ledger_paper_202601.jsonl")
+    assert snapshot.taxlots_path.endswith("taxlots_paper_202601.jsonl")
 
     parquet_frame = pd.read_parquet(snapshot.parquet_path)
     assert len(parquet_frame) == 3

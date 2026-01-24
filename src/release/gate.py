@@ -151,6 +151,8 @@ class ReleaseGateService:
     def verify_completion(self, *, version: str) -> Mapping[str, object]:
         checklist = self._load_state(version)
         pending = [task for task in checklist.tasks if task.status not in {"pass", "ok", "done"}]
+        cutover_pending = self._check_broker_cutover(version)
+        pending.extend(cutover_pending)
         payload = {
             "status": "ok" if not pending else "blocked",
             "version": version,
@@ -189,6 +191,29 @@ class ReleaseGateService:
         else:
             self._emit_event({"event": "release.gate.completed", "version": version})
         return payload
+
+    def _check_broker_cutover(self, version: str) -> list[ReleaseTask]:
+        candidates = sorted(self._base_dir.glob(f"{version}_broker_cutover_*.json"))
+        if not candidates:
+            return []
+        blocked_any = False
+        for path in candidates:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            items = payload.get("items", [])
+            blocked = [item for item in items if item.get("status") != "done"]
+            if blocked:
+                blocked_any = True
+                break
+        if not blocked_any:
+            return []
+        return [
+            ReleaseTask(
+                task_id="broker_cutover",
+                label="Broker cutover checklist",
+                status="blocked",
+                evidence_path=str(candidates[-1]),
+            )
+        ]
 
     def tag_release(self, *, version: str) -> Mapping[str, object]:
         result = self.verify_completion(version=version)

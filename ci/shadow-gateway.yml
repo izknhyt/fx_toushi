@@ -1,0 +1,43 @@
+name: shadow-gateway
+
+on:
+  workflow_dispatch:
+
+jobs:
+  shadow-gateway:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+      - name: Install Poetry
+        run: |
+          python -m pip install --upgrade pip
+          pip install poetry
+      - name: Install dependencies
+        run: |
+          poetry install --no-interaction --no-root
+      - name: Run Shadow Gateway tests
+        run: |
+          poetry run pytest -k shadow_gateway
+      - name: Run Shadow Gateway smoke workflows
+        run: |
+          poetry run make load-shadow-gateway ARGS="--duration 5m --smoke"
+          poetry run make chaos-shadow-gateway ARGS="--fault drop-commands --smoke"
+      - name: Validate Shadow Gateway playbook
+        run: |
+          poetry run make check-validation ARGS="--category shadow_gateway"
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: shadow-gateway-artifacts
+          path: |
+            reports/validation_log/
+            reports/ops/shadow_gateway/
+            metrics/shadow_gateway.jsonl
+            logs/audit/shadow_gateway.jsonl

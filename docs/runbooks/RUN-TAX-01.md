@@ -1,12 +1,12 @@
 # RUN-TAX-01: 税務レポート生成・提出手順
 
 > **ACカバレッジ**: FR-59, FR-64, NFR-05  
-> **Runbook版数**: v1.2  
-> **最終更新日**: 2026-01-17  
+> **Runbook版数**: v1.3  
+> **最終更新日**: 2026-01-21  
 > **最終更新者**: Back Office Lead (Doc Maintainer)  
 > **仕様参照**: detailed_design_fx_signal_tool_v1.md §47.1-47.4, §48.2-48.4; basic_design_fx_signal_tool_v1.md:278,313; 要件定義（テンプレ形式）v_1.md:183  
 > **運用シナリオID**: DRILL-tax_reconciliation (Tax readiness drill)  
-> **関連メトリクス/ログ**: metrics/backoffice_ledger.jsonl, metrics/secure_share.jsonl, logs/audit/backoffice_<date>.jsonl, audit_pack/<period>/finance/, reports/tax/ledger_summary_<period>.md, reports/tax/<year>/<mode>_tax_report.{md,csv}  
+> **関連メトリクス/ログ**: metrics/backoffice_ledger.jsonl, metrics/secure_share.jsonl, logs/audit/backoffice_<date>.jsonl, audit_pack/<period>/finance/, reports/tax/ledger_summary_<mode>_<period>.md, reports/tax/<year>/<mode>_tax_report.{md,csv}  
 > **外部資料**: docs/templates/tax_report_jp.md, config/tax/<jurisdiction>.yaml, secure_share config/share_profiles/tax_accountant.yaml, validation_playbook/FR-59_audit_bundle.md, docs/runbooks/RUN-AUD-02.md, docs/runbooks/RUN-REC-02.md
 
 ## 目的
@@ -29,7 +29,7 @@
 ## 手順
 1. **前提確認**
    - `tradectl finance ledger generate --period 2025-10 --mode live --include-pending=false`を再実行し、`pending_entries=0`を確認。
-   - `RUN-AUD-02`/`RUN-REC-02`のチェックリストが完了しているか確認し、必要なEvidenceリンクを`reports/tax/ledger_summary_<period>.md`に追記。
+  - `RUN-AUD-02`/`RUN-REC-02`のチェックリストが完了しているか確認し、必要なEvidenceリンクを`reports/tax/ledger_summary_<mode>_<period>.md`に追記。
    - 為替換算設定`config/tax/jp.yaml`（例）を確認し、年平均レート/スポット基準が最新であることをレビュー。
 2. **Tax Report生成**
    - CLI実行:
@@ -74,7 +74,7 @@
 
 ## 証跡
 - `reports/tax/<year>/<mode>_tax_report.{md,csv}`
-- `reports/tax/ledger_summary_<period>.md`
+- `reports/tax/ledger_summary_<mode>_<period>.md`
 - `audit_pack/<period>/finance/`, `audit_pack/<period>/audit_manifest.json`
 - `metrics/backoffice_ledger.jsonl`, `metrics/secure_share.jsonl`
 - `logs/audit/backoffice_<timestamp>.jsonl`, `logs/audit/secure_share_<timestamp>.jsonl`
@@ -94,3 +94,4 @@
 | --- | --- | --- | --- |
 | v1.0 | 2025-11-03 | 初版作成（Taxレポート生成・共有フロー定義） | Back Office Lead |
 | v1.2 | 2026-01-17 | Audit bundleのfinance自動添付手順を追加 | Back Office Lead |
+| v1.3 | 2026-01-21 | ledger_summaryのmode別パスへ更新 | Back Office Lead |

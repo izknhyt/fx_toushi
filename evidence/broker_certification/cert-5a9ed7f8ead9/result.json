@@ -1,0 +1,53 @@
+{
+  "run_id": "cert-5a9ed7f8ead9",
+  "plan_id": "broker_certification_sandbox",
+  "adapter": "sandbox",
+  "profile": "paper",
+  "overall_status": "pass_with_warning",
+  "started_at": "2026-01-24T09:51:32Z",
+  "finished_at": "2026-01-24T09:51:32Z",
+  "scenarios": [
+    {
+      "name": "sandbox_connectivity",
+      "scenario_type": "sandbox_connectivity",
+      "status": "pass",
+      "message": null,
+      "attachments": [],
+      "metrics": {
+        "latency_ms": 0.0
+      }
+    },
+    {
+      "name": "reduce_only_dispatch",
+      "scenario_type": "reduce_only_dispatch",
+      "status": "pass",
+      "message": null,
+      "attachments": [],
+      "metrics": {
+        "order_id": "sbx-71c7271f3a28"
+      }
+    },
+    {
+      "name": "rate_limit_burst",
+      "scenario_type": "rate_limit_burst",
+      "status": "warning",
+      "message": "no throttle triggered",
+      "attachments": [],
+      "metrics": {
+        "deferred": 0,
+        "queue_wait_ms": 0.0
+      }
+    },
+    {
+      "name": "failover_switch",
+      "scenario_type": "failover_switch",
+      "status": "pass",
+      "message": null,
+      "attachments": [],
+      "metrics": {
+        "plan_id": "failover-1769248292"
+      }
+    }
+  ],
+  "evidence_dir": "evidence/broker_certification/cert-5a9ed7f8ead9"
+}

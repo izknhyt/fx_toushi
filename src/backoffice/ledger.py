@@ -161,8 +161,8 @@ class BackOfficeLedgerService:
             entries = [entry for entry in entries if entry.reconciliation_status == "matched"]
         parquet_path = self._parquet_dir / f"ledger_{mode}_{period}.parquet"
         jsonl_path = self._jsonl_dir / f"ledger_{mode}_{period}.jsonl"
-        taxlots_path = self._jsonl_dir / f"taxlots_{period}.jsonl"
-        summary_path = self._report_dir / f"ledger_summary_{period}.md"
+        taxlots_path = self._jsonl_dir / f"taxlots_{mode}_{period}.jsonl"
+        summary_path = self._report_dir / f"ledger_summary_{mode}_{period}.md"
         snapshot_path = self._snapshot_dir / f"ledger_{_ts_compact()}.json"
 
         self._parquet_dir.mkdir(parents=True, exist_ok=True)
@@ -234,7 +234,7 @@ class BackOfficeLedgerService:
                 taxlots_path=snapshot.taxlots_path,
                 snapshot_path=snapshot.snapshot_path,
             )
-        summary_path = self._report_dir / f"ledger_summary_{snapshot.period}.md"
+        summary_path = self._report_dir / f"ledger_summary_{snapshot.mode}_{snapshot.period}.md"
         summary_path.write_text(content, encoding="utf-8")
 
     def _append_metrics(
@@ -284,9 +284,9 @@ class BackOfficeLedgerService:
         ledger_entries.append(adjustment_entry)
         parquet_path = self._parquet_dir / f"ledger_{record.mode}_{record.period}.parquet"
         jsonl_path = self._jsonl_dir / f"ledger_{record.mode}_{record.period}.jsonl"
-        taxlots_path = self._jsonl_dir / f"taxlots_{record.period}.jsonl"
+        taxlots_path = self._jsonl_dir / f"taxlots_{record.mode}_{record.period}.jsonl"
         snapshot_path = self._snapshot_dir / f"ledger_{_ts_compact()}.json"
-        summary_path = self._report_dir / f"ledger_summary_{record.period}.md"
+        summary_path = self._report_dir / f"ledger_summary_{record.mode}_{record.period}.md"
 
         self._parquet_dir.mkdir(parents=True, exist_ok=True)
         self._jsonl_dir.mkdir(parents=True, exist_ok=True)
@@ -376,7 +376,7 @@ class BackOfficeLedgerService:
                 return jsonl_path
             frame = _load_frame(parquet_path)
         else:
-            jsonl_path = self._jsonl_dir / f"taxlots_{period}.jsonl"
+            jsonl_path = self._jsonl_dir / f"taxlots_{mode}_{period}.jsonl"
             if format_value == "json":
                 return jsonl_path
             frame = _load_jsonl_frame(jsonl_path)
@@ -398,7 +398,7 @@ class BackOfficeLedgerService:
         attachments = [
             self._parquet_dir / f"ledger_{mode}_{period}.parquet",
             self._jsonl_dir / f"ledger_{mode}_{period}.jsonl",
-            self._report_dir / f"ledger_summary_{period}.md",
+            self._report_dir / f"ledger_summary_{mode}_{period}.md",
         ]
         missing = [str(path) for path in attachments if not path.exists()]
         if missing:

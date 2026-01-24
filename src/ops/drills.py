@@ -507,6 +507,8 @@ class OpsDrillService:
                 )
             except Exception:
                 continue
+            if scheduled_for.tzinfo is None:
+                scheduled_for = scheduled_for.replace(tzinfo=timezone.utc)
             plans.append(
                 DrillPlan(
                     plan_id=str(data.get("plan_id", "")),
@@ -520,7 +522,7 @@ class OpsDrillService:
             )
         if include_completed:
             return plans
-        return [p for p in plans if p.scheduled_for >= datetime.utcnow()]
+        return [p for p in plans if p.scheduled_for >= datetime.now(timezone.utc)]
 
     def _append_execution(self, execution: DrillExecution) -> None:
         payload = {
@@ -600,6 +602,8 @@ class OpsDrillService:
                 )
             except Exception:
                 scheduled_for = datetime.now(timezone.utc)
+            if scheduled_for.tzinfo is None:
+                scheduled_for = scheduled_for.replace(tzinfo=timezone.utc)
             return DrillPlan(
                 plan_id=str(data.get("plan_id", "")),
                 scenario_id=str(data.get("scenario_id", "")),

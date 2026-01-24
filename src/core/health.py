@@ -190,6 +190,7 @@ class HealthMonitor:
         *,
         detail: str | None = None,
         recommended_action: str | None = None,
+        simulated: bool = False,
     ) -> None:
         """Register (or update) a degraded health reason."""
 
@@ -209,7 +210,9 @@ class HealthMonitor:
             existing.detail = detail
             existing.recommended_action = recommended_action
             existing.raised_at = _now()
-        self._emit_health_event(level=level, reason=reason, detail=detail, action=recommended_action)
+        self._emit_health_event(
+            level=level, reason=reason, detail=detail, action=recommended_action, simulated=simulated
+        )
 
     def _emit_health_event(
         self,
@@ -218,6 +221,7 @@ class HealthMonitor:
         reason: str,
         detail: str | None,
         action: str | None,
+        simulated: bool,
     ) -> None:
         mapped_status = self._LEVEL_TO_STATUS.get(level, "degraded")
         runbook_ref = None
@@ -230,6 +234,7 @@ class HealthMonitor:
             "reason": reason,
             "detail": detail,
             "recommended_action": action,
+            "simulated": simulated,
         }
         if runbook_ref:
             payload["runbook_ref"] = runbook_ref

@@ -69,3 +69,29 @@ def test_lifecycle_force_requires_role(tmp_path: Path) -> None:
             actor="user:unknown",
             force=True,
         )
+
+
+def test_lifecycle_gate_rejects_nan_thresholds(tmp_path: Path) -> None:
+    roles_path = tmp_path / "roles.yaml"
+    _write_roles(roles_path)
+    orchestrator = StrategyLifecycleOrchestrator(
+        state_dir=tmp_path / "state",
+        history_log=tmp_path / "history.jsonl",
+        audit_log=tmp_path / "audit.jsonl",
+        metrics_path=tmp_path / "metrics.jsonl",
+        roles_path=roles_path,
+    )
+    result = orchestrator.evaluate_gate(
+        strategy_id="strat_a",
+        gate_id="gate.paper_promotion",
+        signals={
+            "idea.stage.screening": True,
+            "strategy_board.decision.approve": True,
+            "alpha_score": float("nan"),
+            "ops_readiness_score": 85,
+        },
+        actor="user:override",
+        force=False,
+    )
+    assert result.status == "fail"
+    assert "missing:alpha_score" in result.reasons

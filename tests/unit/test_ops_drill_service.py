@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -144,3 +145,30 @@ def test_drill_flow_writes_report_and_metrics(tmp_path: Path) -> None:
     assert "Execution: plan-03-run" in content
     metrics_path = tmp_path / "metrics" / "drill.jsonl"
     assert metrics_path.exists()
+
+
+def test_list_plans_accepts_naive_timestamp(tmp_path: Path) -> None:
+    service = _build_service(tmp_path)
+    plans_log = tmp_path / "logs" / "ops" / "drill_plan.jsonl"
+    plans_log.parent.mkdir(parents=True, exist_ok=True)
+    plans_log.write_text(
+        "\n".join(
+            [
+                json.dumps(
+                    {
+                        "plan_id": "plan-naive",
+                        "scenario_id": "drill-01",
+                        "scheduled_for": "2026-01-12T10:00:00",
+                        "owner": "ops",
+                        "participants": ["ops"],
+                        "board_mode_on_start": "normal",
+                        "acceptance_conditions": [],
+                    }
+                ),
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    plans = list(service.list_plans(include_completed=True))
+    assert plans[0].plan_id == "plan-naive"

@@ -34,3 +34,7 @@
 {"ts": "2026-01-11T13:16:04.913759Z", "scenario": "venue_halt", "error_class": "circuit_breaker", "stage_from": "live", "stage_to": "live_shadow", "recovery": false, "runbook_ref": "RUN-BROKER-01"}
 {"ts": "2026-01-11T13:16:04.920281Z", "scenario": "venue_recover", "error_class": "circuit_breaker", "stage_from": "live", "stage_to": "live_shadow", "recovery": true, "runbook_ref": "RUN-BROKER-01"}
 {"ts": "2026-01-11T13:16:04.925329Z", "scenario": "auth_failure", "error_class": "fatal", "stage_from": "live", "stage_to": "live", "recovery": false, "runbook_ref": "RUN-BROKER-AUTH"}
+{"ts": "2026-01-24T09:32:42.922138Z", "scenario": "latency_spike", "stage_guard_action": null, "recovery_plan": false, "ops_todo_created": true}
+{"ts": "2026-01-24T09:34:20.933418Z", "scenario": "latency_spike", "stage_guard_action": null, "recovery_plan": false, "ops_todo_created": true}
+{"ts": "2026-01-24T10:07:26.955215Z", "scenario": "latency_spike", "stage_guard_action": null, "recovery_plan": false, "ops_todo_created": true}
+{"ts": "2026-01-24T10:08:00.153466Z", "scenario": "latency_spike", "stage_guard_action": null, "recovery_plan": false, "ops_todo_created": true}

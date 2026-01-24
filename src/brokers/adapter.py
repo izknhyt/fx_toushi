@@ -8,9 +8,62 @@ real API responses or mock fixtures.
 """
 from __future__ import annotations
 
+from abc import ABC, abstractmethod
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import Final, Literal
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any, Final, Literal
+import json
+import uuid
+
+from src.infra.secrets import SecretNotFoundError, SecretsVaultService
+from src.security.access import AccessGovernanceService
+
+
+class BrokerAdapterError(RuntimeError):
+    """Raised when broker adapter operations fail."""
+
+
+class BrokerAccessDenied(BrokerAdapterError):
+    """Raised when broker access checks fail."""
+
+
+class BrokerOrderRejected(BrokerAdapterError):
+    """Raised when an order is rejected by policy or kill switch."""
+
+
+@dataclass(slots=True)
+class BrokerOrderRequest:
+    ticket_id: str
+    symbol: str
+    side: str
+    quantity: float
+    price: float | None = None
+    reduce_only: bool = False
+    ttl_sec: int | None = None
+
+
+@dataclass(slots=True)
+class BrokerOrder:
+    order_id: str
+    ticket_id: str
+    status: str
+    adapter: str
+    submitted_at: str
+    ack_at: str | None
+    payload: dict[str, Any]
+    schema_version: str = "broker.order.v1"
+
+
+@dataclass(slots=True)
+class BrokerPosition:
+    symbol: str
+    quantity: float
+    avg_price: float
+    side: str
+    position_id: str
+    schema_version: str = "broker.position.v1"
 
 
 @dataclass(frozen=True)
@@ -344,6 +397,174 @@ class BrokerAdapter:
     configuration generators that populate `config/brokers/*.yaml`.
     """
 
+    adapter_id: str = "base"
+
+    def __init__(
+        self,
+        *,
+        audit_log_path: Path = Path("logs/audit/broker_orders.jsonl"),
+        metrics_path: Path = Path("metrics/broker_api.jsonl"),
+        kill_switch_path: Path = Path("snapshots/latest/kill_switch_state.json"),
+        access_service: AccessGovernanceService | None = None,
+        secret_store: SecretsVaultService | None = None,
+    ) -> None:
+        self._audit_log_path = audit_log_path
+        self._metrics_path = metrics_path
+        self._kill_switch_path = kill_switch_path
+        self._access_service = access_service or AccessGovernanceService()
+        self._secret_store = secret_store or SecretsVaultService()
+
+    @abstractmethod
+    def place_order(
+        self,
+        request: BrokerOrderRequest,
+        *,
+        principal_id: str,
+        device_id: str,
+    ) -> BrokerOrder:
+        """Submit an order via the adapter."""
+
+    @abstractmethod
+    def modify_order(self, order_id: str, updates: Mapping[str, Any]) -> BrokerOrder:
+        """Modify an existing broker order."""
+
+    @abstractmethod
+    def cancel_order(self, order_id: str) -> None:
+        """Cancel an existing broker order."""
+
+    @abstractmethod
+    def fetch_positions(self) -> Sequence[BrokerPosition]:
+        """Fetch open broker positions."""
+
+    @abstractmethod
+    def fetch_balances(self) -> Mapping[str, float]:
+        """Fetch account balances for the adapter."""
+
+    @abstractmethod
+    def stream_events(self) -> Sequence[Mapping[str, Any]]:
+        """Return the latest broker events."""
+
+    def _require_access(self, *, principal_id: str, device_id: str) -> None:
+        result = self._access_service.enforce_policy(principal_id)
+        if result.status != "allowed":
+            self._append_audit(
+                {
+                    "event": "audit.broker_access_denied",
+                    "principal_id": principal_id,
+                    "device_id": device_id,
+                    "reasons": result.reasons,
+                    "runbook_ref": result.runbook_ref,
+                }
+            )
+            raise BrokerAccessDenied(f"access denied: {', '.join(result.reasons)}")
+        if result.device_id and result.device_id != device_id:
+            self._append_audit(
+                {
+                    "event": "audit.broker_access_denied",
+                    "principal_id": principal_id,
+                    "device_id": device_id,
+                    "reasons": ["device_mismatch"],
+                    "runbook_ref": result.runbook_ref,
+                }
+            )
+            raise BrokerAccessDenied("device mismatch")
+
+    def _kill_switch_state(self) -> str:
+        if not self._kill_switch_path.exists():
+            return "none"
+        try:
+            payload = json.loads(self._kill_switch_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            return "none"
+        return str(payload.get("state") or "none")
+
+    def _append_audit(self, payload: Mapping[str, Any]) -> None:
+        self._audit_log_path.parent.mkdir(parents=True, exist_ok=True)
+        entry = {"ts": _utcnow_iso(), **payload}
+        with self._audit_log_path.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(entry, ensure_ascii=False))
+            handle.write("\n")
+
+    def _append_metrics(self, payload: Mapping[str, Any]) -> None:
+        self._metrics_path.parent.mkdir(parents=True, exist_ok=True)
+        entry = {"ts": _utcnow_iso(), **payload}
+        with self._metrics_path.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(entry, ensure_ascii=False))
+            handle.write("\n")
+
+    def _load_secret(self, secret_id: str, *, purpose: str) -> dict[str, Any] | None:
+        try:
+            return self._secret_store.load(secret_id, purpose=purpose)
+        except SecretNotFoundError:
+            return None
+
+
+class BrokerAdapterRegistry:
+    """Resolve broker adapters based on feature flags and profile."""
+
+    def __init__(
+        self,
+        *,
+        feature_flags_path: Path = Path("config/feature_flags.yaml"),
+        audit_log_path: Path = Path("logs/audit/broker_orders.jsonl"),
+        metrics_path: Path = Path("metrics/broker_api.jsonl"),
+        kill_switch_path: Path = Path("snapshots/latest/kill_switch_state.json"),
+        access_service: AccessGovernanceService | None = None,
+        secret_store: SecretsVaultService | None = None,
+    ) -> None:
+        self._feature_flags_path = feature_flags_path
+        self._audit_log_path = audit_log_path
+        self._metrics_path = metrics_path
+        self._kill_switch_path = kill_switch_path
+        self._access_service = access_service
+        self._secret_store = secret_store
+
+    def get_adapter(self, *, adapter: str, profile: str = "paper") -> BrokerAdapter:
+        api_enabled = _feature_enabled(
+            flag="brokers.api_enabled", profile=profile, path=self._feature_flags_path
+        )
+        sandbox_only = _feature_enabled(
+            flag="brokers.api_sandbox_only", profile=profile, path=self._feature_flags_path
+        )
+        adapter_name = adapter
+        if not api_enabled:
+            adapter_name = "sandbox"
+        if adapter_name != "sandbox" and sandbox_only:
+            raise BrokerAdapterError("broker api sandbox-only mode is enabled")
+        if adapter_name == "sandbox":
+            from src.brokers.sandbox import SandboxAdapter
+
+            return SandboxAdapter(
+                audit_log_path=self._audit_log_path,
+                metrics_path=self._metrics_path,
+                kill_switch_path=self._kill_switch_path,
+                access_service=self._access_service,
+                secret_store=self._secret_store,
+            )
+        raise BrokerAdapterError(f"unknown broker adapter: {adapter_name}")
+
+
+def _feature_enabled(*, flag: str, profile: str, path: Path) -> bool:
+    if not path.exists():
+        return False
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        import yaml
+
+        payload = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    defaults = payload.get("defaults") if isinstance(payload, dict) else {}
+    profile_flags = defaults.get(profile) if isinstance(defaults, dict) else {}
+    return bool(profile_flags.get(flag)) if isinstance(profile_flags, dict) else False
+
+
+def _order_id(prefix: str = "order") -> str:
+    return f"{prefix}-{uuid.uuid4().hex[:12]}"
+
+
+def _utcnow_iso() -> str:
+    return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
 
 class Mt5Adapter(BrokerAdapter):
     """MetaTrader 5 bridge adapter metadata and connection guidance.
@@ -397,7 +618,7 @@ class CTraderAdapter(BrokerAdapter):
     - ポジション照会: GET /openapi/trade/v1/positions (REST)
       - headers: Accept, Authorization, X-Spotware-Trading-Account
       - step: request
-      - notes: オープンポジション照会
+    - notes: オープンポジション照会
 
     - アクセストークンは30分有効。残り5分で`oauth_refresh`を行う。
     - 429応答は`Retry-After`ヘッダを尊重し、RateLimitウィンドウへ反映。

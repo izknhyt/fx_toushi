@@ -366,7 +366,8 @@ def _collect_finance_sources(period: str) -> list[tuple[str, Path]]:
     sources: list[tuple[str, Path]] = []
     sources.extend(_collect_glob("finance", Path("parquet/backoffice"), f"ledger_*_{period}.parquet"))
     sources.extend(_collect_glob("finance", Path("jsonl/backoffice"), f"ledger_*_{period}.jsonl"))
-    sources.extend(_collect_glob("finance", Path("jsonl/backoffice"), f"taxlots_{period}.jsonl"))
+    sources.extend(_collect_glob("finance", Path("jsonl/backoffice"), f"taxlots_*_{period}.jsonl"))
+    sources.extend(_collect_glob("finance", Path("reports/tax"), f"ledger_summary_*_{period}.md"))
     sources.extend(_collect_glob("finance", Path("reports/tax"), f"ledger_summary_{period}.md"))
     year = _extract_year(period)
     if year:

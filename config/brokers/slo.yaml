@@ -3,4 +3,7 @@
 
 schema_version: broker_slo.v1
 latency_ms_p95: 800
+latency_warn_ms: 750
+latency_critical_ms: 1500
+queue_warn_sec: 30
 fill_rate_min: 0.95

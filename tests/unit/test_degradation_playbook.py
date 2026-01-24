@@ -54,6 +54,22 @@ def test_degradation_requires_evidence(tmp_path: Path) -> None:
         orchestrator.ack(instance.instance_id, node_id=instance.nodes[0].node_id, evidence_path=None, actor="ops")
 
 
+def test_degradation_requires_recovery_report(tmp_path: Path) -> None:
+    orchestrator = _make_orchestrator(tmp_path)
+    instance = orchestrator.start("data_latency", severity="high", reason="lag")
+    evidence = tmp_path / "evidence.md"
+    evidence.write_text("ok\n", encoding="utf-8")
+    for node in instance.nodes:
+        instance = orchestrator.ack(
+            instance.instance_id,
+            node_id=node.node_id,
+            evidence_path=evidence,
+            actor="ops",
+        )
+    with pytest.raises(DegradationPlaybookError):
+        orchestrator.recover(instance.instance_id, attach_report=None)
+
+
 def test_degradation_status_round_trip(tmp_path: Path) -> None:
     orchestrator = _make_orchestrator(tmp_path)
     instance = orchestrator.start("rate_limit", severity="medium", reason=None)

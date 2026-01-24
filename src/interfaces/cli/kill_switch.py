@@ -117,7 +117,8 @@ def set_state(
 
     current = _load_state(state_path)
     current_state = str(current.get("state") or "none")
-    evidence_paths = [str(item) for item in (evidence or ())]
+    evidence_items = list(evidence or ())
+    evidence_paths = [str(item) for item in evidence_items]
 
     blocked = state_value == "none" and current_state == "hard_stop" and not evidence_paths
     exit_code = 62 if blocked else 0
@@ -145,6 +146,23 @@ def set_state(
             "state_path": str(state_path),
             "exit_code": exit_code,
         }
+
+    if state_value == "none" and evidence_items:
+        missing = [str(path) for path in evidence_items if not Path(path).exists()]
+        if missing:
+            audit_payload["status"] = "blocked"
+            audit_payload["missing_evidence"] = missing
+            _append_jsonl(audit_path, audit_payload)
+            return {
+                "status": "blocked",
+                "state": current_state,
+                "requested_state": state_value,
+                "reason": reason,
+                "audit_path": str(audit_path),
+                "state_path": str(state_path),
+                "exit_code": 62,
+                "missing_evidence": missing,
+            }
 
     if auto_ack_required is None:
         auto_ack_required = state_value in {"soft_stop", "hard_stop"}
