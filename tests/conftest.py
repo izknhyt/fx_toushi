@@ -18,6 +18,7 @@ _ORIG_READ_BYTES = Path.read_bytes
 _ORIG_EXISTS = Path.exists
 _ORIG_IS_FILE = Path.is_file
 _ORIG_IS_DIR = Path.is_dir
+_ORIG_STAT = Path.stat
 _ORIG_MKDIR = Path.mkdir
 _ORIG_TOUCH = Path.touch
 _ORIG_UNLINK = Path.unlink
@@ -88,6 +89,7 @@ def isolate_runtime_outputs(tmp_path: Path, project_root: Path, monkeypatch: pyt
         "ops_worklog.jsonl",
         "automation_effect.jsonl",
         "ignored.jsonl",
+        "docs/governance/share_register.md",
     }
 
     def _relative(path: Path) -> Path | None:
@@ -96,6 +98,9 @@ def isolate_runtime_outputs(tmp_path: Path, project_root: Path, monkeypatch: pyt
                 return path.relative_to(project_root)
             except ValueError:
                 return None
+        # When tests chdir into tmp dirs, keep their local outputs untouched.
+        if Path.cwd() != project_root:
+            return None
         return path
 
     def _is_mutable(path: Path) -> bool:
@@ -114,13 +119,13 @@ def isolate_runtime_outputs(tmp_path: Path, project_root: Path, monkeypatch: pyt
         target = runtime_root / rel
         if for_write:
             target.parent.mkdir(parents=True, exist_ok=True)
-            redirected[str(path.resolve())] = target
+            redirected[str((project_root / rel).absolute())] = target
         return target
 
     def _resolve(path: Path, *, for_write: bool) -> Path:
         if not _is_mutable(path):
             return path
-        key = str(path.resolve())
+        key = str((project_root / _relative(path)).absolute()) if _relative(path) else str(path.absolute())
         if for_write:
             return _runtime_path(path, for_write=True)
         mapped = redirected.get(key)
@@ -156,24 +161,39 @@ def isolate_runtime_outputs(tmp_path: Path, project_root: Path, monkeypatch: pyt
 
     def _exists(self: Path) -> bool:  # type: ignore[override]
         if _is_mutable(self):
-            mapped = redirected.get(str(self.resolve()))
+            rel = _relative(self)
+            key = str((project_root / rel).absolute()) if rel is not None else str(self.absolute())
+            mapped = redirected.get(key)
             if mapped is not None and _ORIG_EXISTS(mapped):
                 return True
         return _ORIG_EXISTS(self)
 
     def _is_file(self: Path) -> bool:  # type: ignore[override]
         if _is_mutable(self):
-            mapped = redirected.get(str(self.resolve()))
+            rel = _relative(self)
+            key = str((project_root / rel).absolute()) if rel is not None else str(self.absolute())
+            mapped = redirected.get(key)
             if mapped is not None and _ORIG_IS_FILE(mapped):
                 return True
         return _ORIG_IS_FILE(self)
 
     def _is_dir(self: Path) -> bool:  # type: ignore[override]
         if _is_mutable(self):
-            mapped = redirected.get(str(self.resolve()))
+            rel = _relative(self)
+            key = str((project_root / rel).absolute()) if rel is not None else str(self.absolute())
+            mapped = redirected.get(key)
             if mapped is not None and _ORIG_IS_DIR(mapped):
                 return True
         return _ORIG_IS_DIR(self)
+
+    def _stat(self: Path, *args: Any, **kwargs: Any):  # type: ignore[override]
+        if _is_mutable(self):
+            rel = _relative(self)
+            key = str((project_root / rel).absolute()) if rel is not None else str(self.absolute())
+            mapped = redirected.get(key)
+            if mapped is not None and _ORIG_EXISTS(mapped):
+                return _ORIG_STAT(mapped, *args, **kwargs)
+        return _ORIG_STAT(self, *args, **kwargs)
 
     def _mkdir(self: Path, *args: Any, **kwargs: Any) -> None:  # type: ignore[override]
         target = _resolve(self, for_write=True) if _is_mutable(self) else self
@@ -197,6 +217,7 @@ def isolate_runtime_outputs(tmp_path: Path, project_root: Path, monkeypatch: pyt
     monkeypatch.setattr(Path, "exists", _exists)
     monkeypatch.setattr(Path, "is_file", _is_file)
     monkeypatch.setattr(Path, "is_dir", _is_dir)
+    monkeypatch.setattr(Path, "stat", _stat)
     monkeypatch.setattr(Path, "mkdir", _mkdir)
     monkeypatch.setattr(Path, "touch", _touch)
     monkeypatch.setattr(Path, "unlink", _unlink)
