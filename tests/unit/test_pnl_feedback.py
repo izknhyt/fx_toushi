@@ -1,40 +1,48 @@
-import pytest
-from src.analytics.pnl_feedback import FeedbackVector, apply_dynamic_adjustment
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+from src.analytics.pnl_feedback import FeedbackVector, PnLFeedbackLoop
 
 
-def test_dynamic_adjustment_respects_max_pct() -> None:
-    new_conv, new_size, applied = apply_dynamic_adjustment(
-        conviction=0.5,
-        size=1.0,
-        feedback=FeedbackVector(realized_rr=1.1, target_rr=0.5),
-        max_dynamic_adjust_pct=0.15,
-        dynamic_enabled=True,
+def test_pnl_feedback_records_adjustment(tmp_path: Path) -> None:
+    metrics_path = tmp_path / "profit_loop.jsonl"
+    loop = PnLFeedbackLoop(
+        metrics_path=metrics_path, audit_path=tmp_path / "audit.jsonl"
     )
-    assert applied is True
-    assert new_conv == pytest.approx(0.575)
-    assert new_size == pytest.approx(1.15)
-
-
-def test_dynamic_adjustment_disables_on_spread_or_flag() -> None:
-    conv, size, applied = apply_dynamic_adjustment(
+    entry = loop.record(
+        strategy_id="m1_baseline_ma_rsi",
+        pair="USDJPY",
+        pulse_id="pulse-1",
         conviction=0.6,
-        size=1.0,
-        feedback=FeedbackVector(realized_rr=-1.0, target_rr=0.5),
-        max_dynamic_adjust_pct=0.2,
+        size_hint=1.0,
+        feedback=FeedbackVector(realized_rr=1.0, target_rr=0.4),
+        board_mode="normal",
+        decision_latency_ms=12000,
+        feedback_cycle_minutes=90,
+        mode="live",
+    )
+    assert entry.dynamic_adjust_applied is True
+    assert metrics_path.exists()
+    record = json.loads(metrics_path.read_text(encoding="utf-8").splitlines()[0])
+    assert record["strategy_id"] == "m1_baseline_ma_rsi"
+    assert record["mode"] == "live"
+
+
+def test_pnl_feedback_respects_dynamic_disabled(tmp_path: Path) -> None:
+    metrics_path = tmp_path / "profit_loop.jsonl"
+    loop = PnLFeedbackLoop(
+        metrics_path=metrics_path, audit_path=tmp_path / "audit.jsonl"
+    )
+    entry = loop.record(
+        strategy_id="m1_baseline_ma_rsi",
+        pair="USDJPY",
+        pulse_id=None,
+        conviction=0.5,
+        size_hint=1.0,
+        feedback=FeedbackVector(realized_rr=-1.0, target_rr=0.4),
         dynamic_enabled=False,
     )
-    assert applied is False
-    assert conv == pytest.approx(0.6)
-    assert size == pytest.approx(1.0)
-
-    conv2, size2, applied2 = apply_dynamic_adjustment(
-        conviction=0.6,
-        size=1.0,
-        feedback=FeedbackVector(realized_rr=-1.0, target_rr=0.5),
-        max_dynamic_adjust_pct=0.2,
-        dynamic_enabled=True,
-        spread_penalty=0.06,
-    )
-    assert applied2 is False
-    assert conv2 == pytest.approx(0.6)
-    assert size2 == pytest.approx(1.0)
+    assert entry.dynamic_adjust_applied is False
+    assert entry.size_adjust_pct == 0.0

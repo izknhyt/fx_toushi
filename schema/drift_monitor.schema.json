@@ -8,7 +8,9 @@
     "thresholds": {
       "type": "object",
       "properties": {
-        "z_score": {"type": "number", "minimum": 0}
+        "z_score": {"type": "number", "minimum": 0},
+        "kl_threshold": {"type": "number", "minimum": 0},
+        "mahalanobis_threshold": {"type": "number", "minimum": 0}
       },
       "additionalProperties": false
     }

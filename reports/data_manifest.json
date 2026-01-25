@@ -1,6 +1,6 @@
 {
   "schema_version": "data.manifest.v1",
-  "generated_at": "2026-01-24T13:06:55Z",
+  "generated_at": "2026-01-25T09:03:09Z",
   "entries": [
     {
       "id": "9b0ba095-9d11-4026-b434-385cde83774a",
@@ -36,5 +36,27 @@
         "cache_replay"
       ]
     }
-  ]
+  ],
+  "strategies": {
+    "m1_baseline_ma_rsi": {
+      "dataset_path": "data/research/curated/usdjpy/usdjpy_m5_20220101_20251219_merged.parquet",
+      "dataset_sha256": "369c2425406b581f38bffaad38e63d6d0423de35256cae74aa0d3dd7fd2401d4",
+      "watchlist_datasets": {
+        "USDJPY": {
+          "path": "data/research/curated/usdjpy/usdjpy_m5_20220101_20251219_merged.parquet",
+          "sha256": "369c2425406b581f38bffaad38e63d6d0423de35256cae74aa0d3dd7fd2401d4"
+        }
+      }
+    },
+    "m1_baseline_donchian": {
+      "dataset_path": "data/research/curated/usdjpy/usdjpy_m5_20220101_20251219_merged.parquet",
+      "dataset_sha256": "369c2425406b581f38bffaad38e63d6d0423de35256cae74aa0d3dd7fd2401d4",
+      "watchlist_datasets": {
+        "USDJPY": {
+          "path": "data/research/curated/usdjpy/usdjpy_m5_20220101_20251219_merged.parquet",
+          "sha256": "369c2425406b581f38bffaad38e63d6d0423de35256cae74aa0d3dd7fd2401d4"
+        }
+      }
+    }
+  }
 }

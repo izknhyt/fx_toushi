@@ -2,10 +2,10 @@
 
 - Window: 90d
 - Mode: paper
-- Status: PASS
+- Status: FAIL
 
 | Metric | Value | Min | Max | Status |
 | --- | --- | --- | --- | --- |
-| pf | 1.2000 | 1.0 |  | ok |
+| pf | 0.2000 | 1.0 |  | below_min(1.0) |
 
 - Runbook: docs/runbooks/STRAT-PROMOTE-01.md

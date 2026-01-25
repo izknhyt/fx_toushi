@@ -6,6 +6,9 @@
   "properties": {
     "schema_version": {"type": "string"},
     "latency_ms_p95": {"type": "number", "minimum": 0},
+    "latency_warn_ms": {"type": "number", "minimum": 0},
+    "latency_critical_ms": {"type": "number", "minimum": 0},
+    "queue_warn_sec": {"type": "number", "minimum": 0},
     "fill_rate_min": {"type": "number", "minimum": 0, "maximum": 1}
   },
   "additionalProperties": false

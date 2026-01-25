@@ -1,0 +1,15 @@
+# JSON
+{
+  "order_id": "order-4209da3993e8",
+  "external_id": null,
+  "mode": "paper",
+  "stage_guard_stage": "reduce_only",
+  "strategy_id": null,
+  "ticket_id": "ticket-1",
+  "profile": "paper",
+  "risk_snapshot": {},
+  "protect_pips": null,
+  "reduce_only": true,
+  "submitted_by": "system",
+  "submitted_at": "2026-01-25T09:06:04Z"
+}

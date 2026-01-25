@@ -5,6 +5,8 @@
   "required": ["schema_version", "scenarios"],
   "properties": {
     "schema_version": {"type": "string"},
+    "max_concurrency": {"type": "integer", "minimum": 1},
+    "max_runtime_per_scenario_min": {"type": "integer", "minimum": 1},
     "scenarios": {
       "type": "array",
       "items": {"type": "object"}

@@ -6,6 +6,7 @@ import argparse
 import json
 import statistics
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -50,24 +51,65 @@ def _load_jsonl(path: Path) -> Iterable[dict[str, Any]]:
     return records
 
 
+def _parse_ts(value: object) -> datetime | None:
+    if not isinstance(value, str):
+        return None
+    text = value.replace("Z", "+00:00")
+    try:
+        return datetime.fromisoformat(text)
+    except ValueError:
+        return None
+
+
+def _state_from_payload(payload: dict[str, object]) -> str | None:
+    state = payload.get("state")
+    if isinstance(state, str):
+        return state
+    reason = str(payload.get("reason") or "")
+    if "feature_flag_disabled" in reason:
+        return "disabled"
+    return None
+
+
 def _compute_availability(audit_path: Path) -> float | None:
-    sessions = [r for r in _load_jsonl(audit_path) if r.get("event_type") == "audit.shadow_gateway.session"]
+    sessions = [
+        r
+        for r in _load_jsonl(audit_path)
+        if r.get("event_type") == "audit.shadow_gateway.session"
+    ]
     if not sessions:
         return None
-    active = 0
-    disabled = 0
+    timeline = []
     for entry in sessions:
+        ts = _parse_ts(entry.get("ts"))
         payload = entry.get("payload") or {}
-        state = payload.get("state")
-        reason = str(payload.get("reason") or "")
-        if state in {"active", "failover"}:
-            active += 1
-        if state == "disabled" or "feature_flag_disabled" in reason:
-            disabled += 1
-    total = active + disabled
-    if total == 0:
+        if isinstance(payload, dict):
+            state = _state_from_payload(payload)
+        else:
+            state = None
+        if ts and state:
+            timeline.append((ts, state))
+    if len(timeline) < 2:
+        # fallback to event ratio
+        active = sum(1 for _, state in timeline if state in {"active", "failover"})
+        disabled = sum(1 for _, state in timeline if state == "disabled")
+        total = active + disabled
+        return (active / total) if total else None
+    timeline.sort(key=lambda item: item[0])
+    up_seconds = 0.0
+    total_seconds = 0.0
+    last_ts, last_state = timeline[0]
+    for ts, state in timeline[1:]:
+        delta = (ts - last_ts).total_seconds()
+        if delta > 0:
+            total_seconds += delta
+            if last_state in {"active", "failover"}:
+                up_seconds += delta
+        last_ts = ts
+        last_state = state
+    if total_seconds <= 0:
         return None
-    return active / total
+    return up_seconds / total_seconds
 
 
 def _compute_cache_success(metrics_path: Path) -> float | None:

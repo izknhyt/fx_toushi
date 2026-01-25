@@ -183,11 +183,11 @@ def reject(
     _acquire_lock(ticket_id, owner=actor, take_over=take_over, reason="reject")
     diff = [{"op": "replace", "path": "/status", "value": "rejected"}]
     cfg_hash, data_hash = _extract_hashes(guardrails_payload, gate_state=gate_state)
-    effective_determinism_hash = determinism_hash or guardrails_payload.get("determinism_hash")
-    effective_determinism_version = (
-        determinism_version
-        if determinism_version is not None
-        else guardrails_payload.get("determinism_version", DEFAULT_DETERMINISM_VERSION)
+    effective_determinism_hash = str(
+        guardrails_payload.get("determinism_hash", DEFAULT_DETERMINISM_HASH)
+    )
+    effective_determinism_version = int(
+        guardrails_payload.get("determinism_version", DEFAULT_DETERMINISM_VERSION)
     )
     audit_entry = _build_audit_entry(
         ticket_id=ticket_id,

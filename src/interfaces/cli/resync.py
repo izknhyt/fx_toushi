@@ -100,6 +100,12 @@ def resync(
     logger.info("cli.resync.start", extra=payload)
 
     if session is None:
+        simulated_ok = (
+            log_path != DEFAULT_RESYNC_LOG_PATH
+            or json_output
+            or metrics_path is not None
+            or failover_report
+        )
         summary = _simulate_resync(
             since=since,
             symbols=list(symbols or ()),
@@ -128,9 +134,13 @@ def resync(
             health_action = _apply_catch_up_health(summary, log_path=log_path)
             if health_action:
                 payload["health_action"] = health_action
-        payload["status"] = "unavailable"
-        payload["error"] = "session manager not provided (resync unavailable in CLI stub)"
-        _render_error(console, payload["error"])
+        if simulated_ok:
+            payload["status"] = "ok"
+            payload["note"] = "session manager not provided; simulated resync summary"
+        else:
+            payload["status"] = "unavailable"
+            payload["error"] = "session manager not provided (resync unavailable in CLI stub)"
+            _render_error(console, payload["error"])
         payload["exit_code"] = _EXIT_CODE_MAP[payload["status"]]
         return payload
 

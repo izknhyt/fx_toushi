@@ -1,0 +1,35 @@
+{
+  "strategy_id": "alpha",
+  "target_stage": "paper",
+  "items": [
+    {
+      "item_id": "experiment.run_available",
+      "description": "Experiment run completed",
+      "source": "experiment",
+      "status": "fail",
+      "evidence_refs": [],
+      "threshold": null,
+      "auto_fix_hint": "tradectl research experiment run"
+    },
+    {
+      "item_id": "risk_consent_valid",
+      "description": "Risk consent accepted",
+      "source": "risk",
+      "status": "pass",
+      "evidence_refs": [],
+      "threshold": null,
+      "auto_fix_hint": null
+    },
+    {
+      "item_id": "ops_readiness",
+      "description": "Ops readiness score 100.0",
+      "source": "ops",
+      "status": "pass",
+      "evidence_refs": [],
+      "threshold": null,
+      "auto_fix_hint": null
+    }
+  ],
+  "last_evaluated_at": "2026-01-25T08:59:48Z",
+  "status": "fail"
+}

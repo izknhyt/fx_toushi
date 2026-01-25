@@ -1,6 +1,8 @@
 """Core coordination layer for session and workflow orchestration."""
 
 from .event_bus import EventBus, EventBusConfig, EventBusError
+from .health_jobs import HealthEscalationJob, HealthEscalationResult
+from .health_store import HealthStateStore, HealthStateSummary
 from .gate import (
     CalendarGateState,
     GateAggregator,
@@ -38,6 +40,10 @@ __all__ = [
     "EventBus",
     "EventBusConfig",
     "EventBusError",
+    "HealthEscalationJob",
+    "HealthEscalationResult",
+    "HealthStateStore",
+    "HealthStateSummary",
     "GateAggregator",
     "GateBlockState",
     "GateState",

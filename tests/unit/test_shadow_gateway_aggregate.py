@@ -29,11 +29,18 @@ def test_shadow_gateway_aggregate_summary(tmp_path: Path) -> None:
         [
             {
                 "event_type": "audit.shadow_gateway.session",
+                "ts": "2026-01-24T00:00:00Z",
                 "payload": {"state": "active", "reason": "started"},
             },
             {
                 "event_type": "audit.shadow_gateway.session",
+                "ts": "2026-01-24T00:10:00Z",
                 "payload": {"state": "disabled", "reason": "feature_flag_disabled"},
+            },
+            {
+                "event_type": "audit.shadow_gateway.session",
+                "ts": "2026-01-24T00:20:00Z",
+                "payload": {"state": "active", "reason": "started"},
             },
         ],
     )

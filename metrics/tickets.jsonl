@@ -28,3 +28,12 @@
 {"ts": "2026-01-11T08:55:57.472320+00:00", "ticket_id": "t-hash", "action": "approve", "user": "alice", "latency_ms": 0, "board_mode": "normal"}
 {"ts": "2026-01-11T13:13:13.184381+00:00", "ticket_id": "t-hash", "action": "approve", "user": "alice", "latency_ms": 0, "board_mode": "normal"}
 {"ts": "2026-01-11T13:16:07.070039+00:00", "ticket_id": "t-hash", "action": "approve", "user": "alice", "latency_ms": 0, "board_mode": "normal"}
+{"ts": "2026-01-25T08:49:58.264201+00:00", "ticket_id": "t-hash", "action": "approve", "user": "alice", "latency_ms": 0, "board_mode": "normal"}
+{"ts": "2026-01-25T08:58:04.955117+00:00", "ticket_id": "t-hash", "action": "approve", "user": "alice", "latency_ms": 0, "board_mode": "normal"}
+{"ts": "2026-01-25T09:05:05.762840+00:00", "ticket_id": "t-hash", "action": "approve", "user": "alice", "latency_ms": 0, "board_mode": "normal"}
+{"ts": "2026-01-25T09:06:09.393847+00:00", "ticket_id": "t-hash", "action": "approve", "user": "alice", "latency_ms": 0, "board_mode": "normal"}
+{"ts": "2026-01-25T09:09:37.017538+00:00", "ticket_id": "t-hash", "action": "approve", "user": "alice", "latency_ms": 0, "board_mode": "normal"}
+{"ts": "2026-01-25T09:10:00.709100+00:00", "ticket_id": "t-hash", "action": "approve", "user": "alice", "latency_ms": 0, "board_mode": "normal"}
+{"ts": "2026-01-25T09:11:56.439130+00:00", "ticket_id": "t-hash", "action": "approve", "user": "alice", "latency_ms": 0, "board_mode": "normal"}
+{"ts": "2026-01-25T09:55:25.222721+00:00", "ticket_id": "t-hash", "action": "approve", "user": "alice", "latency_ms": 0, "board_mode": "normal"}
+{"ts": "2026-01-25T09:58:47.686258+00:00", "ticket_id": "t-hash", "action": "approve", "user": "alice", "latency_ms": 0, "board_mode": "normal"}

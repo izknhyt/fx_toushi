@@ -6,8 +6,15 @@ import json
 from collections.abc import Mapping
 from pathlib import Path
 
+from jsonschema import Draft202012Validator, ValidationError
+
+from src.core.schema_registry import build_schema_registry
+from src.strategies.alpha_pulse import AlphaPulseInputs, AlphaPulseSynthesizer
+
 DEFAULT_BRIDGE_DIR = Path("scoreboard") / "bridge"
 DEFAULT_PROFIT_LOOP_METRICS = Path("metrics") / "profit_loop.jsonl"
+DEFAULT_ALPHA_PROFILE = "usd_jpy_breakout"
+DEFAULT_ALPHA_PULSE_SCHEMA = Path("docs") / "schemas" / "alpha_pulse.schema.json"
 
 
 class AlphaReviewError(RuntimeError):
@@ -81,6 +88,62 @@ def _read_profit_loop_metrics(path: Path, strategy: str, limit: int) -> list[dic
     return list(reversed(entries))
 
 
+def preview(
+    *,
+    pair: str,
+    regime: str,
+    profile_id: str = DEFAULT_ALPHA_PROFILE,
+    spread_cooldown: float = 0.0,
+    latency_minutes: float = 0.0,
+    account_equity: float = 1.0,
+    entry_window_pips: tuple[float, float] = (0.0, 0.0),
+    board_mode: str = "normal",
+    momentum_score: float = 0.5,
+    mean_reversion_score: float = 0.5,
+    macro_score: float = 0.5,
+    dry_run: bool = False,
+    validate_schema: bool = False,
+    schema_path: Path = DEFAULT_ALPHA_PULSE_SCHEMA,
+) -> Mapping[str, object]:
+    synthesizer = AlphaPulseSynthesizer(profile_id=profile_id)
+    pulse = synthesizer.refresh(
+        AlphaPulseInputs(
+            pair=pair,
+            regime=regime,
+            momentum_score=momentum_score,
+            mean_reversion_score=mean_reversion_score,
+            macro_score=macro_score,
+            spread_cooldown_factor=spread_cooldown,
+            latency_minutes=latency_minutes,
+            account_equity=account_equity,
+            entry_window_pips=entry_window_pips,
+            board_mode=board_mode,
+        )
+    )
+    payload: dict[str, object] = {
+        "status": "ok",
+        "schema_version": "alpha.pulse.v1",
+        "dry_run": dry_run,
+        "profile_id": profile_id,
+        "inputs": {
+            "pair": pair,
+            "regime": regime,
+            "spread_cooldown": spread_cooldown,
+            "latency_minutes": latency_minutes,
+            "account_equity": account_equity,
+            "entry_window_pips": list(entry_window_pips),
+            "board_mode": board_mode,
+            "momentum_score": momentum_score,
+            "mean_reversion_score": mean_reversion_score,
+            "macro_score": macro_score,
+        },
+        "pulse": pulse.to_dict(),
+    }
+    if validate_schema:
+        _validate_payload(payload, schema_path=schema_path)
+    return payload
+
+
 def review(
     *,
     strategy: str,
@@ -128,3 +191,19 @@ def review(
             )
 
     return payload
+
+
+def _validate_payload(payload: Mapping[str, object], *, schema_path: Path) -> None:
+    schema_data = json.loads(schema_path.read_text(encoding="utf-8"))
+    Draft202012Validator.check_schema(schema_data)
+    registry = build_schema_registry(schema_path)
+    validator = Draft202012Validator(schema_data, registry=registry)
+    validator.validate(payload)
+
+
+__all__ = [
+    "AlphaReviewError",
+    "AlphaWatchlistAlertError",
+    "preview",
+    "review",
+]

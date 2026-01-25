@@ -1,1 +1,10 @@
 {"ts": "2026-01-18T03:45:33Z", "metric": "docops_export", "bundle": "governance", "destination": "secure_share://audit/2026W01", "package_id": "ecb29216-0d35-43f0-bce5-95b5c4e6e986", "files_count": 72}
+{"ts": "2026-01-25T08:49:48Z", "metric": "docops_export", "bundle": "governance", "destination": "secure_share://audit/2026W01", "package_id": "26aa1e4c-0fcf-4472-9e4c-55dc0753c518", "files_count": 98}
+{"ts": "2026-01-25T08:57:55Z", "metric": "docops_export", "bundle": "governance", "destination": "secure_share://audit/2026W01", "package_id": "078c04d7-a56d-40d8-a455-08392e92faff", "files_count": 98}
+{"ts": "2026-01-25T09:04:56Z", "metric": "docops_export", "bundle": "governance", "destination": "secure_share://audit/2026W01", "package_id": "05cce0e9-ad82-496f-b8f3-7bf52d62fdc6", "files_count": 98}
+{"ts": "2026-01-25T09:05:59Z", "metric": "docops_export", "bundle": "governance", "destination": "secure_share://audit/2026W01", "package_id": "c51cc856-4841-45dc-ae91-04c163a46779", "files_count": 98}
+{"ts": "2026-01-25T09:09:27Z", "metric": "docops_export", "bundle": "governance", "destination": "secure_share://audit/2026W01", "package_id": "6a5f4bf5-eb0a-49b7-a70f-b6776f865576", "files_count": 98}
+{"ts": "2026-01-25T09:09:51Z", "metric": "docops_export", "bundle": "governance", "destination": "secure_share://audit/2026W01", "package_id": "d03d4798-82cd-4ece-9252-80fbc9feaebd", "files_count": 98}
+{"ts": "2026-01-25T09:11:46Z", "metric": "docops_export", "bundle": "governance", "destination": "secure_share://audit/2026W01", "package_id": "7917f124-4fa7-4056-ba26-cf91837929c8", "files_count": 98}
+{"ts": "2026-01-25T09:55:15Z", "metric": "docops_export", "bundle": "governance", "destination": "secure_share://audit/2026W01", "package_id": "2cab04eb-9d89-4adc-a004-6deaa20aa1d6", "files_count": 98}
+{"ts": "2026-01-25T09:58:37Z", "metric": "docops_export", "bundle": "governance", "destination": "secure_share://audit/2026W01", "package_id": "1b081526-9c32-41a6-b8e4-a75d8f5dbbe3", "files_count": 98}

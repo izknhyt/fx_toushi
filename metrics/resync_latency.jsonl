@@ -1,3 +1,12 @@
 {"ts": "2026-01-11T03:52:53.964524Z", "resync_job_id": "5a859a9f-20cd-443c-884c-bfec2143c261", "resync_latency_sec": 64036373, "timeframe": "M5", "resync_latency_ratio": 213454.57666666666}
 {"ts": "2026-01-11T13:13:13.897254Z", "resync_job_id": "420392c5-3554-4f7b-b3a8-b8173985d1d1", "resync_latency_sec": 64069993, "timeframe": "M5", "resync_latency_ratio": 213566.64333333334}
 {"ts": "2026-01-11T13:16:08.468739Z", "resync_job_id": "0aa06aeb-8310-4ccf-9029-7a5c1936ec13", "resync_latency_sec": 64070167, "timeframe": "M5", "resync_latency_ratio": 213567.22333333333}
+{"ts": "2026-01-25T08:49:58.825874Z", "resync_job_id": "0bd36fc2-2411-4696-8c8f-8861bdc80a26", "resync_latency_sec": 65263798, "timeframe": "M5", "resync_latency_ratio": 217545.99333333335}
+{"ts": "2026-01-25T08:58:05.484917Z", "resync_job_id": "c0ccfaeb-348c-475b-90d6-f1939bd6d24f", "resync_latency_sec": 65264285, "timeframe": "M5", "resync_latency_ratio": 217547.61666666667}
+{"ts": "2026-01-25T09:05:06.387250Z", "resync_job_id": "ba07d7db-f46c-4611-af69-f9f1400b6a84", "resync_latency_sec": 65264706, "timeframe": "M5", "resync_latency_ratio": 217549.02}
+{"ts": "2026-01-25T09:06:10.017495Z", "resync_job_id": "da245fde-9dea-462e-95fc-03daa33df3f9", "resync_latency_sec": 65264769, "timeframe": "M5", "resync_latency_ratio": 217549.23}
+{"ts": "2026-01-25T09:09:37.605635Z", "resync_job_id": "a99b7e39-9471-4619-b850-4c704c9084c3", "resync_latency_sec": 65264977, "timeframe": "M5", "resync_latency_ratio": 217549.92333333334}
+{"ts": "2026-01-25T09:10:01.278470Z", "resync_job_id": "f2aee511-dd2a-47a0-8688-8bc3f4f9cc4b", "resync_latency_sec": 65265001, "timeframe": "M5", "resync_latency_ratio": 217550.00333333333}
+{"ts": "2026-01-25T09:11:57.097934Z", "resync_job_id": "6a15c795-1287-45b2-a53e-addaf86db0bc", "resync_latency_sec": 65265116, "timeframe": "M5", "resync_latency_ratio": 217550.38666666666}
+{"ts": "2026-01-25T09:55:25.974967Z", "resync_job_id": "f1b4f442-907b-4453-a06d-9095119b4ccc", "resync_latency_sec": 65267725, "timeframe": "M5", "resync_latency_ratio": 217559.08333333334}
+{"ts": "2026-01-25T09:58:48.459885Z", "resync_job_id": "c5e50e60-0d41-4cbc-a0a6-c92bbab77381", "resync_latency_sec": 65267928, "timeframe": "M5", "resync_latency_ratio": 217559.76}

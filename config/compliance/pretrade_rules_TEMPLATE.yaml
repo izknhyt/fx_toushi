@@ -1,10 +1,30 @@
 # Pre-trade compliance rules template
 # Schema: schema/compliance_pretrade_rules.schema.json
 
-schema_version: compliance_pretrade.v1
-rules:
-  - id: MAX_SPREAD
-    severity: warn
-    threshold: 2.5
-    unit: pips
-    enabled: true
+schema_version: compliance.pretrade.v1
+max_leverage: 25
+fifo_required: true
+hedge_allowed: false
+position_limits:
+  total_open_positions: 6
+  symbol:
+    USDJPY:
+      max_lots: 5.0
+      max_side: both
+    EURUSD:
+      max_lots: 4.0
+      max_side: net_long
+blocked_pairs: ["TRYJPY", "ZARJPY"]
+blocked_time_windows:
+  - weekday: "fri"
+    start: "20:00"
+    end: "23:00"
+    reason: "rollover"
+override_roles: ["PO", "OpsManager"]
+runbook_map:
+  max_leverage: "RUN-RISK-03#step2"
+  fifo_required: "RUN-RISK-03#step5"
+  hedge_allowed: "RUN-RISK-03#step6"
+  position_limits: "RUN-RISK-03#step7"
+  blocked_pairs: "RUN-RISK-03#step8"
+  blocked_time_windows: "RUN-RISK-03#step9"

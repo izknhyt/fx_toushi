@@ -224,6 +224,10 @@ class ApiFaultInjectionLab:
 
 
 def _find_scenario(scenario_id: str) -> ApiFaultScenario | None:
+    alias_map = {
+        "429": "rate_limit_exhaust",
+    }
+    scenario_id = alias_map.get(str(scenario_id), str(scenario_id))
     for scenario in _DEFAULT_SCENARIOS:
         if scenario.scenario_id == scenario_id:
             return scenario

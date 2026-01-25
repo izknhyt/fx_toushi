@@ -120,6 +120,37 @@
             }
           }
         },
+        "liquidity": {
+          "type": "object",
+          "required": [
+            "state"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "state": {
+              "type": "string",
+              "enum": [
+                "normal",
+                "watch",
+                "guarded",
+                "halted"
+              ]
+            },
+            "recommendation": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "updated_at": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "format": "date-time"
+            }
+          }
+        },
         "per_symbol": {
           "type": "object",
           "description": "Symbol-specific gate blocks that override global news/calendar/spread settings.",

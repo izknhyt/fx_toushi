@@ -2,3 +2,12 @@
 {"ts": "2026-01-11T13:16:01Z", "status": "disabled", "provider": "paid_feed_stub", "paid_feed_enabled": false, "license_required": true, "evidence_paths": [], "reason": null}
 {"ts": "2026-01-12T02:24:49Z", "status": "disabled", "provider": "paid_feed_stub", "paid_feed_enabled": false, "license_required": true, "evidence_paths": [], "reason": null}
 {"ts": "2026-01-12T02:25:37Z", "status": "disabled", "provider": "paid_feed_stub", "paid_feed_enabled": false, "license_required": true, "evidence_paths": [], "reason": null}
+{"ts": "2026-01-25T08:49:43Z", "status": "disabled", "provider": "paid_feed_stub", "paid_feed_enabled": false, "license_required": true, "evidence_paths": ["reports/governance/licensing/license_registry.yaml"], "reason": null}
+{"ts": "2026-01-25T08:57:51Z", "status": "disabled", "provider": "paid_feed_stub", "paid_feed_enabled": false, "license_required": true, "evidence_paths": ["reports/governance/licensing/license_registry.yaml"], "reason": null}
+{"ts": "2026-01-25T09:04:52Z", "status": "disabled", "provider": "paid_feed_stub", "paid_feed_enabled": false, "license_required": true, "evidence_paths": ["reports/governance/licensing/license_registry.yaml"], "reason": null}
+{"ts": "2026-01-25T09:05:55Z", "status": "disabled", "provider": "paid_feed_stub", "paid_feed_enabled": false, "license_required": true, "evidence_paths": ["reports/governance/licensing/license_registry.yaml"], "reason": null}
+{"ts": "2026-01-25T09:09:23Z", "status": "disabled", "provider": "paid_feed_stub", "paid_feed_enabled": false, "license_required": true, "evidence_paths": ["reports/governance/licensing/license_registry.yaml"], "reason": null}
+{"ts": "2026-01-25T09:09:47Z", "status": "disabled", "provider": "paid_feed_stub", "paid_feed_enabled": false, "license_required": true, "evidence_paths": ["reports/governance/licensing/license_registry.yaml"], "reason": null}
+{"ts": "2026-01-25T09:11:42Z", "status": "disabled", "provider": "paid_feed_stub", "paid_feed_enabled": false, "license_required": true, "evidence_paths": ["reports/governance/licensing/license_registry.yaml"], "reason": null}
+{"ts": "2026-01-25T09:55:10Z", "status": "disabled", "provider": "paid_feed_stub", "paid_feed_enabled": false, "license_required": true, "evidence_paths": ["reports/governance/licensing/license_registry.yaml"], "reason": null}
+{"ts": "2026-01-25T09:58:33Z", "status": "disabled", "provider": "paid_feed_stub", "paid_feed_enabled": false, "license_required": true, "evidence_paths": ["reports/governance/licensing/license_registry.yaml"], "reason": null}

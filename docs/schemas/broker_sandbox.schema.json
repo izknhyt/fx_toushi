@@ -7,7 +7,21 @@
     "schema_version": {"type": "string"},
     "adapter": {"type": "string"},
     "endpoint": {"type": "string"},
-    "simulated_latency_ms": {"type": "number", "minimum": 0}
+    "simulated_latency_ms": {"type": "number", "minimum": 0},
+    "rate_limit": {
+      "type": "object",
+      "required": ["burst", "sustained_per_min", "reset_sec"],
+      "properties": {
+        "burst": {"type": "number", "minimum": 0},
+        "sustained_per_min": {"type": "number", "minimum": 0},
+        "reset_sec": {"type": "number", "minimum": 0},
+        "priority_rules": {
+          "type": "object",
+          "additionalProperties": {"type": "string"}
+        }
+      },
+      "additionalProperties": false
+    }
   },
   "additionalProperties": false
 }

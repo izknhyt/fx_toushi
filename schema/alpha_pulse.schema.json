@@ -1,0 +1,103 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://fx-toushi.dev/schemas/alpha_pulse.schema.json",
+  "title": "AlphaPulsePreview",
+  "type": "object",
+  "required": [
+    "status",
+    "schema_version",
+    "pulse"
+  ],
+  "properties": {
+    "status": {
+      "type": "string"
+    },
+    "schema_version": {
+      "type": "string",
+      "const": "alpha.pulse.v1"
+    },
+    "dry_run": {
+      "type": "boolean"
+    },
+    "profile_id": {
+      "type": "string"
+    },
+    "inputs": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "pulse": {
+      "type": "object",
+      "required": [
+        "pulse_id",
+        "pair",
+        "regime",
+        "conviction",
+        "half_life_bars",
+        "entry_window_pips",
+        "size_band",
+        "reduce_only_hint",
+        "status"
+      ],
+      "properties": {
+        "pulse_id": {
+          "type": "string"
+        },
+        "pair": {
+          "type": "string"
+        },
+        "regime": {
+          "type": "string"
+        },
+        "conviction": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "half_life_bars": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "entry_window_pips": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 2,
+          "maxItems": 2
+        },
+        "size_band": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 2,
+          "maxItems": 2
+        },
+        "reduce_only_hint": {
+          "type": "boolean"
+        },
+        "status": {
+          "type": "string"
+        },
+        "playbook_hint": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "protect_levels": {
+          "type": [
+            "object",
+            "null"
+          ]
+        },
+        "profit_targets": {
+          "type": "array"
+        }
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": true
+}

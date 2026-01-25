@@ -1,5 +1,6 @@
 """Data ingestion and quality management layer."""
 
+from .manifest_signer import DataManifestSigner, ManifestSignature, ManifestSignatureError
 from .quality import DataQualityGuard, QualityResult
 from .service import (
     BufferCoordinator,
@@ -15,6 +16,9 @@ from .service import (
 
 __all__ = [
     "DataQualityGuard",
+    "DataManifestSigner",
+    "ManifestSignature",
+    "ManifestSignatureError",
     "QualityResult",
     "BufferCoordinator",
     "MarketFrame",

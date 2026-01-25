@@ -8,9 +8,9 @@ import json
 import logging
 import shutil
 import time
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Callable, Iterator
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from enum import Enum
 from pathlib import Path
 from typing import Any, Literal
@@ -28,12 +28,16 @@ class EventBusConfig:
     retention_days: int = 7
     archive_compression: ArchiveCompression = "gz"
     metrics_path: Path = Path("metrics/event_bus_queue.jsonl")
+    state_path: Path = Path("snapshots/latest/event_bus_state.json")
+    state_flush_interval_sec: int = 30
 
     def __post_init__(self) -> None:
         if self.queue_maxsize <= 0:
             raise ValueError("queue_maxsize must be positive")
         if self.retention_days <= 0:
             raise ValueError("retention_days must be positive")
+        if self.state_flush_interval_sec <= 0:
+            raise ValueError("state_flush_interval_sec must be positive")
 
 
 @dataclass
@@ -78,12 +82,15 @@ class EventBus:
         self._pressure_samples: list[QueuePressureSample] = []
         self._dropped_events: int = 0
         self._last_prune_epoch: float = 0.0
+        self._last_state_flush: float = 0.0
+        self._state_cache: dict[str, Any] = {}
         self._log_base = Path("logs") / "events"
         self._log_base.mkdir(parents=True, exist_ok=True)
         self._archive_dir = self._log_base / "archive"
         self._archive_dir.mkdir(parents=True, exist_ok=True)
         self._current_log_path: Path | None = None
         self.config.metrics_path.parent.mkdir(parents=True, exist_ok=True)
+        self.config.state_path.parent.mkdir(parents=True, exist_ok=True)
 
     async def publish(
         self,
@@ -124,11 +131,14 @@ class EventBus:
         filter_fn: Callable[[Any], bool] | None = None,
         backlog_mode: Literal["live", "catchup", "snapshot"] = "live",
     ) -> AsyncIterator[Any]:
-        """Return an async iterator for a given event stream (live queue only)."""
-
-        _ = backlog_mode
+        """Return an async iterator for a given event stream with optional backlog."""
 
         async def iterator() -> AsyncIterator[Any]:
+            if backlog_mode in {"catchup", "snapshot"}:
+                async for event_payload in self._replay_backlog(
+                    event_type=event_type, backlog_mode=backlog_mode, filter_fn=filter_fn
+                ):
+                    yield event_payload
             while True:
                 payload = await self._queue.get()
                 if payload is None:
@@ -145,10 +155,26 @@ class EventBus:
     async def recover(
         self, state_path: Path | str = Path("snapshots/latest/event_bus_state.json")
     ) -> None:
-        """Recover from persisted state after a crash (best-effort placeholder)."""
+        """Recover from persisted state after a crash (best-effort)."""
 
+        resolved_path = Path(state_path)
+        if not resolved_path.exists():
+            self._logger.info(
+                "EventBus recover: no state file found", extra={"state_path": str(resolved_path)}
+            )
+            return
+        try:
+            payload = json.loads(resolved_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            self._logger.warning(
+                "EventBus recover failed",
+                extra={"state_path": str(resolved_path), "error": str(exc)},
+            )
+            return
+        self._state_cache = dict(payload)
         self._logger.info(
-            "EventBus recover placeholder invoked", extra={"state_path": str(state_path)}
+            "EventBus recovered state",
+            extra={"state_path": str(resolved_path), "keys": list(self._state_cache.keys())},
         )
 
     def replay(
@@ -158,7 +184,7 @@ class EventBus:
         to_ts: datetime | None = None,
         event_types: list[str] | None = None,
         batch_size: int = 256,
-    ) -> AsyncIterator[Any]:
+    ) -> Iterator[dict[str, Any]]:
         """Replay historic events from the JSONL log archive."""
 
         _ = batch_size
@@ -288,8 +314,74 @@ class EventBus:
                 handle.write("\n")
         except OSError as exc:
             self._logger.error("EventBus event write failed", extra={"error": str(exc)})
+        self._update_state_cache(record)
         self._rotate_if_needed(path)
         self._prune_retention()
+        self._flush_state_if_needed()
+
+    def _update_state_cache(self, record: dict[str, Any]) -> None:
+        event_type = str(record.get("event_type") or "").strip() or "unknown"
+        last_events = self._state_cache.setdefault("last_event", {})
+        if isinstance(last_events, dict):
+            last_events[event_type] = record.get("ts")
+        self._state_cache["last_ts"] = record.get("ts")
+        self._state_cache["last_log"] = str(self._current_log_path or "")
+
+    def _flush_state_if_needed(self) -> None:
+        now_epoch = time.time()
+        if now_epoch - self._last_state_flush < self.config.state_flush_interval_sec:
+            return
+        try:
+            self.config.state_path.write_text(
+                json.dumps(self._state_cache, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+            self._last_state_flush = now_epoch
+        except OSError:
+            return
+
+    async def _replay_backlog(
+        self,
+        *,
+        event_type: str,
+        backlog_mode: Literal["catchup", "snapshot"],
+        filter_fn: Callable[[Any], bool] | None,
+    ) -> AsyncIterator[Any]:
+        event_type_key = event_type.lower()
+        since_ts = self._replay_since_ts(event_type_key)
+        if backlog_mode == "snapshot":
+            snapshot = self._latest_event_snapshot(event_type_key, since_ts)
+            if snapshot is not None:
+                event_payload = snapshot.get("event")
+                if filter_fn is None or filter_fn(event_payload):
+                    yield event_payload
+            return
+        for record in self.replay(from_ts=since_ts, event_types=[event_type_key]):
+            event_payload = record.get("event")
+            if filter_fn is not None and not filter_fn(event_payload):
+                continue
+            yield event_payload
+            await asyncio.sleep(0)
+
+    def _replay_since_ts(self, event_type: str) -> datetime:
+        cached = {}
+        if isinstance(self._state_cache.get("last_event"), dict):
+            cached = self._state_cache["last_event"]
+        ts_value = cached.get(event_type) or cached.get(event_type.upper())
+        if ts_value:
+            try:
+                return datetime.fromisoformat(str(ts_value).replace("Z", "+00:00"))
+            except Exception:
+                pass
+        return datetime.now(timezone.utc) - timedelta(days=self.config.retention_days)
+
+    def _latest_event_snapshot(
+        self, event_type: str, since_ts: datetime
+    ) -> dict[str, Any] | None:
+        latest: dict[str, Any] | None = None
+        for record in self.replay(from_ts=since_ts, event_types=[event_type]):
+            latest = record
+        return latest
 
     def _rotate_if_needed(self, path: Path) -> None:
         max_size = 50 * 1024 * 1024

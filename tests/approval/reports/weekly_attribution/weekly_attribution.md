@@ -17,6 +17,9 @@
 - Status: disabled
 - Summary: n/a
 
+## Model Risk
+n/a
+
 ## Kill Switch & Spread
 - Kill Switch history: deferred
 - Spread cooldown summary: deferred
@@ -34,6 +37,9 @@ no entries
 
 ## Stress Runs
 - No stress runs
+
+## Risk Envelope Delta
+n/a
 
 ## Trade Journal
 - No entries

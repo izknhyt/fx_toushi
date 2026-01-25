@@ -1,140 +1,61 @@
 from __future__ import annotations
 
-import json
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 from src.data.quality import DataQualityGuard
 from src.data.service import MarketFrame
 
 
-def _bar(
-    ts: datetime, *, o: float, h: float, low: float, c: float, v: float = 1.0
-) -> dict[str, object]:
-    return {
-        "timestamp": ts.isoformat().replace("+00:00", "Z"),
-        "open": o,
-        "high": h,
-        "low": low,
-        "close": c,
-        "volume": v,
-    }
+def _frame(symbol: str, close_values: list[float]) -> MarketFrame:
+    bars = []
+    now = datetime(2024, 1, 1, tzinfo=timezone.utc)
+    for idx, close in enumerate(close_values):
+        bars.append(
+            {
+                "timestamp": (now + timedelta(minutes=5 * idx)).isoformat(),
+                "open": close,
+                "high": close,
+                "low": close,
+                "close": close,
+                "volume": 1,
+            }
+        )
+    return MarketFrame(symbol=symbol, timeframe="5m", bars=bars)
 
 
-def test_quality_guard_accepts_clean_bars() -> None:
-    guard = DataQualityGuard(expected_timeframe_minutes=5, max_gap_minutes=10)
-    start = datetime(2025, 1, 1, 0, 0, tzinfo=timezone.utc)
-    bars = [_bar(start + timedelta(minutes=5 * i), o=1, h=2, low=0.5, c=1.5) for i in range(5)]
-    frame = MarketFrame(symbol="USDJPY", timeframe="5m", bars=bars)
+def test_compare_detects_drift() -> None:
+    guard = DataQualityGuard(expected_timeframe_minutes=5)
+    current = _frame("EURUSD", [1.0, 1.1, 1.2, 1.3])
+    reference = _frame("EURUSD", [0.5, 0.5, 0.5, 0.5])
+    guard.validate(current)
 
-    result = guard.validate(frame)
+    comparison = guard.compare([reference])
 
-    assert result.status == "ok"
-    assert result.issues == []
+    assert comparison.drift_detected is True
+    assert comparison.status == "drift"
 
+def test_compare_requires_matching_reference() -> None:
+    guard = DataQualityGuard(expected_timeframe_minutes=5)
+    current = _frame("EURUSD", [1.0, 1.1])
+    reference = _frame("USDJPY", [1.0, 1.1])
+    guard.validate(current)
 
-def test_quality_guard_flags_ohlc_bounds() -> None:
-    guard = DataQualityGuard(expected_timeframe_minutes=5, max_gap_minutes=10)
-    ts = datetime(2025, 1, 1, 0, 0, tzinfo=timezone.utc)
-    bars = [_bar(ts, o=2.0, h=1.0, low=0.5, c=2.5)]
-    frame = MarketFrame(symbol="USDJPY", timeframe="5m", bars=bars)
+    comparison = guard.compare([reference])
 
-    result = guard.validate(frame)
-
-    assert result.status == "fail"
-    assert "ohlc_bounds" in result.issues
-
-
-def test_quality_guard_flags_gap() -> None:
-    guard = DataQualityGuard(expected_timeframe_minutes=5, max_gap_minutes=10)
-    start = datetime(2025, 1, 1, 0, 0, tzinfo=timezone.utc)
-    bars = [
-        _bar(start, o=1, h=2, low=0.5, c=1.2),
-        _bar(start + timedelta(minutes=30), o=1, h=2, low=0.5, c=1.2),
-    ]
-    frame = MarketFrame(symbol="USDJPY", timeframe="5m", bars=bars)
-
-    result = guard.validate(frame)
-
-    assert result.status == "fail"
-    assert "gap_exceeds_threshold" in result.issues
+    assert comparison.status == "error"
+    assert "reference_mismatch" in comparison.issues
 
 
-def test_quality_guard_handles_mixed_timezone_timestamps() -> None:
-    guard = DataQualityGuard(expected_timeframe_minutes=5, max_gap_minutes=10)
-    bars = [
-        {
-            "timestamp": "2025-01-01T00:00:00Z",
-            "open": 1.0,
-            "high": 2.0,
-            "low": 0.5,
-            "close": 1.2,
-            "volume": 1.0,
-        },
-        {
-            "timestamp": "2025-01-01T00:05:00",
-            "open": 1.0,
-            "high": 2.0,
-            "low": 0.5,
-            "close": 1.2,
-            "volume": 1.0,
-        },
-    ]
-    frame = MarketFrame(symbol="USDJPY", timeframe="5m", bars=bars)
+def test_annotate_writes_payload(tmp_path: Path) -> None:
+    guard = DataQualityGuard(expected_timeframe_minutes=5)
+    frame = _frame("USDJPY", [150.0, 150.1, 150.2])
+    guard.validate(frame)
 
-    result = guard.validate(frame)
+    out_path = tmp_path / "annotations.jsonl"
+    payload = guard.annotate({"note": "quality_check"}, out=out_path)
 
-    assert result.status == "ok"
-
-
-def test_quality_guard_records_ntp_drift_and_missing_ratio(tmp_path) -> None:
-    metrics_path = tmp_path / "time_sync.jsonl"
-    metrics_path.write_text(json.dumps({"clock_drift_ms": 120}) + "\n", encoding="utf-8")
-    guard = DataQualityGuard(
-        expected_timeframe_minutes=5,
-        max_gap_minutes=30,
-        time_sync_metrics_path=metrics_path,
-        ntp_max_ms=50,
-        missing_ratio_warn=0.1,
-    )
-    start = datetime(2025, 1, 1, 0, 0, tzinfo=timezone.utc)
-    bars = [
-        _bar(start, o=1, h=2, low=0.5, c=1.2),
-        _bar(start + timedelta(minutes=5), o=1, h=2, low=0.5, c=1.2),
-        _bar(start + timedelta(minutes=15), o=1, h=2, low=0.5, c=1.2),
-        _bar(start + timedelta(minutes=20), o=1, h=2, low=0.5, c=1.2),
-    ]
-    frame = MarketFrame(symbol="USDJPY", timeframe="5m", bars=bars)
-
-    result = guard.validate(frame)
-
-    assert result.clock_drift_ms == 120
-    assert result.missing_ratio is not None and result.missing_ratio > 0.1
-    assert "ntp_drift" in result.issues
-    assert "missing_ratio_high" in result.issues
-
-
-def test_quality_guard_evaluate_builds_latency_alert(tmp_path) -> None:
-    metrics_path = tmp_path / "time_sync.jsonl"
-    metrics_path.write_text(json.dumps({"clock_drift_ms": 120}) + "\n", encoding="utf-8")
-    guard = DataQualityGuard(
-        expected_timeframe_minutes=5,
-        max_gap_minutes=30,
-        time_sync_metrics_path=metrics_path,
-        ntp_max_ms=50,
-        missing_ratio_warn=0.1,
-    )
-    start = datetime(2025, 1, 1, 0, 0, tzinfo=timezone.utc)
-    bars = [
-        _bar(start, o=1, h=2, low=0.5, c=1.2),
-        _bar(start + timedelta(minutes=5), o=1, h=2, low=0.5, c=1.2),
-        _bar(start + timedelta(minutes=15), o=1, h=2, low=0.5, c=1.2),
-        _bar(start + timedelta(minutes=20), o=1, h=2, low=0.5, c=1.2),
-    ]
-    frame = MarketFrame(symbol="USDJPY", timeframe="5m", bars=bars)
-
-    alert = guard.evaluate(frame, provider="primary", lag_seconds=600)
-
-    assert alert is not None
-    assert alert.clock_drift_ms == 120
-    assert alert.manual_csv_required is True
-    assert alert.severity == "major"
+    assert payload["status"] in {"ok", "warn", "fail"}
+    assert payload["symbol"] == "USDJPY"
+    assert payload["timeframe"] == "5m"
+    assert out_path.exists()

@@ -126,12 +126,11 @@ class OfflineCacheManager:
                 "checksum": checksum,
             },
         )
-        DataManifestService(path=manifest_path).record(
-            path=output_path,
-            kind="shadow_gateway_cache",
-            owner="ops_manager",
+        _upsert_manifest_entry(
+            manifest_path=manifest_path,
+            output_path=output_path,
+            checksum=checksum,
             playbook_id=playbook_id,
-            tags=["shadow_gateway", "cache_replay"],
         )
         return {
             "status": "ok",
@@ -148,6 +147,40 @@ class OfflineCacheManager:
         if not self.feature_flags or not self.profile:
             return True
         return self.feature_flags.is_enabled("shadow.gateway.offline_cache", mode=self.profile)
+
+
+def _upsert_manifest_entry(
+    *,
+    manifest_path: Path,
+    output_path: Path,
+    checksum: str,
+    playbook_id: str,
+) -> None:
+    if manifest_path.exists():
+        try:
+            payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+        except Exception:
+            payload = {}
+        entries = payload.get("entries")
+        if isinstance(entries, list):
+            target = str(output_path)
+            for entry in entries:
+                if isinstance(entry, dict) and entry.get("path") == target:
+                    entry["hash_sha256"] = checksum
+                    entry["validation_playbook_id"] = playbook_id
+                    payload["generated_at"] = _utcnow_iso()
+                    manifest_path.write_text(
+                        json.dumps(payload, ensure_ascii=False, indent=2),
+                        encoding="utf-8",
+                    )
+                    return
+    DataManifestService(path=manifest_path).record(
+        path=output_path,
+        kind="shadow_gateway_cache",
+        owner="ops_manager",
+        playbook_id=playbook_id,
+        tags=["shadow_gateway", "cache_replay"],
+    )
 
 
 __all__ = ["OfflineCacheManager"]

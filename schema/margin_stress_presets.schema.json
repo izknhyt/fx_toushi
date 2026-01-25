@@ -6,11 +6,31 @@
   "properties": {
     "schema_version": {"type": "string"},
     "presets": {
-      "type": "object",
-      "additionalProperties": {
+      "type": "array",
+      "items": {
         "type": "object",
+        "required": ["id", "kind", "shock_profile"],
         "properties": {
-          "shock_pct": {"type": "number", "minimum": 0}
+          "id": {"type": "string"},
+          "kind": {"type": "string"},
+          "duration": {"type": "string"},
+          "confidence_level": {"type": "number", "minimum": 0, "maximum": 1},
+          "ref_events": {
+            "type": "array",
+            "items": {"type": "string"}
+          },
+          "shock_profile": {
+            "type": "object",
+            "properties": {
+              "drawdown_pct": {"type": "number"},
+              "weekly_drawdown_pct": {"type": "number"},
+              "margin_peak": {"type": "number"},
+              "r_eff_peak": {"type": "number"},
+              "loss_streak": {"type": "number"},
+              "corr_hotness": {"type": "number"}
+            },
+            "additionalProperties": false
+          }
         },
         "additionalProperties": false
       }

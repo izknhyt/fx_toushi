@@ -52,12 +52,14 @@ def simulate_fault(
     }
     if metrics_path:
         metrics_path.parent.mkdir(parents=True, exist_ok=True)
+        retryable = str(scenario) in {"429", "rate_limit_exhaust"}
         sample = {
             "ts": record["ts"],
             "scenario": scenario,
             "stage_guard_action": record.get("stage_guard_action"),
             "recovery_plan": bool(record.get("recovery_plan_id")),
             "ops_todo_created": record.get("ops_todo_created"),
+            "retryable": retryable,
         }
         try:
             with metrics_path.open("a", encoding="utf-8") as handle:
@@ -113,4 +115,3 @@ def simulate_verify(
         "expected_stage": expected_stage,
         "expected_alert": expected_alert,
     }
-

@@ -12,6 +12,8 @@ from .bridge import (
     ScoreboardBridgeError,
     ScoreboardBridgeSnapshot,
 )
+from .jobs_stub import DEFAULT_SCOREBOARD_JOB_METRICS, run_weekly_job
+from .repository_stub import ScoreRecord, ScoreboardRepository, ScoreboardRepositoryError
 from .service import (
     DEFAULT_ALPHA_DIR,
     DEFAULT_OPS_WORKLOG,
@@ -31,15 +33,20 @@ __all__ = [
     "DEFAULT_OPS_WORKLOG",
     "DEFAULT_PROFIT_LOOP_METRICS_PATH",
     "DEFAULT_PROFIT_LOOP_REPORT",
+    "DEFAULT_SCOREBOARD_JOB_METRICS",
     "DEFAULT_SCOREBOARD_CONFIG_PATH",
     "DEFAULT_STRATEGY_SCORES_PATH",
     "DEFAULT_WATCHLIST_LOG",
+    "ScoreRecord",
     "ScoreboardBridge",
     "ScoreboardBridgeError",
     "ScoreboardBridgeEntry",
     "ScoreboardBridgeSnapshot",
     "ScoreboardComputationFailedError",
+    "ScoreboardRepository",
+    "ScoreboardRepositoryError",
     "SnapshotSummary",
     "StrategyScoreboardService",
     "WatchlistRecord",
+    "run_weekly_job",
 ]

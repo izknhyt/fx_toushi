@@ -7,6 +7,8 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
+import yaml
+
 INCIDENT_REPORT_DIR = Path("reports/ops/incidents")
 """Root directory for incident postmortems."""
 
@@ -359,28 +361,35 @@ class IncidentPostmortemService:
             else None,
         }
         self._validation_playbook_path.parent.mkdir(parents=True, exist_ok=True)
+        data: dict[str, object] = {}
         if self._validation_playbook_path.exists():
-            lines = self._validation_playbook_path.read_text(encoding="utf-8").splitlines()
-            if not lines:
-                lines = [
-                    "validation_playbook_id: AC43_postmortem",
-                    "category: incident_postmortem",
-                    "entries:",
-                ]
-        else:
-            lines = [
-                "validation_playbook_id: AC43_postmortem",
-                "category: incident_postmortem",
-                "entries:",
-            ]
-        lines.append(
-            f"  - incident_id: {entry['incident_id']}"
+            try:
+                loaded = yaml.safe_load(
+                    self._validation_playbook_path.read_text(encoding="utf-8")
+                )
+                if isinstance(loaded, dict):
+                    data = loaded
+            except Exception:
+                data = {}
+        entries = list(data.get("entries") or []) if isinstance(data, dict) else []
+        entries.append(
+            {
+                "incident_id": entry["incident_id"],
+                "postmortem_path": entry["postmortem_path"],
+                "postmortem_hash": entry["postmortem_hash"],
+                "runbook_ref": "RUN-INC-01",
+                "closed_at": entry["closed_at"],
+            }
         )
-        lines.append(f"    postmortem_path: {entry['postmortem_path']}")
-        lines.append(f"    postmortem_hash: {entry['postmortem_hash']}")
-        lines.append("    runbook_ref: RUN-INC-01")
-        lines.append(f"    closed_at: {entry['closed_at']}")
-        self._validation_playbook_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        payload = {
+            "validation_playbook_id": "AC43_postmortem",
+            "category": "incident_postmortem",
+            "entries": entries,
+        }
+        self._validation_playbook_path.write_text(
+            _dump_incident_playbook(payload),
+            encoding="utf-8",
+        )
 
 
 def _render_template(
@@ -429,6 +438,27 @@ def _render_section(
             line = line.replace(f"{{{{{col}}}}}", "n/a")
         rendered_block = line
     return template[:start_index] + rendered_block + template[end_index + len(end_tag) :]
+
+
+def _dump_incident_playbook(data: dict[str, object]) -> str:
+    lines = [
+        "validation_playbook_id: AC43_postmortem",
+        "category: incident_postmortem",
+        "entries:",
+    ]
+    for entry in data.get("entries") or []:
+        if not isinstance(entry, dict):
+            continue
+        lines.append(f"  - incident_id: {_yaml_scalar(entry.get('incident_id'))}")
+        lines.append(f"    postmortem_path: {_yaml_scalar(entry.get('postmortem_path'))}")
+        lines.append(f"    postmortem_hash: {_yaml_scalar(entry.get('postmortem_hash'))}")
+        lines.append(f"    runbook_ref: {_yaml_scalar(entry.get('runbook_ref'))}")
+        lines.append(f"    closed_at: {_yaml_scalar(entry.get('closed_at'))}")
+    return "\n".join(lines) + "\n"
+
+
+def _yaml_scalar(value: object) -> str:
+    return "null" if value in {None, ""} else str(value)
 
 
 def _record_to_dict(record: IncidentRecord) -> dict[str, object]:

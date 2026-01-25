@@ -137,7 +137,7 @@ definitions:
     milestone: "M2"
     owner: ops_manager
     category: guarded
-    runbook_ref: "RUN-ACCOUNT-02"
+    runbook_ref: "RUN-FEATURE-FLAG-01 (see RUN-ACCOUNT-02)"
     enable_conditions:
       - "account aggregation CLI で portfolio_state が生成されることを確認"
       - "Validation Playbook M2_account_aggregation が用意されていること"
@@ -150,7 +150,7 @@ definitions:
     milestone: "M3"
     owner: ops_manager
     category: dangerous
-    runbook_ref: "RUN-BROKER-API-03"
+    runbook_ref: "RUN-FEATURE-FLAG-01 (see RUN-BROKER-API-03)"
     enable_conditions:
       - "BrokerCertificationSuite が直近で pass を維持"
       - "FillShadow 24h アラートゼロ"
@@ -166,7 +166,7 @@ definitions:
     milestone: "M2"
     owner: ops_manager
     category: guarded
-    runbook_ref: "RUN-SHADOW-01"
+    runbook_ref: "RUN-FEATURE-FLAG-01 (see RUN-SHADOW-01)"
     enable_conditions:
       - "config/shadow/channels.yaml と config/shadow/tokens.yaml が更新済み"
       - "tradectl shadow test が正常に実行できる"
@@ -179,7 +179,7 @@ definitions:
     milestone: "M3"
     owner: ops_manager
     category: guarded
-    runbook_ref: "RUN-SHADOW-GW-01"
+    runbook_ref: "RUN-FEATURE-FLAG-01 (see RUN-SHADOW-GW-01)"
     enable_conditions:
       - "RUN-SHADOW-GW-01 のフェイルオーバー演習が完了している"
       - "metrics/shadow_gateway.jsonl の availability が99.5%を維持"
@@ -194,7 +194,7 @@ definitions:
     milestone: "M3"
     owner: ops_manager
     category: guarded
-    runbook_ref: "RUN-SHADOW-GW-02"
+    runbook_ref: "RUN-FEATURE-FLAG-01 (see RUN-SHADOW-GW-02)"
     enable_conditions:
       - "RUN-SHADOW-GW-02 のキャッシュリプレイ演習が完了している"
       - "reports/ops/shadow_gateway/cache_replay.md が生成される"
@@ -208,11 +208,13 @@ definitions:
     milestone: "M3"
     owner: ops_manager
     category: dangerous
-    runbook_ref: "RUN-SHADOW-GW-01"
+    runbook_ref: "RUN-FEATURE-FLAG-01 (see RUN-SHADOW-GW-01)"
     enable_conditions:
       - "フェイルオーバードリルの承認が完了している"
+      - "shadow gateway load/chaos 証跡が直近で更新済み"
     rollback:
       - "tradectl shadow gateway failover --restore --profile <mode>"
+      - "shadow gateway status で primary 復帰と遅延正常化を確認"
     telemetry_checks:
       - "logs/audit/shadow_gateway.jsonl"
   risk_disclosure_enforce:
@@ -236,7 +238,7 @@ definitions:
     milestone: "M2"
     owner: compliance
     category: guarded
-    runbook_ref: "GOV-STRAT-01"
+    runbook_ref: "RUN-FEATURE-FLAG-01 (see GOV-STRAT-01)"
     enable_conditions:
       - "docs/governance/model_risk_register.md が初期化済み"
       - "reports/model_risk/<strategy>/manifest.yaml が作成済み"
@@ -250,7 +252,7 @@ definitions:
     milestone: "M2"
     owner: governance
     category: guarded
-    runbook_ref: "GOV-IDEA-01"
+    runbook_ref: "RUN-FEATURE-FLAG-01 (see GOV-IDEA-01)"
     enable_conditions:
       - "config/idea_pipeline.yaml が更新済み"
       - "docs/templates/idea_checklists/* が初期化済み"
@@ -264,7 +266,7 @@ definitions:
     milestone: "M2"
     owner: finance_ops
     category: guarded
-    runbook_ref: "RUN-TAX-01"
+    runbook_ref: "RUN-FEATURE-FLAG-01 (see RUN-TAX-01)"
     enable_conditions:
       - "Ledger event sources (ticket/execution/funding/reconciliation) が揃っている"
       - "Tax ledger snapshotの出力先が確保済み"
@@ -278,7 +280,7 @@ definitions:
     milestone: "M2"
     owner: governance
     category: guarded
-    runbook_ref: "RUN-GOV-02"
+    runbook_ref: "RUN-FEATURE-FLAG-01 (see RUN-GOV-02)"
     enable_conditions:
       - "config/share_profiles/<profile>.yaml が整備済み"
       - "reports/secure_share/<profile>/<period>/ が出力可能"
@@ -291,7 +293,7 @@ definitions:
     milestone: "M3"
     owner: ops_manager
     category: dangerous
-    runbook_ref: "RUN-BROKER-API-01"
+    runbook_ref: "RUN-FEATURE-FLAG-01 (see RUN-BROKER-API-01)"
     enable_conditions:
       - "RUN-BROKER-API-01のsandbox接続検証を完了"
       - "Access governance enforcementが有効であること"
@@ -306,7 +308,7 @@ definitions:
     milestone: "M3"
     owner: ops_manager
     category: guarded
-    runbook_ref: "RUN-BROKER-API-01"
+    runbook_ref: "RUN-FEATURE-FLAG-01 (see RUN-BROKER-API-01)"
     enable_conditions:
       - "Sandbox接続の疎通とSmoke結果が記録済み"
     rollback:
@@ -318,7 +320,7 @@ definitions:
     milestone: "M3"
     owner: ops_manager
     category: guarded
-    runbook_ref: "RUN-BROKER-API-02"
+    runbook_ref: "RUN-FEATURE-FLAG-01 (see RUN-BROKER-API-02)"
     enable_conditions:
       - "Broker API sandbox smokeが完了"
     rollback:
@@ -331,7 +333,7 @@ definitions:
     milestone: "M3"
     owner: ops_manager
     category: guarded
-    runbook_ref: "RUN-BROKER-API-03"
+    runbook_ref: "RUN-FEATURE-FLAG-01 (see RUN-BROKER-API-03)"
     enable_conditions:
       - "BrokerCertificationSuiteをPassしたこと"
     rollback:

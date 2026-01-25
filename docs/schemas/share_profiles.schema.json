@@ -2,11 +2,26 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "ShareProfiles",
   "type": "object",
-  "required": ["schema_version", "profile_id", "recipients"],
+  "required": ["schema_version", "profile_id", "recipient"],
   "properties": {
     "schema_version": {"type": "string"},
     "profile_id": {"type": "string"},
-    "recipients": {
+    "recipient": {"type": "string"},
+    "purpose": {"type": "string"},
+    "allowed_paths": {
+      "type": "array",
+      "items": {"type": "string"}
+    },
+    "retention_days": {"type": "integer", "minimum": 1},
+    "public_key_path": {"type": ["string", "null"]},
+    "contact": {"type": ["string", "null"]},
+    "runbook_refs": {
+      "type": "array",
+      "items": {"type": "string"}
+    },
+    "encryption_method": {"type": "string"},
+    "require_risk_disclosure": {"type": "boolean"},
+    "channels": {
       "type": "array",
       "items": {"type": "string"}
     }

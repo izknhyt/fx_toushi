@@ -2,23 +2,64 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "CompliancePretradeRules",
   "type": "object",
-  "required": ["schema_version", "rules"],
+  "required": [
+    "schema_version",
+    "max_leverage",
+    "fifo_required",
+    "hedge_allowed",
+    "position_limits",
+    "blocked_pairs",
+    "blocked_time_windows",
+    "override_roles",
+    "runbook_map"
+  ],
   "properties": {
     "schema_version": {"type": "string"},
-    "rules": {
+    "max_leverage": {"type": "number"},
+    "fifo_required": {"type": "boolean"},
+    "hedge_allowed": {"type": "boolean"},
+    "position_limits": {
+      "type": "object",
+      "required": ["total_open_positions", "symbol"],
+      "properties": {
+        "total_open_positions": {"type": "integer"},
+        "symbol": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "required": ["max_lots", "max_side"],
+            "properties": {
+              "max_lots": {"type": "number"},
+              "max_side": {"type": "string", "enum": ["both", "net_long", "net_short"]}
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "blocked_pairs": {"type": "array", "items": {"type": "string"}},
+    "blocked_time_windows": {
       "type": "array",
       "items": {
         "type": "object",
-        "required": ["id", "severity", "threshold", "unit", "enabled"],
+        "required": ["weekday", "start", "end"],
         "properties": {
-          "id": {"type": "string"},
-          "severity": {"type": "string"},
-          "threshold": {"type": "number"},
-          "unit": {"type": "string"},
-          "enabled": {"type": "boolean"}
+          "weekday": {
+            "type": "string",
+            "enum": ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
+          },
+          "start": {"type": "string"},
+          "end": {"type": "string"},
+          "reason": {"type": "string"}
         },
         "additionalProperties": false
       }
+    },
+    "override_roles": {"type": "array", "items": {"type": "string"}},
+    "runbook_map": {
+      "type": "object",
+      "additionalProperties": {"type": "string"}
     }
   },
   "additionalProperties": false

@@ -1,3 +1,4 @@
+schema_version: broker_error_map.v1
 error_map:
   RATE_LIMIT_EXCEEDED:
     trigger_reason: rate_limit

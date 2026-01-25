@@ -757,7 +757,6 @@ class StrategyEngine:
                 required_features=plugin_metadata.required_features,
                 feature_version=feature_version,
                 data_manifest_hash=data_manifest_hash,
-                strategy_config=entry.parameters,
             )
             event_payload = {
                 "event": "strategy.determinism",

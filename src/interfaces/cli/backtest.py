@@ -11,10 +11,8 @@ from typing import Any
 
 import pandas as pd
 
-from src.backtest.paper_poc import (
-    StrategyManifest,
-    simulate_paper_poc,
-)
+from src.backtest.paper_poc import StrategyManifest, simulate_paper_poc
+from src.backtest.walkforward import build_plan_from_specs
 
 from .board import _load_manifest_entry  # reuse manifest helper
 
@@ -226,28 +224,27 @@ def walk_forward_backtest(
     dataset_path = manifest_entry["dataset_path"]
     dataset_hash = manifest_entry["dataset_sha256"]
 
+    plan = build_plan_from_specs(
+        start=pd.Timestamp(window_from).date(),
+        end=pd.Timestamp(window_to).date(),
+        window_spec=window_spec,
+        step_spec=step_spec,
+    )
     segments = []
-    start_ts = pd.Timestamp(window_from)
-    end_ts = pd.Timestamp(window_to)
-    window = pd.DateOffset(months=int(window_spec.rstrip("m")))
-    step = pd.DateOffset(months=int(step_spec.rstrip("m")))
-    cursor = start_ts
-    segment_index = 1
-    while cursor < end_ts:
-        segment_end = min(cursor + window, end_ts)
-        pf = 1.18 + (segment_index % 3) * 0.02
-        sharpe = 0.9 + (segment_index % 3) * 0.03
+    for segment in plan.segments:
+        pf = 1.18 + (segment.index % 3) * 0.02
+        sharpe = 0.9 + (segment.index % 3) * 0.03
         segments.append(
             {
-                "segment": segment_index,
-                "from": str(cursor.date()),
-                "to": str(segment_end.date()),
+                "segment": segment.index,
+                "train_from": str(segment.train_start),
+                "train_to": str(segment.train_end),
+                "test_from": str(segment.test_start),
+                "test_to": str(segment.test_end),
                 "pf": round(pf, 4),
                 "sharpe": round(sharpe, 4),
             }
         )
-        cursor += step
-        segment_index += 1
 
     payload = {
         "strategy": strategy,

@@ -20,6 +20,7 @@ def test_ops_incident_cli_flow(tmp_path: Path, monkeypatch) -> None:
         log_path=tmp_path / "logs" / "ops" / "incidents.jsonl",
         template_path=template_path,
         audit_dir=tmp_path / "logs" / "audit",
+        validation_playbook_path=tmp_path / "docs" / "validation_playbook" / "AC43_postmortem.yaml",
     )
     analyzer = TradeForensicsAnalyzer(
         postmortem_service=service,

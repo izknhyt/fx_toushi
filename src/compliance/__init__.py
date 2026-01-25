@@ -1,6 +1,12 @@
 """Compliance services."""
 
 from .device_binding import DeviceBinding, DeviceBindingService
+from .pretrade import (
+    PreTradeCheckRequest,
+    PreTradeCheckResult,
+    PreTradeComplianceService,
+    PreTradeRuleSet,
+)
 from .risk_disclosure import RiskDisclosureService, RiskDisclosureState
 from .risk_disclosure_enforcer import BlockRule, ConsentDecision, RiskDisclosureEnforcer
 
@@ -12,4 +18,8 @@ __all__ = [
     "RiskDisclosureEnforcer",
     "DeviceBinding",
     "DeviceBindingService",
+    "PreTradeCheckRequest",
+    "PreTradeCheckResult",
+    "PreTradeComplianceService",
+    "PreTradeRuleSet",
 ]

@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any
 
 import typer
+from jsonschema import ValidationError
 from rich.console import Console
 from rich.panel import Panel
 from rich.pretty import Pretty
@@ -57,7 +58,12 @@ from .access import (
     review_complete as access_review_complete,
     review_start as access_review_start,
 )
-from .alpha import AlphaReviewError, AlphaWatchlistAlertError, review as alpha_review
+from .alpha import (
+    AlphaReviewError,
+    AlphaWatchlistAlertError,
+    preview as alpha_preview,
+    review as alpha_review,
+)
 from .backtest import run_backtest, run_paper_poc, run_paper_poc_all, walk_forward_backtest
 from .backtest_regression import (
     regression_list as backtest_regression_list,
@@ -121,7 +127,14 @@ from .compliance import (
     refresh as compliance_refresh,
     status as compliance_status,
 )
+from .compliance_pretrade import (
+    pretrade_dry_run as compliance_pretrade_dry_run,
+    pretrade_overrides as compliance_pretrade_overrides,
+    pretrade_rules as compliance_pretrade_rules,
+)
 from .compliance_risk import device_list, device_register, risk_disclosure_enforce
+from .config import diff as config_diff
+from .config import sign as config_sign
 from .config import validate as config_validate
 from .data import (
     acknowledge_degradation,
@@ -260,6 +273,7 @@ from .research_promote import (
     promote as research_promote,
     simulate as research_promote_simulate,
 )
+from src.research.promotion import promote as research_pipeline_promote
 from .research import (
     workspace_status as research_workspace_status,
     workspace_sync as research_workspace_sync,
@@ -889,6 +903,65 @@ def create_cli_app() -> typer.Typer:
             "files": files,
             "count": len(files),
         }
+        _render_payload(console, payload, json_output=effective_json)
+
+    @config_app.command("diff")
+    def config_diff_command(
+        ctx: typer.Context,
+        profile_from: str = typer.Option(..., "--from", help="Source profile"),
+        profile_to: str = typer.Option(..., "--to", help="Target profile"),
+        include_defaults: bool = typer.Option(False, "--include-defaults", help="Include defaults"),
+        format: str = typer.Option("table", "--format", help="Output format (table|json|md)"),
+        risk_threshold: str | None = typer.Option(
+            None, "--risk-threshold", help="Warn when risk level >= threshold"
+        ),
+        require_signed: bool = typer.Option(
+            False, "--require-signed", help="Require signed diff file"
+        ),
+        signature_path: Path | None = typer.Option(
+            None, "--signature", help="Signature file path"
+        ),
+        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
+    ) -> None:
+        ctx_obj = ctx.obj or {"json": False}
+        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        payload = config_diff(
+            profile_from=profile_from,
+            profile_to=profile_to,
+            include_defaults=include_defaults,
+            format=format,
+            risk_threshold=risk_threshold,
+            require_signed=require_signed,
+            signature_path=signature_path,
+        )
+        if not effective_json and format != "json":
+            rendered = payload.get("rendered")
+            if isinstance(rendered, str) and rendered.strip():
+                console.print(rendered)
+                return
+        _render_payload(console, payload, json_output=effective_json)
+        if payload.get("status") == "error":
+            raise typer.Exit(code=1)
+
+    @config_app.command("sign")
+    def config_sign_command(
+        ctx: typer.Context,
+        diff_path: Path = typer.Option(..., "--diff", help="Diff JSON path"),
+        profile_from: str = typer.Option(..., "--from", help="Source profile"),
+        profile_to: str = typer.Option(..., "--to", help="Target profile"),
+        key: Path = typer.Option(..., "--key", help="Ed25519 private key PEM path"),
+        signer: str = typer.Option("local", "--signer", help="Signer identifier"),
+        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
+    ) -> None:
+        ctx_obj = ctx.obj or {"json": False}
+        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        payload = config_sign(
+            diff_path=diff_path,
+            profile_from=profile_from,
+            profile_to=profile_to,
+            private_key_path=key,
+            signer=signer,
+        )
         _render_payload(console, payload, json_output=effective_json)
 
     @determinism_app.command("replay")
@@ -6614,6 +6687,42 @@ def create_cli_app() -> typer.Typer:
             help="Promotion audit log path",
             hidden=True,
         ),
+        metrics_path: Path = typer.Option(
+            Path("metrics") / "promotion_gate.jsonl",
+            "--metrics",
+            help="Promotion metrics path",
+            hidden=True,
+        ),
+        window: str = typer.Option(
+            "90d",
+            "--window",
+            help="Validation window",
+            hidden=True,
+        ),
+        mode: str | None = typer.Option(
+            None,
+            "--mode",
+            help="Validation mode override",
+            hidden=True,
+        ),
+        suite_path: Path | None = typer.Option(
+            None,
+            "--suite",
+            help="Validation suite manifest",
+            hidden=True,
+        ),
+        output_dir: Path | None = typer.Option(
+            None,
+            "--output-dir",
+            help="Promotion output directory",
+            hidden=True,
+        ),
+        event_log: Path | None = typer.Option(
+            None,
+            "--event-log",
+            help="Promotion event log path",
+            hidden=True,
+        ),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
         if ctx.invoked_subcommand:
@@ -6624,19 +6733,43 @@ def create_cli_app() -> typer.Typer:
             raise typer.BadParameter("Missing option '--to'.")
         ctx_obj = ctx.obj or {"json": False}
         effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
-        payload = research_promote(
-            strategy_id=strategy,
-            target_stage=target,
-            actor=actor,
-            note=note,
-            attachments=attach,
-            dry_run=dry_run,
-            override=override,
-            idea_root=idea_root,
-            validation_playbook_dir=validation_playbook_dir,
-            checklist_dir=checklist_dir,
-            audit_log=audit_log,
-        )
+        if suite_path is not None:
+            pipeline_result = research_pipeline_promote(
+                strategy_id=strategy,
+                target_stage=target,
+                window=window,
+                mode=mode or target,
+                suite_path=suite_path,
+                metrics_path=metrics_path,
+                note=note,
+                attachments=attach,
+                dry_run=dry_run,
+                output_dir=output_dir or (Path("reports") / "research" / "promotion"),
+                event_log=event_log or (Path("logs") / "events" / "research_promotion.jsonl"),
+                audit_log=audit_log,
+            )
+            payload = {
+                "schema_version": "promotion.receipt.v1",
+                "status": pipeline_result.status,
+                "result": pipeline_result.to_dict(),
+                "note": note,
+                "attachments": [str(path) for path in attach],
+                "dry_run": dry_run,
+            }
+        else:
+            payload = research_promote(
+                strategy_id=strategy,
+                target_stage=target,
+                actor=actor,
+                note=note,
+                attachments=attach,
+                dry_run=dry_run,
+                override=override,
+                idea_root=idea_root,
+                validation_playbook_dir=validation_playbook_dir,
+                checklist_dir=checklist_dir,
+                audit_log=audit_log,
+            )
         _render_payload(console, payload, json_output=effective_json)
         if payload.get("status") != "pass":
             raise typer.Exit(code=2)
@@ -6744,6 +6877,65 @@ def create_cli_app() -> typer.Typer:
             payload = dict(exc.payload or {"error": str(exc)})
             _render_payload(console, payload, json_output=effective_json)
             raise typer.Exit(78) from exc
+        _render_payload(console, payload, json_output=effective_json)
+
+    @alpha_app.command("preview")
+    def alpha_preview_command(
+        ctx: typer.Context,
+        pair: str = typer.Option(..., "--pair", help="FX pair."),
+        regime: str = typer.Option("trend", "--regime", help="Regime (trend/range/news)."),
+        profile: str = typer.Option(
+            "usd_jpy_breakout", "--profile", help="Alpha profile id."
+        ),
+        spread_cooldown: float = typer.Option(
+            0.0, "--spread-cooldown", help="Spread cooldown factor."
+        ),
+        latency_minutes: float = typer.Option(
+            0.0, "--latency-minutes", help="Data catch-up latency in minutes."
+        ),
+        account_equity: float = typer.Option(
+            1.0, "--account-equity", help="Account equity for sizing."
+        ),
+        entry_window_min: float = typer.Option(
+            0.0, "--entry-window-min", help="Entry window min (pips)."
+        ),
+        entry_window_max: float = typer.Option(
+            0.0, "--entry-window-max", help="Entry window max (pips)."
+        ),
+        board_mode: str = typer.Option("normal", "--board-mode", help="Board mode."),
+        momentum_score: float = typer.Option(0.5, "--momentum-score", help="Momentum score."),
+        mean_reversion_score: float = typer.Option(
+            0.5, "--mean-reversion-score", help="Mean reversion score."
+        ),
+        macro_score: float = typer.Option(0.5, "--macro-score", help="Macro score."),
+        dry_run: bool = typer.Option(False, "--dry-run", help="Run in dry-run mode."),
+        validate_schema: bool = typer.Option(
+            False, "--validate-schema", help="Validate output against alpha pulse schema."
+        ),
+        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON."),
+    ) -> None:
+        ctx_obj = ctx.obj or {"json": False}
+        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        try:
+            payload = alpha_preview(
+                pair=pair,
+                regime=regime,
+                profile_id=profile,
+                spread_cooldown=spread_cooldown,
+                latency_minutes=latency_minutes,
+                account_equity=account_equity,
+                entry_window_pips=(entry_window_min, entry_window_max),
+                board_mode=board_mode,
+                momentum_score=momentum_score,
+                mean_reversion_score=mean_reversion_score,
+                macro_score=macro_score,
+                dry_run=dry_run,
+                validate_schema=validate_schema,
+            )
+        except ValidationError as exc:
+            payload = {"status": "error", "schema_error": str(exc)}
+            _render_payload(console, payload, json_output=effective_json)
+            raise typer.Exit(1) from exc
         _render_payload(console, payload, json_output=effective_json)
 
     app.add_typer(alpha_app, name="alpha")
@@ -7453,6 +7645,7 @@ def create_cli_app() -> typer.Typer:
     regression_app = typer.Typer(help="Compliance regression tools")
     risk_app = typer.Typer(help="Risk disclosure enforcement")
     device_app = typer.Typer(help="Compliance device bindings")
+    pretrade_app = typer.Typer(help="Pre-trade compliance checks")
 
     @compliance_app.command("status")
     def compliance_status_command(
@@ -7620,9 +7813,73 @@ def create_cli_app() -> typer.Typer:
         payload = device_list(show_revoked=show_revoked)
         _render_payload(console, payload, json_output=effective_json)
 
+    @pretrade_app.command("rules")
+    def compliance_pretrade_rules_command(
+        ctx: typer.Context,
+        profile: str = typer.Option("compliance", "--profile", help="Rules profile id"),
+        runbook: bool = typer.Option(False, "--runbook", help="Include runbook map"),
+        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
+    ) -> None:
+        ctx_obj = ctx.obj or {"json": False}
+        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        payload = compliance_pretrade_rules(profile=profile, runbook=runbook)
+        _render_payload(console, payload, json_output=effective_json)
+
+    @pretrade_app.command("dry-run")
+    def compliance_pretrade_dry_run_command(
+        ctx: typer.Context,
+        ticket: Path = typer.Option(..., "--ticket", help="Ticket JSON payload"),
+        profile: str = typer.Option("compliance", "--profile", help="Rules profile id"),
+        board_mode: str = typer.Option("normal", "--board-mode", help="Board mode"),
+        mode: str = typer.Option("paper", "--mode", help="Execution mode"),
+        override_user: str | None = typer.Option(None, "--override-user", help="Override user id"),
+        override_role: list[str] = typer.Option(
+            [],
+            "--override-role",
+            help="Override role (repeatable)",
+            show_default=False,
+        ),
+        override_reason: str | None = typer.Option(
+            None, "--override-reason", help="Override reason"
+        ),
+        strict: bool = typer.Option(
+            True, "--strict/--no-strict", help="Require all inputs for evaluation"
+        ),
+        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
+    ) -> None:
+        ctx_obj = ctx.obj or {"json": False}
+        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        payload = compliance_pretrade_dry_run(
+            ticket=ticket,
+            profile=profile,
+            board_mode=board_mode,
+            mode=mode,
+            override_user=override_user,
+            override_roles=override_role,
+            override_reason=override_reason,
+            strict=strict,
+        )
+        _render_payload(console, payload, json_output=effective_json)
+        if payload.get("status") == "blocked":
+            raise typer.Exit(70)
+        if payload.get("status") in {"error", "denied"}:
+            raise typer.Exit(1)
+
+    @pretrade_app.command("overrides")
+    def compliance_pretrade_overrides_command(
+        ctx: typer.Context,
+        period: str = typer.Option(..., "--period", help="ISO year/week (YYYYWW)"),
+        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
+    ) -> None:
+        ctx_obj = ctx.obj or {"json": False}
+        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        payload = compliance_pretrade_overrides(period=period)
+        _render_payload(console, payload, json_output=effective_json)
+
     compliance_app.add_typer(risk_app, name="risk-disclosure")
     compliance_app.add_typer(device_app, name="device")
     compliance_app.add_typer(regression_app, name="regression")
+    compliance_app.add_typer(pretrade_app, name="pretrade")
     app.add_typer(compliance_app, name="compliance")
 
     risk_tools_app = typer.Typer(help="Risk stress utilities")

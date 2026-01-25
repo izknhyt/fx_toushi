@@ -7,6 +7,7 @@ The stub mirrors the interfaces referenced in detailed_design_fx_signal_tool_v1.
 from __future__ import annotations
 
 import json
+import math
 from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -15,7 +16,7 @@ from typing import Any, Literal
 
 from .service import MarketFrame
 
-__all__ = ["DataQualityGuard", "QualityResult", "DataLatencyAlert"]
+__all__ = ["DataQualityGuard", "QualityResult", "QualityComparison", "DataLatencyAlert"]
 
 _QUALITY_FLAG_MAP = {
     "missing_bars": 1,
@@ -44,6 +45,16 @@ class QualityResult:
     quality_flag: int = 0
     clock_drift_ms: int | None = None
     missing_ratio: float | None = None
+
+
+@dataclass(slots=True)
+class QualityComparison:
+    """Comparison result from reference series checks."""
+
+    status: str
+    issues: list[str]
+    drift_detected: bool
+    diff_stats: dict[str, float]
 
 
 @dataclass(slots=True, frozen=True)
@@ -88,6 +99,7 @@ class DataQualityGuard:
         self.ntp_max_ms = ntp_max_ms
         self.missing_ratio_warn = missing_ratio_warn
         self._last_result: QualityResult | None = None
+        self._last_frame: MarketFrame | None = None
 
     def validate(self, frame: MarketFrame) -> QualityResult:
         """Validate a market frame and return a quality result."""
@@ -109,6 +121,7 @@ class DataQualityGuard:
                 missing_ratio=None,
             )
             self._last_result = result
+            self._last_frame = frame
             return result
 
         timestamps: list[datetime] = []
@@ -167,6 +180,7 @@ class DataQualityGuard:
             missing_ratio=missing_ratio,
         )
         self._last_result = result
+        self._last_frame = frame
         return result
 
     def evaluate(
@@ -217,11 +231,72 @@ class DataQualityGuard:
             out.write_text(json.dumps(report, ensure_ascii=False), encoding="utf-8")
         return report
 
-    def compare(self, reference_series: Iterable[MarketFrame]) -> QualityResult:
-        """Compare frames to a reference series."""
+    def compare(self, reference_series: Iterable[MarketFrame]) -> QualityComparison:
+        """Compare the last validated frame to a reference series."""
 
-        _ = list(reference_series)  # materialise for deterministic behaviour
-        return QualityResult(status="unimplemented", issues=list(self._issues))
+        reference = list(reference_series)
+        if self._last_frame is None:
+            return QualityComparison(
+                status="error",
+                issues=["missing_current_frame"],
+                drift_detected=False,
+                diff_stats={},
+            )
+        if not reference:
+            return QualityComparison(
+                status="error",
+                issues=["reference_missing"],
+                drift_detected=False,
+                diff_stats={},
+            )
+        reference_frame = reference[-1]
+        if (
+            reference_frame.symbol != self._last_frame.symbol
+            or reference_frame.timeframe != self._last_frame.timeframe
+        ):
+            return QualityComparison(
+                status="error",
+                issues=["reference_mismatch"],
+                drift_detected=False,
+                diff_stats={},
+            )
+        current_stats = _compute_bar_stats(self._last_frame.bars)
+        reference_stats = _compute_bar_stats(reference_frame.bars)
+        diff_stats = _compare_stats(current_stats, reference_stats)
+        drift_detected = diff_stats.get("mean_diff_ratio", 0.0) >= 0.05 or diff_stats.get(
+            "std_diff_ratio", 0.0
+        ) >= 0.5
+        status = "drift" if drift_detected else "ok"
+        return QualityComparison(
+            status=status,
+            issues=[] if status == "ok" else ["drift_detected"],
+            drift_detected=drift_detected,
+            diff_stats=diff_stats,
+        )
+
+    def annotate(
+        self,
+        event: dict[str, Any],
+        *,
+        out: Path = Path("reports") / "quality" / "annotations.jsonl",
+    ) -> dict[str, Any]:
+        """Append a quality annotation record for external consumers."""
+
+        symbol = self._last_frame.symbol if self._last_frame else None
+        timeframe = self._last_frame.timeframe if self._last_frame else None
+        payload = {
+            "ts": datetime.now(tz=timezone.utc).isoformat(),
+            "event": event,
+            "status": self._last_result.status if self._last_result else "unknown",
+            "issues": list(self._last_result.issues) if self._last_result else [],
+            "quality_flag": self._last_result.quality_flag if self._last_result else 0,
+            "symbol": symbol,
+            "timeframe": timeframe,
+        }
+        out.parent.mkdir(parents=True, exist_ok=True)
+        with out.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(payload, ensure_ascii=False) + "\n")
+        return payload
 
     def record_manual_csv_hash_verification(
         self,
@@ -290,6 +365,34 @@ def _parse_timestamp(value: object) -> datetime | None:
         return parsed.astimezone(timezone.utc)
     except Exception:
         return None
+
+
+def _compute_bar_stats(bars: list[dict[str, object]]) -> dict[str, float]:
+    closes: list[float] = []
+    for bar in bars:
+        close = _as_float(bar.get("close"))
+        if close is not None:
+            closes.append(close)
+    if not closes:
+        return {"count": 0.0, "mean_close": 0.0, "std_close": 0.0}
+    mean = sum(closes) / len(closes)
+    variance = sum((value - mean) ** 2 for value in closes) / len(closes)
+    return {"count": float(len(closes)), "mean_close": mean, "std_close": math.sqrt(variance)}
+
+
+def _compare_stats(current: dict[str, float], reference: dict[str, float]) -> dict[str, float]:
+    mean_ref = reference.get("mean_close", 0.0)
+    std_ref = reference.get("std_close", 0.0)
+    mean_cur = current.get("mean_close", 0.0)
+    std_cur = current.get("std_close", 0.0)
+    mean_diff_ratio = abs(mean_cur - mean_ref) / max(abs(mean_ref), 1e-6)
+    std_diff_ratio = abs(std_cur - std_ref) / max(abs(std_ref), 1e-6)
+    return {
+        "mean_diff_ratio": mean_diff_ratio,
+        "std_diff_ratio": std_diff_ratio,
+        "current_mean": mean_cur,
+        "reference_mean": mean_ref,
+    }
 
 
 def _load_latest_clock_drift(path: Path) -> int | None:

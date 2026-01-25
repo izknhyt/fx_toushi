@@ -143,6 +143,28 @@ class ReportGenerator:
         if kpi:
             for key, value in kpi.items():
                 context[f"kpi_{key}"] = value
+        # Ensure templates render even when optional blocks are omitted.
+        defaults = {
+            "risk_summary_status": "n/a",
+            "risk_summary": "n/a",
+            "model_risk_summary": "n/a",
+            "kill_switch_history": "n/a",
+            "spread_cooldown_summary": "n/a",
+            "manual_csv_summary": "n/a",
+            "data_quality_summary": "n/a",
+            "resync_summary": "n/a",
+            "funding_summary": "n/a",
+            "ops_worklog_excerpt": "n/a",
+            "risk_envelope_delta": "n/a",
+            "benchmark_summary": "n/a",
+            "attribution_summary": "n/a",
+            "kpi_sharpe": "n/a",
+            "kpi_max_dd": "n/a",
+            "kpi_win_rate": "n/a",
+            "kpi_cum_r": "n/a",
+        }
+        for key, value in defaults.items():
+            context.setdefault(key, value)
         tpl = (template_path or TICKET_SUMMARY_TEMPLATE).read_text(encoding="utf-8")
         return tpl.format(**context)
 
