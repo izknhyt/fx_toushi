@@ -64,7 +64,13 @@ from .alpha import (
     preview as alpha_preview,
     review as alpha_review,
 )
-from .backtest import run_backtest, run_paper_poc, run_paper_poc_all, walk_forward_backtest
+from .backtest import (
+    run_backtest,
+    run_paper_poc,
+    run_paper_poc_all,
+    run_poc_report,
+    walk_forward_backtest,
+)
 from .backtest_regression import (
     regression_list as backtest_regression_list,
     regression_run as backtest_regression_run,
@@ -119,6 +125,9 @@ from .supervision import (
     supervision_deny,
     supervision_status,
 )
+from .gui_sync import GuiDataSyncError, run_gui_data_sync
+from .signals import export_signals_csv as signals_export_csv
+from src.interfaces.gui.web_server import GuiOpsRuntimeConfig, resolve_sync_source_dir, run_gui_server
 from .compliance import (
     ack as compliance_ack,
     regression_diff as compliance_regression_diff,
@@ -1210,6 +1219,39 @@ def create_cli_app() -> typer.Typer:
         )
         _render_payload(console, payload, json_output=effective_json)
 
+    @backtest_app.command("poc-report")
+    def backtest_poc_report_command(
+        ctx: typer.Context,
+        input_path: Path = typer.Option(
+            ...,
+            "--input",
+            help="PoC result JSON path (from poc-paper output)",
+        ),
+        output: Path
+        | None = typer.Option(
+            None,
+            "--output",
+            help="Optional JSON output path for analysis report",
+            show_default=False,
+        ),
+        export_md: Path
+        | None = typer.Option(
+            None,
+            "--export-md",
+            help="Optional Markdown output path",
+            show_default=False,
+        ),
+        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
+    ) -> None:
+        ctx_obj = ctx.obj or {"json": False}
+        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        payload = run_poc_report(
+            input_path=input_path,
+            output_path=output,
+            export_md=export_md,
+        )
+        _render_payload(console, payload, json_output=effective_json)
+
     app.add_typer(backtest_app, name="backtest")
     app.add_typer(diagnostics_app, name="diagnostics")
     app.add_typer(determinism_app, name="determinism")
@@ -1929,6 +1971,644 @@ def create_cli_app() -> typer.Typer:
         )
 
     app.add_typer(events_app, name="events")
+
+    gui_app = typer.Typer(help="Local GUI utilities")
+
+    @gui_app.command("serve")
+    def gui_serve_command(
+        host: str = typer.Option("127.0.0.1", "--host", help="Bind host"),
+        port: int = typer.Option(8787, "--port", help="Bind port"),
+        refresh_sec: int = typer.Option(30, "--refresh-sec", help="UI refresh interval (sec)"),
+        signal_log: Path = typer.Option(
+            Path("logs") / "events" / "signal.generated.jsonl",
+            "--signal-log",
+            help="Signal JSONL log path",
+            show_default=False,
+        ),
+        price_csv: Path
+        | None = typer.Option(
+            None,
+            "--price-csv",
+            help="CSV price source (optional)",
+            show_default=False,
+        ),
+        price_column: str = typer.Option("close", "--price-column", help="CSV price column"),
+        ts_column: str = typer.Option("ts", "--ts-column", help="CSV timestamp column"),
+        static_dir: Path
+        | None = typer.Option(
+            None,
+            "--static-dir",
+            help="Static assets directory (default: ui/web)",
+            show_default=False,
+        ),
+        ops_enabled: bool = typer.Option(
+            True,
+            "--ops-enabled/--ops-disabled",
+            help="Enable GUI one-click sync+loop controls",
+        ),
+        ops_symbol: str = typer.Option("USDJPY", "--ops-symbol", help="Sync target symbol"),
+        ops_symbols: str = typer.Option(
+            "USDJPY", "--ops-symbols", help="Comma-separated symbols for post-sync loop"
+        ),
+        ops_source_dir: Path
+        | None = typer.Option(
+            None,
+            "--ops-source-dir",
+            help="Backfill source directory (default: auto select by symbol)",
+            show_default=False,
+        ),
+        ops_provider: str = typer.Option(
+            "twelvedata", "--ops-provider", help="Provider for post-sync loop"
+        ),
+        ops_strategy_manifest: Path = typer.Option(
+            Path("config") / "strategy_manifest.yaml",
+            "--ops-strategy-manifest",
+            help="Strategy manifest used for post-sync loop",
+            show_default=False,
+        ),
+        ops_data_manifest: Path = typer.Option(
+            Path("reports") / "data_manifest.json",
+            "--ops-data-manifest",
+            help="Data manifest path updated by sync",
+            show_default=False,
+        ),
+        ops_validation_dir: Path = typer.Option(
+            Path("reports") / "validation_log",
+            "--ops-validation-dir",
+            help="Validation log dir for sync reports",
+            show_default=False,
+        ),
+        ops_latest_days: int = typer.Option(
+            120, "--ops-latest-days", help="Days to keep in latest parquet refresh"
+        ),
+        ops_gap_minutes: int = typer.Option(5, "--ops-gap-minutes", help="Gap threshold in minutes"),
+        ops_chunk_hours: int = typer.Option(6, "--ops-chunk-hours", help="Backfill chunk size hours"),
+        ops_gap_exclude_weekend: bool = typer.Option(
+            True,
+            "--ops-gap-exclude-weekend/--ops-gap-include-weekend",
+            help="Exclude weekend gaps in backfill plan",
+        ),
+        ops_run_fetch_plan: bool = typer.Option(
+            True,
+            "--ops-run-fetch-plan/--ops-no-run-fetch-plan",
+            help="Execute generated backfill fetch plan",
+        ),
+        ops_interval_sec: int = typer.Option(300, "--ops-interval-sec", help="Post-sync loop interval seconds"),
+        ops_backfill_days: int = typer.Option(90, "--ops-backfill-days", help="Signal history backfill days"),
+        ops_target_r_multiple: float = typer.Option(0.8, "--ops-target-r", help="Target R multiple"),
+        ops_ttl_bars: int = typer.Option(4, "--ops-ttl-bars", help="TTL bars"),
+        ops_trail_atr_mult: float = typer.Option(1.2, "--ops-trail-atr-mult", help="Trail ATR multiplier"),
+        ops_spread_pips: float = typer.Option(0.005, "--ops-spread-pips", help="Spread (price units)"),
+        ops_slippage_pips: float = typer.Option(0.0015, "--ops-slippage-pips", help="Slippage (price units)"),
+        ops_slippage_std: float = typer.Option(0.001, "--ops-slippage-std", help="Slippage std (price units)"),
+        ops_timeframe: str = typer.Option("5m", "--ops-timeframe", help="Post-sync loop timeframe"),
+        ops_lookback_hours: int = typer.Option(6, "--ops-lookback-hours", help="Post-sync lookback hours"),
+        ops_raw_dir: Path = typer.Option(Path("data/raw"), "--ops-raw-dir", help="Raw output root"),
+        ops_curated_dir: Path = typer.Option(
+            Path("data/research/curated"),
+            "--ops-curated-dir",
+            help="Curated output root",
+        ),
+        ops_metrics_path: Path = typer.Option(
+            Path("metrics/data_ingestion_sla.jsonl"),
+            "--ops-metrics-path",
+            help="Ingestion metrics JSONL",
+        ),
+        ops_price_csv_dir: Path = typer.Option(
+            Path("reports/price"),
+            "--ops-price-csv-dir",
+            help="Price CSV output dir",
+        ),
+        ops_bootstrap_rows: int = typer.Option(1000, "--ops-bootstrap-rows", help="Bootstrap rows for price CSV"),
+        ops_profile_path: Path = typer.Option(
+            Path("config") / "profiles" / "paper.yaml",
+            "--ops-profile",
+            help="Profile path for signal preview",
+            show_default=False,
+        ),
+        ops_data_dir: Path = typer.Option(
+            Path("data") / "research" / "curated",
+            "--ops-data-dir",
+            help="Curated data root for signal preview",
+            show_default=False,
+        ),
+        ops_feature_config: Path = typer.Option(
+            Path("config") / "feature_pipeline.yaml",
+            "--ops-feature-config",
+            help="Feature pipeline config path",
+            show_default=False,
+        ),
+        ops_signals_csv_append: bool = typer.Option(
+            True,
+            "--ops-signals-csv-append/--ops-signals-csv-no-append",
+            help="Append signal CSV exports",
+        ),
+        ops_signals_csv_monthly: bool = typer.Option(
+            True,
+            "--ops-signals-csv-monthly/--ops-signals-csv-single",
+            help="Use monthly signal CSV rotation",
+        ),
+    ) -> None:
+        ops_runtime = None
+        if ops_enabled:
+            normalized_symbol = ops_symbol.strip().upper() or "USDJPY"
+            loop_symbols = [s.strip().upper() for s in ops_symbols.split(",") if s.strip()]
+            if not loop_symbols:
+                loop_symbols = [normalized_symbol]
+            ops_runtime = GuiOpsRuntimeConfig(
+                symbol=normalized_symbol,
+                source_dir=resolve_sync_source_dir(normalized_symbol, ops_source_dir),
+                manifest=ops_data_manifest,
+                validation_dir=ops_validation_dir,
+                latest_days=ops_latest_days,
+                gap_minutes=ops_gap_minutes,
+                chunk_hours=ops_chunk_hours,
+                gap_exclude_weekend=ops_gap_exclude_weekend,
+                run_fetch_plan=ops_run_fetch_plan,
+                provider=ops_provider,
+                symbols=loop_symbols,
+                timeframe=ops_timeframe,
+                lookback_hours=ops_lookback_hours,
+                raw_dir=ops_raw_dir,
+                curated_dir=ops_curated_dir,
+                metrics_path=ops_metrics_path,
+                price_csv_dir=ops_price_csv_dir,
+                bootstrap_rows=ops_bootstrap_rows,
+                profile_path=ops_profile_path,
+                data_dir=ops_data_dir,
+                feature_config=ops_feature_config,
+                strategy_manifest=ops_strategy_manifest,
+                signal_log_path=signal_log,
+                backfill_days=ops_backfill_days,
+                target_r_multiple=ops_target_r_multiple,
+                ttl_bars=ops_ttl_bars,
+                trail_atr_mult=ops_trail_atr_mult,
+                spread_pips=ops_spread_pips,
+                slippage_pips=ops_slippage_pips,
+                slippage_std=ops_slippage_std,
+                interval_sec=ops_interval_sec,
+                signals_csv_append=ops_signals_csv_append,
+                signals_csv_monthly=ops_signals_csv_monthly,
+            )
+        run_gui_server(
+            host=host,
+            port=port,
+            refresh_sec=refresh_sec,
+            signal_log_path=signal_log,
+            price_csv_path=price_csv,
+            price_column=price_column,
+            ts_column=ts_column,
+            static_dir=static_dir,
+            ops_runtime=ops_runtime,
+        )
+
+    @gui_app.command("loop")
+    def gui_loop_command(
+        ctx: typer.Context,
+        provider: str = typer.Option(
+            "auto", "--provider", help="Provider name (dukascopy/yfinance/twelvedata/auto)"
+        ),
+        symbols: str = typer.Option("USDJPY", "--symbols", help="Comma-separated symbols"),
+        timeframe: str = typer.Option("5m", "--timeframe", help="Timeframe label"),
+        lookback_hours: int = typer.Option(6, "--lookback-hours", help="Lookback window in hours"),
+        raw_dir: Path = typer.Option(Path("data/raw"), "--raw-dir", help="Raw output root"),
+        curated_dir: Path = typer.Option(
+            Path("data/research/curated"),
+            "--curated-dir",
+            help="Curated output root",
+        ),
+        metrics_path: Path = typer.Option(
+            Path("metrics/data_ingestion_sla.jsonl"),
+            "--metrics-path",
+            help="Metrics JSONL output",
+        ),
+        price_csv_dir: Path = typer.Option(
+            Path("reports/price"),
+            "--price-csv-dir",
+            help="CSV price output directory",
+        ),
+        bootstrap_rows: int = typer.Option(
+            1000,
+            "--bootstrap-rows",
+            help="Rows to seed when price CSV does not exist",
+        ),
+        profile_path: Path = typer.Option(
+            Path("config") / "profiles" / "paper.yaml",
+            "--profile",
+            help="Profile path for symbols defaults",
+            show_default=False,
+        ),
+        data_dir: Path = typer.Option(
+            Path("data") / "research" / "curated",
+            "--data-dir",
+            help="Curated data root for signal preview",
+            show_default=False,
+        ),
+        feature_config: Path = typer.Option(
+            Path("config") / "feature_pipeline.yaml",
+            "--feature-config",
+            help="Feature pipeline config",
+            show_default=False,
+        ),
+        strategy_manifest: Path = typer.Option(
+            Path("config") / "strategy_manifest.yaml",
+            "--strategy-manifest",
+            help="Strategy manifest",
+            show_default=False,
+        ),
+        data_manifest: Path = typer.Option(
+            Path("reports") / "data_manifest.json",
+            "--data-manifest",
+            help="Data manifest",
+            show_default=False,
+        ),
+        signal_log: Path = typer.Option(
+            Path("logs") / "events" / "signal.gui.jsonl",
+            "--signal-log",
+            help="Signal JSONL log path for GUI loop",
+            show_default=False,
+        ),
+        backfill_days: int = typer.Option(
+            90,
+            "--backfill-days",
+            help="Backfill signal history window in days when log is empty",
+        ),
+        target_r_multiple: float = typer.Option(
+            1.1, "--target-r", help="Target R multiple (PoC parameter)"
+        ),
+        ttl_bars: int = typer.Option(6, "--ttl-bars", help="TTL bars (PoC parameter)"),
+        trail_atr_mult: float = typer.Option(
+            0.7, "--trail-atr-mult", help="Trailing ATR multiplier (PoC parameter)"
+        ),
+        spread_pips: float = typer.Option(0.001, "--spread-pips", help="Spread (price units)"),
+        slippage_pips: float = typer.Option(0.0015, "--slippage-pips", help="Slippage (price)"),
+        slippage_std: float = typer.Option(0.001, "--slippage-std", help="Slippage std (price)"),
+        interval_sec: int = typer.Option(300, "--interval-sec", help="Polling interval seconds"),
+        once: bool = typer.Option(False, "--once", help="Run once and exit"),
+        max_iterations: int
+        | None = typer.Option(None, "--max-iterations", help="Loop iterations cap"),
+        signals_csv_append: bool = typer.Option(
+            True,
+            "--signals-csv-append/--signals-csv-no-append",
+            help="Append to signals CSV",
+        ),
+        signals_csv_monthly: bool = typer.Option(
+            True,
+            "--signals-csv-monthly/--signals-csv-single",
+            help="Use monthly signals CSV rotation",
+        ),
+        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
+    ) -> None:
+        from tools.gui_ops_loop import run_gui_ops_loop
+
+        ctx_obj = ctx.obj or {"json": False}
+        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        symbol_list = [s.strip().upper() for s in symbols.split(",") if s.strip()]
+        results = run_gui_ops_loop(
+            provider=provider,
+            symbols=symbol_list,
+            timeframe=timeframe,
+            lookback_hours=lookback_hours,
+            raw_dir=raw_dir,
+            curated_dir=curated_dir,
+            metrics_path=metrics_path,
+            price_csv_dir=price_csv_dir,
+            bootstrap_rows=bootstrap_rows,
+            profile_path=profile_path,
+            data_dir=data_dir,
+            feature_config=feature_config,
+            strategy_manifest=strategy_manifest,
+            data_manifest=data_manifest,
+            signal_log_path=signal_log,
+            backfill_days=backfill_days,
+            target_r_multiple=target_r_multiple,
+            ttl_bars=ttl_bars,
+            trail_atr_mult=trail_atr_mult,
+            spread_pips=spread_pips,
+            slippage_pips=slippage_pips,
+            slippage_std=slippage_std,
+            interval_sec=interval_sec,
+            once=once,
+            max_iterations=max_iterations,
+            signals_csv_append=signals_csv_append,
+            signals_csv_monthly=signals_csv_monthly,
+        )
+        if results is None:
+            return
+        payload = {
+            "runs": len(results),
+            "last": results[-1].to_dict() if results else {},
+        }
+        _render_payload(console, payload, json_output=effective_json)
+
+    @gui_app.command("oneclick")
+    def gui_oneclick_command(
+        ctx: typer.Context,
+        symbol: str = typer.Option("USDJPY", "--symbol", help="Target symbol"),
+        source_dir: Path
+        | None = typer.Option(
+            None,
+            "--source-dir",
+            help="Source directory for Dukascopy/backfill data (default: data/research/curated/<symbol>)",
+            show_default=False,
+        ),
+        latest_days: int = typer.Option(
+            120,
+            "--latest-days",
+            help="Latest window length in days after sync",
+        ),
+        manifest: Path = typer.Option(
+            Path("reports") / "data_manifest.json",
+            "--manifest",
+            help="Data manifest path to update",
+            show_default=False,
+        ),
+        validation_dir: Path = typer.Option(
+            Path("reports") / "validation_log",
+            "--validation-dir",
+            help="Directory for generated gap/fetch-plan logs",
+            show_default=False,
+        ),
+        gap_minutes: int = typer.Option(5, "--gap-minutes", help="Gap threshold in minutes"),
+        chunk_hours: int = typer.Option(6, "--chunk-hours", help="Backfill chunk size in hours"),
+        gap_exclude_weekend: bool = typer.Option(
+            True,
+            "--gap-exclude-weekend/--gap-include-weekend",
+            help="Exclude weekend gaps when building backfill plan",
+        ),
+        run_fetch_plan: bool = typer.Option(
+            True,
+            "--run-fetch-plan/--no-run-fetch-plan",
+            help="Execute generated Dukascopy fetch plan",
+        ),
+        loop: bool = typer.Option(
+            True,
+            "--loop/--no-loop",
+            help="Start twelvedata GUI loop after sync",
+        ),
+        loop_once: bool = typer.Option(
+            False,
+            "--loop-once",
+            help="When --loop is enabled, run a single twelvedata cycle and exit",
+        ),
+        provider: str = typer.Option(
+            "twelvedata", "--provider", help="Provider for post-sync GUI loop"
+        ),
+        symbols: str = typer.Option("USDJPY", "--symbols", help="Comma-separated symbols"),
+        timeframe: str = typer.Option("5m", "--timeframe", help="Timeframe label"),
+        lookback_hours: int = typer.Option(6, "--lookback-hours", help="Lookback window in hours"),
+        raw_dir: Path = typer.Option(Path("data/raw"), "--raw-dir", help="Raw output root"),
+        curated_dir: Path = typer.Option(
+            Path("data/research/curated"),
+            "--curated-dir",
+            help="Curated output root",
+        ),
+        metrics_path: Path = typer.Option(
+            Path("metrics/data_ingestion_sla.jsonl"),
+            "--metrics-path",
+            help="Metrics JSONL output",
+        ),
+        price_csv_dir: Path = typer.Option(
+            Path("reports/price"),
+            "--price-csv-dir",
+            help="CSV price output directory",
+        ),
+        bootstrap_rows: int = typer.Option(
+            1000,
+            "--bootstrap-rows",
+            help="Rows to seed when price CSV does not exist",
+        ),
+        profile_path: Path = typer.Option(
+            Path("config") / "profiles" / "paper.yaml",
+            "--profile",
+            help="Profile path for symbols defaults",
+            show_default=False,
+        ),
+        data_dir: Path = typer.Option(
+            Path("data") / "research" / "curated",
+            "--data-dir",
+            help="Curated data root for signal preview",
+            show_default=False,
+        ),
+        feature_config: Path = typer.Option(
+            Path("config") / "feature_pipeline.yaml",
+            "--feature-config",
+            help="Feature pipeline config",
+            show_default=False,
+        ),
+        strategy_manifest: Path = typer.Option(
+            Path("config") / "strategy_manifest.yaml",
+            "--strategy-manifest",
+            help="Strategy manifest",
+            show_default=False,
+        ),
+        signal_log: Path = typer.Option(
+            Path("logs") / "events" / "signal.gui.jsonl",
+            "--signal-log",
+            help="Signal JSONL log path for GUI loop",
+            show_default=False,
+        ),
+        backfill_days: int = typer.Option(
+            90,
+            "--backfill-days",
+            help="Backfill signal history window in days when log is empty",
+        ),
+        target_r_multiple: float = typer.Option(
+            0.8, "--target-r", help="Target R multiple (post-sync loop)"
+        ),
+        ttl_bars: int = typer.Option(4, "--ttl-bars", help="TTL bars (post-sync loop)"),
+        trail_atr_mult: float = typer.Option(
+            1.2, "--trail-atr-mult", help="Trailing ATR multiplier (post-sync loop)"
+        ),
+        spread_pips: float = typer.Option(0.005, "--spread-pips", help="Spread (price units)"),
+        slippage_pips: float = typer.Option(0.0015, "--slippage-pips", help="Slippage (price)"),
+        slippage_std: float = typer.Option(0.001, "--slippage-std", help="Slippage std (price)"),
+        interval_sec: int = typer.Option(300, "--interval-sec", help="Polling interval seconds"),
+        max_iterations: int
+        | None = typer.Option(None, "--max-iterations", help="Loop iterations cap"),
+        signals_csv_append: bool = typer.Option(
+            True,
+            "--signals-csv-append/--signals-csv-no-append",
+            help="Append to signals CSV",
+        ),
+        signals_csv_monthly: bool = typer.Option(
+            True,
+            "--signals-csv-monthly/--signals-csv-single",
+            help="Use monthly signals CSV rotation",
+        ),
+        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
+    ) -> None:
+        from tools.gui_ops_loop import run_gui_ops_loop
+
+        ctx_obj = ctx.obj or {"json": False}
+        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+
+        sync_symbol = symbol.strip().upper()
+        if not sync_symbol:
+            typer.echo("[gui.oneclick] --symbol is required", err=True)
+            raise typer.Exit(2)
+        if source_dir is not None:
+            resolved_source_dir = source_dir
+        else:
+            curated_root = Path("data/research/curated")
+            candidates = [
+                curated_root / f"{sync_symbol.lower()}_m5_clean",
+                curated_root / f"{sync_symbol.lower()}_m5",
+                curated_root / sync_symbol.lower(),
+            ]
+            resolved_source_dir = next(
+                (candidate for candidate in candidates if candidate.exists()), candidates[0]
+            )
+
+        try:
+            sync_result = run_gui_data_sync(
+                symbol=sync_symbol,
+                source_dir=resolved_source_dir,
+                manifest=manifest,
+                validation_dir=validation_dir,
+                latest_days=latest_days,
+                gap_minutes=gap_minutes,
+                chunk_hours=chunk_hours,
+                gap_exclude_weekend=gap_exclude_weekend,
+                run_fetch_plan=run_fetch_plan,
+            )
+        except GuiDataSyncError as exc:
+            typer.echo(f"[gui.oneclick] {exc}", err=True)
+            raise typer.Exit(1) from exc
+
+        payload: dict[str, Any] = {"sync": sync_result.to_dict()}
+        if not loop:
+            _render_payload(console, payload, json_output=effective_json)
+            return
+
+        symbol_list = [s.strip().upper() for s in symbols.split(",") if s.strip()]
+        if not symbol_list:
+            symbol_list = [sync_symbol]
+
+        if not loop_once and max_iterations is None:
+            payload["loop"] = {"status": "starting", "mode": "continuous", "provider": provider}
+            _render_payload(console, payload, json_output=effective_json)
+            run_gui_ops_loop(
+                provider=provider,
+                symbols=symbol_list,
+                timeframe=timeframe,
+                lookback_hours=lookback_hours,
+                raw_dir=raw_dir,
+                curated_dir=curated_dir,
+                metrics_path=metrics_path,
+                price_csv_dir=price_csv_dir,
+                bootstrap_rows=bootstrap_rows,
+                profile_path=profile_path,
+                data_dir=data_dir,
+                feature_config=feature_config,
+                strategy_manifest=strategy_manifest,
+                data_manifest=manifest,
+                signal_log_path=signal_log,
+                backfill_days=backfill_days,
+                target_r_multiple=target_r_multiple,
+                ttl_bars=ttl_bars,
+                trail_atr_mult=trail_atr_mult,
+                spread_pips=spread_pips,
+                slippage_pips=slippage_pips,
+                slippage_std=slippage_std,
+                interval_sec=interval_sec,
+                once=False,
+                max_iterations=None,
+                signals_csv_append=signals_csv_append,
+                signals_csv_monthly=signals_csv_monthly,
+            )
+            return
+
+        results = run_gui_ops_loop(
+            provider=provider,
+            symbols=symbol_list,
+            timeframe=timeframe,
+            lookback_hours=lookback_hours,
+            raw_dir=raw_dir,
+            curated_dir=curated_dir,
+            metrics_path=metrics_path,
+            price_csv_dir=price_csv_dir,
+            bootstrap_rows=bootstrap_rows,
+            profile_path=profile_path,
+            data_dir=data_dir,
+            feature_config=feature_config,
+            strategy_manifest=strategy_manifest,
+            data_manifest=manifest,
+            signal_log_path=signal_log,
+            backfill_days=backfill_days,
+            target_r_multiple=target_r_multiple,
+            ttl_bars=ttl_bars,
+            trail_atr_mult=trail_atr_mult,
+            spread_pips=spread_pips,
+            slippage_pips=slippage_pips,
+            slippage_std=slippage_std,
+            interval_sec=interval_sec,
+            once=loop_once,
+            max_iterations=max_iterations,
+            signals_csv_append=signals_csv_append,
+            signals_csv_monthly=signals_csv_monthly,
+        )
+        payload["loop"] = {
+            "runs": len(results or []),
+            "last": results[-1].to_dict() if results else {},
+        }
+        _render_payload(console, payload, json_output=effective_json)
+
+    app.add_typer(gui_app, name="gui")
+
+    signals_app = typer.Typer(help="Signal log utilities")
+
+    @signals_app.command("export")
+    def signals_export_command(
+        ctx: typer.Context,
+        input_path: Path = typer.Option(
+            Path("logs") / "events" / "signal.generated.jsonl",
+            "--input",
+            help="Signal JSONL log path",
+            show_default=False,
+        ),
+        output: Path
+        | None = typer.Option(
+            None,
+            "--output",
+            help="CSV output path (defaults to reports/exports)",
+            show_default=False,
+        ),
+        append: bool = typer.Option(
+            False,
+            "--append",
+            help="Append to CSV (deduplicate by timestamp/strategy/symbol/direction)",
+        ),
+        monthly: bool = typer.Option(
+            False,
+            "--monthly",
+            help="Use monthly CSV rotation when output is not set",
+        ),
+        window_from: str
+        | None = typer.Option(None, "--from", help="Start time (ISO8601)", show_default=False),
+        window_to: str
+        | None = typer.Option(None, "--to", help="End time (ISO8601)", show_default=False),
+        sort_by_ts: bool = typer.Option(
+            True,
+            "--sort/--no-sort",
+            help="Sort rows by timestamp before export",
+        ),
+        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
+    ) -> None:
+        ctx_obj = ctx.obj or {"json": False}
+        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        payload = signals_export_csv(
+            input_path=input_path,
+            output_path=output,
+            window_from=window_from,
+            window_to=window_to,
+            sort_by_ts=sort_by_ts,
+            append=append,
+            monthly=monthly,
+        )
+        _render_payload(console, payload, json_output=effective_json)
+
+    app.add_typer(signals_app, name="signals")
 
     spread_app = typer.Typer(help="Spread guard utilities")
     journal_app = typer.Typer(help="Trade journal utilities")
@@ -4592,6 +5272,100 @@ def create_cli_app() -> typer.Typer:
         payload = strategy_manifest_list(
             manifest_path=manifest_path, status=status, sort_by=sort_by
         )
+        _render_payload(console, payload, json_output=effective_json)
+
+    def _apply_donchian_selection(manifest_path: Path, enabled_ids: set[str]) -> dict[str, Any]:
+        target_ids = {
+            "m1_baseline_donchian",
+            "m1_baseline_donchian_long_only",
+            "m1_baseline_donchian_upper_only",
+        }
+        text = manifest_path.read_text(encoding="utf-8")
+        lines = text.splitlines()
+        header_indices: dict[str, int] = {}
+        updated: set[str] = set()
+
+        for idx, line in enumerate(lines):
+            stripped = line.lstrip()
+            indent = len(line) - len(stripped)
+            if indent == 2 and stripped.endswith(":") and not stripped.startswith("#"):
+                key = stripped[:-1].strip()
+                if key in target_ids:
+                    header_indices[key] = idx
+
+        if set(header_indices) != target_ids:
+            missing = sorted(target_ids - set(header_indices))
+            raise ValueError(f"Missing donchian strategy entries in manifest: {missing}")
+
+        current: str | None = None
+        for idx, line in enumerate(lines):
+            stripped = line.lstrip()
+            indent = len(line) - len(stripped)
+            if indent == 2 and stripped.endswith(":") and not stripped.startswith("#"):
+                key = stripped[:-1].strip()
+                current = key if key in target_ids else None
+                continue
+            if current and indent == 4 and stripped.startswith("enabled:"):
+                enabled = "true" if current in enabled_ids else "false"
+                lines[idx] = f"    enabled: {enabled}"
+                updated.add(current)
+
+        inserts = []
+        for strategy_id in target_ids - updated:
+            insert_at = header_indices[strategy_id] + 1
+            enabled = "true" if strategy_id in enabled_ids else "false"
+            inserts.append((insert_at, f"    enabled: {enabled}"))
+        for insert_at, line in sorted(inserts, key=lambda item: item[0], reverse=True):
+            lines.insert(insert_at, line)
+
+        manifest_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        return {
+            "manifest": str(manifest_path),
+            "enabled": {sid: (sid in enabled_ids) for sid in sorted(target_ids)},
+        }
+
+    @strategy_manifest_app.command("select-donchian")
+    def strategy_manifest_select_donchian_command(
+        ctx: typer.Context,
+        modes: str = typer.Option(
+            ...,
+            "--modes",
+            help="Comma-separated selection: bidirectional,long_only,upper_only (or all).",
+        ),
+        manifest_path: Path = typer.Option(
+            Path("config") / "strategy_manifest.yaml",
+            "--manifest",
+            help="Override strategy manifest path",
+        ),
+        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
+    ) -> None:
+        ctx_obj = ctx.obj or {"json": False}
+        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        tokens = [token.strip().lower() for token in modes.split(",") if token.strip()]
+        if not tokens:
+            typer.echo("[strategy.manifest.select] --modes is required", err=True)
+            raise typer.Exit(2)
+        known = {"bidirectional", "long_only", "upper_only", "all"}
+        unknown = sorted(set(tokens) - known)
+        if unknown:
+            typer.echo(
+                f"[strategy.manifest.select] Unknown modes: {', '.join(unknown)}", err=True
+            )
+            raise typer.Exit(2)
+        selected = {"bidirectional", "long_only", "upper_only"} if "all" in tokens else set(tokens)
+        mode_map = {
+            "bidirectional": "m1_baseline_donchian",
+            "long_only": "m1_baseline_donchian_long_only",
+            "upper_only": "m1_baseline_donchian_upper_only",
+        }
+        enabled_ids = {mode_map[mode] for mode in selected}
+        try:
+            payload = _apply_donchian_selection(manifest_path, enabled_ids)
+        except (OSError, ValueError) as exc:
+            typer.echo(f"[strategy.manifest.select] {exc}", err=True)
+            raise typer.Exit(1) from exc
+        payload["status"] = "ok"
+        payload["selected_modes"] = sorted(selected)
         _render_payload(console, payload, json_output=effective_json)
 
     @strategy_manifest_app.command("renew")

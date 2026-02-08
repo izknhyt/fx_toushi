@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Signal Board Monitor</title>
+    <link rel="stylesheet" href="/style.css" />
+  </head>
+  <body>
+    <div class="app">
+      <header class="hero">
+        <div>
+          <p class="eyebrow">Local Ops</p>
+          <h1>Signal Board Monitor</h1>
+          <p class="sub">ローカル監視用ダッシュボード。30秒ごとに更新します。</p>
+        </div>
+        <div class="status-card" id="status-card">
+          <div class="status-line"><span>状態</span><strong id="status">-</strong></div>
+          <div class="status-line"><span>最終更新</span><strong id="updated">-</strong></div>
+          <div class="status-line"><span>更新間隔</span><strong id="refresh">-</strong></div>
+        </div>
+      </header>
+
+      <section class="grid">
+        <article class="panel">
+          <header>
+            <h2>現在値</h2>
+            <p>最新のバーから取得</p>
+          </header>
+          <div class="price" id="price">--</div>
+          <div class="meta" id="price-meta">取得元: --</div>
+        </article>
+
+        <article class="panel">
+          <header>
+            <h2>最新シグナル</h2>
+            <p>直近の通知を表示</p>
+          </header>
+          <ul class="signal-list" id="latest-signals"></ul>
+        </article>
+      </section>
+
+      <section class="panel ops-panel">
+        <header>
+          <h2>データ同期と自動取得</h2>
+          <p>Dukascopy差分補完 → TwelveData 5分ループをワンクリックで開始</p>
+        </header>
+        <div class="ops-controls">
+          <button id="ops-start" type="button">同期+ループ開始</button>
+          <button id="ops-stop" type="button" class="secondary">停止</button>
+        </div>
+        <div class="ops-meta" id="ops-meta">状態: -</div>
+        <pre class="ops-log" id="ops-log"></pre>
+      </section>
+
+      <section class="panel table-panel">
+        <header>
+          <h2>シグナル履歴</h2>
+          <p>直近100件（時系列）</p>
+        </header>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>時刻</th>
+                <th>戦略</th>
+                <th>通貨</th>
+                <th>方向</th>
+                <th>レベル</th>
+                <th>エントリー</th>
+                <th>SL</th>
+                <th>TP</th>
+                <th>期限</th>
+                <th>状態</th>
+                <th>理由</th>
+              </tr>
+            </thead>
+            <tbody id="signal-table"></tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+
+    <script src="/app.js"></script>
+  </body>
+</html>
