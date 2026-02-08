@@ -312,6 +312,7 @@ def run_paper_poc(
     payload = {
         "strategy": strategy_label,
         "profile": profile,
+        "seed_used": result.seed_used,
         "window": result.window,
         "dataset_path": result.dataset_path,
         "dataset_hash": result.dataset_hash,
