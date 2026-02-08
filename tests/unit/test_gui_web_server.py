@@ -1,9 +1,11 @@
 import time
+import json
 from pathlib import Path
 
 from src.interfaces.gui.web_server import (
     GuiOpsRuntimeConfig,
     GuiOpsRuntimeController,
+    _load_signal_records,
     _read_last_line,
     _read_latest_price_from_csv,
     resolve_sync_source_dir,
@@ -23,6 +25,31 @@ def test_read_latest_price_from_csv(tmp_path: Path) -> None:
     assert row is not None
     assert row["close"] == "1.5"
     assert row["ts"] == "2024-01-01"
+
+
+def test_load_signal_records_reads_tail_only(tmp_path: Path) -> None:
+    path = tmp_path / "signal.generated.jsonl"
+    with path.open("w", encoding="utf-8") as handle:
+        for index in range(2000):
+            handle.write(
+                json.dumps(
+                    {
+                        "event": "signal.generated",
+                        "ts": f"2026-02-08T00:{index // 60:02d}:{index % 60:02d}Z",
+                        "idx": index,
+                    }
+                )
+            )
+            handle.write("\n")
+
+    records = _load_signal_records(path, limit=5)
+    assert [record["idx"] for record in records] == [1995, 1996, 1997, 1998, 1999]
+
+    # Non-positive limits should still avoid unbounded reads and return a recent window.
+    records = _load_signal_records(path, limit=0)
+    assert len(records) == 1000
+    assert records[0]["idx"] == 1000
+    assert records[-1]["idx"] == 1999
 
 
 def test_resolve_sync_source_dir_prefers_m5_clean(tmp_path: Path, monkeypatch) -> None:
@@ -97,6 +124,10 @@ def test_gui_ops_runtime_controller_start_stop(monkeypatch, tmp_path: Path) -> N
         time.sleep(0.05)
     assert snapshot["running"] is True
     assert snapshot["last_sync"] == {"phase": "sync"}
+    assert snapshot["symbols"] == ["USDJPY"]
+    assert snapshot["timeframe"] == "5m"
+    assert snapshot["strategy_manifest"] == str(tmp_path / "config/strategy_manifest.yaml")
+    assert snapshot["data_manifest"] == str(tmp_path / "reports/data_manifest.json")
 
     stopped = controller.stop()
     assert stopped["accepted"] is True

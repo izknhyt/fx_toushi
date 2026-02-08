@@ -125,8 +125,13 @@ class GuiOpsRuntimeController:
             "last_sync": self._last_sync,
             "last_loop": self._last_loop,
             "symbol": self._config.symbol,
+            "symbols": self._config.symbols,
             "provider": self._config.provider,
+            "timeframe": self._config.timeframe,
             "interval_sec": self._config.interval_sec,
+            "strategy_manifest": str(self._config.strategy_manifest),
+            "data_manifest": str(self._config.manifest),
+            "source_dir": str(self._config.source_dir),
             "recent_logs": self._recent_logs[-20:],
         }
 
@@ -406,9 +411,8 @@ def _price_payload(config: GuiServerConfig) -> dict[str, Any]:
 def _load_signal_records(path: Path, *, limit: int) -> list[dict[str, Any]]:
     if not path.exists():
         return []
-    lines = path.read_text(encoding="utf-8").splitlines()
-    lines = [line for line in lines if line.strip()]
-    selected = lines[-limit:] if limit > 0 else lines
+    effective_limit = limit if limit > 0 else 1000
+    selected = _read_last_non_empty_lines(path, limit=effective_limit)
     records: list[dict[str, Any]] = []
     for line in selected:
         try:
@@ -455,14 +459,36 @@ def _read_first_line(path: Path) -> str | None:
 
 
 def _read_last_line(path: Path) -> str | None:
-    try:
-        lines = path.read_text(encoding="utf-8").splitlines()
-    except OSError:
+    lines = _read_last_non_empty_lines(path, limit=1)
+    if not lines:
         return None
-    for line in reversed(lines):
-        if line.strip():
-            return line.strip()
-    return None
+    return lines[-1]
+
+
+def _read_last_non_empty_lines(path: Path, *, limit: int, chunk_size: int = 64 * 1024) -> list[str]:
+    if limit <= 0 or not path.exists():
+        return []
+    try:
+        with path.open("rb") as handle:
+            handle.seek(0, 2)
+            position = handle.tell()
+            chunks: list[bytes] = []
+            newline_count = 0
+            while position > 0 and newline_count <= limit:
+                read_size = min(chunk_size, position)
+                position -= read_size
+                handle.seek(position)
+                data = handle.read(read_size)
+                chunks.append(data)
+                newline_count += data.count(b"\n")
+    except OSError:
+        return []
+
+    blob = b"".join(reversed(chunks))
+    lines = [line.strip() for line in blob.decode("utf-8", errors="ignore").splitlines() if line.strip()]
+    if not lines:
+        return []
+    return lines[-limit:]
 
 
 def _parse_csv_line(line: str) -> list[str]:

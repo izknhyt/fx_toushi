@@ -25,6 +25,11 @@ import yaml
 from pydantic import BaseModel, Field, ValidationError, field_validator, model_validator
 
 from src.features.pipeline import FeatureContext, FeaturePipeline
+from src.strategies.allocation import (
+    AllocationCandidate,
+    AllocationContext,
+    StrategyAllocationPolicy,
+)
 from src.strategies.base import StrategyContext, StrategyMetadata, StrategyPluginProtocol
 
 __all__ = [
@@ -41,6 +46,8 @@ __all__ = [
 logger = logging.getLogger(__name__)
 DEFAULT_SIGNAL_EVENT_LOG = Path("logs") / "events" / "signal.generated.jsonl"
 DEFAULT_DETERMINISM_METRICS = Path("metrics") / "determinism.jsonl"
+DEFAULT_LOG_MAX_BYTES = 64 * 1024 * 1024
+DEFAULT_LOG_KEEP_BYTES = 8 * 1024 * 1024
 
 
 def _as_utc(value: datetime | None) -> datetime:
@@ -65,11 +72,56 @@ def _normalise_symbol_set(symbols: Iterable[str]) -> frozenset[str]:
     return frozenset(normalised)
 
 
-def _append_jsonl(path: Path, payload: Mapping[str, Any]) -> None:
+def _tail_bytes(path: Path, keep_bytes: int) -> bytes:
+    if keep_bytes <= 0:
+        return b""
+    size = path.stat().st_size
+    if size <= keep_bytes:
+        return path.read_bytes()
+    with path.open("rb") as handle:
+        handle.seek(size - keep_bytes)
+        tail = handle.read()
+    first_newline = tail.find(b"\n")
+    if first_newline >= 0:
+        return tail[first_newline + 1 :]
+    return tail
+
+
+def _maybe_rotate_log(path: Path, *, max_bytes: int | None, keep_bytes: int) -> None:
+    if max_bytes is None or max_bytes <= 0 or not path.exists():
+        return
+    if path.stat().st_size <= max_bytes:
+        return
+    tail = _tail_bytes(path, keep_bytes)
+    with path.open("wb") as handle:
+        handle.write(tail)
+
+
+def _append_jsonl(
+    path: Path,
+    payload: Mapping[str, Any],
+    *,
+    max_bytes: int | None = None,
+    keep_bytes: int = DEFAULT_LOG_KEEP_BYTES,
+) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
+    _maybe_rotate_log(path, max_bytes=max_bytes, keep_bytes=keep_bytes)
     with path.open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(payload, ensure_ascii=False))
         handle.write("\n")
+
+
+def _int_env(name: str, default: int | None) -> int | None:
+    raw = os.getenv(name)
+    if raw is None or raw.strip() == "":
+        return default
+    try:
+        value = int(raw)
+    except ValueError:
+        return default
+    if value <= 0:
+        return None
+    return value
 
 
 def _is_guarded_mode(gate: Any) -> bool:
@@ -514,15 +566,40 @@ class StrategyEngine:
             if determinism_log_path is None
             else Path(determinism_log_path)
         )
+        self._determinism_log_max_bytes = _int_env(
+            "TRADECTL_STRATEGY_LOG_MAX_BYTES",
+            DEFAULT_LOG_MAX_BYTES,
+        )
+        self._determinism_log_keep_bytes = _int_env(
+            "TRADECTL_STRATEGY_LOG_KEEP_BYTES",
+            DEFAULT_LOG_KEEP_BYTES,
+        ) or DEFAULT_LOG_KEEP_BYTES
         if determinism_metrics_path is not None:
             self._determinism_metrics_path = Path(determinism_metrics_path)
         else:
             env_path = os.getenv("TRADECTL_DETERMINISM_METRICS")
             self._determinism_metrics_path = Path(env_path) if env_path else DEFAULT_DETERMINISM_METRICS
+        self._determinism_metrics_max_bytes = _int_env(
+            "TRADECTL_DETERMINISM_METRICS_MAX_BYTES",
+            DEFAULT_LOG_MAX_BYTES,
+        )
+        self._determinism_metrics_keep_bytes = _int_env(
+            "TRADECTL_DETERMINISM_METRICS_KEEP_BYTES",
+            DEFAULT_LOG_KEEP_BYTES,
+        ) or DEFAULT_LOG_KEEP_BYTES
         signal_env = os.getenv("TRADECTL_SIGNAL_EVENT_LOG")
         self._signal_log_path = (
             Path(signal_env) if signal_env else DEFAULT_SIGNAL_EVENT_LOG
         )
+        self._signal_log_max_bytes = _int_env(
+            "TRADECTL_SIGNAL_LOG_MAX_BYTES",
+            DEFAULT_LOG_MAX_BYTES,
+        )
+        self._signal_log_keep_bytes = _int_env(
+            "TRADECTL_SIGNAL_LOG_KEEP_BYTES",
+            DEFAULT_LOG_KEEP_BYTES,
+        ) or DEFAULT_LOG_KEEP_BYTES
+        self._allocation_policy: StrategyAllocationPolicy | None = None
 
     # ------------------------------------------------------------------
     # Plugin registration & manifest loading
@@ -587,6 +664,22 @@ class StrategyEngine:
 
         return tuple(self._last_determinism_events)
 
+    @property
+    def allocation_policy(self) -> StrategyAllocationPolicy | None:
+        """Return the configured allocation policy (if any)."""
+
+        return self._allocation_policy
+
+    def set_allocation_policy(self, policy: StrategyAllocationPolicy | None) -> None:
+        """Attach an allocation policy to the engine."""
+
+        self._allocation_policy = policy
+
+    def clear_allocation_policy(self) -> None:
+        """Disable the allocation policy and restore pass-through execution."""
+
+        self._allocation_policy = None
+
     def get_parameters(self, strategy_id: str) -> Mapping[str, Any]:
         """Return manifest parameters for ``strategy_id`` (if available)."""
 
@@ -606,7 +699,11 @@ class StrategyEngine:
     # Execution
     # ------------------------------------------------------------------
     def _build_context(
-        self, *, evaluation: StrategyEvaluationContext, plugin_metadata: StrategyMetadata
+        self,
+        *,
+        evaluation: StrategyEvaluationContext,
+        plugin_metadata: StrategyMetadata,
+        parameters: Mapping[str, Any],
     ) -> StrategyContext:
         watchlist = frozenset(evaluation.watchlist)
         return StrategyContext(
@@ -618,6 +715,7 @@ class StrategyEngine:
             watchlist=watchlist,
             clock=evaluation.clock,
             seed=evaluation.seed + plugin_metadata.seed_offset,
+            parameters=parameters,
         )
 
     def run_all(
@@ -678,6 +776,7 @@ class StrategyEngine:
         guarded_mode = _is_guarded_mode(gate)
 
         results: list[Any] = []
+        allocation_candidates: list[AllocationCandidate] = []
         for strategy_id, entry in ordered_entries:
             plugin = self._plugins.get(strategy_id)
             if plugin is None:
@@ -714,6 +813,7 @@ class StrategyEngine:
             context = self._build_context(
                 evaluation=evaluation,
                 plugin_metadata=plugin_metadata,
+                parameters=entry.parameters,
             )
             plugin.context = context
             if guarded_mode and not entry.feature_flags.get("guarded_board_required", False):
@@ -736,6 +836,15 @@ class StrategyEngine:
             try:
                 for signal in signals:
                     results.append(signal)
+                    allocation_candidates.append(
+                        AllocationCandidate(
+                            strategy_id=strategy_id,
+                            signal=signal,
+                            priority=entry.priority,
+                            weight=entry.weight,
+                            parameters=entry.parameters,
+                        )
+                    )
                     self._emit_signal_event(
                         strategy_id=strategy_id,
                         signal=signal,
@@ -781,7 +890,16 @@ class StrategyEngine:
             }
             self._record_determinism_event(event_payload)
 
-        return results
+        if self._allocation_policy is None:
+            return results
+
+        return self._apply_allocation(
+            candidates=allocation_candidates,
+            clock=clock,
+            gate=gate,
+            config=config,
+            features=features,
+        )
 
     def run_with_pipeline(
         self,
@@ -848,21 +966,31 @@ class StrategyEngine:
                     "breakout": getattr(signal, "breakout", None),
                     "level": getattr(signal, "level", None),
                     "buffer": getattr(signal, "buffer", None),
+                    "breakout_width": getattr(signal, "breakout_width", None),
+                    "filter_flags": getattr(signal, "filter_flags", None),
+                    "filter_block_reason": getattr(signal, "filter_block_reason", None),
+                    "quality_score": getattr(signal, "quality_score", None),
                     "score": getattr(signal, "score", None),
                     "badges": getattr(signal, "badges", None),
                 }
             )
         try:
-            _append_jsonl(self._signal_log_path, payload)
+            _append_jsonl(
+                self._signal_log_path,
+                payload,
+                max_bytes=self._signal_log_max_bytes,
+                keep_bytes=self._signal_log_keep_bytes,
+            )
         except OSError as exc:  # pragma: no cover - best-effort logging
             logger.warning("strategy.registry.signal_log_failed", extra={"error": str(exc)})
 
     def _append_determinism_log(self, payload: Mapping[str, Any]) -> None:
-        path = self._determinism_log_path
-        path.parent.mkdir(parents=True, exist_ok=True)
-        with path.open("a", encoding="utf-8") as handle:
-            handle.write(json.dumps(payload, ensure_ascii=False))
-            handle.write("\n")
+        _append_jsonl(
+            self._determinism_log_path,
+            payload,
+            max_bytes=self._determinism_log_max_bytes,
+            keep_bytes=self._determinism_log_keep_bytes,
+        )
 
     def _append_determinism_metrics(self, payload: Mapping[str, Any]) -> None:
         path = self._determinism_metrics_path
@@ -877,7 +1005,102 @@ class StrategyEngine:
             "latency_ms": payload.get("latency_ms"),
             "mode": payload.get("mode") or "unknown",
         }
-        path.parent.mkdir(parents=True, exist_ok=True)
-        with path.open("a", encoding="utf-8") as handle:
-            handle.write(json.dumps(record, ensure_ascii=False))
-            handle.write("\n")
+        _append_jsonl(
+            path,
+            record,
+            max_bytes=self._determinism_metrics_max_bytes,
+            keep_bytes=self._determinism_metrics_keep_bytes,
+        )
+
+    def _apply_allocation(
+        self,
+        *,
+        candidates: Iterable[AllocationCandidate],
+        clock: Any,
+        gate: Any,
+        config: Any,
+        features: FeatureContext,
+    ) -> list[Any]:
+        policy = self._allocation_policy
+        if policy is None:
+            return [candidate.signal for candidate in candidates]
+
+        materialized = tuple(candidates)
+        if not materialized:
+            return []
+
+        by_symbol: dict[str, list[AllocationCandidate]] = {}
+        for candidate in materialized:
+            symbol = str(getattr(candidate.signal, "symbol", "UNKNOWN")).upper()
+            by_symbol.setdefault(symbol, []).append(candidate)
+
+        selected: list[Any] = []
+        for symbol, symbol_candidates in sorted(by_symbol.items()):
+            context = AllocationContext(
+                now=self._allocation_now(clock),
+                board_mode=self._allocation_board_mode(gate=gate, config=config),
+                kill_switch_state=self._allocation_kill_switch_state(gate=gate, config=config),
+                regime_value=self._allocation_regime_value(features=features, symbol=symbol),
+            )
+            allocation = policy.allocate(candidates=symbol_candidates, context=context)
+            selected.extend(candidate.signal for candidate in allocation.selected)
+
+        return selected
+
+    @staticmethod
+    def _allocation_now(clock: Any) -> datetime:
+        now = getattr(clock, "now", None)
+        if isinstance(now, datetime):
+            return _as_utc(now)
+        return datetime.now(timezone.utc)
+
+    @staticmethod
+    def _allocation_board_mode(*, gate: Any, config: Any) -> str:
+        direct = getattr(gate, "board_mode", None)
+        if isinstance(direct, str) and direct.strip():
+            return direct.strip().lower()
+
+        cfg_mode = getattr(config, "board_mode", None)
+        if isinstance(cfg_mode, str) and cfg_mode.strip():
+            return cfg_mode.strip().lower()
+
+        market = getattr(gate, "market", None)
+        readiness = getattr(market, "profit_readiness_status", None)
+        if isinstance(readiness, str):
+            lowered = readiness.strip().lower()
+            if lowered in {"guarded", "halted"}:
+                return lowered
+        return "normal"
+
+    @staticmethod
+    def _allocation_kill_switch_state(*, gate: Any, config: Any) -> str:
+        risk = getattr(gate, "risk", None)
+        explicit = getattr(risk, "kill_switch_recommendation", None)
+        if isinstance(explicit, str) and explicit.strip():
+            return explicit.strip().lower()
+        if bool(getattr(risk, "reduce_only", False)):
+            return "soft_stop"
+
+        cfg_state = getattr(config, "kill_switch_state", None)
+        if isinstance(cfg_state, str) and cfg_state.strip():
+            return cfg_state.strip().lower()
+        return "normal"
+
+    @staticmethod
+    def _allocation_regime_value(*, features: FeatureContext, symbol: str) -> float | None:
+        try:
+            regime = features.lookup(symbol=symbol, feature="regime_trend_1h", timeframe="1h")
+        except Exception:
+            return None
+        if isinstance(regime, (int, float)):
+            return float(regime)
+        getter = getattr(regime, "iloc", None)
+        if getter is not None:
+            try:
+                return float(regime.iloc[-1])
+            except Exception:
+                return None
+        try:
+            return float(regime)
+        except Exception:
+            return None

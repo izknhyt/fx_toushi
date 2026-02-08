@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from collections.abc import Iterable
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from src.features.pipeline import FeaturePipeline
@@ -200,3 +201,50 @@ def test_run_all_rejects_watchlist_missing_symbols(project_root) -> None:
             watchlist=["USDJPY", "MISSING"],
             **_dummy_context_args(),
         )
+
+
+def test_strategy_engine_rotates_large_logs(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("TRADECTL_STRATEGY_LOG_MAX_BYTES", "512")
+    monkeypatch.setenv("TRADECTL_STRATEGY_LOG_KEEP_BYTES", "256")
+    monkeypatch.setenv("TRADECTL_DETERMINISM_METRICS_MAX_BYTES", "512")
+    monkeypatch.setenv("TRADECTL_DETERMINISM_METRICS_KEEP_BYTES", "256")
+    monkeypatch.setenv("TRADECTL_SIGNAL_LOG_MAX_BYTES", "512")
+    monkeypatch.setenv("TRADECTL_SIGNAL_LOG_KEEP_BYTES", "256")
+    signal_log = tmp_path / "signal.generated.jsonl"
+    monkeypatch.setenv("TRADECTL_SIGNAL_EVENT_LOG", str(signal_log))
+
+    det_log = tmp_path / "registry.log"
+    det_metrics = tmp_path / "determinism.jsonl"
+    engine = StrategyEngine(determinism_log_path=det_log, determinism_metrics_path=det_metrics)
+
+    context = SimpleNamespace(seed=42, watchlist=frozenset({"USDJPY"}))
+    for index in range(50):
+        payload = {
+            "event": "strategy.determinism",
+            "ts": f"2026-02-08T00:00:{index:02d}Z",
+            "strategy_id": "m1_baseline_ma_rsi",
+            "feature_version": "v1",
+            "determinism_hash": f"h{index}",
+            "mode": "paper",
+            "latency_ms": index,
+        }
+        engine._append_determinism_log(payload)
+        engine._append_determinism_metrics(payload)
+        engine._emit_signal_event(
+            strategy_id="m1_baseline_ma_rsi",
+            signal=SimpleNamespace(symbol="USDJPY", direction="long"),
+            context=context,
+            feature_flags={"fx_enabled": True},
+            status="accepted",
+            reason=None,
+        )
+
+    assert det_log.exists()
+    assert det_metrics.exists()
+    assert signal_log.exists()
+    assert det_log.stat().st_size <= 1024
+    assert det_metrics.stat().st_size <= 1024
+    assert signal_log.stat().st_size <= 1024
+    assert det_log.read_text(encoding="utf-8").strip()
+    assert det_metrics.read_text(encoding="utf-8").strip()
+    assert signal_log.read_text(encoding="utf-8").strip()
