@@ -8,6 +8,7 @@ metrics/determinism.jsonl
 
 # python virtual env
 .venv/
+.env
 
 # node deps (念のため)
 ui/node_modules/
