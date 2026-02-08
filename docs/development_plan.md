@@ -329,6 +329,7 @@ When a task is implemented or reviewed:
 - 2026-02-08T13:08Z — Hybrid US tuning: exclude 20-21 UTC for m1_us_session_trend_pullback via blocked_utc_hours, update allocation session ranges, rerun standalone PoC and unit tests.
 - 2026-02-08T13:24Z — PoC bugfix: process all select_many signals in paper_poc, support multiple concurrent positions per symbol, and apply spread+slippage on stop/target exits; add unit regression tests.
 - 2026-02-08T13:34Z — PoC execution audit: enforce next-bar open fill for entry_on_next_bar, align engine seed with CLI seed, and add deterministic-default-seed/next-bar regression tests.
+- 2026-02-08T13:59Z — Ignore high-churn generated artifacts and untrack existing runtime outputs from git index.
 
 ## Codex Q&A Log
 When Codex asks a clarifying question, track it here instead of `docs/prompt_packages/` (legacy).
@@ -346,7 +347,7 @@ Default SLA: 6 hours unless otherwise specified.
 - M2+ scaffolds detected: stress registry/engine, TradeJournalService now SQLite-backed with weekly summary/metrics, benchmark compare exist but are partial.
 - M3+ partials: risk consent completed; access review start scaffolded; licensing/board/lifecycle/compliance governance mostly todo.
 - Design EP coverage check: EP IDs (EP-XX vs EPXX) normalized; backlog coverage matches design EP list.
-- Design Alignment Backlog totals: 184 entries (done 184 / in_progress 0 / todo 0).
+- Design Alignment Backlog totals: 185 entries (done 185 / in_progress 0 / todo 0).
 - Deprecated duplicates removed; historical copies can be found in git history if needed.
 - Archived legacy docs under `docs/archive/` (change_requests, prompt_packages, implementation_packets, daily_agenda, releases, risk_review, review_log, missing_assets_inventory).
 
@@ -357,6 +358,7 @@ This is the single table for tracking what is done vs. not done. Use it as the p
 | --- | --- | --- | --- | --- |
 | Repo hygiene: remove large determinism metrics from history | Ops | Done | `git filter-repo --path metrics/determinism.jsonl --invert-paths` で履歴から削除し、`.gitignore` に `metrics/determinism.jsonl` を追加。originは再追加済み。テスト未実行（履歴整理のみ）。 | Force push rewritten history. |
 | Repo hygiene: ignore local env file | Ops | Done | ローカル環境ファイル `.env` を `.gitignore` に追加し、作業ツリーの未追跡ノイズを削減。 | None. |
+| Repo hygiene: ignore generated runtime artifacts | Ops | Done | 変動が大きい生成物を `.gitignore` へ追加（`metrics/*.jsonl`, `reports/performance/paper/*.parquet`, `reports/exports/`, `reports/signal_preview/`, `reports/validation_log/*.json`, `reports/validation_log/*.sh`, `data/cache/dukascopy/`, `data/raw/auto/`, `data/raw/dukascopy/`, `data/raw/twelvedata/`）。既存追跡分は `git rm --cached` で index から除外してワークツリーは保持。 | 必要に応じて証跡は `md` 形式か外部保管へ統一。 |
 | Runtime log rotation + shrink | Ops | Done | 巨大化した実行ログを縮減し、再発防止としてローテーションを実装。`src/strategies/registry.py` にサイズ上限ローテ（`TRADECTL_STRATEGY_LOG_MAX_BYTES` / `TRADECTL_DETERMINISM_METRICS_MAX_BYTES` / `TRADECTL_SIGNAL_LOG_MAX_BYTES`）を追加。`src/interfaces/gui/web_server.py` は `/api/signals` とCSV末尾取得を全量readから末尾readへ変更。テスト: `pytest tests/unit/test_strategy_registry_contracts.py tests/unit/test_gui_web_server.py -q`。実縮減証跡: `logs/cleanup/log_shrink_20260208T1104Z.log`（`logs/strategy/registry.log` 113G→15M, `metrics/determinism.jsonl` 23G→4.1M, `logs/events/signal.generated.jsonl` 594M→11M）。 | 運用で必要なら環境変数で上限値を調整。 |
 | M1 Core: Data ingestion & quality | M1 | Done | `src/data/service.py`, `src/interfaces/cli/data.py`; review fixes in `src/data/quality.py`, `src/data/manual_csv.py`; tests: `pytest tests/unit/test_data_quality_guard.py`. USDJPY m5運用ディレクトリを `data/research/curated/usdjpy_m5/` に移設後、スケール混在（1.x/150/7万系）を是正するため `usdjpy_m5_clean` を生成し、`tradectl data update --update-manifest` で `reports/data_manifest.json` を更新（証跡: `reports/validation_log/usdjpy_m5_clean_build_20260126T0002Z.json`, `reports/validation_log/data_update_usdjpy_m5_clean_20260126T0002Z.log`）。 | None. |
 | M1 Core: Feature pipeline | M1 | Done | `src/features/pipeline.py`, `src/features/bar_ready.py`; review fixes for ISO8601 UTC normalization + cache-hit context refresh. PoC改善: Donchian bandを1バーシフトしてlookahead回避（`donchian`計算に `.shift(1)` を追加）。Tests: `pytest tests/unit/test_feature_pipeline_compute.py tests/unit/test_donchian_strategy.py`, `pytest tests/integration/test_feature_pipeline.py`. | None. |
@@ -780,6 +782,7 @@ Source: detailed_design_fx_signal_tool_v1.md
 | --- | --- | --- | --- | --- |
 | `OPS-GIT-HYGIENE` | Repo hygiene / Git history cleanup | N/A | done | `metrics/determinism.jsonl` を `git filter-repo` で履歴から削除し、再追加防止のため `.gitignore` に追加。originは再追加済み。 |
 | `OPS-ENV-IGNORE-01` | Repo hygiene / local env ignore | N/A | done | `.env` を `.gitignore` に追加し、ローカル環境ファイルを追跡対象から除外。 |
+| `OPS-GEN-IGNORE-01` | Repo hygiene / generated artifact ignore | N/A | done | 高頻度で更新される生成物（metrics jsonl / paper parquet / signal preview / validation json/sh / raw+cache）を `.gitignore` へ追加し、既存追跡分を index から除外して差分ノイズを抑制。 |
 | `OPS-LOG-ROTATE-01` | Runtime log hygiene / rotation | N/A | done | 実行ログ肥大対策として `src/strategies/registry.py` にサイズ上限ローテーションを追加（strategy log / determinism metrics / signal event log）。`src/interfaces/gui/web_server.py` のシグナル/CSV読み込みを末尾読みへ変更して巨大ファイル時の負荷を軽減。Tests: `pytest tests/unit/test_strategy_registry_contracts.py tests/unit/test_gui_web_server.py -q`。実縮減: `logs/cleanup/log_shrink_20260208T1104Z.log`。 |
 | `OPS-SIGNAL-LOG-CSV` | Signal logging / CSV export | N/A | done | Signal JSONLからCSVを生成する`tradectl signals export`を追加（`src/interfaces/cli/signals.py`, `src/interfaces/cli/__init__.py`）。追記/重複排除＋月次ローテ対応。Tests: `pytest tests/unit/test_signals_export.py`. |
 | `GUI-LOCAL-WEB-01` | Local web GUI | N/A | done | ローカルWeb GUIサーバを追加（`src/interfaces/gui/web_server.py`, `ui/web/*`）し、`tradectl gui serve`で起動可能にした。注文指示（entry/SL/TP/期限）と状態をGUIで表示。ログの`message`衝突で例外が出ないよう`http_message`へ修正。Tests: `pytest tests/unit/test_gui_web_server.py`. |

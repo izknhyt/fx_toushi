@@ -1,6 +1,0 @@
-{
-  "availability": 1.0,
-  "latency_p95": 126.74808502197266,
-  "reconnect_time_p95": null,
-  "cache_replay_success": 1.0
-}

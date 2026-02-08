@@ -1,1 +1,0 @@
-{"ts": "2026-01-24T09:51:32Z", "event": "broker_certification", "run_id": "cert-5a9ed7f8ead9", "plan_id": "broker_certification_sandbox", "adapter": "sandbox", "profile": "paper", "status": "pass_with_warning", "scenario_count": 4}
