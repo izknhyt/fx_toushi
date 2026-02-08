@@ -1,4 +1,4 @@
-"""Minimal ingestion loop for M1 manual operations (dukascopy/yfinance)."""
+"""Minimal ingestion loop for M1 manual operations (dukascopy/yfinance/twelvedata)."""
 
 from __future__ import annotations
 
@@ -360,7 +360,7 @@ def run_loop(
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run minimal Dukascopy ingestion loop.")
     parser.add_argument(
-        "--provider", default="auto", help="Provider name (dukascopy/yfinance/auto)"
+        "--provider", default="auto", help="Provider name (dukascopy/yfinance/twelvedata/auto)"
     )
     parser.add_argument("--symbols", default="USDJPY", help="Comma-separated symbols")
     parser.add_argument("--timeframe", default="5m", help="Timeframe label")

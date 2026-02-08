@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from typer.testing import CliRunner
+import yaml
 
 from src.interfaces.cli import create_cli_app
 
@@ -117,6 +118,53 @@ def _write_manifest(path: Path, *, data_manifest: Path, research_manifest: Path)
     )
 
 
+def _write_donchian_manifest(path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        "\n".join(
+            [
+                "schema_version: 0",
+                "manifest_name: Test",
+                "revision_tag: TEST",
+                "last_reviewed_at: 2025-01-01T00:00:00Z",
+                "strategies:",
+                "  m1_baseline_donchian:",
+                "    enabled: false",
+                "    priority: 1",
+                "    weight: 1.0",
+                "    determinism_key: donchian_v1",
+                "    metadata:",
+                "      name: Donchian",
+                "      version: \"0.1.0\"",
+                "      required_features:",
+                "        - close_5m",
+                "  m1_baseline_donchian_long_only:",
+                "    enabled: false",
+                "    priority: 2",
+                "    weight: 1.0",
+                "    determinism_key: donchian_v1_long_only",
+                "    metadata:",
+                "      name: Donchian Long",
+                "      version: \"0.1.0\"",
+                "      required_features:",
+                "        - close_5m",
+                "  m1_baseline_donchian_upper_only:",
+                "    enabled: true",
+                "    priority: 3",
+                "    weight: 1.0",
+                "    determinism_key: donchian_v1_upper_only",
+                "    metadata:",
+                "      name: Donchian Upper",
+                "      version: \"0.1.0\"",
+                "      required_features:",
+                "        - close_5m",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+
 def test_strategy_manifest_cli_flow(tmp_path: Path) -> None:
     app = create_cli_app()
     runner = CliRunner()
@@ -199,3 +247,34 @@ def test_strategy_manifest_cli_flow(tmp_path: Path) -> None:
     assert result.exit_code == 0, result.stdout
     payload = json.loads(result.stdout)
     assert payload["status"] == "ok"
+
+
+def test_strategy_manifest_select_donchian(tmp_path: Path) -> None:
+    app = create_cli_app()
+    runner = CliRunner()
+
+    manifest = tmp_path / "config" / "strategy_manifest.yaml"
+    _write_donchian_manifest(manifest)
+
+    result = runner.invoke(
+        app,
+        [
+            "strategy",
+            "manifest",
+            "select-donchian",
+            "--modes",
+            "bidirectional,long_only",
+            "--manifest",
+            str(manifest),
+            "--json",
+        ],
+    )
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["status"] == "ok"
+
+    data = yaml.safe_load(manifest.read_text(encoding="utf-8"))
+    strategies = data.get("strategies", {})
+    assert strategies["m1_baseline_donchian"]["enabled"] is True
+    assert strategies["m1_baseline_donchian_long_only"]["enabled"] is True
+    assert strategies["m1_baseline_donchian_upper_only"]["enabled"] is False

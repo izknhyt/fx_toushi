@@ -136,10 +136,21 @@ function renderOps(payload) {
   opsRunning = Boolean(payload.running);
   const phase = payload.phase || "-";
   const loopCount = payload.loop_iterations ?? 0;
+  const strategyManifest = payload.strategy_manifest || "-";
+  const dataManifest = payload.data_manifest || "-";
+  const sourceDir = payload.source_dir || "-";
+  const symbols = Array.isArray(payload.symbols) ? payload.symbols.join(",") : payload.symbol || "-";
   const error = payload.last_error ? ` / error: ${payload.last_error}` : "";
   opsMetaEl.textContent = `状態: ${phase} / running=${opsRunning} / loop=${loopCount}${error}`;
   const logs = Array.isArray(payload.recent_logs) ? payload.recent_logs : [];
-  opsLogEl.textContent = logs.length ? logs.join("\n") : "ログなし";
+  const header = [
+    `symbols: ${symbols}`,
+    `provider/timeframe: ${payload.provider || "-"} / ${payload.timeframe || "-"}`,
+    `strategy_manifest: ${strategyManifest}`,
+    `data_manifest: ${dataManifest}`,
+    `source_dir: ${sourceDir}`,
+  ];
+  opsLogEl.textContent = [...header, ...(logs.length ? logs : ["ログなし"])].join("\n");
   if (opsStartEl) opsStartEl.disabled = opsRunning;
   if (opsStopEl) opsStopEl.disabled = !opsRunning;
 }

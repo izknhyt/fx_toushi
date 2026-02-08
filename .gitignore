@@ -4,6 +4,7 @@ logs/
 *.log
 __pycache__/
 *.pyc
+metrics/determinism.jsonl
 
 # python virtual env
 .venv/

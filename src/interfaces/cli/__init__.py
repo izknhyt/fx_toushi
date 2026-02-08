@@ -372,6 +372,9 @@ logger = logging.getLogger(__name__)
 
 __all__ = ["create_cli_app"]
 
+DEFAULT_STRATEGY_MANIFEST_PATH = Path("config") / "strategy_manifest.yaml"
+DEFAULT_UPPER_NO_US_MANIFEST_PATH = Path("config") / "strategy_manifest.upper_no_us.yaml"
+
 
 def _render_payload(console: Console, payload: Mapping[str, Any], *, json_output: bool) -> None:
     safe_payload = json.loads(json.dumps(payload, default=str))
@@ -402,6 +405,17 @@ def _merge_with_context(option: bool | None, ctx_value: bool) -> bool:
 
 def _normalise_multi(value: Iterable[str] | None) -> list[str]:
     return list(value or ())
+
+
+def _resolve_gui_strategy_manifest(manifest_path: Path) -> Path:
+    if manifest_path.exists():
+        return manifest_path
+    if (
+        manifest_path == DEFAULT_UPPER_NO_US_MANIFEST_PATH
+        and DEFAULT_STRATEGY_MANIFEST_PATH.exists()
+    ):
+        return DEFAULT_STRATEGY_MANIFEST_PATH
+    return manifest_path
 
 
 def _determine_board_exit_code(
@@ -1083,6 +1097,14 @@ def create_cli_app() -> typer.Typer:
         strategy: str = typer.Option(
             "m1_baseline_ma_rsi", "--strategy", help="Strategy identifier."
         ),
+        hybrid: bool = typer.Option(
+            False,
+            "--hybrid",
+            help="Evaluate all enabled strategies in manifest with allocation (if configured).",
+        ),
+        symbols: str | None = typer.Option(
+            None, "--symbols", help="Comma-separated symbols override for PoC."
+        ),
         profile: str = typer.Option("m1_baseline", "--profile", help="Risk profile key"),
         window_from: str
         | None = typer.Option(None, "--from", help="Start date (YYYY-MM-DD)", show_default=False),
@@ -1100,6 +1122,16 @@ def create_cli_app() -> typer.Typer:
         ),
         fixed_risk: bool = typer.Option(
             False, "--fixed-risk", help="Use base capital for per-trade risk (no compounding)"
+        ),
+        seed: int | None = typer.Option(None, "--seed", help="Random seed for PoC slippage"),
+        session_start_hour: int | None = typer.Option(
+            None, "--session-start", help="UTC start hour for entry filter (0-23)"
+        ),
+        session_end_hour: int | None = typer.Option(
+            None, "--session-end", help="UTC end hour for entry filter (0-23)"
+        ),
+        trail_atr_mult: float | None = typer.Option(
+            None, "--trail-atr-mult", help="ATR multiple for trailing stop (entry hours only)"
         ),
         target_r: float = typer.Option(2.0, "--target-r", help="Target R multiple for take profit"),
         ttl_bars: int = typer.Option(12, "--ttl-bars", help="Max bars to hold before exit"),
@@ -1127,6 +1159,18 @@ def create_cli_app() -> typer.Typer:
             help="Strategy manifest path",
             show_default=False,
         ),
+        allocation_config_path: Path | None = typer.Option(
+            None,
+            "--allocation-config",
+            help="Optional allocation config path (e.g. config/strategy_allocation.yaml).",
+            show_default=False,
+        ),
+        allocation_profile: str | None = typer.Option(
+            None,
+            "--allocation-profile",
+            help="Allocation profile name.",
+            show_default=False,
+        ),
         output: Path
         | None = typer.Option(
             None,
@@ -1138,9 +1182,12 @@ def create_cli_app() -> typer.Typer:
     ) -> None:
         ctx_obj = ctx.obj or {"json": False}
         effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        symbol_list = [s.strip().upper() for s in (symbols or "").split(",") if s.strip()] or None
+        selected_strategy = None if hybrid else strategy
         payload = run_paper_poc(
-            strategy=strategy,
+            strategy=selected_strategy,
             profile=profile,
+            symbols=symbol_list,
             window_from=window_from,
             window_to=window_to,
             spread_pips=spread_pips,
@@ -1148,12 +1195,18 @@ def create_cli_app() -> typer.Typer:
             slippage_std=slippage_std,
             commission_pct=commission_pct,
             fixed_risk=fixed_risk,
+            seed=seed,
+            session_start_hour=session_start_hour,
+            session_end_hour=session_end_hour,
+            trail_atr_mult=trail_atr_mult,
             target_r=target_r,
             ttl_bars=ttl_bars,
             risk_policy_path=risk_policy_path,
             data_manifest_path=data_manifest_path,
             feature_config_path=feature_config_path,
             strategy_manifest_path=strategy_manifest_path,
+            allocation_config_path=allocation_config_path,
+            allocation_profile=allocation_profile,
             output=output,
         )
         _render_payload(console, payload, json_output=effective_json)
@@ -2021,7 +2074,7 @@ def create_cli_app() -> typer.Typer:
             "twelvedata", "--ops-provider", help="Provider for post-sync loop"
         ),
         ops_strategy_manifest: Path = typer.Option(
-            Path("config") / "strategy_manifest.yaml",
+            DEFAULT_UPPER_NO_US_MANIFEST_PATH,
             "--ops-strategy-manifest",
             help="Strategy manifest used for post-sync loop",
             show_default=False,
@@ -2115,6 +2168,7 @@ def create_cli_app() -> typer.Typer:
             loop_symbols = [s.strip().upper() for s in ops_symbols.split(",") if s.strip()]
             if not loop_symbols:
                 loop_symbols = [normalized_symbol]
+            resolved_ops_strategy_manifest = _resolve_gui_strategy_manifest(ops_strategy_manifest)
             ops_runtime = GuiOpsRuntimeConfig(
                 symbol=normalized_symbol,
                 source_dir=resolve_sync_source_dir(normalized_symbol, ops_source_dir),
@@ -2137,7 +2191,7 @@ def create_cli_app() -> typer.Typer:
                 profile_path=ops_profile_path,
                 data_dir=ops_data_dir,
                 feature_config=ops_feature_config,
-                strategy_manifest=ops_strategy_manifest,
+                strategy_manifest=resolved_ops_strategy_manifest,
                 signal_log_path=signal_log,
                 backfill_days=ops_backfill_days,
                 target_r_multiple=ops_target_r_multiple,
@@ -2211,7 +2265,7 @@ def create_cli_app() -> typer.Typer:
             show_default=False,
         ),
         strategy_manifest: Path = typer.Option(
-            Path("config") / "strategy_manifest.yaml",
+            DEFAULT_UPPER_NO_US_MANIFEST_PATH,
             "--strategy-manifest",
             help="Strategy manifest",
             show_default=False,
@@ -2264,6 +2318,7 @@ def create_cli_app() -> typer.Typer:
         ctx_obj = ctx.obj or {"json": False}
         effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
         symbol_list = [s.strip().upper() for s in symbols.split(",") if s.strip()]
+        resolved_strategy_manifest = _resolve_gui_strategy_manifest(strategy_manifest)
         results = run_gui_ops_loop(
             provider=provider,
             symbols=symbol_list,
@@ -2277,7 +2332,7 @@ def create_cli_app() -> typer.Typer:
             profile_path=profile_path,
             data_dir=data_dir,
             feature_config=feature_config,
-            strategy_manifest=strategy_manifest,
+            strategy_manifest=resolved_strategy_manifest,
             data_manifest=data_manifest,
             signal_log_path=signal_log,
             backfill_days=backfill_days,
@@ -2397,7 +2452,7 @@ def create_cli_app() -> typer.Typer:
             show_default=False,
         ),
         strategy_manifest: Path = typer.Option(
-            Path("config") / "strategy_manifest.yaml",
+            DEFAULT_UPPER_NO_US_MANIFEST_PATH,
             "--strategy-manifest",
             help="Strategy manifest",
             show_default=False,
@@ -2484,6 +2539,7 @@ def create_cli_app() -> typer.Typer:
         symbol_list = [s.strip().upper() for s in symbols.split(",") if s.strip()]
         if not symbol_list:
             symbol_list = [sync_symbol]
+        resolved_strategy_manifest = _resolve_gui_strategy_manifest(strategy_manifest)
 
         if not loop_once and max_iterations is None:
             payload["loop"] = {"status": "starting", "mode": "continuous", "provider": provider}
@@ -2501,7 +2557,7 @@ def create_cli_app() -> typer.Typer:
                 profile_path=profile_path,
                 data_dir=data_dir,
                 feature_config=feature_config,
-                strategy_manifest=strategy_manifest,
+                strategy_manifest=resolved_strategy_manifest,
                 data_manifest=manifest,
                 signal_log_path=signal_log,
                 backfill_days=backfill_days,
@@ -2532,7 +2588,7 @@ def create_cli_app() -> typer.Typer:
             profile_path=profile_path,
             data_dir=data_dir,
             feature_config=feature_config,
-            strategy_manifest=strategy_manifest,
+            strategy_manifest=resolved_strategy_manifest,
             data_manifest=manifest,
             signal_log_path=signal_log,
             backfill_days=backfill_days,

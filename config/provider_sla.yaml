@@ -6,6 +6,9 @@ providers:
   dukascopy:
     warn_ms: 1200
     breach_ms: 2000
+  twelvedata:
+    warn_ms: 1200
+    breach_ms: 2000
   local:
     warn_ms: 800
     breach_ms: 1500

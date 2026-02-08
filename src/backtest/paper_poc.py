@@ -22,8 +22,14 @@ import pandas as pd
 import yaml
 
 from src.features.pipeline import FeaturePipeline
-from src.strategies.donchian import DonchianBreakoutStrategy
+from src.strategies.donchian import (
+    DonchianBreakoutLongOnlyStrategy,
+    DonchianBreakoutStrategy,
+    DonchianBreakoutUpperOnlyStrategy,
+)
 from src.strategies.ma_rsi import MovingAverageRsiStrategy
+from src.strategies.us_session_momentum import UsSessionTrendPullbackStrategy
+from src.strategies.allocation import StrategyAllocationPolicy
 from src.strategies.registry import StrategyEngine, StrategyManifest
 
 DEFAULT_DATA_MANIFEST = Path("reports") / "data_manifest.json"
@@ -75,6 +81,7 @@ class RiskProfileSettings:
 class TradeRecord:
     """Captured trade lifecycle for the PoC simulator."""
 
+    strategy_id: str | None
     opened_at: datetime
     closed_at: datetime
     symbol: str
@@ -85,6 +92,16 @@ class TradeRecord:
     target: float
     r_multiple: float
     pnl: float
+    breakout: str | None = None
+    level: float | None = None
+    buffer: float | None = None
+    breakout_width: float | None = None
+    quality_score: float | None = None
+    filter_flags: Mapping[str, bool] | None = None
+    trend_value: float | None = None
+    atr_value: float | None = None
+    spread_used: float | None = None
+    slippage_used: float | None = None
 
     def as_dict(self) -> Mapping[str, Any]:
         payload = asdict(self)
@@ -121,10 +138,37 @@ def _load_data_manifest(path: Path, strategy: str) -> Mapping[str, Any]:
     manifest = json.loads(path.read_text(encoding="utf-8"))
     entry = manifest.get("strategies", {}).get(strategy)
     if not entry:
+        fallback = {
+            "m1_baseline_donchian_long_only": "m1_baseline_donchian",
+            "m1_baseline_donchian_upper_only": "m1_baseline_donchian",
+            "m1_us_session_trend_pullback": "m1_baseline_ma_rsi",
+        }.get(strategy)
+        if fallback:
+            entry = manifest.get("strategies", {}).get(fallback)
+    if not entry:
         raise KeyError(f"Strategy '{strategy}' missing in {path}")
     if "dataset_path" not in entry or "dataset_sha256" not in entry:
         raise ValueError(f"Strategy '{strategy}' manifest entry missing dataset information")
     return entry
+
+
+def _restrict_manifest_to_strategy(manifest: StrategyManifest, strategy_id: str) -> None:
+    for sid, entry in manifest.strategies.items():
+        entry.enabled = sid == strategy_id
+
+
+def _resolve_manifest_entries(
+    manifest: StrategyManifest, strategy: str | None
+) -> tuple[dict[str, Any], list[tuple[str, Any]]]:
+    if strategy:
+        selected = manifest.strategies[strategy]
+        _restrict_manifest_to_strategy(manifest, strategy)
+        return {strategy: selected}, [(strategy, selected)]
+
+    enabled = list(manifest.enabled_strategies())
+    if not enabled:
+        raise ValueError("No enabled strategies found in strategy manifest")
+    return {sid: entry for sid, entry in enabled}, enabled
 
 
 def _load_risk_policy(risk_policy_path: Path, profile: str) -> RiskProfileSettings:
@@ -288,6 +332,44 @@ def _timeframe_to_minutes(timeframe: str) -> int:
     raise ValueError(f"Unsupported timeframe '{timeframe}'")
 
 
+def _register_plugin_for_strategy(
+    *,
+    engine: StrategyEngine,
+    strategy_id: str,
+    manifest_entry: Any,
+) -> None:
+    if strategy_id == "m1_baseline_ma_rsi":
+        plugin = MovingAverageRsiStrategy()
+        entry_params = (
+            manifest_entry.parameters.get("entry", {})
+            if hasattr(manifest_entry, "parameters")
+            else {}
+        )
+        plugin.rsi_long_threshold = float(
+            entry_params.get("rsi_long_threshold", plugin.rsi_long_threshold)
+        )
+        plugin.rsi_short_threshold = float(
+            entry_params.get("rsi_short_threshold", plugin.rsi_short_threshold)
+        )
+        plugin.min_gap_pct = float(entry_params.get("min_gap_pct", plugin.min_gap_pct))
+        plugin._cooldown_bars = int(entry_params.get("cooldown_bars", plugin.cooldown_bars()))
+        engine.register_plugin(plugin)
+        return
+    if strategy_id == "m1_baseline_donchian":
+        engine.register_plugin(DonchianBreakoutStrategy())
+        return
+    if strategy_id == "m1_baseline_donchian_long_only":
+        engine.register_plugin(DonchianBreakoutLongOnlyStrategy())
+        return
+    if strategy_id == "m1_baseline_donchian_upper_only":
+        engine.register_plugin(DonchianBreakoutUpperOnlyStrategy())
+        return
+    if strategy_id == "m1_us_session_trend_pullback":
+        engine.register_plugin(UsSessionTrendPullbackStrategy())
+        return
+    raise KeyError(f"Unknown strategy '{strategy_id}' for PoC simulation")
+
+
 @dataclass(slots=True)
 class RiskState:
     """Tracks streak-aware risk sizing state."""
@@ -323,7 +405,7 @@ class RiskState:
 
 def simulate_paper_poc(
     *,
-    strategy: str = "m1_baseline_ma_rsi",
+    strategy: str | None = "m1_baseline_ma_rsi",
     profile: str = "m1_baseline",
     window_from: str | None = None,
     window_to: str | None = None,
@@ -332,10 +414,17 @@ def simulate_paper_poc(
     slippage_std: float = 0.0,
     commission_pct: float = 0.0,
     fixed_risk: bool = False,
+    symbols: Sequence[str] | None = None,
+    seed: int | None = None,
+    session_start_hour: int | None = None,
+    session_end_hour: int | None = None,
+    trail_atr_mult: float | None = None,
     risk_policy_path: Path = DEFAULT_RISK_POLICY,
     strategy_manifest_path: Path = DEFAULT_STRATEGY_MANIFEST,
     data_manifest_path: Path = DEFAULT_DATA_MANIFEST,
     feature_config_path: Path = DEFAULT_FEATURE_CONFIG,
+    allocation_config_path: Path | None = None,
+    allocation_profile: str | None = None,
     target_r_multiple: float = 2.0,
     ttl_bars: int = 12,
     export_returns: Path | None = DEFAULT_RETURNS_EXPORT,
@@ -343,15 +432,48 @@ def simulate_paper_poc(
 ) -> PocResult:
     """Run a minimal paper-trading simulation and return aggregated metrics."""
 
-    data_entry = _load_data_manifest(data_manifest_path, strategy)
+    if (session_start_hour is None) ^ (session_end_hour is None):
+        raise ValueError("session_start_hour and session_end_hour must be set together")
+    if session_start_hour is not None:
+        if not 0 <= session_start_hour <= 23 or not 0 <= session_end_hour <= 23:
+            raise ValueError("session_start_hour/session_end_hour must be 0-23")
+    if trail_atr_mult is not None and trail_atr_mult <= 0:
+        raise ValueError("trail_atr_mult must be positive")
+
+    if seed is not None:
+        np.random.seed(seed)
+
     strategy_manifest = StrategyManifest.load(strategy_manifest_path)
-    manifest_entry = strategy_manifest.strategies[strategy]
-    # narrow manifest to the single strategy to avoid registry mismatch
-    strategy_manifest.strategies = {strategy: manifest_entry}
-    watchlist = manifest_entry.watchlist
-    required_features = manifest_entry.metadata.required_feature_set
-    symbols = list(watchlist or ("USDJPY",))
-    watchlist_datasets = data_entry.get("watchlist_datasets", {})
+    if strategy is not None and strategy not in strategy_manifest.strategies:
+        raise KeyError(f"Unknown strategy '{strategy}' for PoC simulation")
+    _, selected_entries = _resolve_manifest_entries(strategy_manifest, strategy)
+    selected_strategy_ids = [strategy_id for strategy_id, _ in selected_entries]
+    if not selected_strategy_ids:
+        raise ValueError("No strategies selected for PoC simulation")
+
+    data_entries = {
+        strategy_id: _load_data_manifest(data_manifest_path, strategy_id)
+        for strategy_id in selected_strategy_ids
+    }
+    primary_strategy_id = selected_strategy_ids[0]
+    primary_data_entry = data_entries[primary_strategy_id]
+
+    watchlist_union: set[str] = set()
+    for _, entry in selected_entries:
+        if entry.watchlist:
+            watchlist_union.update(symbol.upper() for symbol in entry.watchlist)
+    resolved_symbols = symbols or sorted(watchlist_union) or ["USDJPY"]
+    symbols = [s.strip().upper() for s in resolved_symbols if s.strip()]
+    watchlist_datasets: dict[str, Mapping[str, Any]] = {}
+    for data_entry in data_entries.values():
+        for symbol, dataset in (data_entry.get("watchlist_datasets") or {}).items():
+            symbol_key = str(symbol).upper()
+            if symbol_key not in watchlist_datasets and isinstance(dataset, Mapping):
+                watchlist_datasets[symbol_key] = dataset
+
+    required_features: set[str] = set()
+    for _strategy_id, entry in selected_entries:
+        required_features.update(entry.metadata.required_feature_set)
 
     dataset_paths: list[str] = []
     dataset_hashes: list[str] = []
@@ -359,61 +481,55 @@ def simulate_paper_poc(
     pipeline = FeaturePipeline.from_config_file(feature_config_path)
     gate = _build_gate_state(symbols)
     risk_settings = _load_risk_policy(risk_policy_path, profile)
-    per_strategy_limits = risk_settings.per_strategy_limits.get(
-        strategy, StrategyRiskLimits(per_trade_pct=risk_settings.base_per_trade_pct)
+    default_limits = risk_settings.per_strategy_limits.get(
+        primary_strategy_id,
+        StrategyRiskLimits(per_trade_pct=risk_settings.base_per_trade_pct),
     )
-    base_risk_pct = per_strategy_limits.per_trade_pct or risk_settings.base_per_trade_pct
+    base_risk_pct = default_limits.per_trade_pct or risk_settings.base_per_trade_pct
 
     equity = risk_settings.base_equity
     all_trades: list[TradeRecord] = []
     dd_curve: list[float] = [equity]
 
-    entry_params = (
-        manifest_entry.parameters.get("entry", {}) if hasattr(manifest_entry, "parameters") else {}
-    )
-    sizing_params = (
-        manifest_entry.parameters.get("sizing", {}) if hasattr(manifest_entry, "parameters") else {}
-    )
-    entry_tf = str(entry_params.get("timeframe", "5m"))
-    ttl_minutes = ttl_bars * _timeframe_to_minutes(entry_tf)
-    tp_r_multiple = float(sizing_params.get("tp_r_multiple", target_r_multiple))
-    atr_sl_mult = float(sizing_params.get("atr_sl_mult", 1.0))
+    entry_params_by_strategy: dict[str, Mapping[str, Any]] = {}
+    sizing_params_by_strategy: dict[str, Mapping[str, Any]] = {}
+    for strategy_id, entry in selected_entries:
+        params = entry.parameters if hasattr(entry, "parameters") else {}
+        entry_params = params.get("entry", {}) if isinstance(params, Mapping) else {}
+        sizing_params = params.get("sizing", {}) if isinstance(params, Mapping) else {}
+        entry_params_by_strategy[strategy_id] = (
+            entry_params if isinstance(entry_params, Mapping) else {}
+        )
+        sizing_params_by_strategy[strategy_id] = (
+            sizing_params if isinstance(sizing_params, Mapping) else {}
+        )
+
+    primary_sizing_params = sizing_params_by_strategy.get(primary_strategy_id, {})
+    tp_r_multiple = float(target_r_multiple)
+    atr_sl_mult = float(primary_sizing_params.get("atr_sl_mult", 1.0))
 
     engine = StrategyEngine()
-    if strategy == "m1_baseline_ma_rsi":
-        ma_plugin = MovingAverageRsiStrategy()
-        entry_params = (
-            manifest_entry.parameters.get("entry", {})
-            if hasattr(manifest_entry, "parameters")
-            else {}
+    for strategy_id, entry in selected_entries:
+        _register_plugin_for_strategy(
+            engine=engine,
+            strategy_id=strategy_id,
+            manifest_entry=entry,
         )
-        sizing_params = (
-            manifest_entry.parameters.get("sizing", {})
-            if hasattr(manifest_entry, "parameters")
-            else {}
-        )
-        ma_plugin.rsi_long_threshold = float(
-            entry_params.get("rsi_long_threshold", ma_plugin.rsi_long_threshold)
-        )
-        ma_plugin.rsi_short_threshold = float(
-            entry_params.get("rsi_short_threshold", ma_plugin.rsi_short_threshold)
-        )
-        ma_plugin.min_gap_pct = float(entry_params.get("min_gap_pct", ma_plugin.min_gap_pct))
-        ma_plugin._cooldown_bars = int(entry_params.get("cooldown_bars", ma_plugin.cooldown_bars()))
-        # TP/SL/TTL handled in sizing_params below
-        engine.register_plugin(ma_plugin)
-    elif strategy == "m1_baseline_donchian":
-        engine.register_plugin(DonchianBreakoutStrategy())
-    else:
-        raise KeyError(f"Unknown strategy '{strategy}' for PoC simulation")
     engine._manifest = strategy_manifest  # type: ignore[attr-defined]
+    if allocation_config_path is not None and allocation_config_path.exists():
+        engine.set_allocation_policy(
+            StrategyAllocationPolicy.load(
+                allocation_config_path,
+                profile=allocation_profile,
+            )
+        )
 
     # preload price+feature frames per symbol
     pf_by_symbol: dict[str, pd.DataFrame] = {}
     for symbol in symbols:
         ds_entry = watchlist_datasets.get(symbol) or {}
-        ds_path = Path(ds_entry.get("path", data_entry["dataset_path"]))
-        ds_hash = ds_entry.get("sha256", data_entry["dataset_sha256"])
+        ds_path = Path(ds_entry.get("path", primary_data_entry["dataset_path"]))
+        ds_hash = ds_entry.get("sha256", primary_data_entry["dataset_sha256"])
         dataset_paths.append(str(ds_path))
         dataset_hashes.append(ds_hash)
 
@@ -425,9 +541,17 @@ def simulate_paper_poc(
             df = df[df["timestamp"] <= pd.Timestamp(window_to)]
         df = df.sort_values("timestamp").reset_index(drop=True)
         df = df.set_index("timestamp")
+        if df.index.tz is None:
+            df.index = df.index.tz_localize("UTC")
+        else:
+            df.index = df.index.tz_convert("UTC")
         if df.empty:
             continue
         feature_matrix = pipeline.compute_feature_matrix(symbol=symbol, price_df=df.reset_index())
+        if feature_matrix.index.tz is None:
+            feature_matrix.index = feature_matrix.index.tz_localize("UTC")
+        else:
+            feature_matrix.index = feature_matrix.index.tz_convert("UTC")
         pf_by_symbol[symbol] = df.join(feature_matrix, how="left")
 
     # build event stream
@@ -439,13 +563,9 @@ def simulate_paper_poc(
 
     risk_state = RiskState(current_risk_pct=base_risk_pct)
     open_positions: dict[str, dict[str, Any]] = {}
-    overall_limit = per_strategy_limits.max_concurrent_overall
-    bucket_limit = per_strategy_limits.max_concurrent_bucket
     total_risk_soft = risk_settings.total_risk_soft_pct
     total_risk_hard = risk_settings.total_risk_hard_pct
     bucket_risk_cap = risk_settings.bucket_risk_cap_pct
-    r_eff_soft = risk_settings.r_eff_soft or per_strategy_limits.r_eff_soft
-    r_eff_hard = risk_settings.r_eff_hard or per_strategy_limits.r_eff_hard
 
     def _currencies(sym: str) -> tuple[str | None, str | None]:
         base = sym[:3].upper() if len(sym) >= 3 else None
@@ -467,19 +587,29 @@ def simulate_paper_poc(
                     corr_matrix[(si, sj)] = corr
                     corr_matrix[(sj, si)] = corr
 
+    engine_seed = min(entry.priority for _, entry in selected_entries)
+
     for ts, symbol, row in events:
-        manifest_entry.watchlist = [symbol]
-        strategy_manifest.strategies[strategy] = manifest_entry
+        for strategy_id, entry in selected_entries:
+            entry.watchlist = [symbol]
+            strategy_manifest.strategies[strategy_id] = entry
 
         if symbol in open_positions:
             pos = open_positions[symbol]
             low = float(row["low"])
             high = float(row["high"])
             close = float(row["close"])
+            atr_value = float(row.get("atr_14_1h", 0) or 0)
             direction = pos["direction"]
             exit_price: float | None = None
 
             dyn_spread = _spread_for(symbol, ts, spread_pips)
+            if trail_atr_mult is not None and atr_value > 0:
+                trail_distance = max(0.05, atr_value * trail_atr_mult)
+                if direction == "long":
+                    pos["stop"] = max(pos["stop"], high - trail_distance)
+                else:
+                    pos["stop"] = min(pos["stop"], low + trail_distance)
             if direction == "long":
                 if low <= pos["stop"]:
                     slip = _slippage_for(symbol, ts, slippage_pips, slippage_std)
@@ -511,9 +641,14 @@ def simulate_paper_poc(
                 if commission_pct:
                     pnl -= pos["risk_amount"] * (commission_pct / 100.0)
                 equity += pnl
-                risk_state.update_after_trade(r_multiple, risk_settings.streak, base_risk_pct)
+                risk_state.update_after_trade(
+                    r_multiple,
+                    risk_settings.streak,
+                    float(pos.get("base_risk_pct", base_risk_pct)),
+                )
                 all_trades.append(
                     TradeRecord(
+                        strategy_id=pos.get("strategy_id"),
                         opened_at=pos["opened_at"].to_pydatetime(),
                         closed_at=ts.to_pydatetime(),
                         symbol=symbol,
@@ -524,11 +659,32 @@ def simulate_paper_poc(
                         target=pos["target"],
                         r_multiple=round(float(r_multiple), 4),
                         pnl=round(float(pnl), 2),
+                        breakout=pos.get("breakout"),
+                        level=pos.get("level"),
+                        buffer=pos.get("buffer"),
+                        breakout_width=pos.get("breakout_width"),
+                        quality_score=pos.get("quality_score"),
+                        filter_flags=pos.get("filter_flags"),
+                        trend_value=pos.get("trend_value"),
+                        atr_value=pos.get("atr_value"),
+                        spread_used=pos.get("spread_used"),
+                        slippage_used=pos.get("slippage_used"),
                     )
                 )
                 open_positions.pop(symbol, None)
             dd_curve.append(equity)
             continue
+
+        if session_start_hour is not None:
+            hour = ts.hour
+            if session_start_hour <= session_end_hour:
+                if not (session_start_hour <= hour <= session_end_hour):
+                    dd_curve.append(equity)
+                    continue
+            else:
+                if not (hour >= session_start_hour or hour <= session_end_hour):
+                    dd_curve.append(equity)
+                    continue
 
         feature_context, clock = _feature_context_for_row(pipeline, [symbol], row)
         if not feature_context.feature_frame(symbol):
@@ -549,49 +705,62 @@ def simulate_paper_poc(
             config=config_snapshot,
             clock=clock,
             watchlist=[symbol],
-            seed=manifest_entry.priority,
+            seed=engine_seed,
         )
         if not signals:
             dd_curve.append(equity)
             continue
 
         signal = signals[0]
+        strategy_for_signal = str(getattr(signal, "strategy_id", primary_strategy_id))
+        entry_params_signal = entry_params_by_strategy.get(strategy_for_signal, {})
+        sizing_params_signal = sizing_params_by_strategy.get(strategy_for_signal, {})
+        atr_sl_mult_signal = float(sizing_params_signal.get("atr_sl_mult", atr_sl_mult))
+        entry_tf_signal = str(entry_params_signal.get("timeframe", "5m"))
+        ttl_minutes_signal = ttl_bars * _timeframe_to_minutes(entry_tf_signal)
+
         direction = getattr(signal, "direction", "long")
         close_price = float(row["close"])
         atr_value = float(row.get("atr_14_1h", 0) or 0)
+        trend_value = float(row.get("regime_trend_1h", 0) or 0)
 
         dyn_spread = _spread_for(symbol, ts, spread_pips)
-        if strategy == "m1_baseline_ma_rsi":
-            stop_buffer = atr_value * atr_sl_mult
+        slip = _slippage_for(symbol, ts, slippage_pips, slippage_std)
+        entry_price = (
+            close_price + dyn_spread + slip
+            if direction == "long"
+            else close_price - dyn_spread - slip
+        )
+        level = getattr(signal, "level", None)
+        buffer = getattr(signal, "buffer", None)
+        if level is None:
+            stop_buffer = atr_value * atr_sl_mult_signal
             if stop_buffer <= 0:
                 dd_curve.append(equity)
                 continue
-            slip = _slippage_for(symbol, ts, slippage_pips, slippage_std)
-            entry_price = (
-                close_price + dyn_spread + slip
-                if direction == "long"
-                else close_price - dyn_spread - slip
-            )
             stop_price = (
                 entry_price - stop_buffer if direction == "long" else entry_price + stop_buffer
             )
         else:
-            buffer = getattr(signal, "buffer", None)
             if buffer is None or buffer <= 0:
                 buffer = max(0.08, atr_value * 0.03)
-            level = getattr(signal, "level", close_price)
-            slip = _slippage_for(symbol, ts, slippage_pips, slippage_std)
-            entry_price = (
-                close_price + dyn_spread + slip
-                if direction == "long"
-                else close_price - dyn_spread - slip
-            )
             stop_price = (level - buffer) if direction == "long" else (level + buffer)
 
         risk_distance = abs(entry_price - stop_price)
         if risk_distance <= 0:
             dd_curve.append(equity)
             continue
+
+        signal_limits = risk_settings.per_strategy_limits.get(
+            strategy_for_signal,
+            StrategyRiskLimits(per_trade_pct=risk_settings.base_per_trade_pct),
+        )
+        base_risk_for_strategy = signal_limits.per_trade_pct or risk_settings.base_per_trade_pct
+        new_risk_pct = min(risk_state.current_risk_pct, base_risk_for_strategy)
+        overall_limit = signal_limits.max_concurrent_overall
+        bucket_limit = signal_limits.max_concurrent_bucket
+        r_eff_soft = signal_limits.r_eff_soft or risk_settings.r_eff_soft
+        r_eff_hard = signal_limits.r_eff_hard or risk_settings.r_eff_hard
 
         # open risk constraints
         def _open_risk_pct_total(equity_value: float = equity) -> float:
@@ -606,7 +775,6 @@ def simulate_paper_poc(
                     pct += (pos["risk_amount"] / equity_value) * 100
             return pct
 
-        new_risk_pct = risk_state.current_risk_pct
         total_after = _open_risk_pct_total() + new_risk_pct
         if total_risk_hard and total_after > total_risk_hard:
             dd_curve.append(equity)
@@ -655,13 +823,15 @@ def simulate_paper_poc(
                 continue
 
         equity_for_risk = risk_settings.base_equity if fixed_risk else equity
-        risk_amount = equity_for_risk * (risk_state.current_risk_pct / 100)
+        risk_amount = equity_for_risk * (new_risk_pct / 100)
         target_price = (
             entry_price + tp_r_multiple * risk_distance
             if direction == "long"
             else entry_price - tp_r_multiple * risk_distance
         )
         open_positions[symbol] = {
+            "strategy_id": strategy_for_signal,
+            "base_risk_pct": base_risk_for_strategy,
             "direction": direction,
             "entry": entry_price,
             "stop": stop_price,
@@ -669,7 +839,17 @@ def simulate_paper_poc(
             "risk_distance": risk_distance,
             "risk_amount": risk_amount,
             "opened_at": ts,
-            "expire_at": ts.to_pydatetime() + pd.Timedelta(minutes=ttl_minutes),
+            "expire_at": ts.to_pydatetime() + pd.Timedelta(minutes=ttl_minutes_signal),
+            "breakout": getattr(signal, "breakout", None),
+            "level": level,
+            "buffer": buffer,
+            "breakout_width": getattr(signal, "breakout_width", None),
+            "quality_score": getattr(signal, "quality_score", None),
+            "filter_flags": getattr(signal, "filter_flags", None),
+            "trend_value": trend_value,
+            "atr_value": atr_value,
+            "spread_used": dyn_spread,
+            "slippage_used": slip,
         }
         dd_curve.append(equity)
 
@@ -696,9 +876,14 @@ def simulate_paper_poc(
             if commission_pct:
                 pnl -= pos["risk_amount"] * (commission_pct / 100.0)
             equity += pnl
-            risk_state.update_after_trade(r_multiple, risk_settings.streak, base_risk_pct)
+            risk_state.update_after_trade(
+                r_multiple,
+                risk_settings.streak,
+                float(pos.get("base_risk_pct", base_risk_pct)),
+            )
             all_trades.append(
                 TradeRecord(
+                    strategy_id=pos.get("strategy_id"),
                     opened_at=pos["opened_at"].to_pydatetime(),
                     closed_at=last_ts.to_pydatetime(),
                     symbol=symbol,
@@ -709,6 +894,16 @@ def simulate_paper_poc(
                     target=pos["target"],
                     r_multiple=round(float(r_multiple), 4),
                     pnl=round(float(pnl), 2),
+                    breakout=pos.get("breakout"),
+                    level=pos.get("level"),
+                    buffer=pos.get("buffer"),
+                    breakout_width=pos.get("breakout_width"),
+                    quality_score=pos.get("quality_score"),
+                    filter_flags=pos.get("filter_flags"),
+                    trend_value=pos.get("trend_value"),
+                    atr_value=pos.get("atr_value"),
+                    spread_used=pos.get("spread_used"),
+                    slippage_used=pos.get("slippage_used"),
                 )
             )
             open_positions.pop(symbol, None)

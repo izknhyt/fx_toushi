@@ -1,19 +1,19 @@
-# config/strategy_manifest.yaml -- CONFIG-SCAFF-01 scaffold
+# config/strategy_manifest.upper_no_us.yaml -- GUI運用向け固定manifest
 # 詳細設計 §3.5 / §4.4 (Strategy Engine & Config Governance) と Runbook STRAT-PROMOTE-01 を参照。
 # Schema: docs/schemas/strategy_manifest.schema.json （schema_version を更新する際は同スキーマと同期させる）。
 
 schema_version: 0  # TODO: docs/schemas/strategy_manifest.schema.json が整備されたら見直す
-manifest_name: "M1 Core Strategy Manifest (PoC 2024Q1)"
-revision_tag: "POC-2024Q1"
-last_reviewed_at: "2025-11-21T00:00:00Z"
+manifest_name: "M1 Donchian Upper-Only (No US Session)"
+revision_tag: "POC-UPPER-NO-US-2026Q1"
+last_reviewed_at: "2026-02-08T00:00:00Z"
 notes: |
-  このファイルは Codex 実装着手前のダミー値です。戦略有効化/優先度/Feature Flag 変更時は
-  `docs/runbooks/STRAT-PROMOTE-01.md` および `reports/governance/strategy_board/` への記録を必須とします。
-  Runbook で定義された Validation Data Playbook 項目（AC-46 等）と突合してください。
+  GUI運用の誤操作防止を目的に、Donchian upper-only + no US sessionを既定化したmanifest。
+  戦略有効化/優先度/Feature Flag変更時は `docs/runbooks/STRAT-PROMOTE-01.md` と
+  `reports/governance/strategy_board/` への記録を必須とする。
 
 strategies:
   m1_baseline_ma_rsi:
-    enabled: true
+    enabled: false
     priority: 50
     weight: 0.5
     determinism_key: "ma_rsi_v1"
@@ -89,7 +89,7 @@ strategies:
         correlation_guard: true
 
   m1_baseline_donchian:
-    enabled: true
+    enabled: false
     priority: 60
     weight: 0.5
     determinism_key: "donchian_v1"
@@ -249,7 +249,7 @@ strategies:
         slippage_std: 0.001
 
   m1_baseline_donchian_upper_only:
-    enabled: false
+    enabled: true
     priority: 62
     weight: 0.5
     determinism_key: "donchian_v1_upper_only"
@@ -312,7 +312,7 @@ strategies:
         r_eff_cap: 2.0
         reduce_only_on_guarded: true
       filters:
-        session_utc_range: "06-21"
+        session_utc_range: "06-14"
         news_block_minutes: [-15, 30]
         spread_guard_multiplier: 2.0
         board_mode_guarded_size_factor: 0.6

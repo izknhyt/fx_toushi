@@ -179,70 +179,70 @@ def _format_signal_summary(signals: list[dict[str, Any]]) -> list[str]:
     return summary
 
 
-def main() -> int:
-    repo_root = Path(__file__).resolve().parents[1]
-    if str(repo_root) not in sys.path:
-        sys.path.insert(0, str(repo_root))
-
-    parser = argparse.ArgumentParser(description="Preview strategy signals from curated data.")
-    parser.add_argument("--symbols", help="Comma-separated symbols (e.g., USDJPY,EURUSD).")
-    parser.add_argument(
-        "--profile", default="config/profiles/paper.yaml", help="Profile path for defaults."
-    )
-    parser.add_argument("--data-dir", default="data/research/curated", help="Curated data root.")
-    parser.add_argument(
-        "--feature-config", default="config/feature_pipeline.yaml", help="Feature pipeline config."
-    )
-    parser.add_argument(
-        "--strategy-manifest", default="config/strategy_manifest.yaml", help="Strategy manifest."
-    )
-    parser.add_argument(
-        "--data-manifest", default="reports/data_manifest.json", help="Data manifest for fallbacks."
-    )
-    parser.add_argument("--output", help="Optional output JSON path.")
-    parser.add_argument("--verbose", action="store_true", help="Print detailed diagnostics")
-    args = parser.parse_args()
-
-    profile_path = Path(args.profile)
-    symbols = []
-    if args.symbols:
-        symbols = [token.strip().upper() for token in args.symbols.split(",") if token.strip()]
-    if not symbols:
-        symbols = _load_symbols_from_profile(profile_path)
-    if not symbols:
+def run_preview(
+    *,
+    symbols: list[str] | None,
+    profile_path: Path,
+    data_dir: Path,
+    feature_config: Path,
+    strategy_manifest: Path,
+    data_manifest: Path,
+    allocation_config: Path | None = None,
+    allocation_profile: str | None = None,
+    output_path: Path | None,
+    verbose: bool,
+) -> dict[str, Any]:
+    profile_symbols = _load_symbols_from_profile(profile_path)
+    resolved_symbols = symbols or profile_symbols
+    if not resolved_symbols:
         raise SystemExit("No symbols provided. Use --symbols or configure data_ingestion.symbols.")
 
     from src.features.pipeline import FeaturePipeline
-    from src.strategies.donchian import DonchianBreakoutStrategy
+    from src.strategies.donchian import (
+        DonchianBreakoutLongOnlyStrategy,
+        DonchianBreakoutStrategy,
+        DonchianBreakoutUpperOnlyStrategy,
+    )
     from src.strategies.ma_rsi import MovingAverageRsiStrategy
+    from src.strategies.us_session_momentum import UsSessionTrendPullbackStrategy
+    from src.strategies.allocation import StrategyAllocationPolicy
     from src.strategies.registry import StrategyEngine
 
-    pipeline = FeaturePipeline.from_config_file(Path(args.feature_config))
+    pipeline = FeaturePipeline.from_config_file(feature_config)
     engine = StrategyEngine()
     engine.register_plugin(MovingAverageRsiStrategy())
     engine.register_plugin(DonchianBreakoutStrategy())
-    manifest = engine.load_manifest(Path(args.strategy_manifest))
+    engine.register_plugin(DonchianBreakoutLongOnlyStrategy())
+    engine.register_plugin(DonchianBreakoutUpperOnlyStrategy())
+    engine.register_plugin(UsSessionTrendPullbackStrategy())
+    manifest = engine.load_manifest(strategy_manifest)
+    if allocation_config and allocation_config.exists():
+        engine.set_allocation_policy(
+            StrategyAllocationPolicy.load(
+                allocation_config,
+                profile=allocation_profile,
+            )
+        )
 
     required_by_strategy = {
         strategy_id: entry.metadata.required_feature_set
         for strategy_id, entry in manifest.enabled_strategies()
     }
-    gate = _build_gate_state(symbols)
+    gate = _build_gate_state(resolved_symbols)
     account = SimpleNamespace(equity=10_000_000)
     config_snapshot = SimpleNamespace(cfg_hash="signal_preview")
     regime = SimpleNamespace(mode="normal")
 
     results: dict[str, Any] = {
         "generated_at": _utcnow_iso(),
-        "symbols": symbols,
+        "symbols": resolved_symbols,
         "signals": [],
         "warnings": [],
         "diagnostics": {},
     }
 
-    data_dir = Path(args.data_dir)
-    manifest_paths = _load_manifest_paths(Path(args.data_manifest))
-    for symbol in symbols:
+    manifest_paths = _load_manifest_paths(data_manifest)
+    for symbol in resolved_symbols:
         fallback = manifest_paths.get(symbol)
         if fallback:
             curated_path = Path(fallback)
@@ -266,7 +266,7 @@ def main() -> int:
         row, diagnostics = _candidate_row(combined, required_by_strategy)
         if row is None:
             results["warnings"].append(f"no usable row with required features: {symbol}")
-            if args.verbose:
+            if verbose:
                 results["diagnostics"][symbol] = _diagnose_missing_features(
                     combined, required_by_strategy
                 )
@@ -292,7 +292,7 @@ def main() -> int:
         )
         if not signals:
             results["warnings"].append(f"no signals emitted: {symbol}")
-        if args.verbose:
+        if verbose:
             results["diagnostics"][symbol] = _diagnose_missing_features(
                 combined, required_by_strategy
             )
@@ -300,20 +300,70 @@ def main() -> int:
             results["diagnostics"][symbol] = diagnostics
         results["signals"].extend([_collect_signal_payload(signal) for signal in signals])
 
-    output_path = (
-        Path(args.output)
-        if args.output
-        else Path("reports") / "signal_preview" / f"{_utcnow_iso()}.json"
-    )
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_text(json.dumps(results, ensure_ascii=False, indent=2), encoding="utf-8")
-    summary = {
-        "output": str(output_path),
+    resolved_output = output_path or Path("reports") / "signal_preview" / f"{_utcnow_iso()}.json"
+    resolved_output.parent.mkdir(parents=True, exist_ok=True)
+    resolved_output.write_text(json.dumps(results, ensure_ascii=False, indent=2), encoding="utf-8")
+    summary: dict[str, Any] = {
+        "output": str(resolved_output),
         "signals": len(results["signals"]),
         "warnings": results["warnings"],
     }
-    if args.verbose:
+    if verbose:
         summary["signal_summary"] = _format_signal_summary(results["signals"])
+    return summary
+
+
+def main() -> int:
+    repo_root = Path(__file__).resolve().parents[1]
+    if str(repo_root) not in sys.path:
+        sys.path.insert(0, str(repo_root))
+
+    parser = argparse.ArgumentParser(description="Preview strategy signals from curated data.")
+    parser.add_argument("--symbols", help="Comma-separated symbols (e.g., USDJPY,EURUSD).")
+    parser.add_argument(
+        "--profile", default="config/profiles/paper.yaml", help="Profile path for defaults."
+    )
+    parser.add_argument("--data-dir", default="data/research/curated", help="Curated data root.")
+    parser.add_argument(
+        "--feature-config", default="config/feature_pipeline.yaml", help="Feature pipeline config."
+    )
+    parser.add_argument(
+        "--strategy-manifest", default="config/strategy_manifest.yaml", help="Strategy manifest."
+    )
+    parser.add_argument(
+        "--allocation-config",
+        default=None,
+        help="Optional allocation config (e.g. config/strategy_allocation.yaml).",
+    )
+    parser.add_argument(
+        "--allocation-profile",
+        default=None,
+        help="Allocation profile name in allocation config.",
+    )
+    parser.add_argument(
+        "--data-manifest", default="reports/data_manifest.json", help="Data manifest for fallbacks."
+    )
+    parser.add_argument("--output", help="Optional output JSON path.")
+    parser.add_argument("--verbose", action="store_true", help="Print detailed diagnostics")
+    args = parser.parse_args()
+
+    symbols = (
+        [token.strip().upper() for token in args.symbols.split(",") if token.strip()]
+        if args.symbols
+        else None
+    )
+    summary = run_preview(
+        symbols=symbols,
+        profile_path=Path(args.profile),
+        data_dir=Path(args.data_dir),
+        feature_config=Path(args.feature_config),
+        strategy_manifest=Path(args.strategy_manifest),
+        data_manifest=Path(args.data_manifest),
+        allocation_config=Path(args.allocation_config) if args.allocation_config else None,
+        allocation_profile=args.allocation_profile,
+        output_path=Path(args.output) if args.output else None,
+        verbose=args.verbose,
+    )
     sys.stdout.write(json.dumps(summary, ensure_ascii=False) + "\n")
     return 0
 

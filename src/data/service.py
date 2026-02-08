@@ -332,6 +332,19 @@ def build_provider_handlers(
     except Exception:
         pass
     try:
+        from src.data.providers.twelvedata import TwelveDataProvider
+
+        profile = _resolve_provider_profile("twelvedata", provider_profiles)
+        twelve = TwelveDataProvider(timeout_sec=profile.timeout_sec)
+
+        def _twelve_handler(symbols: Sequence[str], timeframe: str) -> list[MarketFrame]:
+            request = MarketRequest(symbols=symbols, timeframe=timeframe, start=start, end=end)
+            return list(twelve.fetch_bars(request))
+
+        handlers["twelvedata"] = _twelve_handler
+    except Exception:
+        pass
+    try:
         from src.data.providers.local_parquet import parquet_provider
 
         def _local_handler(symbols: Sequence[str], timeframe: str) -> ProviderResult:

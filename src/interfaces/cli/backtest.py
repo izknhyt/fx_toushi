@@ -12,6 +12,7 @@ from typing import Any
 import pandas as pd
 
 from src.backtest.paper_poc import StrategyManifest, simulate_paper_poc
+from src.backtest.poc_report import build_poc_report, render_poc_report_md
 from src.backtest.walkforward import build_plan_from_specs
 
 from .board import _load_manifest_entry  # reuse manifest helper
@@ -267,7 +268,7 @@ def walk_forward_backtest(
 
 def run_paper_poc(
     *,
-    strategy: str,
+    strategy: str | None,
     profile: str,
     window_from: str | None,
     window_to: str | None,
@@ -282,6 +283,8 @@ def run_paper_poc(
     data_manifest_path: Path,
     feature_config_path: Path,
     strategy_manifest_path: Path,
+    allocation_config_path: Path | None = None,
+    allocation_profile: str | None = None,
     output: Path | None,
 ) -> dict[str, Any]:
     """Execute the paper-trading PoC simulator and optionally persist JSON output."""
@@ -300,11 +303,14 @@ def run_paper_poc(
         data_manifest_path=data_manifest_path,
         feature_config_path=feature_config_path,
         strategy_manifest_path=strategy_manifest_path,
+        allocation_config_path=allocation_config_path,
+        allocation_profile=allocation_profile,
         target_r_multiple=target_r,
         ttl_bars=ttl_bars,
     )
+    strategy_label = strategy or "manifest_hybrid"
     payload = {
-        "strategy": strategy,
+        "strategy": strategy_label,
         "profile": profile,
         "window": result.window,
         "dataset_path": result.dataset_path,
@@ -364,3 +370,19 @@ def run_paper_poc_all(
         output.parent.mkdir(parents=True, exist_ok=True)
         output.write_text(json.dumps(aggregate, ensure_ascii=False, indent=2), encoding="utf-8")
     return aggregate
+
+
+def run_poc_report(
+    *,
+    input_path: Path,
+    output_path: Path | None = None,
+    export_md: Path | None = None,
+) -> dict[str, Any]:
+    report = build_poc_report(input_path)
+    if output_path is not None:
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+    if export_md is not None:
+        export_md.parent.mkdir(parents=True, exist_ok=True)
+        export_md.write_text(render_poc_report_md(report), encoding="utf-8")
+    return report

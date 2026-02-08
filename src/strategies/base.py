@@ -175,6 +175,9 @@ class StrategyContext:
     seed: int
     """Deterministic seed derived from mode context and strategy metadata."""
 
+    parameters: Mapping[str, Any] = field(default_factory=dict)
+    """Manifest parameters for the active strategy (if supplied)."""
+
 
 @dataclass(slots=True, frozen=True)
 class StrategyMetadata:

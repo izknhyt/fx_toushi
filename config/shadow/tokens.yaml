@@ -2,4 +2,6 @@
 # Schema: schema/shadow_tokens.schema.json
 
 schema_version: shadow_tokens.v1
-tokens: []
+tokens:
+  - name: gui_default
+    token: b6ecc1fa841c4e59871ca79022b933fb

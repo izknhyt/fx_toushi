@@ -17,6 +17,11 @@ providers:
     retry:
       max_attempts: 3
       backoff_sec: 0.5
+  twelvedata:
+    timeout_sec: 15
+    retry:
+      max_attempts: 2
+      backoff_sec: 0.5
   paid_feed:
     timeout_sec: 5
     retry:
