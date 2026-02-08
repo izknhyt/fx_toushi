@@ -238,3 +238,77 @@ def test_allocation_supports_n_strategy_expansion_by_config_only(tmp_path: Path)
     )
 
     assert [item.strategy_id for item in result.selected] == ["strat_c"]
+
+
+def test_allocation_select_many_keeps_all_accepted_candidates(tmp_path: Path) -> None:
+    config_path = _write_policy(
+        tmp_path,
+        {
+            "profiles": {
+                "active": {
+                    "mode": "active",
+                    "global": {
+                        "require_strategy_config": True,
+                        "selection": {"mode": "select_many"},
+                        "hard_filters": {"session_utc_range": "00-23"},
+                        "score": {"min_score": 0.0},
+                    },
+                    "tie_break": ["score_desc", "priority_asc", "strategy_id_asc"],
+                    "strategies": {
+                        "strat_a": {"enabled": True, "weight": 1.0},
+                        "strat_b": {"enabled": True, "weight": 1.0},
+                    },
+                }
+            }
+        },
+    )
+    policy = StrategyAllocationPolicy.load(config_path, profile="active")
+    result = policy.allocate(
+        candidates=(
+            _candidate(strategy_id="strat_a", score=1.0, priority=10),
+            _candidate(strategy_id="strat_b", score=1.1, priority=20),
+        ),
+        context=_context(),
+    )
+
+    assert {item.strategy_id for item in result.selected} == {"strat_a", "strat_b"}
+    assert all(outcome.selected for outcome in result.outcomes)
+
+
+def test_allocation_select_many_honors_max_per_symbol(tmp_path: Path) -> None:
+    config_path = _write_policy(
+        tmp_path,
+        {
+            "profiles": {
+                "active": {
+                    "mode": "active",
+                    "global": {
+                        "require_strategy_config": True,
+                        "selection": {"mode": "select_many", "max_per_symbol": 2},
+                        "hard_filters": {"session_utc_range": "00-23"},
+                        "score": {"min_score": 0.0},
+                    },
+                    "tie_break": ["score_desc", "priority_asc", "strategy_id_asc"],
+                    "strategies": {
+                        "strat_a": {"enabled": True, "weight": 1.0},
+                        "strat_b": {"enabled": True, "weight": 1.0},
+                        "strat_c": {"enabled": True, "weight": 1.0},
+                    },
+                }
+            }
+        },
+    )
+    policy = StrategyAllocationPolicy.load(config_path, profile="active")
+    result = policy.allocate(
+        candidates=(
+            _candidate(strategy_id="strat_a", score=1.3, priority=30),
+            _candidate(strategy_id="strat_b", score=1.2, priority=20),
+            _candidate(strategy_id="strat_c", score=1.1, priority=10),
+        ),
+        context=_context(),
+    )
+
+    assert [item.strategy_id for item in result.selected] == ["strat_a", "strat_b"]
+    by_id = {outcome.strategy_id: outcome for outcome in result.outcomes}
+    assert by_id["strat_c"].selected is False
+    assert by_id["strat_c"].reason == "selection_limit"

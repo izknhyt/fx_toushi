@@ -111,3 +111,21 @@ def test_us_session_strategy_respects_atr_and_spread_filters() -> None:
     signals = list(strategy.generate_signals(context))
 
     assert signals == []
+
+
+def test_us_session_strategy_blocks_configured_utc_hours() -> None:
+    strategy = UsSessionTrendPullbackStrategy(default_watchlist=("USDJPY",))
+    blocked_context = _context(
+        hour=20,
+        params={"entry": {"blocked_utc_hours": [20, 21]}},
+    )
+    allowed_context = _context(
+        hour=22,
+        params={"entry": {"blocked_utc_hours": [20, 21]}},
+    )
+
+    blocked_signals = list(strategy.generate_signals(blocked_context))
+    allowed_signals = list(strategy.generate_signals(allowed_context))
+
+    assert blocked_signals == []
+    assert len(allowed_signals) == 1

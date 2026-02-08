@@ -120,6 +120,26 @@ class UsSessionTrendPullbackStrategy(StrategyPluginProtocol):
             return start <= hour <= end
         return hour >= start or hour <= end
 
+    @staticmethod
+    def _blocked_hours(value: object) -> frozenset[int]:
+        if value is None:
+            return frozenset()
+        values: list[int] = []
+        if isinstance(value, (list, tuple, set, frozenset)):
+            raw_items = list(value)
+        elif isinstance(value, str):
+            raw_items = [item.strip() for item in value.split(",")]
+        else:
+            raw_items = [value]
+        for item in raw_items:
+            try:
+                hour = int(item)
+            except (TypeError, ValueError):
+                continue
+            if 0 <= hour <= 23:
+                values.append(hour)
+        return frozenset(values)
+
     def _score_components(
         self,
         *,
@@ -154,11 +174,18 @@ class UsSessionTrendPullbackStrategy(StrategyPluginProtocol):
         rsi_short_max = self._coerce_float(entry.get("rsi_short_max"), 52.0)
         spread_limit = self._coerce_float(filters.get("spread_max"), -1.0)
         spread = self._coerce_float(execution.get("spread"), 0.0)
+        blocked_hours = self._blocked_hours(
+            entry.get("blocked_utc_hours", filters.get("blocked_utc_hours"))
+        )
 
         symbols = sorted(context.watchlist or frozenset(self._default_watchlist))
         signals: list[UsMomentumSignal] = []
+        current_hour_raw = getattr(context.clock.now, "hour", None)
+        current_hour = int(current_hour_raw) if isinstance(current_hour_raw, (int, float)) else None
         for symbol in symbols:
             if not self._session_allowed(context.clock.now, session_range):
+                continue
+            if current_hour is not None and current_hour in blocked_hours:
                 continue
             if spread_limit >= 0 and spread > spread_limit:
                 continue

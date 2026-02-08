@@ -169,19 +169,23 @@ class _EvaluatedCandidate:
 
 
 class StrategyAllocationPolicy:
-    """Config-driven allocator that selects one candidate per symbol."""
+    """Config-driven allocator that selects one or many candidates per symbol."""
 
     def __init__(
         self,
         *,
         mode: str,
         tie_break_rules: tuple[str, ...],
+        selection_mode: str,
+        max_selected_per_symbol: int | None,
         global_config: Mapping[str, Any],
         strategy_config: Mapping[str, Mapping[str, Any]],
         source_path: Path | None = None,
     ) -> None:
         self.mode = mode
         self.tie_break_rules = tie_break_rules
+        self.selection_mode = selection_mode
+        self.max_selected_per_symbol = max_selected_per_symbol
         self._global_config = dict(global_config)
         self._strategy_config = {
             str(strategy_id): dict(config)
@@ -198,6 +202,8 @@ class StrategyAllocationPolicy:
         return cls(
             mode="pass_through",
             tie_break_rules=("score_desc", "priority_asc", "strategy_id_asc"),
+            selection_mode="select_many",
+            max_selected_per_symbol=None,
             global_config={},
             strategy_config={},
         )
@@ -243,10 +249,26 @@ class StrategyAllocationPolicy:
         global_map = dict(global_config) if isinstance(global_config, Mapping) else {}
         strategies = selected.get("strategies")
         strategy_map = dict(strategies) if isinstance(strategies, Mapping) else {}
+        selection_cfg = global_map.get("selection")
+        if isinstance(selection_cfg, Mapping):
+            selection_mode = _normalize_text(selection_cfg.get("mode")) or "select_one"
+            max_selected_raw = selection_cfg.get("max_per_symbol")
+        else:
+            selection_mode = "select_one"
+            max_selected_raw = None
+        if selection_mode not in {"select_one", "select_many"}:
+            selection_mode = "select_one"
+        max_selected_per_symbol: int | None = None
+        if max_selected_raw is not None:
+            parsed_max = _coerce_int(max_selected_raw, 0)
+            if parsed_max > 0:
+                max_selected_per_symbol = parsed_max
 
         return cls(
             mode=mode,
             tie_break_rules=tie_break_rules,
+            selection_mode=selection_mode,
+            max_selected_per_symbol=max_selected_per_symbol,
             global_config=global_map,
             strategy_config=strategy_map,
             source_path=path,
@@ -300,27 +322,33 @@ class StrategyAllocationPolicy:
                 )
                 continue
 
-            winner = min(accepted, key=self._tie_break_sort_key)
-            selected.append(winner.candidate)
-            outcomes.append(
-                AllocationOutcome(
-                    strategy_id=winner.candidate.strategy_id,
-                    symbol=symbol,
-                    selected=True,
-                    reason="selected",
-                    score=winner.score,
-                )
-            )
-
-            for item in accepted:
-                if item.candidate.strategy_id == winner.candidate.strategy_id:
+            accepted_sorted = sorted(accepted, key=self._tie_break_sort_key)
+            keep_count = 1
+            if self.selection_mode == "select_many":
+                keep_count = len(accepted_sorted)
+                if self.max_selected_per_symbol is not None:
+                    keep_count = min(keep_count, self.max_selected_per_symbol)
+            selected_items = accepted_sorted[:keep_count]
+            selected.extend(item.candidate for item in selected_items)
+            selected_ids = {item.candidate.strategy_id for item in selected_items}
+            for item in accepted_sorted:
+                if item.candidate.strategy_id in selected_ids:
+                    outcomes.append(
+                        AllocationOutcome(
+                            strategy_id=item.candidate.strategy_id,
+                            symbol=symbol,
+                            selected=True,
+                            reason="selected",
+                            score=item.score,
+                        )
+                    )
                     continue
                 outcomes.append(
                     AllocationOutcome(
                         strategy_id=item.candidate.strategy_id,
                         symbol=symbol,
                         selected=False,
-                        reason="tie_break_lost",
+                        reason="selection_limit" if self.selection_mode == "select_many" else "tie_break_lost",
                         score=item.score,
                     )
                 )

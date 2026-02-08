@@ -144,13 +144,14 @@ def _write_manifest(path: Path) -> None:
     )
 
 
-def _write_policy(path: Path) -> None:
+def _write_policy(path: Path, *, selection_mode: str = "select_one") -> None:
     payload = {
         "profiles": {
             "active": {
                 "mode": "active",
                 "global": {
                     "require_strategy_config": True,
+                    "selection": {"mode": selection_mode},
                     "hard_filters": {"session_utc_range": "00-23"},
                     "score": {"min_score": 0.0},
                 },
@@ -217,6 +218,24 @@ def test_strategy_engine_without_allocation_keeps_all_candidates(tmp_path: Path)
     engine.register_plugin(_AlphaStrategy())
     engine.register_plugin(_BetaStrategy())
     engine.load_manifest(manifest_path)
+
+    signals = _run(engine)
+
+    assert len(signals) == 2
+    assert {signal.strategy_id for signal in signals} == {"alpha", "beta"}
+
+
+def test_strategy_engine_allocation_select_many_keeps_multiple_candidates(tmp_path: Path) -> None:
+    manifest_path = tmp_path / "strategy_manifest.yaml"
+    policy_path = tmp_path / "strategy_allocation.yaml"
+    _write_manifest(manifest_path)
+    _write_policy(policy_path, selection_mode="select_many")
+
+    engine = StrategyEngine()
+    engine.register_plugin(_AlphaStrategy())
+    engine.register_plugin(_BetaStrategy())
+    engine.load_manifest(manifest_path)
+    engine.set_allocation_policy(StrategyAllocationPolicy.load(policy_path, profile="active"))
 
     signals = _run(engine)
 

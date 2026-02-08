@@ -15,6 +15,8 @@ defaults:
     - "strategy_id_asc"
   global:
     require_strategy_config: false
+    selection:
+      mode: "select_one"
     hard_filters:
       kill_switch_blocked_states: ["soft_stop", "hard_stop", "triggered"]
       board_modes: ["normal", "guarded"]
@@ -42,6 +44,9 @@ profiles:
       - "strategy_id_asc"
     global:
       require_strategy_config: true
+      selection:
+        mode: "select_many"
+        max_per_symbol: 2
       hard_filters:
         kill_switch_blocked_states: ["soft_stop", "hard_stop", "triggered"]
         board_modes: ["normal", "guarded"]
@@ -75,7 +80,7 @@ profiles:
         enabled: true
         weight: 1.15
         hard_filters:
-          session_utc_ranges: ["16-23"]
+          session_utc_ranges: ["16-19", "22-23"]
         score:
           bias: 0.08
           min_score: 0.60
