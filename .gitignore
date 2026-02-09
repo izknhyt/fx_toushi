@@ -18,6 +18,9 @@ metrics/*.jsonl
 reports/performance/paper/*.parquet
 reports/exports/
 reports/signal_preview/
+reports/analysis/
+reports/price/
+reports/gui/runtime/
 reports/validation_log/*.json
 reports/validation_log/*.sh
 reports/validation_log/**/*.json
@@ -25,3 +28,5 @@ data/cache/dukascopy/
 data/raw/auto/
 data/raw/dukascopy/
 data/raw/twelvedata/
+data/research/curated/usdjpy_m5_clean/
+data/research/curated/*/*_latest.parquet
