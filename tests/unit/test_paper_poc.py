@@ -137,8 +137,18 @@ def test_exit_with_cost_applies_adverse_spread_and_slippage() -> None:
 def test_simulate_paper_poc_consumes_multiple_signals(project_root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     def _fake_run_all(*args, **kwargs):  # noqa: ANN002, ANN003
         return [
-            SimpleNamespace(strategy_id="m1_baseline_donchian_upper_only", direction="long"),
-            SimpleNamespace(strategy_id="m1_us_session_trend_pullback", direction="short"),
+            SimpleNamespace(
+                strategy_id="m1_baseline_donchian_upper_only",
+                direction="long",
+                level=150.0,
+                buffer=0.1,
+            ),
+            SimpleNamespace(
+                strategy_id="m1_us_session_trend_pullback",
+                direction="short",
+                level=150.0,
+                buffer=0.1,
+            ),
         ]
 
     monkeypatch.setattr(paper_poc.StrategyEngine, "run_all", _fake_run_all)
@@ -179,7 +189,7 @@ def test_simulate_paper_poc_consumes_multiple_signals(project_root: Path, monkey
         allocation_config_path=project_root / "config" / "strategy_allocation.yaml",
         allocation_profile="hybrid_us_experiment",
         window_from="2024-01-01",
-        window_to="2024-01-02",
+        window_to="2024-02-15",
         symbols=["USDJPY"],
         spread_pips=0.005,
         slippage_pips=0.0015,
@@ -195,7 +205,14 @@ def test_simulate_paper_poc_entry_on_next_bar_uses_next_open(
     project_root: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     def _fake_run_all(*args, **kwargs):  # noqa: ANN002, ANN003
-        return [SimpleNamespace(strategy_id="m1_baseline_donchian_upper_only", direction="long")]
+        return [
+            SimpleNamespace(
+                strategy_id="m1_baseline_donchian_upper_only",
+                direction="long",
+                level=150.0,
+                buffer=0.1,
+            )
+        ]
 
     monkeypatch.setattr(paper_poc.StrategyEngine, "run_all", _fake_run_all)
 
@@ -206,7 +223,7 @@ def test_simulate_paper_poc_entry_on_next_bar_uses_next_open(
         feature_config_path=project_root / "config" / "feature_pipeline.yaml",
         risk_policy_path=project_root / "config" / "risk_policy.yaml",
         window_from="2024-01-01",
-        window_to="2024-01-03",
+        window_to="2024-02-15",
         symbols=["USDJPY"],
         spread_pips=0.0,
         slippage_pips=0.0,
@@ -245,3 +262,50 @@ def test_simulate_paper_poc_default_seed_is_deterministic(project_root: Path) ->
     assert result_a.seed_used == 0
     assert result_b.seed_used == 0
     assert result_a.metrics == result_b.metrics
+
+
+def test_export_series_falls_back_to_csv_on_parquet_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    series = pd.Series([1.0, 2.0, 3.0], name="equity")
+    target = tmp_path / "series_output.parquet"
+
+    def _raise_parquet(*args, **kwargs):  # noqa: ANN002, ANN003
+        raise RuntimeError("parquet writer unavailable")
+
+    monkeypatch.setattr(pd.DataFrame, "to_parquet", _raise_parquet)
+    paper_poc._export_series(target, "equity", series)
+
+    assert not target.exists()
+    csv_target = target.with_suffix(".csv")
+    assert csv_target.exists()
+
+
+def test_simulate_paper_poc_enforces_entry_time_filters_on_pending_entries(
+    project_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def _fake_run_all(*args, **kwargs):  # noqa: ANN002, ANN003
+        return [SimpleNamespace(strategy_id="m1_us_session_trend_pullback", direction="long")]
+
+    monkeypatch.setattr(paper_poc.StrategyEngine, "run_all", _fake_run_all)
+
+    result = simulate_paper_poc(
+        strategy="m1_us_session_trend_pullback",
+        strategy_manifest_path=project_root / "config" / "strategy_manifest.hybrid_us_experiment.yaml",
+        data_manifest_path=project_root / "reports" / "data_manifest.json",
+        feature_config_path=project_root / "config" / "feature_pipeline.yaml",
+        risk_policy_path=project_root / "config" / "risk_policy.yaml",
+        window_from="2024-01-01",
+        window_to="2024-01-03",
+        symbols=["USDJPY"],
+        spread_pips=0.005,
+        slippage_pips=0.0015,
+        slippage_std=0.001,
+        ttl_bars=1,
+        seed=7,
+        entry_on_next_bar=True,
+    )
+    opened_hours = {pd.Timestamp(trade.opened_at).tz_convert("UTC").hour for trade in result.trades}
+    assert 20 not in opened_hours
+    assert 21 not in opened_hours
+    assert 0 not in opened_hours

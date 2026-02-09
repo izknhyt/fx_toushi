@@ -42,6 +42,7 @@ def test_fetch_latest_logs_fallback_retry_events(tmp_path: Path) -> None:
     states = {event.get("state") for event in events}
     assert "retry_scheduled" in states
     assert "failover_to" in states
+    assert "retry_exhausted" not in states
     failover_events = [event for event in events if event.get("state") == "failover_to"]
     assert failover_events
     assert failover_events[-1]["failover_to"] == "secondary"

@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from functools import partial
 from pathlib import Path
+from types import SimpleNamespace
 
 import pandas as pd
 from src.data.providers.local_parquet import parquet_provider
@@ -121,6 +122,42 @@ def test_fetch_latest_respects_provider_profile_retry_override(tmp_path: Path) -
     assert attempts["count"] == 1
     entries = [entry for entry in _read_jsonl(metrics_path) if entry.get("phase") == "fetch"]
     assert len(entries) == 2
+
+
+def test_fetch_latest_all_providers_fail_propagates_quality_flag(tmp_path: Path) -> None:
+    metrics_path = tmp_path / "metrics" / "data_ingestion_sla.jsonl"
+
+    def provider_ok(symbols: list[str], tf: str) -> ProviderResult:
+        frame = MarketFrame(
+            symbol=symbols[0], timeframe=tf, bars=[{"timestamp": "2025-01-01T00:00:00Z"}]
+        )
+        return ProviderResult(frames=[frame], p95_ms=50.0, p99_ms=60.0, rate_limit_ratio=0.0)
+
+    quality_guard = SimpleNamespace(
+        validate=lambda _frame: SimpleNamespace(
+            status="fail",
+            quality_flag=7,
+            issues=["clock_drift"],
+            clock_drift_ms=100,
+            missing_ratio=0.0,
+        )
+    )
+
+    frames = fetch_latest(
+        symbols=["EURUSD"],
+        timeframe="M5",
+        provider_priority=["primary"],
+        retries=0,
+        metrics_path=metrics_path,
+        provider_handlers={"primary": provider_ok},
+        data_quality_guard=quality_guard,
+    )
+
+    assert frames == []
+    entries = [entry for entry in _read_jsonl(metrics_path) if entry.get("phase") == "fetch"]
+    assert len(entries) >= 2
+    assert entries[-1]["latency_status"] == "error"
+    assert entries[-1]["quality_flag"] == 7
 
 
 def test_parquet_provider_integration(tmp_path: Path) -> None:

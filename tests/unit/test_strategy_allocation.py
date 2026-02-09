@@ -312,3 +312,41 @@ def test_allocation_select_many_honors_max_per_symbol(tmp_path: Path) -> None:
     by_id = {outcome.strategy_id: outcome for outcome in result.outcomes}
     assert by_id["strat_c"].selected is False
     assert by_id["strat_c"].reason == "selection_limit"
+
+
+def test_allocation_select_many_handles_duplicate_strategy_ids(tmp_path: Path) -> None:
+    config_path = _write_policy(
+        tmp_path,
+        {
+            "profiles": {
+                "active": {
+                    "mode": "active",
+                    "global": {
+                        "require_strategy_config": True,
+                        "selection": {"mode": "select_many", "max_per_symbol": 1},
+                        "hard_filters": {"session_utc_range": "00-23"},
+                        "score": {"min_score": 0.0},
+                    },
+                    "tie_break": ["score_desc", "priority_asc", "strategy_id_asc"],
+                    "strategies": {
+                        "strat_a": {"enabled": True, "weight": 1.0},
+                    },
+                }
+            }
+        },
+    )
+    policy = StrategyAllocationPolicy.load(config_path, profile="active")
+    result = policy.allocate(
+        candidates=(
+            _candidate(strategy_id="strat_a", score=1.2, priority=20),
+            _candidate(strategy_id="strat_a", score=1.1, priority=10),
+        ),
+        context=_context(),
+    )
+
+    assert len(result.selected) == 1
+    selected = [outcome for outcome in result.outcomes if outcome.selected]
+    rejected = [outcome for outcome in result.outcomes if not outcome.selected]
+    assert len(selected) == 1
+    assert len(rejected) == 1
+    assert rejected[0].reason == "selection_limit"

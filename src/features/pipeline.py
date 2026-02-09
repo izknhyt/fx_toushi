@@ -380,21 +380,13 @@ class FeaturePipeline:
 
         return outputs
 
-    def _deterministic_fill_value(self, *, column: str) -> float:
-        seed_source = f"{self._determinism.seed}:{column}".encode("utf-8")
-        digest = hashlib.sha256(seed_source).digest()
-        seed = int.from_bytes(digest[:8], "big")
-        rng = np.random.default_rng(seed)
-        return float(rng.normal(loc=0.0, scale=0.01))
-
     def _fill_missing_series(self, series: pd.Series, *, column: str) -> pd.Series:
+        del column
         if series.empty or not series.isna().any():
             return series
-        filled = series.ffill()
-        if filled.isna().any():
-            fill_value = self._deterministic_fill_value(column=column)
-            filled = filled.fillna(fill_value)
-        return filled
+        # Preserve leading NaNs to avoid inventing synthetic price-scale values
+        # for warm-up periods (e.g., Donchian/ATR before enough history exists).
+        return series.ffill()
 
     def _fill_missing_matrix(self, matrix: pd.DataFrame) -> pd.DataFrame:
         if matrix.empty:

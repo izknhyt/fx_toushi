@@ -1212,7 +1212,8 @@ def fetch_latest(
         *,
         retries_for_provider: int,
         backoff_ms_for_provider: float,
-    ) -> tuple[list[MarketFrame], float]:
+        emit_retry_exhausted: bool = True,
+    ) -> tuple[list[MarketFrame], float, int, int, int]:
         local_frames: list[MarketFrame] = []
         retry_budget = retries_for_provider
         attempt = 0
@@ -1439,7 +1440,7 @@ def fetch_latest(
                     buffer_coordinator.pop()
                 logger.error("data.fetch_latest.unexpected", extra={"error": str(exc)})
                 break
-        if not local_frames and fallback_log_path is not None:
+        if not local_frames and fallback_log_path is not None and emit_retry_exhausted:
             _emit_fallback_state(
                 provider=provider,
                 symbols=symbols,
@@ -1450,7 +1451,7 @@ def fetch_latest(
                 reason="no_frames",
                 stage="fetch_latest",
             )
-        return local_frames, rate_limit_ratio
+        return local_frames, rate_limit_ratio, attempt, max_attempts, quality_flag
 
     if apply_worker_plan:
         plans: list[WorkerPlan] = list(provider_plans.values())
@@ -1481,7 +1482,7 @@ def fetch_latest(
                     default_retries=retries,
                     default_backoff_ms=backoff_ms,
                 )
-                frames_for_provider, rl_ratio = _fetch_provider_once(
+                frames_for_provider, rl_ratio, _, _, _ = _fetch_provider_once(
                     target_provider,
                     plan_lookup.get(target_provider),
                     retries_for_provider=retries_for_provider,
@@ -1519,235 +1520,25 @@ def fetch_latest(
             default_retries=retries,
             default_backoff_ms=backoff_ms,
         )
-        retry_budget = retries_for_provider
-        attempt = 0
-        warn = provider_sla_thresholds.get(provider, (warn_ms, breach_ms))[0]
-        breach = provider_sla_thresholds.get(provider, (warn_ms, breach_ms))[1]
-        quality_flag = 0
-        max_attempts = retry_budget + 1
-        while retry_budget >= 0:
-            try:
-                buffer_item: BufferItem | None = None
-                request_ts = datetime.now(timezone.utc)
-                start = time.perf_counter()
-                result = _invoke_provider(
-                    provider=provider,
-                    symbols=symbols,
-                    timeframe=timeframe,
-                    handler=handler_map.get(provider),
-                )
-                elapsed_ms = (time.perf_counter() - start) * 1000
-                frames = result.frames
-                buffer_item = buffer_coordinator.enqueue(
-                    provider=provider,
-                    symbols=symbols,
-                    timeframe=timeframe,
-                    request_ts=request_ts,
-                    frames=frames,
-                )
-                delay_sec = max(
-                    (buffer_item.enqueue_ts - buffer_item.request_ts).total_seconds(), 0.0
-                )
-                processing_start = time.perf_counter()
-                if data_quality_guard:
-                    for frame in frames:
-                        quality = data_quality_guard.validate(frame)
-                        quality_flag = max(quality_flag, quality.quality_flag)
-                        if quality.status in {"fail", "error"}:
-                            raise DataQualityError(
-                                f"data_quality_failed: {quality.issues}",
-                                details={
-                                    "issues": quality.issues,
-                                    "status": quality.status,
-                                    "quality_flag": quality.quality_flag,
-                                    "clock_drift_ms": quality.clock_drift_ms,
-                                    "missing_ratio": quality.missing_ratio,
-                                    "provider": provider,
-                                    "manual_csv_required": provider == primary_provider,
-                                },
-                            )
-                processing_ms = (time.perf_counter() - processing_start) * 1000
-                processing_delay_ms = processing_ms
-                if buffer_item is not None:
-                    processing_delay_ms = max(
-                        (datetime.now(timezone.utc) - buffer_item.enqueue_ts).total_seconds()
-                        * 1000.0,
-                        0.0,
-                    )
-                    buffer_coordinator.pop()
-                p95_ms = result.p95_ms
-                p99_ms = result.p99_ms
-                if metrics_collector:
-                    metrics_collector.observe(
-                        provider=provider,
-                        symbols=symbols,
-                        timeframe=timeframe,
-                        latency_ms=elapsed_ms,
-                        bars=len(frames),
-                        stage="fetch",
-                        rate_limit_ratio=result.rate_limit_ratio,
-                        success=True,
-                    )
-                    snapshot = metrics_collector.snapshot()
-                    p95_ms = snapshot.get("fetch_p95_ms") or p95_ms
-                    p99_ms = snapshot.get("fetch_p99_ms") or p99_ms
-                anchor = _parse_bar_timestamp(end) or datetime.now(timezone.utc)
-                last_ts = _extract_last_bar_timestamp(frames)
-                last_bar_ts = (
-                    last_ts.replace(microsecond=0).isoformat().replace("+00:00", "Z")
-                    if last_ts
-                    else None
-                )
-                bar_gap_minutes = _compute_bar_gap_minutes(anchor, last_ts)
-                _maybe_raise_data_latency(
-                    health_monitor,
-                    delay_sec=delay_sec,
-                    bar_gap_minutes=bar_gap_minutes,
-                    provider=provider,
-                    symbols=symbols,
-                    fetch_delay_warn_sec=fetch_delay_warn_sec,
-                    bar_gap_warn_minutes=bar_gap_warn_minutes,
-                )
-                _log_sla_entry(
-                    provider=provider,
-                    timeframe=timeframe,
-                    symbols=symbols,
-                    stage="fetch",
-                    p95_ms=p95_ms,
-                    p99_ms=p99_ms,
-                    bars=len(frames),
-                    status=_compute_latency_status(p95_ms, warn_ms=warn, breach_ms=breach),
-                    rate_limit_ratio=result.rate_limit_ratio,
-                    metrics_path=metrics_path,
-                    quality_flag=quality_flag,
-                    last_bar_ts=last_bar_ts,
-                    bar_gap_minutes=bar_gap_minutes,
-                    delay_sec=delay_sec,
-                )
-                logger.info(
-                    "data.fetch",
-                    extra={
-                        "provider": provider,
-                        "symbols": list(symbols),
-                        "timeframe": timeframe,
-                        "attempt": attempt,
-                        "latency_ms": round(float(elapsed_ms), 3),
-                        "bars": len(frames),
-                        "rate_limit_ratio": result.rate_limit_ratio,
-                        "status": "ok",
-                    },
-                )
-                if frames:
-                    for frame in frames:
-                        log_processing_delay(
-                            provider=provider,
-                            timeframe=timeframe,
-                            symbol=frame.symbol,
-                            bars=len(frame.bars),
-                            processing_ms=processing_delay_ms,
-                            metrics_path=metrics_path,
-                            health_monitor=health_monitor,
-                            processing_delay_warn_sec=processing_delay_warn_sec,
-                            processing_delay_breach_sec=processing_delay_breach_sec,
-                        )
-                break
-            except (ProviderError, DataQualityError) as exc:
-                elapsed_ms = (time.perf_counter() - start) * 1000 if "start" in locals() else 0.0
-                frames = []
-                if buffer_item is not None:
-                    buffer_coordinator.pop()
-                if metrics_collector:
-                    metrics_collector.observe(
-                        provider=provider,
-                        symbols=symbols,
-                        timeframe=timeframe,
-                        latency_ms=elapsed_ms,
-                        bars=0,
-                        stage="fetch",
-                        rate_limit_ratio=getattr(exc, "rate_limit_ratio", 0.0),
-                        success=False,
-                    )
-                if isinstance(exc, DataQualityError):
-                    quality_flag = max(
-                        quality_flag, int(exc.details.get("quality_flag", 0) or 0)
-                    )
-                logger.info(
-                    "data.fetch_failed",
-                    extra={
-                        "provider": provider,
-                        "symbols": list(symbols),
-                        "timeframe": timeframe,
-                        "attempt": attempt,
-                        "error": str(exc),
-                        "status": "error",
-                    },
-                )
-                logger.warning(
-                    "data.fetch_latest.retry provider=%s error=%s attempt=%s",
-                    provider,
-                    str(exc),
-                    attempt,
-                )
-                _log_sla_entry(
-                    provider=provider,
-                    timeframe=timeframe,
-                    symbols=symbols,
-                    stage="fetch",
-                    p95_ms=0.0,
-                    p99_ms=0.0,
-                    bars=0,
-                    status="error",
-                    rate_limit_ratio=getattr(exc, "rate_limit_ratio", 0.0),
-                    metrics_path=metrics_path,
-                    quality_flag=quality_flag,
-                )
-                retry_budget -= 1
-                attempt += 1
-                if retry_budget >= 0 and fallback_log_path is not None:
-                    _emit_fallback_state(
-                        provider=provider,
-                        symbols=symbols,
-                        timeframe=timeframe,
-                        attempt=attempt,
-                        max_attempts=max_attempts,
-                        state="retry_scheduled",
-                        reason=str(exc),
-                        stage="fetch_latest",
-                    )
-                if retry_budget < 0:
-                    break
-                current_plan = provider_plans.get(provider) if provider_plans else worker_plan
-                backoff_base = (
-                    current_plan.poll_interval_sec * 1000 if current_plan else backoff_ms_for_provider
-                )
-                delay_ms = backoff_base if attempt == 1 else backoff_base * 2
-                if fallback_log_path is not None:
-                    _emit_fallback_state(
-                        provider=provider,
-                        symbols=symbols,
-                        timeframe=timeframe,
-                        attempt=attempt,
-                        max_attempts=max_attempts,
-                        state="retry_backoff",
-                        backoff_sec=delay_ms / 1000.0,
-                        reason=str(exc),
-                        stage="fetch_latest",
-                    )
-                logger.info(
-                    "data.fetch_latest.backoff", extra={"delay_ms": delay_ms, "provider": provider}
-                )
-                time.sleep(max(delay_ms / 1000.0, 0.0))
-                # placeholder: in async/real mode use asyncio.sleep(delay_ms/1000)
-            except Exception as exc:  # pragma: no cover - defensive
-                if buffer_item is not None:
-                    buffer_coordinator.pop()
-                logger.error("data.fetch_latest.unexpected", extra={"error": str(exc)})
-                break
+        (
+            frames,
+            rate_limit_ratio,
+            attempt,
+            max_attempts,
+            provider_quality_flag,
+        ) = _fetch_provider_once(
+            provider,
+            provider_plans.get(provider) if provider_plans else worker_plan,
+            retries_for_provider=retries_for_provider,
+            backoff_ms_for_provider=backoff_ms_for_provider,
+            emit_retry_exhausted=False,
+        )
+        quality_flag = max(quality_flag, provider_quality_flag)
         # evaluate rate limit guard for this provider
         if frames and rate_limit_guard:
             decision = _evaluate_rate_limit(
                 provider=provider,
-                rate_limit_ratio=result.rate_limit_ratio if "result" in locals() else 0.0,
+                rate_limit_ratio=rate_limit_ratio,
                 guard=rate_limit_guard,
                 state=rate_limit_state,
                 log_path=rate_limit_log_path,

@@ -129,3 +129,39 @@ def test_us_session_strategy_blocks_configured_utc_hours() -> None:
 
     assert blocked_signals == []
     assert len(allowed_signals) == 1
+
+
+def test_us_session_strategy_supports_overnight_session_ranges() -> None:
+    strategy = UsSessionTrendPullbackStrategy(default_watchlist=("USDJPY",))
+    allowed_context = _context(
+        hour=23,
+        params={"entry": {"session_utc_range": "22-02"}},
+    )
+    blocked_context = _context(
+        hour=12,
+        params={"entry": {"session_utc_range": "22-02"}},
+    )
+
+    allowed_signals = list(strategy.generate_signals(allowed_context))
+    blocked_signals = list(strategy.generate_signals(blocked_context))
+
+    assert len(allowed_signals) == 1
+    assert blocked_signals == []
+
+
+def test_us_session_strategy_parses_blocked_hours_from_string() -> None:
+    strategy = UsSessionTrendPullbackStrategy(default_watchlist=("USDJPY",))
+    blocked_context = _context(
+        hour=21,
+        params={"entry": {"blocked_utc_hours": "20, 21, x"}},
+    )
+    allowed_context = _context(
+        hour=22,
+        params={"entry": {"blocked_utc_hours": "20, 21, x"}},
+    )
+
+    blocked_signals = list(strategy.generate_signals(blocked_context))
+    allowed_signals = list(strategy.generate_signals(allowed_context))
+
+    assert blocked_signals == []
+    assert len(allowed_signals) == 1

@@ -341,6 +341,44 @@ def _safe_float(value: Any) -> float | None:
         return None
 
 
+def _hour_allowed_by_session(*, hour: int, session_range: object) -> bool:
+    if not isinstance(session_range, str) or "-" not in session_range:
+        return True
+    left, right = session_range.split("-", 1)
+    try:
+        start = int(left.strip())
+        end = int(right.strip())
+    except ValueError:
+        return True
+    if not (0 <= start <= 23 and 0 <= end <= 23):
+        return True
+    if start <= end:
+        return start <= hour <= end
+    return hour >= start or hour <= end
+
+
+def _blocked_hours_from_params(entry_params: Mapping[str, Any]) -> frozenset[int]:
+    filters = entry_params.get("filters") if isinstance(entry_params.get("filters"), Mapping) else {}
+    raw = entry_params.get("blocked_utc_hours", filters.get("blocked_utc_hours"))
+    if raw is None:
+        return frozenset()
+    if isinstance(raw, str):
+        items = [part.strip() for part in raw.split(",")]
+    elif isinstance(raw, (list, tuple, set, frozenset)):
+        items = list(raw)
+    else:
+        items = [raw]
+    hours: list[int] = []
+    for item in items:
+        try:
+            hour = int(item)
+        except (TypeError, ValueError):
+            continue
+        if 0 <= hour <= 23:
+            hours.append(hour)
+    return frozenset(hours)
+
+
 def _timeframe_to_minutes(timeframe: str) -> int:
     """Convert timeframe token (e.g., '5m', '1h') to minutes."""
 
@@ -642,6 +680,14 @@ def simulate_paper_poc(
         atr_sl_mult_signal = float(sizing_params_signal.get("atr_sl_mult", atr_sl_mult))
         entry_tf_signal = str(entry_params_signal.get("timeframe", "5m"))
         ttl_minutes_signal = ttl_bars * _timeframe_to_minutes(entry_tf_signal)
+        current_hour = current_ts.hour
+        if not _hour_allowed_by_session(
+            hour=current_hour,
+            session_range=entry_params_signal.get("session_utc_range"),
+        ):
+            return
+        if current_hour in _blocked_hours_from_params(entry_params_signal):
+            return
 
         entry_base_price = _safe_float(spec.get("entry_base_price"))
         if entry_base_price is None:
@@ -867,6 +913,12 @@ def simulate_paper_poc(
                     dd_curve.append(equity)
                     continue
 
+        pending_for_symbol = [item for item in pending_entries if str(item.get("symbol")) == symbol]
+        if pending_for_symbol:
+            for pending in pending_for_symbol:
+                _attempt_open_position(pending, current_ts=ts, current_row=row)
+                pending_entries.remove(pending)
+
         feature_context, clock = _feature_context_for_row(pipeline, [symbol], row)
         if not feature_context.feature_frame(symbol):
             dd_curve.append(equity)
@@ -874,12 +926,6 @@ def simulate_paper_poc(
         if any(pd.isna(row.get(key)) for key in required_features):
             dd_curve.append(equity)
             continue
-
-        pending_for_symbol = [item for item in pending_entries if str(item.get("symbol")) == symbol]
-        if pending_for_symbol:
-            for pending in pending_for_symbol:
-                _attempt_open_position(pending, current_ts=ts, current_row=row)
-                pending_entries.remove(pending)
 
         account = SimpleNamespace(equity=equity)
         config_snapshot = SimpleNamespace(cfg_hash="poc")

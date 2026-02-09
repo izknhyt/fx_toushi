@@ -330,9 +330,9 @@ class StrategyAllocationPolicy:
                     keep_count = min(keep_count, self.max_selected_per_symbol)
             selected_items = accepted_sorted[:keep_count]
             selected.extend(item.candidate for item in selected_items)
-            selected_ids = {item.candidate.strategy_id for item in selected_items}
+            selected_refs = {id(item.candidate) for item in selected_items}
             for item in accepted_sorted:
-                if item.candidate.strategy_id in selected_ids:
+                if id(item.candidate) in selected_refs:
                     outcomes.append(
                         AllocationOutcome(
                             strategy_id=item.candidate.strategy_id,

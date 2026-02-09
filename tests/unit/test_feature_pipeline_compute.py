@@ -86,3 +86,11 @@ def test_compute_feature_matrix_updates_context_on_cache_hit(project_root) -> No
     assert "USDJPY" not in second.context.symbols
     second.compute_feature_matrix(symbol="USDJPY", price_df=price_df)
     assert "USDJPY" in second.context.symbols
+
+
+def test_compute_feature_matrix_keeps_leading_warmup_nan(project_root) -> None:
+    pipeline = FeaturePipeline.from_config_file(project_root / "config" / "feature_pipeline.yaml")
+    # 5 hours of bars are insufficient for Donchian(20) on 1h timeframe.
+    matrix = pipeline.compute_feature_matrix(symbol="USDJPY", price_df=pd.DataFrame(_bars(60)))
+    assert "donchian_upper20_1h" in matrix.columns
+    assert matrix["donchian_upper20_1h"].isna().all()

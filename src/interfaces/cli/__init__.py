@@ -120,11 +120,7 @@ from .release_cutover import (
     broker_cutover_generate,
     broker_cutover_verify,
 )
-from .supervision import (
-    supervision_approve,
-    supervision_deny,
-    supervision_status,
-)
+from .supervision_app import build_supervision_app
 from .gui_sync import GuiDataSyncError, run_gui_data_sync
 from .signals import export_signals_csv as signals_export_csv
 from src.interfaces.gui.web_server import GuiOpsRuntimeConfig, resolve_sync_source_dir, run_gui_server
@@ -403,6 +399,11 @@ def _merge_with_context(option: bool | None, ctx_value: bool) -> bool:
     return option if option is not None else ctx_value
 
 
+def _effective_json_output(ctx: typer.Context, json_output: bool | None) -> bool:
+    ctx_obj = ctx.obj or {"json": False}
+    return _merge_with_context(json_output, ctx_obj.get("json", False))
+
+
 def _normalise_multi(value: Iterable[str] | None) -> list[str]:
     return list(value or ())
 
@@ -557,8 +558,7 @@ def create_cli_app() -> typer.Typer:
         ),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         compat_mode = compat or os.getenv("TRADECTL_COMPAT")
         _ = yes
         payload = board_view(
@@ -620,8 +620,7 @@ def create_cli_app() -> typer.Typer:
         ),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         payload = run_backtest(
             strategy=strategy,
             profile=profile,
@@ -654,8 +653,7 @@ def create_cli_app() -> typer.Typer:
         ),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         payload = walk_forward_backtest(
             strategy=strategy,
             profile=profile,
@@ -681,8 +679,7 @@ def create_cli_app() -> typer.Typer:
         ),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         payload = backtest_regression_list(scenarios_path=scenarios_path)
         _render_payload(console, payload, json_output=effective_json)
 
@@ -710,8 +707,7 @@ def create_cli_app() -> typer.Typer:
         ),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         payload = backtest_regression_run(
             scenario_id=scenario_id,
             scenarios_path=scenarios_path,
@@ -737,8 +733,7 @@ def create_cli_app() -> typer.Typer:
         limit: int = typer.Option(20, "--limit", help="Number of recent events to show"),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         try:
             payload = load_determinism_events(log_path, limit=limit)
         except DeterminismDiagnosticsError as exc:
@@ -765,8 +760,7 @@ def create_cli_app() -> typer.Typer:
         ),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         payload = board_diagnostics(
             log_path=log_path, limit=limit, strategy=strategy, output=output
         )
@@ -796,8 +790,7 @@ def create_cli_app() -> typer.Typer:
         dry_run: bool = typer.Option(False, "--dry-run", help="Skip writing dashboard files"),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         payload = execution_dashboard(
             log_path=log_path,
             since=since,
@@ -824,8 +817,7 @@ def create_cli_app() -> typer.Typer:
         list_only: bool = typer.Option(False, "--list", help="List scenarios without running"),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         try:
             registry = _load_stress_registry(config)
         except ValueError as exc:
@@ -886,8 +878,7 @@ def create_cli_app() -> typer.Typer:
         dry_run: bool = typer.Option(False, "--dry-run", help="Validate without writing report"),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         payload = config_validate(
             bundle=bundle,
             target=target,
@@ -912,8 +903,7 @@ def create_cli_app() -> typer.Typer:
         ),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         if not target.exists():
             payload = {"status": "missing", "target": str(target), "files": [], "count": 0}
             _render_payload(console, payload, json_output=effective_json)
@@ -946,8 +936,7 @@ def create_cli_app() -> typer.Typer:
         ),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         payload = config_diff(
             profile_from=profile_from,
             profile_to=profile_to,
@@ -976,8 +965,7 @@ def create_cli_app() -> typer.Typer:
         signer: str = typer.Option("local", "--signer", help="Signer identifier"),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         payload = config_sign(
             diff_path=diff_path,
             profile_from=profile_from,
@@ -1062,8 +1050,7 @@ def create_cli_app() -> typer.Typer:
         ),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         payload = determinism_replay(
             since=since,
             until=until,
@@ -1180,8 +1167,7 @@ def create_cli_app() -> typer.Typer:
         ),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         symbol_list = [s.strip().upper() for s in (symbols or "").split(",") if s.strip()] or None
         selected_strategy = None if hybrid else strategy
         payload = run_paper_poc(
@@ -1255,8 +1241,7 @@ def create_cli_app() -> typer.Typer:
         ),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         payload = run_paper_poc_all(
             profile=profile,
             window_from=window_from,
@@ -1296,8 +1281,7 @@ def create_cli_app() -> typer.Typer:
         ),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         payload = run_poc_report(
             input_path=input_path,
             output_path=output,
@@ -1323,8 +1307,7 @@ def create_cli_app() -> typer.Typer:
         | None = typer.Option(None, "--data-hash", help="Data hash override (sha256:...)"),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         state = GateState.load(path) if path.exists() else GateState()
         agg = GateAggregator(initial_state=state)
         persisted = agg.persist_latest(path=path, cfg_hash=cfg_hash, data_hash=data_hash)
@@ -1355,8 +1338,7 @@ def create_cli_app() -> typer.Typer:
         ),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         service = TradeJournalService(path=path)
         entry = service.from_ticket_action(ticket_id=ticket_id, user=user, note=note, week=week)
         service.append(entry)
@@ -1389,8 +1371,7 @@ def create_cli_app() -> typer.Typer:
         ),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         result = monitor_ticket(
             ticket_id=ticket_id,
             mode=mode,
@@ -1415,8 +1396,7 @@ def create_cli_app() -> typer.Typer:
         ),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         gate_state = GateState.load(gate_state_path) if gate_state_path else None
         try:
             result = tickets_actions.reject(
@@ -1465,8 +1445,7 @@ def create_cli_app() -> typer.Typer:
         ),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         gate_state = GateState.load(gate_state_path) if gate_state_path else None
         if not yes:
             prompt = f"Approve ticket {ticket_id}?"
@@ -1516,8 +1495,7 @@ def create_cli_app() -> typer.Typer:
         ),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         gate_state = GateState.load(gate_state_path) if gate_state_path else None
         try:
             result = tickets_actions.edit(
@@ -1548,8 +1526,7 @@ def create_cli_app() -> typer.Typer:
         include_history: bool = typer.Option(False, "--history", help="Include history/diff"),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         records = tickets_actions.list_tickets(
             status=status, include_history=include_history, json_output=effective_json
         )
@@ -1581,8 +1558,7 @@ def create_cli_app() -> typer.Typer:
         validate: bool = typer.Option(False, "--validate", help="Validate metrics payloads"),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         payload = metrics_report(
             kind=kind,
             window=window,
@@ -1633,8 +1609,7 @@ def create_cli_app() -> typer.Typer:
         ),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         payload = performance_live_guard(
             strategy_id=strategy,
             window=window,
@@ -1695,8 +1670,7 @@ def create_cli_app() -> typer.Typer:
         dry_run: bool = typer.Option(False, "--dry-run", help="Render without writing output"),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         payload = generate_weekly_report(
             profile=profile,
             week=week,
@@ -1735,8 +1709,7 @@ def create_cli_app() -> typer.Typer:
         dry_run: bool = typer.Option(False, "--dry-run", help="Render without writing output"),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         payload = generate_performance_report(
             profile=profile,
             output_path=out,
@@ -1758,8 +1731,7 @@ def create_cli_app() -> typer.Typer:
         dry_run: bool = typer.Option(False, "--dry-run", help="Render without writing output"),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         payload = generate_daily_report(
             date=date_value,
             profile=profile,
@@ -1785,8 +1757,7 @@ def create_cli_app() -> typer.Typer:
         email: str | None = typer.Option(None, "--email", help="Notification email (optional)"),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         try:
             result = benchmark_ingest(
                 provider=provider,
@@ -1829,8 +1800,7 @@ def create_cli_app() -> typer.Typer:
         fail_on_gap: bool = typer.Option(False, "--fail-on-gap", help="Fail if gaps are detected"),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         exit_code = 0
         try:
             result = benchmark_compare(
@@ -1870,8 +1840,7 @@ def create_cli_app() -> typer.Typer:
         path: Path = typer.Option(..., "--path", help="Manual benchmark CSV path"),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         try:
             payload = benchmark_validate_manual(str(path))
         except Exception as exc:  # noqa: BLE001
@@ -1892,8 +1861,7 @@ def create_cli_app() -> typer.Typer:
         event: list[str] | None = typer.Option(None, "--event", help="Filter by audit event name"),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         entries = audit_actions.tail(since=since, event=event, json_output=effective_json)
         _render_payload(
             console, {"count": len(entries), "events": entries}, json_output=effective_json
@@ -1910,8 +1878,7 @@ def create_cli_app() -> typer.Typer:
         out: Path = typer.Option(..., "--out", help="Output JSONL path"),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         result_path = audit_actions.export(
             export_type=export_type,
             date_from=date_from,
@@ -1933,8 +1900,7 @@ def create_cli_app() -> typer.Typer:
         ),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         service = AuditBundleService()
         result = service.generate(
             period=period,
@@ -1962,8 +1928,7 @@ def create_cli_app() -> typer.Typer:
         path: Path = typer.Option(..., "--path", help="Audit pack path (audit_pack/<period>)"),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         service = AuditBundleService()
         payload = service.verify(bundle_path=path)
         _render_payload(console, payload, json_output=effective_json)
@@ -1975,8 +1940,7 @@ def create_cli_app() -> typer.Typer:
         ctx: typer.Context,
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         service = AuditBundleService()
         bundles = service.list_bundles()
         _render_payload(console, {"status": "ok", "bundles": bundles}, json_output=effective_json)
@@ -1999,8 +1963,7 @@ def create_cli_app() -> typer.Typer:
         ),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         trace = trace_order(order_id=order, log_path=log_path, export_path=export)
         _render_payload(console, trace.to_mapping(), json_output=effective_json)
 
@@ -2016,8 +1979,7 @@ def create_cli_app() -> typer.Typer:
         follow: bool = typer.Option(False, "--follow", help="Follow events (best-effort)"),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         entries = events_actions.tail_events(since=since, follow=follow)
         _render_payload(
             console, {"count": len(entries), "events": entries}, json_output=effective_json
@@ -2315,8 +2277,7 @@ def create_cli_app() -> typer.Typer:
     ) -> None:
         from tools.gui_ops_loop import run_gui_ops_loop
 
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         symbol_list = [s.strip().upper() for s in symbols.split(",") if s.strip()]
         resolved_strategy_manifest = _resolve_gui_strategy_manifest(strategy_manifest)
         results = run_gui_ops_loop(
@@ -2495,8 +2456,7 @@ def create_cli_app() -> typer.Typer:
     ) -> None:
         from tools.gui_ops_loop import run_gui_ops_loop
 
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
 
         sync_symbol = symbol.strip().upper()
         if not sync_symbol:
@@ -2651,8 +2611,7 @@ def create_cli_app() -> typer.Typer:
         ),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         payload = signals_export_csv(
             input_path=input_path,
             output_path=output,
@@ -2679,8 +2638,7 @@ def create_cli_app() -> typer.Typer:
         dry_run: bool = typer.Option(False, "--dry-run", help="Preview without writing files"),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         service = ReleaseGateService()
         checklist = service.prepare(version=version, dry_run=dry_run)
         _render_payload(
@@ -2696,8 +2654,7 @@ def create_cli_app() -> typer.Typer:
         evidence: str | None = typer.Option(None, "--evidence", help="Evidence path"),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         service = ReleaseGateService()
         checklist = service.record_result(
             version=version, task_id=task, status=status, evidence_path=evidence
@@ -2712,8 +2669,7 @@ def create_cli_app() -> typer.Typer:
         version: str = typer.Option(..., "--version", help="Release version identifier"),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         service = ReleaseGateService()
         payload = service.verify_completion(version=version)
         _render_payload(console, payload, json_output=effective_json)
@@ -2726,8 +2682,7 @@ def create_cli_app() -> typer.Typer:
         version: str = typer.Option(..., "--version", help="Release version identifier"),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         service = ReleaseGateService()
         payload = service.tag_release(version=version)
         _render_payload(console, payload, json_output=effective_json)
@@ -2741,8 +2696,7 @@ def create_cli_app() -> typer.Typer:
         version: str | None = typer.Option(None, "--version", help="Release version"),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         payload = broker_cutover_generate(profile=profile, version=version)
         _render_payload(console, payload, json_output=effective_json)
 
@@ -2753,8 +2707,7 @@ def create_cli_app() -> typer.Typer:
         version: str | None = typer.Option(None, "--version", help="Release version"),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         try:
             payload = broker_cutover_verify(profile=profile, version=version)
         except CutoverBlockedError as exc:
@@ -2774,8 +2727,7 @@ def create_cli_app() -> typer.Typer:
         profile: str | None = typer.Option(None, "--profile", help="Feature flag profile"),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         payload = model_risk_status(strategy_id=strategy, profile=profile)
         _render_payload(console, payload, json_output=effective_json)
 
@@ -2791,8 +2743,7 @@ def create_cli_app() -> typer.Typer:
         profile: str | None = typer.Option(None, "--profile", help="Feature flag profile"),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         payload = model_risk_review(
             strategy_id=strategy,
             approve=approve,
@@ -2814,8 +2765,7 @@ def create_cli_app() -> typer.Typer:
         profile: str | None = typer.Option(None, "--profile", help="Feature flag profile"),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         payload = model_risk_artifact_add(
             strategy_id=strategy,
             artifact_type=artifact_type,
@@ -2835,8 +2785,7 @@ def create_cli_app() -> typer.Typer:
         profile: str | None = typer.Option(None, "--profile", help="Feature flag profile"),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         payload = model_risk_escalate(
             strategy_id=strategy,
             severity=severity,
@@ -2914,8 +2863,7 @@ def create_cli_app() -> typer.Typer:
         ),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         try:
             payload = spread_inspect(
                 symbol,
@@ -2952,8 +2900,7 @@ def create_cli_app() -> typer.Typer:
         week: str | None = typer.Option(None, "--week", help="Week label (e.g. 2025-W12)"),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         service = TradeJournalService()
         entry = service.from_ticket_action(ticket_id=ticket_id, user=user, note=note, week=week)
         saved = service.append(entry)
@@ -2975,8 +2922,7 @@ def create_cli_app() -> typer.Typer:
         ),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         service = TradeJournalService(path=path)
         entry = service.from_ticket_action(ticket_id=ticket_id, user=user, note=note, week=week)
         saved = service.append(entry)
@@ -2999,8 +2945,7 @@ def create_cli_app() -> typer.Typer:
         ),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         service = TradeJournalService(path=path)
         payload = journal_list(
             service=service,
@@ -3021,8 +2966,7 @@ def create_cli_app() -> typer.Typer:
         ),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         service = TradeJournalService()
         path = service.export_weekly(week=week, output_dir=output_dir)
         _render_payload(console, {"status": "ok", "path": str(path)}, json_output=effective_json)
@@ -3045,8 +2989,7 @@ def create_cli_app() -> typer.Typer:
         ),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         service = TradeJournalService(path=path)
         try:
             payload = journal_add_note(
@@ -3078,8 +3021,7 @@ def create_cli_app() -> typer.Typer:
         ),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         service = TradeJournalService(path=path)
         payload = journal_review(
             service=service, week=week, include_notes=include_notes, export_path=export_path
@@ -3100,8 +3042,7 @@ def create_cli_app() -> typer.Typer:
         ),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         service = TradeJournalService(path=path)
         try:
             payload = journal_stats(service=service, window=window, group_by=group_by)
@@ -3116,8 +3057,7 @@ def create_cli_app() -> typer.Typer:
         symbol: str | None = typer.Option(None, "--symbol", help="Symbol filter"),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         payload = liquidity_status(symbol=symbol)
         _render_payload(console, payload, json_output=effective_json)
 
@@ -3132,8 +3072,7 @@ def create_cli_app() -> typer.Typer:
         ),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         payload = liquidity_compare(
             source_from=source_from,
             source_to=source_to,
@@ -3154,8 +3093,7 @@ def create_cli_app() -> typer.Typer:
         ),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         payload = liquidity_ingest(
             source=source,
             path=path,
@@ -3311,8 +3249,7 @@ def create_cli_app() -> typer.Typer:
         ),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         try:
             payload = preflight(
                 profile=profile,
@@ -3496,8 +3433,7 @@ def create_cli_app() -> typer.Typer:
         ),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         effective_profile = profile or mode
         payload = finance_generate_ledger(
             period=period,
@@ -3542,8 +3478,7 @@ def create_cli_app() -> typer.Typer:
         ),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         effective_profile = profile or mode
         payload = finance_generate_tax_report(
             year=year,
@@ -3575,8 +3510,7 @@ def create_cli_app() -> typer.Typer:
         ),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         effective_profile = profile or mode
         payload = finance_ledger_diff(
             period_from=period_from,
@@ -3605,8 +3539,7 @@ def create_cli_app() -> typer.Typer:
         ),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         effective_profile = profile or mode
         payload = finance_apply_adjustments(
             file_path=file_path,
@@ -3643,8 +3576,7 @@ def create_cli_app() -> typer.Typer:
         ),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         profile = os.getenv("TRADECTL_PROFILE", "live")
         payload = finance_share_evidence(
             profile_id=profile_id,
@@ -3744,8 +3676,7 @@ def create_cli_app() -> typer.Typer:
         ),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON."),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         parsed_date = None
         if report_date:
             try:
@@ -3792,8 +3723,7 @@ def create_cli_app() -> typer.Typer:
         strict: bool = typer.Option(False, "--strict", help="Enable strict mode"),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON."),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         payload = broker_shadow_start(
             adapter=adapter, profile=profile, scenario=scenario, strict=strict
         )
@@ -3808,8 +3738,7 @@ def create_cli_app() -> typer.Typer:
         ),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON."),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         payload = broker_shadow_status(alerts=alerts, window_minutes=window_minutes)
         _render_payload(console, payload, json_output=effective_json)
 
@@ -3820,8 +3749,7 @@ def create_cli_app() -> typer.Typer:
         destination: str | None = typer.Option(None, "--out", help="Output path"),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON."),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         payload = {
             "status": "ok",
             "path": broker_shadow_export(date=date_value, destination=destination),
@@ -3834,8 +3762,7 @@ def create_cli_app() -> typer.Typer:
         alerts: bool = typer.Option(False, "--alerts", help="Include alert summary"),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON."),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         payload = broker_monitor_status(alerts=alerts)
         _render_payload(console, payload, json_output=effective_json)
 
@@ -3845,8 +3772,7 @@ def create_cli_app() -> typer.Typer:
         adapter: str = typer.Option("sandbox", "--adapter", help="Broker adapter"),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON."),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         payload = broker_monitor_test(adapter=adapter)
         _render_payload(console, payload, json_output=effective_json)
 
@@ -3857,8 +3783,7 @@ def create_cli_app() -> typer.Typer:
         sustained: int | None = typer.Option(None, "--sustained", help="Sustained limit"),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON."),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         payload = broker_monitor_limit(burst=burst, sustained=sustained)
         _render_payload(console, payload, json_output=effective_json)
 
@@ -3873,8 +3798,7 @@ def create_cli_app() -> typer.Typer:
         ),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON."),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         payload = broker_monitor_report(window=window, output_dir=output_dir)
         _render_payload(console, payload, json_output=effective_json)
 
@@ -3883,8 +3807,7 @@ def create_cli_app() -> typer.Typer:
         ctx: typer.Context,
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON."),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         payload = broker_stage_status()
         _render_payload(console, payload, json_output=effective_json)
 
@@ -3897,8 +3820,7 @@ def create_cli_app() -> typer.Typer:
         reason: str | None = typer.Option(None, "--reason", help="Reason for stage change"),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON."),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         payload = broker_stage_set(request=request, approve=approve, request_id=request_id, reason=reason)
         _render_payload(console, payload, json_output=effective_json)
 
@@ -3909,8 +3831,7 @@ def create_cli_app() -> typer.Typer:
         reason: str | None = typer.Option(None, "--reason", help="Reason for request"),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON."),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         payload = broker_stage_request(stage=stage, reason=reason)
         _render_payload(console, payload, json_output=effective_json)
 
@@ -3922,8 +3843,7 @@ def create_cli_app() -> typer.Typer:
         reason: str | None = typer.Option(None, "--reason", help="Reason for denial"),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON."),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         payload = broker_stage_deny(request_id=request_id, actor=actor, reason=reason)
         _render_payload(console, payload, json_output=effective_json)
 
@@ -3933,8 +3853,7 @@ def create_cli_app() -> typer.Typer:
         limit: int = typer.Option(20, "--limit", help="History limit"),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON."),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         payload = broker_stage_history(limit=limit)
         _render_payload(console, payload, json_output=effective_json)
 
@@ -3950,8 +3869,7 @@ def create_cli_app() -> typer.Typer:
         dry_run: bool = typer.Option(True, "--dry-run/--live", help="Dry-run simulation"),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON."),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         payload = broker_simulate_fault(
             scenario=scenario,
             iterations=iterations,
@@ -3967,8 +3885,7 @@ def create_cli_app() -> typer.Typer:
         fault_type: str | None = typer.Option(None, "--filter", help="Fault type filter"),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON."),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         payload = broker_simulate_list(fault_type=fault_type, json_output=effective_json)
         _render_payload(console, payload, json_output=effective_json)
 
@@ -3980,8 +3897,7 @@ def create_cli_app() -> typer.Typer:
         expected_alert: str | None = typer.Option(None, "--expected-alert", help="Expected alert"),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON."),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         payload = broker_simulate_verify(
             scenario=scenario, expected_stage=expected_stage, expected_alert=expected_alert
         )
@@ -4002,8 +3918,7 @@ def create_cli_app() -> typer.Typer:
         ),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON."),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         payload = broker_certify(
             plan_path=plan,
             principal_id=principal_id,
@@ -4033,8 +3948,7 @@ def create_cli_app() -> typer.Typer:
         ),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON."),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         try:
             payload = broker_order_submit(
                 symbol=symbol,
@@ -4066,8 +3980,7 @@ def create_cli_app() -> typer.Typer:
         ),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON."),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         payload = broker_orders_list(
             mode=mode, status=status or None, strategy_id=strategy_id, include_recovery=include_recovery
         )
@@ -4083,8 +3996,7 @@ def create_cli_app() -> typer.Typer:
         ),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON."),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         payload = broker_orders_show(order_id=order_id, mode=mode, include_history=include_history)
         _render_payload(console, payload, json_output=effective_json)
 
@@ -4099,8 +4011,7 @@ def create_cli_app() -> typer.Typer:
         assign: str | None = typer.Option(None, "--assign", help="Assign owner"),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON."),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         payload = broker_orders_override(
             order_id=order_id,
             action=action,
@@ -4121,8 +4032,7 @@ def create_cli_app() -> typer.Typer:
         ),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON."),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         payload = broker_orders_replay(
             order_id=order_id, mode=mode, compare_fill_shadow=compare_fill_shadow
         )
@@ -4136,8 +4046,7 @@ def create_cli_app() -> typer.Typer:
         fmt: str = typer.Option("jsonl", "--format", help="jsonl|csv"),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON."),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         payload = broker_orders_export(mode=mode, dest=dest, fmt=fmt)
         _render_payload(console, payload, json_output=effective_json)
 
@@ -4148,8 +4057,7 @@ def create_cli_app() -> typer.Typer:
         mode: str = typer.Option("manual", "--mode", help="Mode (manual/auto)"),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON."),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         payload = broker_emergency_stop(reason=reason, mode=mode)
         _render_payload(console, payload, json_output=effective_json)
 
@@ -4187,8 +4095,7 @@ def create_cli_app() -> typer.Typer:
         ),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         payload = shadow_test(
             channel=channel,
             ticket_path=ticket_path,
@@ -4222,8 +4129,7 @@ def create_cli_app() -> typer.Typer:
         ),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         payload = shadow_replay(
             since_hours=since_hours,
             event_log=event_log,
@@ -4243,8 +4149,7 @@ def create_cli_app() -> typer.Typer:
         ),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         payload = shadow_status(store_path=store_path)
         _render_payload(console, payload, json_output=effective_json)
 
@@ -4275,8 +4180,7 @@ def create_cli_app() -> typer.Typer:
         dry_run: bool = typer.Option(False, "--dry-run", help="Report status without serving"),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         payload = shadow_serve(
             host=host,
             port=port,
@@ -4302,8 +4206,7 @@ def create_cli_app() -> typer.Typer:
         ),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         payload = gateway_status(profile=profile, feature_flags_path=feature_flags_path)
         _render_payload(console, payload, json_output=effective_json)
 
@@ -4320,8 +4223,7 @@ def create_cli_app() -> typer.Typer:
         ),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         payload = gateway_failover(
             profile=profile,
             restore=restore,
@@ -4355,8 +4257,7 @@ def create_cli_app() -> typer.Typer:
         timeframe: str = typer.Option("5m", "--timeframe", help="Timeframe to consume"),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON."),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         payload = drain_bar_ready_queue(
             queue_path=queue_path,
             feature_config_path=feature_config_path,
@@ -4407,8 +4308,7 @@ def create_cli_app() -> typer.Typer:
         ),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         payload = data_status(
             providers=providers,
             watch=watch,
@@ -4451,8 +4351,7 @@ def create_cli_app() -> typer.Typer:
         | None = typer.Option(None, "--max-iterations", help="Loop iterations cap"),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         symbol_list = [s.strip().upper() for s in symbols.split(",") if s.strip()]
         anchor = ingestion_parse_as_of(as_of)
 
@@ -4497,8 +4396,7 @@ def create_cli_app() -> typer.Typer:
         export: Path | None = typer.Option(None, "--export", help="Optional env file to write"),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         payload = rate_limit_snapshot(providers=providers)
         if export is not None:
             payload["export_path"] = export_rate_limit_env(export, payload=payload)
@@ -4517,8 +4415,7 @@ def create_cli_app() -> typer.Typer:
         ),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         payload = health_snapshot(manifest_path=manifest_path, strategy=strategy)
         if fmt == "json" or effective_json:
             _render_payload(console, payload, json_output=True)
@@ -4543,8 +4440,7 @@ def create_cli_app() -> typer.Typer:
         dry_run: bool = typer.Option(False, "--dry-run", help="Emit dry-run log only"),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         payload = acknowledge_degradation(provider=provider, dry_run=dry_run)
         _render_payload(console, payload, json_output=effective_json)
 
@@ -4561,8 +4457,7 @@ def create_cli_app() -> typer.Typer:
         ),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         try:
             data_failover(target=target, mode=mode, log_stage_change=log_stage_change)
         except Exception as exc:  # noqa: BLE001
@@ -4598,8 +4493,7 @@ def create_cli_app() -> typer.Typer:
         symbols: str = typer.Option("USDJPY", "--symbols", help="Comma-separated symbols"),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         symbol_list = [s.strip().upper() for s in symbols.split(",") if s.strip()]
         path = plan_feed_eval(provider_id=provider, window_hours=window, symbols=symbol_list)
         _render_payload(
@@ -4637,8 +4531,7 @@ def create_cli_app() -> typer.Typer:
         shadow: bool = typer.Option(False, "--shadow", help="Include shadow comparison"),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         fetch_values = _parse_samples(fetch_samples, label="fetch_samples")
         processing_values = _parse_samples(processing_samples, label="processing_samples")
         comparison_values = _parse_samples(comparison_gap, label="comparison_gap")
@@ -4691,8 +4584,7 @@ def create_cli_app() -> typer.Typer:
         missing_pct: float = typer.Option(0.2, "--missing-pct", help="Missing percent"),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         comparison_values = _parse_samples(comparison_gap, label="comparison_gap")
         output_dir = compare_feed_eval(
             provider_id=candidate,
@@ -4724,8 +4616,7 @@ def create_cli_app() -> typer.Typer:
         yes: bool = typer.Option(False, "--yes", help="Confirm promotion"),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         try:
             payload = promote_feed_provider(
                 provider_id=provider,
@@ -4750,8 +4641,7 @@ def create_cli_app() -> typer.Typer:
         timeframe: str = typer.Option("m5", "--timeframe", help="Timeframe (m5|h1)"),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         try:
             path = manual_template(
                 provider=provider, symbol=symbol, date=date_str, timeframe=timeframe
@@ -4776,8 +4666,7 @@ def create_cli_app() -> typer.Typer:
         ),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         try:
             payload = validate_csv(str(path), approve=approve, approver=approver)
         except SystemExit as exc:
@@ -4804,8 +4693,7 @@ def create_cli_app() -> typer.Typer:
     ) -> None:
         if ctx.invoked_subcommand:
             return
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         entries = data_jobs(pending=pending, export_json=export_json is not None)
         if export_json:
             export_json.parent.mkdir(parents=True, exist_ok=True)
@@ -4833,8 +4721,7 @@ def create_cli_app() -> typer.Typer:
         end: str | None = typer.Option(None, "--to", help="Optional window end (ISO)"),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         payload = enqueue_manual_csv_job(
             provider=provider,
             symbol=symbol,
@@ -4852,8 +4739,7 @@ def create_cli_app() -> typer.Typer:
         dry_run: bool = typer.Option(False, "--dry-run", help="Log only, do not write parquet"),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         results = run_manual_csv_jobs(job_ids=job_ids or None, dry_run=dry_run)
         _render_payload(console, {"results": results}, json_output=effective_json)
 
@@ -4870,8 +4756,7 @@ def create_cli_app() -> typer.Typer:
         ),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         try:
             path = data_manual_report(date=date, provider=provider, symbol=symbol, attach=attach)
         except Exception as exc:  # noqa: BLE001
@@ -4895,8 +4780,7 @@ def create_cli_app() -> typer.Typer:
         path: Path = typer.Option(..., "--path", help="File or directory to hash"),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         try:
             value = data_hash_path(str(path))
         except Exception as exc:  # noqa: BLE001
@@ -4921,8 +4805,7 @@ def create_cli_app() -> typer.Typer:
         ),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         symbol_list = [s.strip().upper() for s in symbols.split(",") if s.strip()]
         payload = data_update_latest(
             symbols=symbol_list,
@@ -4965,8 +4848,7 @@ def create_cli_app() -> typer.Typer:
         chunk_hours: int = typer.Option(6, "--chunk-hours", help="Backfill chunk size in hours"),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         cmd = [sys.executable, "tools/update_market_data.py", "--symbol", symbol]
         if source_dir is not None:
             cmd.extend(["--source-dir", str(source_dir)])
@@ -5016,8 +4898,7 @@ def create_cli_app() -> typer.Typer:
         ),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         tag_list = [t.strip() for t in (tags or "").split(",") if t.strip()]
         payload = data_manifest_record(
             path=path,
@@ -5043,8 +4924,7 @@ def create_cli_app() -> typer.Typer:
         ),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         try:
             payload = data_manifest_verify(
                 path=path,
@@ -5064,8 +4944,7 @@ def create_cli_app() -> typer.Typer:
         target: Path = typer.Option(..., "--target", help="Target manifest path"),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         payload = data_manifest_diff(base=base, target=target)
         _render_payload(console, payload, json_output=effective_json)
 
@@ -5091,8 +4970,7 @@ def create_cli_app() -> typer.Typer:
         ),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         payload = validation_playbook_sync(
             manifest_path=manifest_path, output_dir=output_dir
         )
@@ -5201,8 +5079,7 @@ def create_cli_app() -> typer.Typer:
         ),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON."),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         iso_week = week
         if not iso_week:
             today = datetime.utcnow().date()
@@ -5276,8 +5153,7 @@ def create_cli_app() -> typer.Typer:
         ),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         payload = strategy_manifest_validate(
             manifest_path=manifest_path,
             playbook_dir=playbook_dir,
@@ -5323,8 +5199,7 @@ def create_cli_app() -> typer.Typer:
         ),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         payload = strategy_manifest_list(
             manifest_path=manifest_path, status=status, sort_by=sort_by
         )
@@ -5395,8 +5270,7 @@ def create_cli_app() -> typer.Typer:
         ),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         tokens = [token.strip().lower() for token in modes.split(",") if token.strip()]
         if not tokens:
             typer.echo("[strategy.manifest.select] --modes is required", err=True)
@@ -5439,8 +5313,7 @@ def create_cli_app() -> typer.Typer:
         note: str | None = typer.Option(None, "--note", help="Optional renewal note"),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         payload = strategy_manifest_renew(
             strategy_id=strategy_id,
             manifest_path=manifest_path,
@@ -5470,8 +5343,7 @@ def create_cli_app() -> typer.Typer:
         ),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         payload = strategy_score_update(
             manifest_path=manifest_path,
             window=window,
@@ -5507,8 +5379,7 @@ def create_cli_app() -> typer.Typer:
         ),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         payload = strategy_score_report(
             manifest_path=manifest_path,
             window=window,
@@ -5539,8 +5410,7 @@ def create_cli_app() -> typer.Typer:
         ),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         payload = licensing_list(registry_path=registry_path)
         _render_payload(console, payload, json_output=effective_json)
 
@@ -5555,8 +5425,7 @@ def create_cli_app() -> typer.Typer:
         ),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         payload = licensing_show(provider_id=provider, registry_path=registry_path)
         _render_payload(console, payload, json_output=effective_json)
 
@@ -5573,8 +5442,7 @@ def create_cli_app() -> typer.Typer:
         ),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         payload = licensing_attach_contract(
             provider_id=provider,
             contract_path=contract,
@@ -5590,8 +5458,7 @@ def create_cli_app() -> typer.Typer:
         compliance_id: str = typer.Option(..., "--compliance-id", help="Compliance reviewer id"),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         payload = licensing_generate_checklist(provider_id=provider, compliance_id=compliance_id)
         _render_payload(console, payload, json_output=effective_json)
 
@@ -5608,8 +5475,7 @@ def create_cli_app() -> typer.Typer:
         ),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         payload = licensing_review(
             provider_id=provider,
             notes_path=notes,
@@ -5633,8 +5499,7 @@ def create_cli_app() -> typer.Typer:
         ),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         payload = governance_board_agenda(
             week=week,
             meeting_id=meeting,
@@ -5653,8 +5518,7 @@ def create_cli_app() -> typer.Typer:
         notes: str | None = typer.Option(None, "--notes", help="Optional notes"),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         payload = governance_board_decision(
             meeting_id=meeting, strategy_id=strategy_id, decision=decision, actor=actor, notes=notes
         )
@@ -5669,8 +5533,7 @@ def create_cli_app() -> typer.Typer:
         dry_run: bool = typer.Option(False, "--dry-run", help="Dry run only"),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         payload = governance_board_publish(
             meeting_id=meeting, profile_id=profile, channel=channel, dry_run=dry_run
         )
@@ -5684,8 +5547,7 @@ def create_cli_app() -> typer.Typer:
         strategy: str | None = typer.Option(None, "--strategy", help="Strategy id"),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         payload = governance_lifecycle_status(strategy_id=strategy)
         _render_payload(console, payload, json_output=effective_json)
 
@@ -5694,8 +5556,7 @@ def create_cli_app() -> typer.Typer:
         ctx: typer.Context,
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         payload = governance_lifecycle_gates()
         _render_payload(console, payload, json_output=effective_json)
 
@@ -5708,8 +5569,7 @@ def create_cli_app() -> typer.Typer:
         force: bool = typer.Option(False, "--force", help="Force gate pass"),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         signals = {
             "idea.stage.screening": True,
             "strategy_board.decision.approve": True,
@@ -5730,8 +5590,7 @@ def create_cli_app() -> typer.Typer:
         strategy: str = typer.Option(..., "--strategy", help="Strategy id"),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         payload = governance_lifecycle_history(strategy_id=strategy)
         _render_payload(console, payload, json_output=effective_json)
 
@@ -5746,8 +5605,7 @@ def create_cli_app() -> typer.Typer:
         ),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         payload = governance_lifecycle_simulate(strategy_id=strategy, scenario=scenario)
         _render_payload(console, payload, json_output=effective_json)
 
@@ -5772,8 +5630,7 @@ def create_cli_app() -> typer.Typer:
         ),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         payload = governance_sunset_issue(
             strategy_id=strategy,
             reason=reason,
@@ -5800,8 +5657,7 @@ def create_cli_app() -> typer.Typer:
         ),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         try:
             payload = governance_sunset_plan(
                 strategy_id=strategy,
@@ -5830,8 +5686,7 @@ def create_cli_app() -> typer.Typer:
         ),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         try:
             payload = governance_sunset_execute(
                 plan_id=plan_id,
@@ -5860,8 +5715,7 @@ def create_cli_app() -> typer.Typer:
         ),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         try:
             payload = governance_sunset_complete(
                 plan_id=plan_id,
@@ -5894,8 +5748,7 @@ def create_cli_app() -> typer.Typer:
         ),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         try:
             payload = portfolio_reallocate_suggest(
                 plan_id=plan_id,
@@ -5932,8 +5785,7 @@ def create_cli_app() -> typer.Typer:
         ),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON."),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         try:
             payload = dict(
                 scoreboard_weekly_snapshot(
@@ -5972,8 +5824,7 @@ def create_cli_app() -> typer.Typer:
         ),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         payload = accounts_status(
             account=account,
             with_positions=with_positions,
@@ -6002,8 +5853,7 @@ def create_cli_app() -> typer.Typer:
         ),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         payload = accounts_ingest(
             profile_id=profile,
             path=path,
@@ -6044,8 +5894,7 @@ def create_cli_app() -> typer.Typer:
         ),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         payload = accounts_aggregate(
             account_filter=account_filter or None,
             export_md=export_md,
@@ -6075,8 +5924,7 @@ def create_cli_app() -> typer.Typer:
         ),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         payload = accounts_diff(
             period_a=period_a,
             period_b=period_b,
@@ -6102,8 +5950,7 @@ def create_cli_app() -> typer.Typer:
         ),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         payload = accounts_alerts(
             severity=severity,
             ack=ack,
@@ -6123,8 +5970,7 @@ def create_cli_app() -> typer.Typer:
         ),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         payload = accounts_coverage(window_days=window_days, portfolio_log=portfolio_log)
         _render_payload(console, payload, json_output=effective_json)
 
@@ -6135,8 +5981,7 @@ def create_cli_app() -> typer.Typer:
         dry_run: bool = typer.Option(False, "--dry-run", help="Dry run"),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         payload = accounts_rebalance(plan_path=plan, dry_run=dry_run)
         _render_payload(console, payload, json_output=effective_json)
 
@@ -6213,8 +6058,7 @@ def create_cli_app() -> typer.Typer:
         ),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         payload = runbook_status(
             category=category,
             overdue_only=overdue_only,
@@ -6294,8 +6138,7 @@ def create_cli_app() -> typer.Typer:
         ),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         try:
             payload = runbook_review(
                 runbook_id=runbook_id,
@@ -6387,8 +6230,7 @@ def create_cli_app() -> typer.Typer:
         ),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         payload = runbook_sync(
             no_write=no_write,
             runbooks_dir=runbooks_dir,
@@ -6452,8 +6294,7 @@ def create_cli_app() -> typer.Typer:
         ),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         try:
             payload = decision_add(
                 topic=topic,
@@ -6502,8 +6343,7 @@ def create_cli_app() -> typer.Typer:
         ),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         try:
             payload = decision_close(
                 decision_id=decision_id,
@@ -6541,8 +6381,7 @@ def create_cli_app() -> typer.Typer:
         ),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         payload = decision_list(
             records_dir=records_dir,
             event_log=event_log,
@@ -6595,8 +6434,7 @@ def create_cli_app() -> typer.Typer:
         ),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         try:
             payload = export_docops(
                 bundle=bundle,
@@ -6626,8 +6464,7 @@ def create_cli_app() -> typer.Typer:
         ),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         try:
             payload = docs_build(
                 clean=clean,
@@ -6647,8 +6484,7 @@ def create_cli_app() -> typer.Typer:
         against: str = typer.Option("main", "--against", help="Git ref to diff against"),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         try:
             payload = docs_diff(against=against)
         except DocBuildCliError as exc:
@@ -6665,8 +6501,7 @@ def create_cli_app() -> typer.Typer:
         ),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         payload = docs_lint(category=category, require_front_matter=require_front_matter)
         if payload.get("status") == "error":
             _render_payload(console, payload, json_output=effective_json)
@@ -6702,8 +6537,7 @@ def create_cli_app() -> typer.Typer:
         ),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         try:
             payload = onboarding_assign(
                 user_id=user_id,
@@ -6744,8 +6578,7 @@ def create_cli_app() -> typer.Typer:
         ),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         try:
             payload = onboarding_complete(
                 user_id=user_id,
@@ -6783,8 +6616,7 @@ def create_cli_app() -> typer.Typer:
         ),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         try:
             payload = onboarding_status(
                 onboarding_path=onboarding_path,
@@ -6811,8 +6643,7 @@ def create_cli_app() -> typer.Typer:
         ctx: typer.Context,
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         payload = research_workspace_status()
         _render_payload(console, payload, json_output=effective_json)
 
@@ -6821,8 +6652,7 @@ def create_cli_app() -> typer.Typer:
         ctx: typer.Context,
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         payload = research_workspace_sync()
         _render_payload(console, payload, json_output=effective_json)
 
@@ -6834,8 +6664,7 @@ def create_cli_app() -> typer.Typer:
         execute: bool = typer.Option(False, "--execute", help="Execute notebook"),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         payload = research_run_notebook(path=path, output_dir=out, execute=execute)
         _render_payload(console, payload, json_output=effective_json)
         if payload.get("status") == "error":
@@ -6854,8 +6683,7 @@ def create_cli_app() -> typer.Typer:
         ),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         payload = research_artifact_add(
             path=path,
             kind=kind,
@@ -6871,8 +6699,7 @@ def create_cli_app() -> typer.Typer:
         ctx: typer.Context,
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         payload = research_artifact_list()
         _render_payload(console, payload, json_output=effective_json)
 
@@ -6896,8 +6723,7 @@ def create_cli_app() -> typer.Typer:
         ),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         payload = research_experiment_init(
             experiment_id=experiment_id,
             strategy_id=strategy,
@@ -6939,8 +6765,7 @@ def create_cli_app() -> typer.Typer:
         ),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         metrics = research_experiment_parse_metrics(metrics_path, metric)
         payload = research_experiment_run(
             experiment_id=experiment_id,
@@ -6976,8 +6801,7 @@ def create_cli_app() -> typer.Typer:
         ),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         payload = research_experiment_list(
             status=status,
             strategy_id=strategy,
@@ -7008,8 +6832,7 @@ def create_cli_app() -> typer.Typer:
         ),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         receipt = research_experiment_promote(
             run_id=run_id,
             target_stage=target,
@@ -7035,8 +6858,7 @@ def create_cli_app() -> typer.Typer:
         ),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         payload = research_experiment_export(
             run_id=run_id,
             export_format=export_format,
@@ -7099,8 +6921,7 @@ def create_cli_app() -> typer.Typer:
         ),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         payload = research_drift_scan(
             strategy_id=strategy,
             mode=mode,
@@ -7129,8 +6950,7 @@ def create_cli_app() -> typer.Typer:
         ),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         payload = research_idea_list(stage=stage, owner=owner, root=root)
         _render_payload(console, payload, json_output=effective_json)
 
@@ -7146,8 +6966,7 @@ def create_cli_app() -> typer.Typer:
         ),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         payload = research_idea_show(idea_id=idea_id, root=root)
         _render_payload(console, payload, json_output=effective_json)
 
@@ -7167,8 +6986,7 @@ def create_cli_app() -> typer.Typer:
         ),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         payload = research_idea_stage(
             idea_id=idea_id,
             target_stage=target,
@@ -7194,8 +7012,7 @@ def create_cli_app() -> typer.Typer:
         ),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         payload = research_idea_checklist(idea_id=idea_id, stage=stage, root=root)
         _render_payload(console, payload, json_output=effective_json)
 
@@ -7215,8 +7032,7 @@ def create_cli_app() -> typer.Typer:
         ),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         payload = research_idea_checklist_update(
             idea_id=idea_id,
             stage=stage,
@@ -7255,8 +7071,7 @@ def create_cli_app() -> typer.Typer:
         ),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         payload = research_idea_evidence_bundle(
             idea_id=idea_id,
             stage=stage,
@@ -7284,8 +7099,7 @@ def create_cli_app() -> typer.Typer:
         ),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         payload = research_idea_pipeline_report(week=week, output_dir=out_dir, root=root)
         _render_payload(console, payload, json_output=effective_json)
 
@@ -7314,8 +7128,7 @@ def create_cli_app() -> typer.Typer:
         ),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         payload = research_validate_strategy(
             strategy_id=strategy,
             window=window,
@@ -7361,8 +7174,7 @@ def create_cli_app() -> typer.Typer:
         ),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         payload = research_generate_manifest(
             strategy_id=strategy,
             idea_id=idea_id,
@@ -7402,8 +7214,7 @@ def create_cli_app() -> typer.Typer:
         ),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         payload = research_promo_checklist_show(
             strategy_id=strategy,
             target_stage=target,
@@ -7461,8 +7272,7 @@ def create_cli_app() -> typer.Typer:
         ),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         payload = research_promo_checklist_approve(
             strategy_id=strategy,
             target_stage=target,
@@ -7561,8 +7371,7 @@ def create_cli_app() -> typer.Typer:
             raise typer.BadParameter("Missing option '--strategy'.")
         if not target:
             raise typer.BadParameter("Missing option '--to'.")
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         if suite_path is not None:
             pipeline_result = research_pipeline_promote(
                 strategy_id=strategy,
@@ -7633,8 +7442,7 @@ def create_cli_app() -> typer.Typer:
         ),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         payload = research_promote_simulate(
             strategy_id=strategy,
             target_stage=target,
@@ -7686,8 +7494,7 @@ def create_cli_app() -> typer.Typer:
         ),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON."),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         try:
             payload = dict(
                 alpha_review(
@@ -7744,8 +7551,7 @@ def create_cli_app() -> typer.Typer:
         ),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON."),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         try:
             payload = alpha_preview(
                 pair=pair,
@@ -7836,8 +7642,7 @@ def create_cli_app() -> typer.Typer:
         ),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON."),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         payload = access_principal_list(
             role=role,
             status=status,
@@ -7924,8 +7729,7 @@ def create_cli_app() -> typer.Typer:
         ),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON."),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         try:
             payload = access_principal_add(
                 principal_id=principal_id,
@@ -8012,8 +7816,7 @@ def create_cli_app() -> typer.Typer:
         ),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON."),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         payload = access_device_list(
             principal_id=principal_id,
             stale_only=stale_only,
@@ -8097,8 +7900,7 @@ def create_cli_app() -> typer.Typer:
         ),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON."),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         try:
             payload = access_device_register(
                 principal_id=principal_id,
@@ -8188,8 +7990,7 @@ def create_cli_app() -> typer.Typer:
         ),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON."),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         try:
             payload = access_review_start(
                 scope=scope,
@@ -8279,8 +8080,7 @@ def create_cli_app() -> typer.Typer:
         ),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON."),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         try:
             payload = access_review_complete(
                 review_id=review_id,
@@ -8368,8 +8168,7 @@ def create_cli_app() -> typer.Typer:
         ),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON."),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         payload = access_enforce_policy(
             principal_id=principal_id,
             roles_config=roles_config,
@@ -8447,8 +8246,7 @@ def create_cli_app() -> typer.Typer:
         ),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON."),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         payload = access_report_generate(
             profile=profile,
             output_format=output_format,
@@ -8482,8 +8280,7 @@ def create_cli_app() -> typer.Typer:
         ctx: typer.Context,
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         payload = compliance_status(json_output=effective_json)
         _render_payload(console, payload, json_output=effective_json)
 
@@ -8501,8 +8298,7 @@ def create_cli_app() -> typer.Typer:
         force: bool = typer.Option(False, "--force", help="Force override warning"),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         payload = compliance_ack(note=note, user=user, force=force, decision=decision)
         _render_payload(console, payload, json_output=effective_json)
 
@@ -8511,8 +8307,7 @@ def create_cli_app() -> typer.Typer:
         ctx: typer.Context,
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         payload = compliance_refresh()
         _render_payload(console, payload, json_output=effective_json)
 
@@ -8525,8 +8320,7 @@ def create_cli_app() -> typer.Typer:
         seed: int = typer.Option(7, "--seed", help="Random seed"),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         payload = compliance_regression_generate(
             per_pair=per_pair,
             profile=profile,
@@ -8567,8 +8361,7 @@ def create_cli_app() -> typer.Typer:
         dry_run: bool = typer.Option(False, "--dry-run", help="Skip writing outputs"),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         payload = compliance_regression_run(
             profile=profile,
             scenarios=scenarios,
@@ -8589,8 +8382,7 @@ def create_cli_app() -> typer.Typer:
         threshold: float = typer.Option(0.02, "--threshold", help="Threshold for alerts"),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         payload = compliance_regression_diff(
             current=current,
             against=against,
@@ -8608,8 +8400,7 @@ def create_cli_app() -> typer.Typer:
         dry_run: bool = typer.Option(False, "--dry-run", help="Skip metrics/audit writes."),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         payload = risk_disclosure_enforce(
             action=action,
             device_fingerprint=device_fingerprint,
@@ -8627,8 +8418,7 @@ def create_cli_app() -> typer.Typer:
         force: bool = typer.Option(False, "--force", help="Overwrite existing binding."),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         payload = device_register(user=user, fingerprint=fingerprint, force=force)
         _render_payload(console, payload, json_output=effective_json)
 
@@ -8638,8 +8428,7 @@ def create_cli_app() -> typer.Typer:
         show_revoked: bool = typer.Option(False, "--show-revoked", help="Include revoked devices."),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         payload = device_list(show_revoked=show_revoked)
         _render_payload(console, payload, json_output=effective_json)
 
@@ -8650,8 +8439,7 @@ def create_cli_app() -> typer.Typer:
         runbook: bool = typer.Option(False, "--runbook", help="Include runbook map"),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         payload = compliance_pretrade_rules(profile=profile, runbook=runbook)
         _render_payload(console, payload, json_output=effective_json)
 
@@ -8677,8 +8465,7 @@ def create_cli_app() -> typer.Typer:
         ),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         payload = compliance_pretrade_dry_run(
             ticket=ticket,
             profile=profile,
@@ -8701,8 +8488,7 @@ def create_cli_app() -> typer.Typer:
         period: str = typer.Option(..., "--period", help="ISO year/week (YYYYWW)"),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         payload = compliance_pretrade_overrides(period=period)
         _render_payload(console, payload, json_output=effective_json)
 
@@ -8736,8 +8522,7 @@ def create_cli_app() -> typer.Typer:
         ),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         try:
             payload = risk_stress_run(
                 profile=profile,
@@ -8762,8 +8547,7 @@ def create_cli_app() -> typer.Typer:
         ),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         try:
             payload = risk_stress_compare(against=against, threshold=threshold)
         except RiskStressError as exc:
@@ -8789,8 +8573,7 @@ def create_cli_app() -> typer.Typer:
         signoff: str | None = typer.Option(None, "--signoff", help="Signoff name"),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         try:
             payload = risk_envelope_apply(
                 profile=profile,
@@ -8816,8 +8599,7 @@ def create_cli_app() -> typer.Typer:
         ),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         try:
             payload = risk_envelope_simulate(profile=profile, what_if=what_if)
         except RiskStressError as exc:
@@ -8861,8 +8643,7 @@ def create_cli_app() -> typer.Typer:
         ),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         payload = reconcile_statements_cli(
             statement_path=statement,
             fills_path=fills,
@@ -8884,8 +8665,7 @@ def create_cli_app() -> typer.Typer:
         limit: int = typer.Option(5, "--limit", help="Number of rows to preview"),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         payload = reconcile_preview(statement_path=statement, config_path=config, limit=limit)
         _render_payload(console, payload, json_output=effective_json)
 
@@ -8900,8 +8680,7 @@ def create_cli_app() -> typer.Typer:
         ),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         payload = reconcile_scaffold(broker_id=broker_id, output=output)
         _render_payload(console, payload, json_output=effective_json)
 
@@ -8943,8 +8722,7 @@ def create_cli_app() -> typer.Typer:
         ),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         try:
             payload = dict(
                 kill_switch_set_state(
@@ -9030,8 +8808,7 @@ def create_cli_app() -> typer.Typer:
         simulate: bool = typer.Option(False, "--simulate", help="Simulate without execution"),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         payload = emergency_trigger(
             scenario=scenario,
             runbook=runbook,
@@ -9048,8 +8825,7 @@ def create_cli_app() -> typer.Typer:
         ),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         payload = ops_dashboard_render(
             format=format,
             export=export,
@@ -9079,8 +8855,7 @@ def create_cli_app() -> typer.Typer:
         ),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         payload = worklog_add(
             task=task,
             owner=owner,
@@ -9107,8 +8882,7 @@ def create_cli_app() -> typer.Typer:
         ),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         payload = worklog_list(days=days, task=task, ops_worklog_path=ops_worklog_path)
         _render_payload(console, payload, json_output=effective_json)
 
@@ -9126,8 +8900,7 @@ def create_cli_app() -> typer.Typer:
         ),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         payload = automation_add(
             task=task,
             before=before,
@@ -9153,8 +8926,7 @@ def create_cli_app() -> typer.Typer:
         ),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         try:
             payload = coaching_summary(window=window, export_md=export_md, metrics_path=metrics_path)
         except ValueError as exc:
@@ -9190,8 +8962,7 @@ def create_cli_app() -> typer.Typer:
         ),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         try:
             payload = coaching_insight_create(
                 window=window,
@@ -9223,8 +8994,7 @@ def create_cli_app() -> typer.Typer:
         ),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         payload = coaching_review(
             week=week,
             diff=diff,
@@ -9246,8 +9016,7 @@ def create_cli_app() -> typer.Typer:
         ),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         try:
             payload = coaching_simulate(
                 scenario=scenario,
@@ -9279,8 +9048,7 @@ def create_cli_app() -> typer.Typer:
         ),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         payload = agenda(date, out=str(out) if out else None, persist=not no_persist)
         _render_payload(console, payload, json_output=effective_json)
 
@@ -9297,8 +9065,7 @@ def create_cli_app() -> typer.Typer:
         health_state: str = typer.Option("ok", "--health-state", help="Health state."),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         payload = incident_open(
             category=category,
             severity=severity,
@@ -9321,8 +9088,7 @@ def create_cli_app() -> typer.Typer:
         duration_min: int | None = typer.Option(None, "--duration-min", help="Duration in minutes."),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         payload = incident_timeline_add(
             incident_id=incident_id,
             runbook_ref=runbook_ref,
@@ -9340,8 +9106,7 @@ def create_cli_app() -> typer.Typer:
         report: bool = typer.Option(False, "--report", help="Write reports to disk."),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         payload = incident_forensics(incident_id=incident_id, window=window, report=report)
         _render_payload(console, payload, json_output=effective_json)
 
@@ -9353,8 +9118,7 @@ def create_cli_app() -> typer.Typer:
         verified_by: str = typer.Option(..., "--verified-by", help="Verifier name."),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         payload = incident_close(
             incident_id=incident_id,
             verification_note=verification_note,
@@ -9389,8 +9153,7 @@ def create_cli_app() -> typer.Typer:
         ),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         payload = action_item_sync(
             review_log_path=review_log,
             change_request_path=change_request,
@@ -9487,8 +9250,7 @@ def create_cli_app() -> typer.Typer:
         ),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON."),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         try:
             payload = readiness(
                 explain=explain,
@@ -9542,8 +9304,7 @@ def create_cli_app() -> typer.Typer:
         ),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         payload = degraded_ack(
             reason=reason,
             runbook_ref=runbook_ref,
@@ -9615,8 +9376,7 @@ def create_cli_app() -> typer.Typer:
         ),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         payload = degradation_trigger(
             scenario=scenario,
             severity=severity,
@@ -9645,8 +9405,7 @@ def create_cli_app() -> typer.Typer:
         ),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         payload = degradation_status(instance_id=instance_id, playbook_dir=playbook_dir)
         _render_payload(console, payload, json_output=effective_json)
 
@@ -9709,8 +9468,7 @@ def create_cli_app() -> typer.Typer:
         ),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         payload = degradation_ack(
             instance_id=instance_id,
             node_id=node_id,
@@ -9786,8 +9544,7 @@ def create_cli_app() -> typer.Typer:
         ),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         payload = degradation_recover(
             instance_id=instance_id,
             attach_report=attach_report,
@@ -9812,8 +9569,7 @@ def create_cli_app() -> typer.Typer:
         ),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         payload = drill_catalog(include_tags=tag or None)
         _render_payload(console, payload, json_output=effective_json)
 
@@ -9839,8 +9595,7 @@ def create_cli_app() -> typer.Typer:
         ),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         payload = drill_schedule(
             scenario_id=scenario_id,
             scheduled_for=scheduled_for,
@@ -9858,8 +9613,7 @@ def create_cli_app() -> typer.Typer:
         actor: str = typer.Option(..., "--actor", help="Actor starting the drill."),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         payload = drill_start(plan_id=plan_id, actor=actor)
         _render_payload(console, payload, json_output=effective_json)
 
@@ -9881,8 +9635,7 @@ def create_cli_app() -> typer.Typer:
         ),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         payload = drill_step(
             execution_id=execution_id,
             runbook_step=runbook_step,
@@ -9919,8 +9672,7 @@ def create_cli_app() -> typer.Typer:
         ),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         payload = drill_complete(
             execution_id=execution_id,
             success=success,
@@ -9939,52 +9691,15 @@ def create_cli_app() -> typer.Typer:
         actor: str = typer.Option(..., "--actor", help="Actor aborting the drill."),
         json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
     ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
+        effective_json = _effective_json_output(ctx, json_output)
         payload = drill_abort(execution_id=execution_id, reason=reason, actor=actor)
         _render_payload(console, payload, json_output=effective_json)
 
-    supervision_app = typer.Typer(help="Supervision console utilities")
-
-    @supervision_app.command("status")
-    def supervision_status_command(
-        ctx: typer.Context,
-        limit: int = typer.Option(20, "--limit", help="Audit/event tail length"),
-        refresh_readiness: bool = typer.Option(
-            False, "--refresh-readiness", help="Recompute ops readiness"
-        ),
-        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
-    ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
-        payload = supervision_status(limit=limit, refresh_readiness=refresh_readiness)
-        _render_payload(console, payload, json_output=effective_json)
-
-    @supervision_app.command("approve")
-    def supervision_approve_command(
-        ctx: typer.Context,
-        request_id: str = typer.Option(..., "--request-id", help="Stage request ID"),
-        actor: str = typer.Option("ops_manager", "--actor", help="Approver"),
-        reason: str | None = typer.Option(None, "--reason", help="Approval reason"),
-        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
-    ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
-        payload = supervision_approve(request_id=request_id, actor=actor, reason=reason)
-        _render_payload(console, payload, json_output=effective_json)
-
-    @supervision_app.command("deny")
-    def supervision_deny_command(
-        ctx: typer.Context,
-        request_id: str = typer.Option(..., "--request-id", help="Stage request ID"),
-        actor: str = typer.Option("ops_manager", "--actor", help="Actor denying request"),
-        reason: str | None = typer.Option(None, "--reason", help="Denial reason"),
-        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
-    ) -> None:
-        ctx_obj = ctx.obj or {"json": False}
-        effective_json = _merge_with_context(json_output, ctx_obj.get("json", False))
-        payload = supervision_deny(request_id=request_id, actor=actor, reason=reason)
-        _render_payload(console, payload, json_output=effective_json)
+    supervision_app = build_supervision_app(
+        console=console,
+        effective_json_output=_effective_json_output,
+        render_payload=_render_payload,
+    )
 
     app.add_typer(ops_app, name="ops")
     app.add_typer(supervision_app, name="supervision")

@@ -20,6 +20,7 @@ reports/exports/
 reports/signal_preview/
 reports/validation_log/*.json
 reports/validation_log/*.sh
+reports/validation_log/**/*.json
 data/cache/dukascopy/
 data/raw/auto/
 data/raw/dukascopy/
