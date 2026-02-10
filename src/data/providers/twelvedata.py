@@ -76,6 +76,7 @@ def _fetch_symbol_bars(
         "symbol": _normalize_symbol(symbol),
         "interval": interval,
         "outputsize": outputsize,
+        "timezone": "UTC",
         "apikey": api_key,
     }
     response = requests.get(_API_URL, params=params, timeout=timeout_sec or 15.0)

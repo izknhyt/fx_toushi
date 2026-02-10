@@ -59,3 +59,26 @@ def test_provider_drops_last_bar(monkeypatch: pytest.MonkeyPatch) -> None:
     assert len(frames) == 1
     assert len(frames[0].bars) == 1
     assert frames[0].bars[0]["ts"] == "2026-01-28T22:45:00Z"
+
+
+def test_provider_requests_utc_timezone(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: dict[str, object] = {}
+    payload = {"status": "ok", "values": []}
+
+    def _fake_get(*_args: object, **kwargs: object) -> _FakeResponse:
+        captured.update(kwargs)
+        return _FakeResponse(200, payload)
+
+    monkeypatch.setattr("src.data.providers.twelvedata.requests.get", _fake_get)
+    provider = TwelveDataProvider(api_key="test", drop_last_bar=True)
+    request = MarketRequest(
+        symbols=["USDJPY"],
+        timeframe="5m",
+        start="2026-01-28T22:40:00Z",
+        end="2026-01-28T22:50:30Z",
+    )
+    list(provider.fetch_bars(request))
+
+    params = captured.get("params")
+    assert isinstance(params, dict)
+    assert params.get("timezone") == "UTC"

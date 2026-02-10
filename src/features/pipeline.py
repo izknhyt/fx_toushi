@@ -302,7 +302,7 @@ class FeaturePipeline:
             return ema.diff()
 
         if indicator.identifier.startswith("sma"):
-            series = close.rolling(window=window, min_periods=window).mean()
+            series = close.rolling(window=window, min_periods=1).mean()
             outputs[indicator.output_keys["default"]] = series
         elif indicator.identifier.startswith("ema") and indicator.identifier != "ema55_slope":
             series = close.ewm(span=window, adjust=False).mean()

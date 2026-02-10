@@ -12,10 +12,11 @@ from __future__ import annotations
 import json
 from collections.abc import Iterable, Mapping
 from dataclasses import asdict, dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import numpy as np
 import pandas as pd
@@ -119,7 +120,7 @@ class PocResult:
     dataset_path: str | list[str]
     dataset_hash: str | list[str]
     window: Mapping[str, str | None]
-    seed_used: int
+    seed_used: int = 0
     returns: list[float] | None = None
     equity_curve: list[float] | None = None
 
@@ -341,6 +342,95 @@ def _safe_float(value: Any) -> float | None:
         return None
 
 
+def _as_datetime(value: Any) -> datetime | None:
+    if isinstance(value, datetime):
+        return value
+    to_pydatetime = getattr(value, "to_pydatetime", None)
+    if callable(to_pydatetime):
+        try:
+            converted = to_pydatetime()
+        except Exception:
+            return None
+        if isinstance(converted, datetime):
+            return converted
+    return None
+
+
+def _weekdays_from_value(value: Any) -> frozenset[int]:
+    token_map = {
+        "mon": 0,
+        "monday": 0,
+        "tue": 1,
+        "tuesday": 1,
+        "wed": 2,
+        "wednesday": 2,
+        "thu": 3,
+        "thursday": 3,
+        "fri": 4,
+        "friday": 4,
+        "sat": 5,
+        "saturday": 5,
+        "sun": 6,
+        "sunday": 6,
+    }
+    if value is None:
+        return frozenset()
+    if isinstance(value, (list, tuple, set, frozenset)):
+        items = list(value)
+    elif isinstance(value, str):
+        items = [part.strip() for part in value.split(",")]
+    else:
+        items = [value]
+    weekdays: list[int] = []
+    for item in items:
+        if isinstance(item, (int, float)):
+            weekday = int(item)
+            if 0 <= weekday <= 6:
+                weekdays.append(weekday)
+            continue
+        token = str(item).strip().lower()
+        if token in token_map:
+            weekdays.append(token_map[token])
+    return frozenset(weekdays)
+
+
+def _hours_from_value(value: Any) -> frozenset[int]:
+    if value is None:
+        return frozenset()
+    if isinstance(value, (list, tuple, set, frozenset)):
+        items = list(value)
+    elif isinstance(value, str):
+        items = [part.strip() for part in value.split(",")]
+    else:
+        items = [value]
+    hours: list[int] = []
+    for item in items:
+        try:
+            hour = int(item)
+        except (TypeError, ValueError):
+            continue
+        if 0 <= hour <= 23:
+            hours.append(hour)
+    return frozenset(hours)
+
+
+def _directions_from_value(value: Any) -> frozenset[str]:
+    if value is None:
+        return frozenset()
+    if isinstance(value, (list, tuple, set, frozenset)):
+        items = list(value)
+    elif isinstance(value, str):
+        items = [part.strip() for part in value.split(",")]
+    else:
+        items = [value]
+    directions: list[str] = []
+    for item in items:
+        token = str(item).strip().lower()
+        if token in {"long", "short"}:
+            directions.append(token)
+    return frozenset(directions)
+
+
 def _hour_allowed_by_session(*, hour: int, session_range: object) -> bool:
     if not isinstance(session_range, str) or "-" not in session_range:
         return True
@@ -360,23 +450,47 @@ def _hour_allowed_by_session(*, hour: int, session_range: object) -> bool:
 def _blocked_hours_from_params(entry_params: Mapping[str, Any]) -> frozenset[int]:
     filters = entry_params.get("filters") if isinstance(entry_params.get("filters"), Mapping) else {}
     raw = entry_params.get("blocked_utc_hours", filters.get("blocked_utc_hours"))
-    if raw is None:
-        return frozenset()
-    if isinstance(raw, str):
-        items = [part.strip() for part in raw.split(",")]
-    elif isinstance(raw, (list, tuple, set, frozenset)):
-        items = list(raw)
-    else:
-        items = [raw]
-    hours: list[int] = []
-    for item in items:
-        try:
-            hour = int(item)
-        except (TypeError, ValueError):
+    return _hours_from_value(raw)
+
+
+def _blocked_local_direction_window_from_params(
+    *,
+    ts: Any,
+    direction: str,
+    entry_params: Mapping[str, Any],
+) -> bool:
+    filters = entry_params.get("filters") if isinstance(entry_params.get("filters"), Mapping) else {}
+    raw_blocks = entry_params.get(
+        "blocked_local_direction_windows",
+        filters.get("blocked_local_direction_windows"),
+    )
+    if not isinstance(raw_blocks, (list, tuple)):
+        return False
+    current_ts = _as_datetime(ts)
+    if current_ts is None:
+        return False
+    if current_ts.tzinfo is None:
+        current_ts = current_ts.replace(tzinfo=timezone.utc)
+    normalized_direction = str(direction).strip().lower()
+    for block in raw_blocks:
+        if not isinstance(block, Mapping):
             continue
-        if 0 <= hour <= 23:
-            hours.append(hour)
-    return frozenset(hours)
+        timezone_name = str(block.get("timezone", "UTC")).strip() or "UTC"
+        try:
+            local_ts = current_ts.astimezone(ZoneInfo(timezone_name))
+        except Exception:
+            continue
+        weekdays = _weekdays_from_value(block.get("weekdays", block.get("weekday")))
+        if weekdays and local_ts.weekday() not in weekdays:
+            continue
+        hours = _hours_from_value(block.get("hours", block.get("hour")))
+        if hours and local_ts.hour not in hours:
+            continue
+        directions = _directions_from_value(block.get("directions", block.get("direction")))
+        if directions and normalized_direction not in directions:
+            continue
+        return True
+    return False
 
 
 def _timeframe_to_minutes(timeframe: str) -> int:
@@ -687,6 +801,12 @@ def simulate_paper_poc(
         ):
             return
         if current_hour in _blocked_hours_from_params(entry_params_signal):
+            return
+        if _blocked_local_direction_window_from_params(
+            ts=current_ts,
+            direction=direction,
+            entry_params=entry_params_signal,
+        ):
             return
 
         entry_base_price = _safe_float(spec.get("entry_base_price"))

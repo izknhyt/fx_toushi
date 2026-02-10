@@ -38,7 +38,10 @@ def _validate_schema(entry: Mapping[str, object]) -> None:
 
 @lru_cache(maxsize=1)
 def _load_validator() -> Draft202012Validator:
-    schema_path = Path("docs/schemas/release_audit.schema.json")
+    repo_root = Path(__file__).resolve().parents[2]
+    schema_path = repo_root / "docs" / "schemas" / "release_audit.schema.json"
+    if not schema_path.exists():
+        schema_path = Path("docs/schemas/release_audit.schema.json")
     schema = json.loads(schema_path.read_text(encoding="utf-8"))
     return Draft202012Validator(schema)
 

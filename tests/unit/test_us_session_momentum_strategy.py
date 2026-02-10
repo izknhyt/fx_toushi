@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, timezone
 
 from src.features.pipeline import FeatureLookupError
 from src.strategies.base import StrategyContext
@@ -30,6 +31,7 @@ class _ClockStub:
 def _context(
     *,
     hour: int = 18,
+    now: object | None = None,
     params: dict | None = None,
     overrides: dict[str, object] | None = None,
 ) -> StrategyContext:
@@ -47,6 +49,7 @@ def _context(
     }
     if overrides:
         payloads.update(overrides)
+    clock_now = now if now is not None else type("T", (), {"hour": hour})()
     return StrategyContext(
         features=_FeatureStub(available_keys=required, payloads=payloads),
         regime=object(),
@@ -54,7 +57,7 @@ def _context(
         account=object(),
         config=object(),
         watchlist=frozenset({"USDJPY"}),
-        clock=_ClockStub(now=type("T", (), {"hour": hour})()),
+        clock=_ClockStub(now=clock_now),
         seed=0,
         parameters=params or {},
     )
@@ -165,3 +168,45 @@ def test_us_session_strategy_parses_blocked_hours_from_string() -> None:
 
     assert blocked_signals == []
     assert len(allowed_signals) == 1
+
+
+def test_us_session_strategy_blocks_local_monday_jst_07_short_only() -> None:
+    strategy = UsSessionTrendPullbackStrategy(default_watchlist=("USDJPY",))
+    monday_jst_07_15 = datetime(2026, 2, 1, 22, 15, tzinfo=timezone.utc)
+    params = {
+        "entry": {
+            "blocked_local_direction_windows": [
+                {
+                    "timezone": "Asia/Tokyo",
+                    "weekdays": ["mon"],
+                    "hours": [7],
+                    "directions": ["short"],
+                }
+            ]
+        }
+    }
+    short_context = _context(
+        hour=22,
+        now=monday_jst_07_15,
+        params=params,
+        overrides={
+            "ema_fast_5m": 149.8,
+            "ema_slow_5m": 150.4,
+            "rsi_14_5m": 45.0,
+            "ema55_slope_1h": -0.07,
+            "close_5m": 149.7,
+            "regime_trend_1h": -0.4,
+        },
+    )
+    long_context = _context(
+        hour=22,
+        now=monday_jst_07_15,
+        params=params,
+    )
+
+    short_signals = list(strategy.generate_signals(short_context))
+    long_signals = list(strategy.generate_signals(long_context))
+
+    assert short_signals == []
+    assert len(long_signals) == 1
+    assert long_signals[0].direction == "long"

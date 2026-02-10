@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import json
+import math
 import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from collections.abc import Mapping
+from types import SimpleNamespace
 from typing import Any
 
 import pandas as pd
@@ -96,16 +99,20 @@ def run_gui_ops_once(
         )
 
     _ensure_signal_log(signal_log_path)
-    signal_preview_payload = signal_preview_run(
-        symbols=symbols,
-        profile_path=profile_path,
-        data_dir=data_dir,
-        feature_config=feature_config,
-        strategy_manifest=strategy_manifest,
-        data_manifest=data_manifest,
-        output_path=None,
-        verbose=False,
-    )
+    previous_signal_log = _set_signal_log_env(signal_log_path)
+    try:
+        signal_preview_payload = signal_preview_run(
+            symbols=symbols,
+            profile_path=profile_path,
+            data_dir=data_dir,
+            feature_config=feature_config,
+            strategy_manifest=strategy_manifest,
+            data_manifest=data_manifest,
+            output_path=None,
+            verbose=False,
+        )
+    finally:
+        _restore_signal_log_env(previous_signal_log)
 
     try:
         backfill_payload = _backfill_signals(
@@ -277,7 +284,9 @@ def _load_dotenv(path: Path) -> None:
         value = value.strip().strip("'").strip('"')
         if not key:
             continue
-        os.environ.setdefault(key, value)
+        current = os.getenv(key)
+        if current is None or current == "":
+            os.environ[key] = value
 
 
 def _entry_minutes_from_entry(entry: Any) -> int:
@@ -333,14 +342,43 @@ def _backfill_signals(
         start_ts = max(start_ts, cutoff) if start_ts else cutoff
 
     records: list[dict[str, Any]] = []
-    from tools.signal_preview import _load_manifest_paths
+    from tools.signal_preview import (
+        _build_gate_state,
+        _candidate_symbol_dataset_paths,
+        _feature_context_for_row,
+        _load_available_curated_frames,
+        _load_manifest_paths,
+    )
     from src.features.pipeline import FeaturePipeline
-    from src.strategies.registry import StrategyManifest
+    from src.strategies.donchian import (
+        DonchianBreakoutLongOnlyStrategy,
+        DonchianBreakoutStrategy,
+        DonchianBreakoutUpperOnlyStrategy,
+    )
+    from src.strategies.ma_rsi import MovingAverageRsiStrategy
+    from src.strategies.registry import StrategyEngine, StrategyManifest
+    from src.strategies.us_session_momentum import UsSessionTrendPullbackStrategy
 
     manifest_paths = _load_manifest_paths(data_manifest)
     if not strategy_manifest.exists():
         return None
     manifest = StrategyManifest.load(strategy_manifest)
+    enabled_strategy_ids = [strategy_id for strategy_id, _ in manifest.enabled_strategies()]
+    non_donchian_strategy_ids = {
+        strategy_id for strategy_id in enabled_strategy_ids if strategy_id not in DONCHIAN_VARIANT_MODES
+    }
+
+    history_engine: StrategyEngine | None = None
+    history_manifest = None
+    if non_donchian_strategy_ids:
+        history_engine = StrategyEngine()
+        history_engine.register_plugin(MovingAverageRsiStrategy())
+        history_engine.register_plugin(DonchianBreakoutStrategy())
+        history_engine.register_plugin(DonchianBreakoutLongOnlyStrategy())
+        history_engine.register_plugin(DonchianBreakoutUpperOnlyStrategy())
+        history_engine.register_plugin(UsSessionTrendPullbackStrategy())
+        history_manifest = history_engine.load_manifest(strategy_manifest)
+
     strategy_variants: list[tuple[str, str, int]] = []
     for strategy_id, mode in DONCHIAN_VARIANT_MODES.items():
         entry = manifest.strategies.get(strategy_id)
@@ -348,23 +386,31 @@ def _backfill_signals(
             continue
         entry_minutes = _entry_minutes_from_entry(entry)
         strategy_variants.append((strategy_id, mode, entry_minutes))
-    if not strategy_variants:
+    if not strategy_variants and history_engine is None:
         return {"status": "ok", "appended": 0}
 
     pipeline = FeaturePipeline.from_config_file(feature_config)
     for symbol in symbols:
-        fallback = manifest_paths.get(symbol)
-        if fallback:
-            curated_path = Path(fallback)
-        else:
-            curated_path = data_dir / symbol.lower() / f"{symbol.lower()}_m5_latest.parquet"
-        if not curated_path.exists():
+        candidate_paths = [
+            path
+            for path in _candidate_symbol_dataset_paths(
+                symbol=symbol,
+                data_dir=data_dir,
+                manifest_paths=manifest_paths,
+            )
+            if path.exists()
+        ]
+        if not candidate_paths:
             continue
-        df = pd.read_parquet(curated_path)
-        if df.empty:
+        frames, _load_warnings = _load_available_curated_frames(candidate_paths)
+        if not frames:
             continue
-        ts_col = "timestamp" if "timestamp" in df.columns else "ts"
-        df[ts_col] = pd.to_datetime(df[ts_col], utc=True, errors="coerce")
+        df = pd.concat(frames, ignore_index=True)
+        df = df.drop_duplicates(subset=["timestamp"]).sort_values("timestamp").reset_index(drop=True)
+        ts_col, parsed_ts = _resolve_time_column(df)
+        if ts_col is None or parsed_ts is None:
+            continue
+        df[ts_col] = parsed_ts
         df = df.dropna(subset=[ts_col]).sort_values(ts_col)
         features = pipeline.compute_feature_matrix(symbol=symbol, price_df=df)
         if features.empty:
@@ -399,6 +445,55 @@ def _backfill_signals(
                     execution=execution if isinstance(execution, dict) else None,
                 )
             )
+
+        if history_engine is not None and history_manifest is not None:
+            gate = _build_gate_state([symbol])
+            account = SimpleNamespace(equity=10_000_000)
+            config_snapshot = SimpleNamespace(cfg_hash="gui_backfill")
+            regime = SimpleNamespace(mode="normal")
+            for strategy_id, entry in history_manifest.enabled_strategies():
+                entry.watchlist = (symbol,)
+                plugin = history_engine._plugins.get(strategy_id)
+                if plugin is not None:
+                    entry.metadata.required_features = tuple(plugin.metadata.required_features)
+            strategy_params_by_id: dict[str, Mapping[str, Any]] = {}
+            for strategy_id, entry in history_manifest.enabled_strategies():
+                params = entry.parameters if isinstance(entry.parameters, Mapping) else {}
+                strategy_params_by_id[strategy_id] = params if isinstance(params, Mapping) else {}
+            for _, row in combined.iterrows():
+                context, clock = _feature_context_for_row(pipeline, [symbol], row)
+                try:
+                    signals = history_engine.run_all(
+                        features=context,
+                        regime=regime,
+                        gate=gate,
+                        account=account,
+                        config=config_snapshot,
+                        clock=clock,
+                        watchlist=[symbol],
+                        seed=0,
+                    )
+                except Exception:
+                    continue
+                for signal in signals:
+                    strategy_id = str(getattr(signal, "strategy_id", "") or "")
+                    if strategy_id not in non_donchian_strategy_ids:
+                        continue
+                    records.append(
+                        _engine_signal_payload(
+                            signal=signal,
+                            ts=row.name,
+                            symbol=symbol,
+                            row=row,
+                            strategy_parameters=strategy_params_by_id.get(strategy_id),
+                            default_target_r_multiple=target_r_multiple,
+                            default_ttl_bars=ttl_bars,
+                            default_trail_atr_mult=trail_atr_mult,
+                            default_spread_pips=spread_pips,
+                            default_slippage_pips=slippage_pips,
+                            default_slippage_std=slippage_std,
+                        )
+                    )
 
     if not records:
         return {"status": "ok", "appended": 0}
@@ -565,6 +660,40 @@ def _coerce_float(value: object) -> float | None:
         return None
 
 
+def _normalize_close_price_for_symbol(close_price: float | None, symbol: str) -> float | None:
+    if close_price is None or not math.isfinite(close_price) or close_price <= 0:
+        return None
+
+    normalized = symbol.upper().strip()
+    if len(normalized) == 6 and normalized.isalpha():
+        if normalized.endswith("JPY"):
+            low, high = 50.0, 300.0
+        else:
+            low, high = 0.2, 5.0
+    else:
+        low, high = 0.01, 100_000.0
+    target = math.sqrt(low * high)
+    candidates = (0.0002, 0.001, 0.002, 0.01, 0.1, 1.0, 10.0, 100.0)
+
+    best_value = close_price
+    best_score = float("inf")
+    for factor in candidates:
+        scaled = close_price * factor
+        if scaled <= 0 or not math.isfinite(scaled):
+            continue
+        distance = abs(math.log(scaled / target))
+        if low <= scaled <= high:
+            score = distance
+        elif scaled < low:
+            score = abs(math.log(low / scaled)) + 5.0
+        else:
+            score = abs(math.log(scaled / high)) + 5.0
+        if score < best_score:
+            best_score = score
+            best_value = scaled
+    return best_value
+
+
 def _evaluate_breakout_filters(
     *,
     direction: str,
@@ -656,6 +785,20 @@ def _signal_payload(
     filter_flags: dict[str, bool] | None = None,
     quality_score: float | None = None,
 ) -> dict[str, Any]:
+    scaled_close = _normalize_close_price_for_symbol(close_price, symbol)
+    if (
+        scaled_close is not None
+        and close_price > 0
+        and math.isfinite(close_price)
+        and math.isfinite(scaled_close)
+    ):
+        scale_factor = scaled_close / close_price
+        close_price = scaled_close
+        level = level * scale_factor
+        buffer = buffer * scale_factor
+        if breakout_width is not None:
+            breakout_width = breakout_width * abs(scale_factor)
+
     if direction == "long":
         entry_price = close_price + spread_pips + slippage_pips
         stop_price = level - buffer
@@ -702,6 +845,106 @@ def _signal_payload(
     }
 
 
+def _engine_signal_payload(
+    *,
+    signal: Any,
+    ts: datetime,
+    symbol: str,
+    row: pd.Series,
+    strategy_parameters: Mapping[str, Any] | None,
+    default_target_r_multiple: float,
+    default_ttl_bars: int,
+    default_trail_atr_mult: float | None,
+    default_spread_pips: float,
+    default_slippage_pips: float,
+    default_slippage_std: float,
+) -> dict[str, Any]:
+    strategy_id = str(getattr(signal, "strategy_id", "") or "")
+    direction = str(getattr(signal, "direction", "") or "").lower() or None
+    confidence = _coerce_float(getattr(signal, "confidence", None))
+    rationale = str(getattr(signal, "rationale", "") or "")
+    score = _coerce_float(getattr(signal, "score", None))
+    quality_score = _coerce_float(getattr(signal, "quality_score", None))
+    params = strategy_parameters if isinstance(strategy_parameters, Mapping) else {}
+    entry_cfg = params.get("entry") if isinstance(params, Mapping) else {}
+    sizing_cfg = params.get("sizing") if isinstance(params, Mapping) else {}
+    execution_cfg = params.get("execution") if isinstance(params, Mapping) else {}
+    entry_cfg = entry_cfg if isinstance(entry_cfg, Mapping) else {}
+    sizing_cfg = sizing_cfg if isinstance(sizing_cfg, Mapping) else {}
+    execution_cfg = execution_cfg if isinstance(execution_cfg, Mapping) else {}
+
+    close_price = _coerce_float(row.get("close_5m"))
+    if close_price is None:
+        close_price = _coerce_float(row.get("close"))
+    close_price = _normalize_close_price_for_symbol(close_price, symbol)
+    if close_price is not None and close_price > 1000:
+        close_price = None
+    atr_value = _coerce_float(row.get("atr_14_1h")) or 0.08
+    atr_sl_mult = _coerce_float(sizing_cfg.get("atr_sl_mult")) or 1.0
+    target_r = _coerce_float(sizing_cfg.get("tp_r_multiple")) or default_target_r_multiple
+    ttl_value = int(sizing_cfg.get("ttl_bars") or default_ttl_bars or 1)
+    ttl_value = max(1, ttl_value)
+    timeframe = str(entry_cfg.get("timeframe", "5m"))
+    entry_minutes = max(1, _timeframe_to_minutes(timeframe))
+    spread_cost = _coerce_float(execution_cfg.get("spread")) or default_spread_pips
+    slippage_cost = _coerce_float(execution_cfg.get("slippage")) or default_slippage_pips
+    slippage_std = _coerce_float(execution_cfg.get("slippage_std")) or default_slippage_std
+
+    risk_distance = 0.01
+    entry_price = None
+    stop_price = None
+    target_price = None
+    expire_at = None
+    if close_price is not None and direction in {"long", "short"}:
+        raw_risk_distance = max(atr_value * max(0.1, atr_sl_mult), 0.0)
+        min_risk_distance = max(close_price * 0.0002, 0.0005)
+        max_risk_distance = max(close_price * 0.02, min_risk_distance)
+        risk_distance = min(max(raw_risk_distance, min_risk_distance), max_risk_distance)
+        if direction == "long":
+            entry_price = close_price + spread_cost + slippage_cost
+            stop_price = entry_price - risk_distance
+            target_price = entry_price + target_r * risk_distance
+        else:
+            entry_price = close_price - spread_cost - slippage_cost
+            stop_price = entry_price + risk_distance
+            target_price = entry_price - target_r * risk_distance
+        expire_at = (ts + timedelta(minutes=entry_minutes * ttl_value)).isoformat().replace("+00:00", "Z")
+
+    return {
+        "event": "signal.generated",
+        "ts": ts.isoformat().replace("+00:00", "Z"),
+        "status": "generated",
+        "reason": None,
+        "strategy_id": strategy_id,
+        "feature_flags": {},
+        "seed": 0,
+        "watchlist": [symbol],
+        "symbol": symbol,
+        "direction": direction,
+        "confidence": confidence,
+        "rationale": rationale,
+        "breakout": None,
+        "level": None,
+        "buffer": None,
+        "breakout_width": None,
+        "filter_flags": None,
+        "quality_score": quality_score,
+        "entry": entry_price,
+        "stop": stop_price,
+        "target": target_price,
+        "expire_at": expire_at,
+        "ttl_bars": ttl_value,
+        "entry_timeframe_minutes": entry_minutes,
+        "target_r_multiple": target_r,
+        "trail_atr_mult": _coerce_float(sizing_cfg.get("atr_sl_mult")) or default_trail_atr_mult,
+        "spread_pips": spread_cost,
+        "slippage_pips": slippage_cost,
+        "slippage_std": slippage_std,
+        "score": score,
+        "badges": None,
+    }
+
+
 def _read_last_signal_ts(path: Path) -> datetime | None:
     if not path.exists():
         return None
@@ -739,6 +982,16 @@ def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def _resolve_time_column(df: pd.DataFrame) -> tuple[str | None, pd.Series | None]:
+    for candidate in ("timestamp", "ts"):
+        if candidate not in df.columns:
+            continue
+        parsed = pd.to_datetime(df[candidate], utc=True, errors="coerce")
+        if parsed.notna().any():
+            return candidate, parsed
+    return None, None
+
+
 def append_price_csv(
     *,
     curated_path: Path,
@@ -766,8 +1019,16 @@ def append_price_csv(
             "output_path": str(output_path),
             "appended": 0,
         }
-    ts_col = "timestamp" if "timestamp" in df.columns else "ts"
-    df[ts_col] = pd.to_datetime(df[ts_col], utc=True, errors="coerce")
+    ts_col, parsed_ts = _resolve_time_column(df)
+    if ts_col is None or parsed_ts is None:
+        return {
+            "status": "empty",
+            "symbol": symbol,
+            "curated_path": str(curated_path),
+            "output_path": str(output_path),
+            "appended": 0,
+        }
+    df[ts_col] = parsed_ts
     df = df.dropna(subset=[ts_col]).sort_values(ts_col)
 
     last_ts = _read_last_csv_ts(output_path)
@@ -785,8 +1046,34 @@ def append_price_csv(
             "appended": 0,
         }
 
+    required = ["open", "high", "low", "close"]
+    missing_required = [column for column in required if column not in df.columns]
+    if missing_required:
+        return {
+            "status": "empty",
+            "symbol": symbol,
+            "curated_path": str(curated_path),
+            "output_path": str(output_path),
+            "appended": 0,
+        }
+
     df = df.copy()
-    df[ts_col] = df[ts_col].dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+    if "volume" not in df.columns:
+        df["volume"] = 0.0
+    df = df[[ts_col, "open", "high", "low", "close", "volume"]].rename(
+        columns={ts_col: "timestamp"}
+    )
+    df["timestamp"] = pd.to_datetime(df["timestamp"], utc=True, errors="coerce")
+    df = df.dropna(subset=["timestamp"])
+    if df.empty:
+        return {
+            "status": "ok",
+            "symbol": symbol,
+            "curated_path": str(curated_path),
+            "output_path": str(output_path),
+            "appended": 0,
+        }
+    df["timestamp"] = df["timestamp"].dt.strftime("%Y-%m-%dT%H:%M:%SZ")
     write_header = not output_path.exists()
     df.to_csv(output_path, mode="a", header=write_header, index=False)
     return {
@@ -795,7 +1082,7 @@ def append_price_csv(
         "curated_path": str(curated_path),
         "output_path": str(output_path),
         "appended": int(len(df)),
-        "last_ts": df[ts_col].iloc[-1],
+        "last_ts": df["timestamp"].iloc[-1],
         "generated_at": _utcnow_iso(),
     }
 

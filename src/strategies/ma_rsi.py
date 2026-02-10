@@ -33,6 +33,10 @@ class MovingAverageRsiStrategy(StrategyPluginProtocol):
         version="0.1.1",
         required_features=frozenset(
             {
+                "open_5m",
+                "high_5m",
+                "low_5m",
+                "volume_5m",
                 "ema_fast_5m",
                 "ema_slow_5m",
                 "rsi_14_5m",

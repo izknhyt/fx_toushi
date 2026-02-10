@@ -43,11 +43,26 @@
       <section class="panel ops-panel">
         <header>
           <h2>データ同期と自動取得</h2>
-          <p>Dukascopy差分補完 → TwelveData 5分ループをワンクリックで開始（既定: upper_only + no US）</p>
+          <p>Dukascopy差分補完 → TwelveData 5分ループをワンクリックで開始（選択戦略のみ実行）</p>
         </header>
         <div class="ops-controls">
+          <div class="ops-field">
+            <span>戦略（チェックしたものだけ実行）</span>
+            <div class="ops-strategy-list" id="ops-strategy-list"></div>
+          </div>
           <button id="ops-start" type="button">同期+ループ開始</button>
+          <button id="ops-sync-only" type="button" class="secondary">同期のみ実行</button>
+          <button id="ops-loop-only" type="button" class="secondary">ループのみ開始</button>
           <button id="ops-stop" type="button" class="secondary">停止</button>
+        </div>
+        <div class="ops-progress">
+          <div class="ops-progress-head">
+            <span id="ops-progress-label">同期進捗: -</span>
+            <span id="ops-progress-eta">ETA: -</span>
+          </div>
+          <div class="ops-progress-track">
+            <div id="ops-progress-fill"></div>
+          </div>
         </div>
         <div class="ops-meta" id="ops-meta">状態: -</div>
         <pre class="ops-log" id="ops-log"></pre>

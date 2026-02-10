@@ -193,8 +193,14 @@ class EventBus:
         log_files = sorted(self._log_base.glob("*.jsonl")) + sorted(
             self._archive_dir.glob("*.jsonl.gz")
         )
-        from_ts_cmp = from_ts.replace(tzinfo=None)
-        to_ts_cmp = to_ts.replace(tzinfo=None) if to_ts else None
+
+        def _as_utc_naive(ts: datetime) -> datetime:
+            if ts.tzinfo is None:
+                return ts
+            return ts.astimezone(timezone.utc).replace(tzinfo=None)
+
+        from_ts_cmp = _as_utc_naive(from_ts)
+        to_ts_cmp = _as_utc_naive(to_ts) if to_ts else _as_utc_naive(self._clock())
         for path in log_files:
             try:
                 opener = gzip.open if path.suffix.endswith("gz") else open
@@ -206,8 +212,8 @@ class EventBus:
                             continue
                         ts_text = record.get("ts")
                         try:
-                            ts_val = datetime.fromisoformat(str(ts_text).replace("Z", "+00:00"))
-                            ts_val = ts_val.replace(tzinfo=None)
+                            parsed = datetime.fromisoformat(str(ts_text).replace("Z", "+00:00"))
+                            ts_val = _as_utc_naive(parsed)
                         except Exception:
                             continue
                         if ts_val < from_ts_cmp or (to_ts_cmp and ts_val > to_ts_cmp):

@@ -2465,15 +2465,7 @@ def create_cli_app() -> typer.Typer:
         if source_dir is not None:
             resolved_source_dir = source_dir
         else:
-            curated_root = Path("data/research/curated")
-            candidates = [
-                curated_root / f"{sync_symbol.lower()}_m5_clean",
-                curated_root / f"{sync_symbol.lower()}_m5",
-                curated_root / sync_symbol.lower(),
-            ]
-            resolved_source_dir = next(
-                (candidate for candidate in candidates if candidate.exists()), candidates[0]
-            )
+            resolved_source_dir = resolve_sync_source_dir(sync_symbol)
 
         try:
             sync_result = run_gui_data_sync(

@@ -48,6 +48,105 @@ def _load_manifest_paths(path: Path) -> dict[str, str]:
     return paths
 
 
+def _latest_dataset_ts(path: Path) -> pd.Timestamp | None:
+    if not path.exists():
+        return None
+    for column in ("timestamp", "ts"):
+        try:
+            frame = pd.read_parquet(path, columns=[column])
+        except Exception:
+            continue
+        if frame.empty:
+            continue
+        series = pd.to_datetime(frame[column], utc=True, errors="coerce").dropna()
+        if series.empty:
+            continue
+        return series.max()
+    return None
+
+
+def _resolve_symbol_dataset_path(
+    *,
+    symbol: str,
+    data_dir: Path,
+    manifest_paths: dict[str, str],
+) -> Path:
+    candidates = _candidate_symbol_dataset_paths(
+        symbol=symbol,
+        data_dir=data_dir,
+        manifest_paths=manifest_paths,
+    )
+
+    existing = [candidate for candidate in candidates if candidate.exists()]
+    if not existing:
+        return candidates[-1]
+
+    best_path = existing[0]
+    best_ts = _latest_dataset_ts(best_path)
+    for candidate in existing[1:]:
+        current_ts = _latest_dataset_ts(candidate)
+        if best_ts is None and current_ts is not None:
+            best_path = candidate
+            best_ts = current_ts
+            continue
+        if current_ts is not None and best_ts is not None and current_ts > best_ts:
+            best_path = candidate
+            best_ts = current_ts
+    return best_path
+
+
+def _candidate_symbol_dataset_paths(
+    *,
+    symbol: str,
+    data_dir: Path,
+    manifest_paths: dict[str, str],
+) -> list[Path]:
+    symbol_token = symbol.lower()
+    if data_dir.name.lower() == symbol_token:
+        symbol_dir = data_dir
+    else:
+        symbol_dir = data_dir / symbol_token
+    fallback_path = symbol_dir / f"{symbol_token}_m5_latest.parquet"
+    candidates: list[Path] = []
+    manifest_value = manifest_paths.get(symbol.upper())
+    if manifest_value:
+        candidates.append(Path(manifest_value))
+    if symbol_dir.exists():
+        merged_candidates = sorted(symbol_dir.glob("*_merged.parquet"))
+        if merged_candidates:
+            best_merged = merged_candidates[0]
+            best_ts = _latest_dataset_ts(best_merged)
+            for candidate in merged_candidates[1:]:
+                current_ts = _latest_dataset_ts(candidate)
+                if best_ts is None and current_ts is not None:
+                    best_merged = candidate
+                    best_ts = current_ts
+                    continue
+                if current_ts is not None and best_ts is not None and current_ts > best_ts:
+                    best_merged = candidate
+                    best_ts = current_ts
+            if best_merged not in candidates:
+                candidates.append(best_merged)
+        latest_candidates = sorted(symbol_dir.glob("*_m5_latest.parquet"))
+        if latest_candidates:
+            best_latest = latest_candidates[0]
+            best_ts = _latest_dataset_ts(best_latest)
+            for candidate in latest_candidates[1:]:
+                current_ts = _latest_dataset_ts(candidate)
+                if best_ts is None and current_ts is not None:
+                    best_latest = candidate
+                    best_ts = current_ts
+                    continue
+                if current_ts is not None and best_ts is not None and current_ts > best_ts:
+                    best_latest = candidate
+                    best_ts = current_ts
+            if best_latest not in candidates:
+                candidates.append(best_latest)
+    if fallback_path not in candidates:
+        candidates.append(fallback_path)
+    return candidates
+
+
 def _build_gate_state(symbols: Iterable[str]) -> SimpleNamespace:
     news = SimpleNamespace(blocked=False, reason=None, release_ts=None)
     calendar = SimpleNamespace(blocked=False, holiday_block=False, reason=None)
@@ -78,11 +177,33 @@ def _build_gate_state(symbols: Iterable[str]) -> SimpleNamespace:
 
 def _load_curated_frame(path: Path) -> pd.DataFrame:
     df = pd.read_parquet(path)
-    if "timestamp" not in df.columns:
-        raise ValueError(f"Missing 'timestamp' column in {path}")
     df = df.copy()
-    df["timestamp"] = pd.to_datetime(df["timestamp"], utc=True)
-    return df.sort_values("timestamp").reset_index(drop=True)
+    for candidate in ("timestamp", "ts"):
+        if candidate not in df.columns:
+            continue
+        parsed = pd.to_datetime(df[candidate], utc=True, errors="coerce")
+        if not parsed.notna().any():
+            continue
+        df["timestamp"] = parsed
+        df = df.dropna(subset=["timestamp"])
+        return df.sort_values("timestamp").reset_index(drop=True)
+    raise ValueError(f"Missing usable timestamp column (timestamp/ts) in {path}")
+
+
+def _load_available_curated_frames(paths: list[Path]) -> tuple[list[pd.DataFrame], list[str]]:
+    frames: list[pd.DataFrame] = []
+    warnings: list[str] = []
+    for path in paths:
+        try:
+            frame = _load_curated_frame(path)
+        except Exception:
+            warnings.append(f"invalid curated data: {path}")
+            continue
+        if frame.empty:
+            warnings.append(f"empty dataset: {path}")
+            continue
+        frames.append(frame)
+    return frames, warnings
 
 
 def _feature_context_for_row(
@@ -243,18 +364,31 @@ def run_preview(
 
     manifest_paths = _load_manifest_paths(data_manifest)
     for symbol in resolved_symbols:
-        fallback = manifest_paths.get(symbol)
-        if fallback:
-            curated_path = Path(fallback)
-        else:
-            curated_path = data_dir / symbol.lower() / f"{symbol.lower()}_m5_latest.parquet"
-        if not curated_path.exists():
+        curated_path = _resolve_symbol_dataset_path(
+            symbol=symbol,
+            data_dir=data_dir,
+            manifest_paths=manifest_paths,
+        )
+        candidate_paths = [
+            path
+            for path in _candidate_symbol_dataset_paths(
+                symbol=symbol,
+                data_dir=data_dir,
+                manifest_paths=manifest_paths,
+            )
+            if path.exists()
+        ]
+        if not candidate_paths:
             results["warnings"].append(f"missing curated data: {curated_path}")
             continue
 
-        df = _load_curated_frame(curated_path)
+        frames, load_warnings = _load_available_curated_frames(candidate_paths)
+        results["warnings"].extend(load_warnings)
+        if not frames:
+            continue
+        df = pd.concat(frames, ignore_index=True)
+        df = df.drop_duplicates(subset=["timestamp"]).sort_values("timestamp").reset_index(drop=True)
         if df.empty:
-            results["warnings"].append(f"empty dataset: {curated_path}")
             continue
 
         feature_matrix = pipeline.compute_feature_matrix(symbol=symbol, price_df=df)

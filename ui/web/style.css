@@ -161,6 +161,43 @@ h1 {
   flex-wrap: wrap;
 }
 
+.ops-field {
+  display: grid;
+  gap: 4px;
+  min-width: 460px;
+}
+
+.ops-field span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.ops-strategy-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid #45506a;
+  border-radius: 10px;
+  background: #101827;
+}
+
+.ops-strategy-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border: 1px solid #2e3a54;
+  border-radius: 8px;
+  background: #0d1422;
+  color: #d8e0f1;
+  font-size: 12px;
+}
+
+.ops-strategy-item input {
+  margin: 0;
+}
+
 .ops-controls button {
   background: linear-gradient(135deg, #2f7dff, #2e58d6);
   color: #fff;
@@ -186,6 +223,34 @@ h1 {
   color: var(--muted);
   font-size: 12px;
   margin-bottom: 8px;
+}
+
+.ops-progress {
+  margin-bottom: 10px;
+}
+
+.ops-progress-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--muted);
+  font-size: 12px;
+  margin-bottom: 6px;
+}
+
+.ops-progress-track {
+  border: 1px solid var(--border);
+  background: rgba(16, 20, 30, 0.8);
+  border-radius: 999px;
+  height: 10px;
+  overflow: hidden;
+}
+
+#ops-progress-fill {
+  height: 100%;
+  width: 0%;
+  background: linear-gradient(90deg, #2f7dff, #57d2a9);
+  transition: width 0.25s ease;
 }
 
 .ops-log {

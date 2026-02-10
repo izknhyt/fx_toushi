@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import subprocess
 import sys
 from collections.abc import Iterable
@@ -23,23 +24,131 @@ def _utcnow_iso() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
-def _normalize_frame(df: pd.DataFrame) -> pd.DataFrame:
+_PRICE_SCALE_CANDIDATES = (
+    0.0001,
+    0.0002,
+    0.0005,
+    0.001,
+    0.002,
+    0.005,
+    0.01,
+    0.02,
+    0.05,
+    0.1,
+    0.2,
+    0.5,
+    1.0,
+    2.0,
+    5.0,
+    10.0,
+    20.0,
+    50.0,
+    100.0,
+    200.0,
+    500.0,
+    1000.0,
+)
+
+
+def _price_band(symbol: str) -> tuple[float, float]:
+    normalized = symbol.upper().strip()
+    if len(normalized) == 6 and normalized.isalpha():
+        if normalized.endswith("JPY"):
+            return 50.0, 300.0
+        return 0.2, 5.0
+    return 0.01, 100_000.0
+
+
+def _infer_scale_factor(median_close: float, *, symbol: str) -> float:
+    if not math.isfinite(median_close) or median_close <= 0:
+        return 1.0
+    low, high = _price_band(symbol)
+    target = math.sqrt(low * high)
+    best_factor = 1.0
+    best_score = float("inf")
+    for factor in _PRICE_SCALE_CANDIDATES:
+        scaled = median_close * factor
+        if scaled <= 0 or not math.isfinite(scaled):
+            continue
+        distance = abs(math.log(scaled / target))
+        if low <= scaled <= high:
+            score = distance
+        elif scaled < low:
+            score = abs(math.log(low / scaled)) + 5.0
+        else:
+            score = abs(math.log(scaled / high)) + 5.0
+        if score < best_score:
+            best_score = score
+            best_factor = factor
+    return best_factor
+
+
+def _coalesce_timestamp(df: pd.DataFrame) -> pd.DataFrame:
+    df = df.copy()
+    time_candidates = ("ts", "Datetime", "datetime", "Date", "date", "time")
+    if "timestamp" not in df.columns:
+        for candidate in time_candidates:
+            if candidate in df.columns:
+                df["timestamp"] = df[candidate]
+                break
+        return df
+
+    for candidate in time_candidates:
+        if candidate not in df.columns:
+            continue
+        df["timestamp"] = df["timestamp"].where(df["timestamp"].notna(), df[candidate])
+    return df
+
+
+def _normalize_frame(df: pd.DataFrame, *, symbol: str) -> pd.DataFrame:
+    df = _coalesce_timestamp(df)
     rename_map = {
         "o": "open",
         "h": "high",
         "l": "low",
         "c": "close",
         "v": "volume",
-        "Datetime": "timestamp",
+        "tick_volume": "volume",
+        "volume_5m": "volume",
     }
     df = df.rename(columns=rename_map)
-    required = ["timestamp", "open", "high", "low", "close", "volume"]
+    required = ["timestamp", "open", "high", "low", "close"]
     missing = [col for col in required if col not in df.columns]
     if missing:
         raise ValueError(f"missing columns: {missing}")
-    df = df[required].copy()
+    if "volume" not in df.columns:
+        df["volume"] = 0.0
+    df = df[["timestamp", "open", "high", "low", "close", "volume"]].copy()
     df["timestamp"] = pd.to_datetime(df["timestamp"], utc=True, errors="coerce")
     df = df.dropna(subset=["timestamp"])
+    for col in ["open", "high", "low", "close", "volume"]:
+        df[col] = pd.to_numeric(df[col], errors="coerce")
+    df = df.dropna(subset=["open", "high", "low", "close", "volume"])
+    if df.empty:
+        raise ValueError("empty frame")
+
+    factor = _infer_scale_factor(float(df["close"].median()), symbol=symbol)
+    if not math.isclose(factor, 1.0):
+        df[["open", "high", "low", "close"]] = (
+            df[["open", "high", "low", "close"]] * factor
+        )
+
+    positive_mask = (df[["open", "high", "low", "close"]] > 0).all(axis=1)
+    range_mask = (
+        (df["high"] >= df[["open", "low", "close"]].max(axis=1))
+        & (df["low"] <= df[["open", "high", "close"]].min(axis=1))
+    )
+    df = df[positive_mask & range_mask]
+    if df.empty:
+        raise ValueError("no valid OHLC rows after normalization")
+
+    low, high = _price_band(symbol)
+    close = df["close"]
+    sane_mask = close.between(low * 0.2, high * 5.0)
+    df = df[sane_mask]
+    if df.empty:
+        raise ValueError("price band sanity check removed all rows")
+
     df["timestamp"] = df["timestamp"].dt.tz_convert(None)
     return df
 
@@ -52,22 +161,41 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _iter_sources(source_dir: Path) -> Iterable[Path]:
+def _iter_sources(source_dir: Path, *, symbol: str) -> Iterable[Path]:
+    symbol_prefix = symbol.lower()
     for path in sorted(source_dir.glob("*.parquet")):
-        name = path.name
-        if name.endswith("_merged.parquet") or name.endswith("_latest.parquet"):
+        name = path.name.lower()
+        if not name.startswith(symbol_prefix):
+            continue
+        if name.endswith("_merged.parquet"):
+            continue
+        # Merge only intraday 5m datasets from mixed source directories.
+        if "_m5_" not in name and "_5m_" not in name:
+            continue
+        if "synth" in name or "_parsed" in name:
             continue
         yield path
 
 
-def _load_sources(source_dir: Path, extra_csv: list[Path]) -> pd.DataFrame:
+def _load_sources(source_dir: Path, extra_csv: list[Path], *, symbol: str) -> pd.DataFrame:
     frames: list[pd.DataFrame] = []
-    for path in _iter_sources(source_dir):
-        frames.append(_normalize_frame(pd.read_parquet(path)))
+    skipped: list[str] = []
+    for path in _iter_sources(source_dir, symbol=symbol):
+        try:
+            frames.append(_normalize_frame(pd.read_parquet(path), symbol=symbol))
+        except Exception as exc:
+            skipped.append(f"{path.name}: {exc}")
     for path in extra_csv:
-        frames.append(_normalize_frame(pd.read_csv(path)))
+        try:
+            frames.append(_normalize_frame(pd.read_csv(path), symbol=symbol))
+        except Exception as exc:
+            skipped.append(f"{path.name}: {exc}")
     if not frames:
         raise SystemExit(f"no source data found in {source_dir}")
+    if skipped:
+        sys.stderr.write(f"Skipped invalid sources ({len(skipped)}):\n")
+        for item in skipped:
+            sys.stderr.write(f"- {item}\n")
     merged = pd.concat(frames, ignore_index=True)
     merged = merged.drop_duplicates(subset=["timestamp"]).sort_values("timestamp")
     return merged
@@ -207,7 +335,7 @@ def main() -> int:
     extra_csv = [Path(path) for path in args.extra_csv]
 
     if merged_path is None:
-        merged = _load_sources(source_dir, extra_csv)
+        merged = _load_sources(source_dir, extra_csv, symbol=symbol)
         window_from = merged["timestamp"].min().strftime("%Y-%m-%d")
         window_to = merged["timestamp"].max().strftime("%Y-%m-%d")
         merged_name = (
@@ -217,7 +345,7 @@ def main() -> int:
         merged_path = source_dir / merged_name
         merged.to_parquet(merged_path, index=False)
     else:
-        merged = _normalize_frame(pd.read_parquet(merged_path))
+        merged = _normalize_frame(pd.read_parquet(merged_path), symbol=symbol)
         window_from = merged["timestamp"].min().strftime("%Y-%m-%d")
         window_to = merged["timestamp"].max().strftime("%Y-%m-%d")
         source_dir = merged_path.parent

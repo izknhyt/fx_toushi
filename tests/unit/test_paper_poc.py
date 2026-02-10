@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -309,3 +310,52 @@ def test_simulate_paper_poc_enforces_entry_time_filters_on_pending_entries(
     assert 20 not in opened_hours
     assert 21 not in opened_hours
     assert 0 not in opened_hours
+
+
+def test_simulate_paper_poc_enforces_local_direction_filters_on_pending_entries(
+    project_root: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    def _fake_run_all(*args, **kwargs):  # noqa: ANN002, ANN003
+        return [SimpleNamespace(strategy_id="m1_us_session_trend_pullback", direction="long")]
+
+    monkeypatch.setattr(paper_poc.StrategyEngine, "run_all", _fake_run_all)
+
+    base_manifest = (
+        project_root / "config" / "strategy_manifest.hybrid_us_experiment.yaml"
+    ).read_text(encoding="utf-8")
+    block = (
+        "        blocked_local_direction_windows:\n"
+        "          - timezone: \"UTC\"\n"
+        "            weekdays: [\"mon\"]\n"
+        "            hours: [20]\n"
+        "            directions: [\"long\"]\n"
+    )
+    patched_manifest = re.sub(
+        r"(?m)^        blocked_utc_hours:\s*\[[^\]]*\]\n",
+        "        blocked_utc_hours: []\n" + block,
+        base_manifest,
+        count=1,
+    )
+    manifest_path = tmp_path / "manifest_local_block.yaml"
+    manifest_path.write_text(patched_manifest, encoding="utf-8")
+
+    result = simulate_paper_poc(
+        strategy="m1_us_session_trend_pullback",
+        strategy_manifest_path=manifest_path,
+        data_manifest_path=project_root / "reports" / "data_manifest.json",
+        feature_config_path=project_root / "config" / "feature_pipeline.yaml",
+        risk_policy_path=project_root / "config" / "risk_policy.yaml",
+        window_from="2024-01-01",
+        window_to="2024-01-03",
+        symbols=["USDJPY"],
+        spread_pips=0.005,
+        slippage_pips=0.0015,
+        slippage_std=0.001,
+        ttl_bars=1,
+        seed=7,
+        entry_on_next_bar=True,
+    )
+    assert result.trades
+    opened_utc = [pd.Timestamp(trade.opened_at).tz_convert("UTC") for trade in result.trades]
+    monday_20 = [ts for ts in opened_utc if ts.weekday() == 0 and ts.hour == 20]
+    assert monday_20 == []

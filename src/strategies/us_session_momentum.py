@@ -9,6 +9,8 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
+from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 
 from src.strategies.base import StrategyContext, StrategyMetadata, StrategyPluginProtocol
 
@@ -140,6 +142,116 @@ class UsSessionTrendPullbackStrategy(StrategyPluginProtocol):
                 values.append(hour)
         return frozenset(values)
 
+    @staticmethod
+    def _as_datetime(value: object) -> datetime | None:
+        if isinstance(value, datetime):
+            return value
+        to_pydatetime = getattr(value, "to_pydatetime", None)
+        if callable(to_pydatetime):
+            try:
+                converted = to_pydatetime()
+            except Exception:
+                return None
+            if isinstance(converted, datetime):
+                return converted
+        return None
+
+    @staticmethod
+    def _weekdays(value: object) -> frozenset[int]:
+        token_map = {
+            "mon": 0,
+            "monday": 0,
+            "tue": 1,
+            "tuesday": 1,
+            "wed": 2,
+            "wednesday": 2,
+            "thu": 3,
+            "thursday": 3,
+            "fri": 4,
+            "friday": 4,
+            "sat": 5,
+            "saturday": 5,
+            "sun": 6,
+            "sunday": 6,
+        }
+        if value is None:
+            return frozenset()
+        if isinstance(value, (list, tuple, set, frozenset)):
+            raw_items = list(value)
+        elif isinstance(value, str):
+            raw_items = [item.strip() for item in value.split(",")]
+        else:
+            raw_items = [value]
+        weekdays: list[int] = []
+        for item in raw_items:
+            if isinstance(item, (int, float)):
+                weekday = int(item)
+                if 0 <= weekday <= 6:
+                    weekdays.append(weekday)
+                continue
+            token = str(item).strip().lower()
+            if token in token_map:
+                weekdays.append(token_map[token])
+        return frozenset(weekdays)
+
+    @staticmethod
+    def _directions(value: object) -> frozenset[str]:
+        if value is None:
+            return frozenset()
+        if isinstance(value, (list, tuple, set, frozenset)):
+            raw_items = list(value)
+        elif isinstance(value, str):
+            raw_items = [item.strip() for item in value.split(",")]
+        else:
+            raw_items = [value]
+        directions: list[str] = []
+        for item in raw_items:
+            token = str(item).strip().lower()
+            if token in {"long", "short"}:
+                directions.append(token)
+        return frozenset(directions)
+
+    def _blocked_local_direction_window(
+        self,
+        *,
+        ts: object,
+        direction: str,
+        entry: Mapping[str, object],
+        filters: Mapping[str, object],
+    ) -> bool:
+        raw_blocks = entry.get(
+            "blocked_local_direction_windows",
+            filters.get("blocked_local_direction_windows"),
+        )
+        if not isinstance(raw_blocks, (list, tuple)):
+            return False
+        current_ts = self._as_datetime(ts)
+        if current_ts is None:
+            return False
+        if current_ts.tzinfo is None:
+            current_ts = current_ts.replace(tzinfo=timezone.utc)
+        for block in raw_blocks:
+            if not isinstance(block, Mapping):
+                continue
+            timezone_name = str(block.get("timezone", "UTC")).strip() or "UTC"
+            try:
+                local_ts = current_ts.astimezone(ZoneInfo(timezone_name))
+            except Exception:
+                continue
+            weekdays = self._weekdays(block.get("weekdays", block.get("weekday")))
+            if weekdays and local_ts.weekday() not in weekdays:
+                continue
+            hours = self._blocked_hours(block.get("hours", block.get("hour")))
+            if hours and local_ts.hour not in hours:
+                continue
+            blocked_directions = self._directions(
+                block.get("directions", block.get("direction"))
+            )
+            if blocked_directions and direction not in blocked_directions:
+                continue
+            return True
+        return False
+
     def _score_components(
         self,
         *,
@@ -249,6 +361,13 @@ class UsSessionTrendPullbackStrategy(StrategyPluginProtocol):
                 continue
 
             direction = "long" if long_bias else "short"
+            if self._blocked_local_direction_window(
+                ts=context.clock.now,
+                direction=direction,
+                entry=entry,
+                filters=filters,
+            ):
+                continue
             confidence, quality = self._score_components(
                 trend_gap=trend_gap,
                 atr=atr,
