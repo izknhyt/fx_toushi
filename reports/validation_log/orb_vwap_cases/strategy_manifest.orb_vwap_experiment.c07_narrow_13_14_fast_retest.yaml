@@ -1,0 +1,191 @@
+# JSON
+{
+  "schema_version": 0,
+  "manifest_name": "ORB VWAP Experiment (USDJPY M5 UTC)",
+  "revision_tag": "ORB-VWAP-EXP-c07_narrow_13_14_fast_retest",
+  "last_reviewed_at": "2026-02-10T00:00:00Z",
+  "notes": "用manifest。USDJPY/M5/UTC固定で\n_us_orb_vwap_retest と比較対象 m1_us_session_trend_pullback を有効化。\nは独立評価し、配分ロジックは後段で扱う。",
+  "strategies": {
+    "m1_us_orb_vwap_retest": {
+      "enabled": true,
+      "priority": 58,
+      "weight": 0.5,
+      "determinism_key": "us_orb_vwap_retest_v1",
+      "metadata": {
+        "name": "M1 US ORB + VWAP Retest Continuation",
+        "version": "0.1.0",
+        "required_features": [
+          "open_5m",
+          "high_5m",
+          "low_5m",
+          "close_5m",
+          "volume_5m",
+          "atr_14_1h",
+          "session_tag_5m"
+        ]
+      },
+      "watchlist": [
+        "USDJPY"
+      ],
+      "lifecycle": {
+        "status": "active",
+        "last_validated_at": "2026-02-10T00:00:00Z",
+        "deprecated_after_days": 365,
+        "runbook_ref": "docs/runbooks/GOV-STRAT-01.md#orb_vwap_experiment"
+      },
+      "feature_flags": {
+        "determinism_enforced": true,
+        "guarded_board_required": false
+      },
+      "datasets": [
+        {
+          "id": "reports/data_manifest.json::m1_baseline_ma_rsi",
+          "version": "2024Q1",
+          "validation_playbook_id": "AC-01"
+        }
+      ],
+      "governance": {
+        "ticket_id": "TICKET-ORB-VWAP-EXP",
+        "last_board_decision": "2026-02-10T00:00:00Z",
+        "reviewers": [
+          "Quant Lead",
+          "Ops Manager"
+        ]
+      },
+      "parameters": {
+        "entry": {
+          "timeframe": "5m",
+          "session_utc_range": "13-14",
+          "session_start_utc": "13:30",
+          "orb_minutes": 15,
+          "retest_max_bars": 4,
+          "max_signals_per_session": 1,
+          "allowed_session_tags": [
+            "newyork",
+            "overlap",
+            "us"
+          ],
+          "filters": {
+            "min_breakout_abs": 0.0,
+            "breakout_atr_mult": 0.05,
+            "breakout_cost_mult": 1.6,
+            "vwap_bias_cost_mult": 0.0,
+            "retest_min_abs": 0.0,
+            "retest_cost_mult": 0.8,
+            "retest_atr_mult": 0.0,
+            "max_cost_to_range_ratio": 0.7,
+            "spread_max": 0.007,
+            "kill_switch_blocked_states": [
+              "soft_stop",
+              "hard_stop",
+              "triggered"
+            ],
+            "board_modes": [
+              "normal",
+              "guarded"
+            ]
+          }
+        },
+        "sizing": {
+          "per_trade_risk_pct": 0.6,
+          "atr_sl_mult": 1.0,
+          "tp_r_multiple": 1.8,
+          "ttl_bars": 10,
+          "max_concurrent_positions": {
+            "overall": 2,
+            "per_currency_bucket": 1
+          }
+        },
+        "execution": {
+          "spread": 0.005,
+          "slippage": 0.0015,
+          "slippage_std": 0.001
+        }
+      }
+    },
+    "m1_us_session_trend_pullback": {
+      "enabled": true,
+      "priority": 56,
+      "weight": 0.5,
+      "determinism_key": "us_session_trend_pullback_v1",
+      "metadata": {
+        "name": "M1 US Session Trend Pullback",
+        "version": "0.1.0",
+        "required_features": [
+          "ema_fast_5m",
+          "ema_slow_5m",
+          "rsi_14_5m",
+          "atr_14_1h",
+          "ema55_slope_1h",
+          "close_5m",
+          "session_tag_5m",
+          "regime_trend_1h"
+        ]
+      },
+      "watchlist": [
+        "USDJPY"
+      ],
+      "lifecycle": {
+        "status": "active",
+        "last_validated_at": "2026-02-10T00:00:00Z",
+        "deprecated_after_days": 365,
+        "runbook_ref": "docs/runbooks/GOV-STRAT-01.md#orb_vwap_experiment"
+      },
+      "feature_flags": {
+        "determinism_enforced": true,
+        "guarded_board_required": false
+      },
+      "datasets": [
+        {
+          "id": "reports/data_manifest.json::m1_baseline_ma_rsi",
+          "version": "2024Q1",
+          "validation_playbook_id": "AC-01"
+        }
+      ],
+      "governance": {
+        "ticket_id": "TICKET-ORB-VWAP-EXP",
+        "last_board_decision": "2026-02-10T00:00:00Z",
+        "reviewers": [
+          "Quant Lead",
+          "Ops Manager"
+        ]
+      },
+      "parameters": {
+        "entry": {
+          "timeframe": "5m",
+          "session_utc_range": "13-21",
+          "blocked_utc_hours": [
+            20,
+            21
+          ],
+          "trend_threshold": 0.0,
+          "slope_min": 0.02,
+          "rsi_long_min": 48,
+          "rsi_long_max": 64,
+          "rsi_short_min": 36,
+          "rsi_short_max": 52,
+          "cooldown_bars": 3,
+          "filters": {
+            "atr_min": 0.08,
+            "spread_max": 0.007
+          }
+        },
+        "sizing": {
+          "per_trade_risk_pct": 0.6,
+          "atr_sl_mult": 1.0,
+          "tp_r_multiple": 1.8,
+          "ttl_bars": 10,
+          "max_concurrent_positions": {
+            "overall": 2,
+            "per_currency_bucket": 1
+          }
+        },
+        "execution": {
+          "spread": 0.005,
+          "slippage": 0.0015,
+          "slippage_std": 0.001
+        }
+      }
+    }
+  }
+}

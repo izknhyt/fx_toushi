@@ -319,23 +319,14 @@ def run_preview(
         raise SystemExit("No symbols provided. Use --symbols or configure data_ingestion.symbols.")
 
     from src.features.pipeline import FeaturePipeline
-    from src.strategies.donchian import (
-        DonchianBreakoutLongOnlyStrategy,
-        DonchianBreakoutStrategy,
-        DonchianBreakoutUpperOnlyStrategy,
-    )
-    from src.strategies.ma_rsi import MovingAverageRsiStrategy
-    from src.strategies.us_session_momentum import UsSessionTrendPullbackStrategy
     from src.strategies.allocation import StrategyAllocationPolicy
+    from src.strategies.plugin_catalog import build_default_plugins
     from src.strategies.registry import StrategyEngine
 
     pipeline = FeaturePipeline.from_config_file(feature_config)
     engine = StrategyEngine()
-    engine.register_plugin(MovingAverageRsiStrategy())
-    engine.register_plugin(DonchianBreakoutStrategy())
-    engine.register_plugin(DonchianBreakoutLongOnlyStrategy())
-    engine.register_plugin(DonchianBreakoutUpperOnlyStrategy())
-    engine.register_plugin(UsSessionTrendPullbackStrategy())
+    for plugin in build_default_plugins().values():
+        engine.register_plugin(plugin)
     manifest = engine.load_manifest(strategy_manifest)
     if allocation_config and allocation_config.exists():
         engine.set_allocation_policy(

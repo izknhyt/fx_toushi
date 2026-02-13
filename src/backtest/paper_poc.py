@@ -23,14 +23,8 @@ import pandas as pd
 import yaml
 
 from src.features.pipeline import FeaturePipeline
-from src.strategies.donchian import (
-    DonchianBreakoutLongOnlyStrategy,
-    DonchianBreakoutStrategy,
-    DonchianBreakoutUpperOnlyStrategy,
-)
-from src.strategies.ma_rsi import MovingAverageRsiStrategy
-from src.strategies.us_session_momentum import UsSessionTrendPullbackStrategy
 from src.strategies.allocation import StrategyAllocationPolicy
+from src.strategies.plugin_catalog import apply_manifest_parameters, build_default_plugins
 from src.strategies.registry import StrategyEngine, StrategyManifest
 
 DEFAULT_DATA_MANIFEST = Path("reports") / "data_manifest.json"
@@ -137,22 +131,57 @@ class PocResult:
         }
 
 
-def _load_data_manifest(path: Path, strategy: str) -> Mapping[str, Any]:
-    manifest = json.loads(path.read_text(encoding="utf-8"))
-    entry = manifest.get("strategies", {}).get(strategy)
-    if not entry:
-        fallback = {
-            "m1_baseline_donchian_long_only": "m1_baseline_donchian",
-            "m1_baseline_donchian_upper_only": "m1_baseline_donchian",
-            "m1_us_session_trend_pullback": "m1_baseline_ma_rsi",
-        }.get(strategy)
-        if fallback:
-            entry = manifest.get("strategies", {}).get(fallback)
-    if not entry:
-        raise KeyError(f"Strategy '{strategy}' missing in {path}")
-    if "dataset_path" not in entry or "dataset_sha256" not in entry:
-        raise ValueError(f"Strategy '{strategy}' manifest entry missing dataset information")
-    return entry
+def _load_data_manifest_payload(path: Path) -> Mapping[str, Any]:
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    strategies = payload.get("strategies")
+    if not isinstance(strategies, Mapping):
+        raise ValueError(f"Data manifest '{path}' must contain a strategies mapping")
+    return payload
+
+
+def _dataset_ref_strategy_id(value: object) -> str | None:
+    if not isinstance(value, str):
+        return None
+    token = value.strip()
+    if not token:
+        return None
+    if "::" not in token:
+        return None
+    _, candidate = token.rsplit("::", 1)
+    candidate = candidate.strip()
+    return candidate or None
+
+
+def _load_data_manifest_entry(
+    *,
+    manifest_payload: Mapping[str, Any],
+    strategy_id: str,
+    manifest_entry: Any,
+) -> Mapping[str, Any]:
+    strategies = manifest_payload.get("strategies")
+    if not isinstance(strategies, Mapping):
+        raise ValueError("Data manifest payload missing 'strategies' mapping")
+
+    candidate_ids: list[str] = [strategy_id]
+    datasets = getattr(manifest_entry, "datasets", ())
+    for dataset in datasets:
+        dataset_id = getattr(dataset, "id", None)
+        candidate = _dataset_ref_strategy_id(dataset_id)
+        if candidate and candidate not in candidate_ids:
+            candidate_ids.append(candidate)
+
+    for candidate in candidate_ids:
+        entry = strategies.get(candidate)
+        if not isinstance(entry, Mapping):
+            continue
+        if "dataset_path" not in entry or "dataset_sha256" not in entry:
+            raise ValueError(
+                f"Data manifest entry '{candidate}' missing dataset_path/dataset_sha256"
+            )
+        return entry
+    raise KeyError(
+        f"Strategy '{strategy_id}' missing in data manifest candidates: {candidate_ids}"
+    )
 
 
 def _restrict_manifest_to_strategy(manifest: StrategyManifest, strategy_id: str) -> None:
@@ -505,44 +534,6 @@ def _timeframe_to_minutes(timeframe: str) -> int:
     raise ValueError(f"Unsupported timeframe '{timeframe}'")
 
 
-def _register_plugin_for_strategy(
-    *,
-    engine: StrategyEngine,
-    strategy_id: str,
-    manifest_entry: Any,
-) -> None:
-    if strategy_id == "m1_baseline_ma_rsi":
-        plugin = MovingAverageRsiStrategy()
-        entry_params = (
-            manifest_entry.parameters.get("entry", {})
-            if hasattr(manifest_entry, "parameters")
-            else {}
-        )
-        plugin.rsi_long_threshold = float(
-            entry_params.get("rsi_long_threshold", plugin.rsi_long_threshold)
-        )
-        plugin.rsi_short_threshold = float(
-            entry_params.get("rsi_short_threshold", plugin.rsi_short_threshold)
-        )
-        plugin.min_gap_pct = float(entry_params.get("min_gap_pct", plugin.min_gap_pct))
-        plugin._cooldown_bars = int(entry_params.get("cooldown_bars", plugin.cooldown_bars()))
-        engine.register_plugin(plugin)
-        return
-    if strategy_id == "m1_baseline_donchian":
-        engine.register_plugin(DonchianBreakoutStrategy())
-        return
-    if strategy_id == "m1_baseline_donchian_long_only":
-        engine.register_plugin(DonchianBreakoutLongOnlyStrategy())
-        return
-    if strategy_id == "m1_baseline_donchian_upper_only":
-        engine.register_plugin(DonchianBreakoutUpperOnlyStrategy())
-        return
-    if strategy_id == "m1_us_session_trend_pullback":
-        engine.register_plugin(UsSessionTrendPullbackStrategy())
-        return
-    raise KeyError(f"Unknown strategy '{strategy_id}' for PoC simulation")
-
-
 @dataclass(slots=True)
 class RiskState:
     """Tracks streak-aware risk sizing state."""
@@ -625,9 +616,14 @@ def simulate_paper_poc(
     if not selected_strategy_ids:
         raise ValueError("No strategies selected for PoC simulation")
 
+    data_manifest_payload = _load_data_manifest_payload(data_manifest_path)
     data_entries = {
-        strategy_id: _load_data_manifest(data_manifest_path, strategy_id)
-        for strategy_id in selected_strategy_ids
+        strategy_id: _load_data_manifest_entry(
+            manifest_payload=data_manifest_payload,
+            strategy_id=strategy_id,
+            manifest_entry=entry,
+        )
+        for strategy_id, entry in selected_entries
     }
     primary_strategy_id = selected_strategy_ids[0]
     primary_data_entry = data_entries[primary_strategy_id]
@@ -683,12 +679,14 @@ def simulate_paper_poc(
     atr_sl_mult = float(primary_sizing_params.get("atr_sl_mult", 1.0))
 
     engine = StrategyEngine()
+    available_plugins = build_default_plugins()
     for strategy_id, entry in selected_entries:
-        _register_plugin_for_strategy(
-            engine=engine,
-            strategy_id=strategy_id,
-            manifest_entry=entry,
-        )
+        plugin = available_plugins.get(strategy_id)
+        if plugin is None:
+            raise KeyError(f"Unknown strategy '{strategy_id}' for PoC simulation")
+        params = entry.parameters if hasattr(entry, "parameters") else {}
+        apply_manifest_parameters(plugin, parameters=params if isinstance(params, Mapping) else {})
+        engine.register_plugin(plugin)
     engine._manifest = strategy_manifest  # type: ignore[attr-defined]
     if allocation_config_path is not None and allocation_config_path.exists():
         engine.set_allocation_policy(

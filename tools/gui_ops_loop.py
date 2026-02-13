@@ -350,14 +350,8 @@ def _backfill_signals(
         _load_manifest_paths,
     )
     from src.features.pipeline import FeaturePipeline
-    from src.strategies.donchian import (
-        DonchianBreakoutLongOnlyStrategy,
-        DonchianBreakoutStrategy,
-        DonchianBreakoutUpperOnlyStrategy,
-    )
-    from src.strategies.ma_rsi import MovingAverageRsiStrategy
+    from src.strategies.plugin_catalog import build_default_plugins
     from src.strategies.registry import StrategyEngine, StrategyManifest
-    from src.strategies.us_session_momentum import UsSessionTrendPullbackStrategy
 
     manifest_paths = _load_manifest_paths(data_manifest)
     if not strategy_manifest.exists():
@@ -372,11 +366,8 @@ def _backfill_signals(
     history_manifest = None
     if non_donchian_strategy_ids:
         history_engine = StrategyEngine()
-        history_engine.register_plugin(MovingAverageRsiStrategy())
-        history_engine.register_plugin(DonchianBreakoutStrategy())
-        history_engine.register_plugin(DonchianBreakoutLongOnlyStrategy())
-        history_engine.register_plugin(DonchianBreakoutUpperOnlyStrategy())
-        history_engine.register_plugin(UsSessionTrendPullbackStrategy())
+        for plugin in build_default_plugins().values():
+            history_engine.register_plugin(plugin)
         history_manifest = history_engine.load_manifest(strategy_manifest)
 
     strategy_variants: list[tuple[str, str, int]] = []

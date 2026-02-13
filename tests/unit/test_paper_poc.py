@@ -130,6 +130,48 @@ def test_simulate_paper_poc_hybrid_allocation_smoke(project_root: Path) -> None:
     assert all((trade.strategy_id in allowed) for trade in result.trades)
 
 
+def test_simulate_paper_poc_orb_vwap_strategy_smoke(project_root: Path) -> None:
+    result = simulate_paper_poc(
+        strategy="m1_us_orb_vwap_retest",
+        strategy_manifest_path=project_root / "config" / "strategy_manifest.orb_vwap_experiment.yaml",
+        data_manifest_path=project_root / "reports" / "data_manifest.json",
+        feature_config_path=project_root / "config" / "feature_pipeline.yaml",
+        risk_policy_path=project_root / "config" / "risk_policy.yaml",
+        window_from="2024-01-01",
+        window_to="2024-01-05",
+        symbols=["USDJPY"],
+        spread_pips=0.005,
+        slippage_pips=0.0015,
+        slippage_std=0.001,
+        ttl_bars=6,
+        seed=7,
+    )
+    assert result.metrics["trades"] >= 0
+    assert all(trade.strategy_id == "m1_us_orb_vwap_retest" for trade in result.trades)
+
+
+def test_simulate_paper_poc_asia_compression_strategy_smoke(project_root: Path) -> None:
+    result = simulate_paper_poc(
+        strategy="m1_asia_compression_expansion_breakout",
+        strategy_manifest_path=project_root
+        / "config"
+        / "strategy_manifest.asia_compression_expansion_experiment.yaml",
+        data_manifest_path=project_root / "reports" / "data_manifest.json",
+        feature_config_path=project_root / "config" / "feature_pipeline.yaml",
+        risk_policy_path=project_root / "config" / "risk_policy.yaml",
+        window_from="2024-01-01",
+        window_to="2024-01-05",
+        symbols=["USDJPY"],
+        spread_pips=0.005,
+        slippage_pips=0.0015,
+        slippage_std=0.001,
+        ttl_bars=6,
+        seed=7,
+    )
+    assert result.metrics["trades"] >= 0
+    assert all(trade.strategy_id == "m1_asia_compression_expansion_breakout" for trade in result.trades)
+
+
 def test_exit_with_cost_applies_adverse_spread_and_slippage() -> None:
     assert _exit_with_cost(price=100.0, direction="long", spread=0.3, slippage=0.2) == 99.5
     assert _exit_with_cost(price=100.0, direction="short", spread=0.3, slippage=0.2) == 100.5
