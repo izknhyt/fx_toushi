@@ -4,7 +4,7 @@
 schema_version: 0
 manifest_name: "Asia Compression Expansion Experiment (USDJPY M5 UTC)"
 revision_tag: "ASIA-COMP-EXP-2026Q1"
-last_reviewed_at: "2026-02-11T00:00:00Z"
+last_reviewed_at: "2026-02-23T00:00:00Z"
 notes: |
   研究用manifest。USDJPY/M5/UTC固定で
   m1_asia_compression_expansion_breakout を独立評価する。
@@ -32,7 +32,7 @@ strategies:
       - USDJPY
     lifecycle:
       status: active
-      last_validated_at: "2026-02-11T00:00:00Z"
+      last_validated_at: "2026-02-23T00:00:00Z"
       deprecated_after_days: 365
       runbook_ref: "docs/runbooks/GOV-STRAT-01.md#asia_compression_expansion_experiment"
     feature_flags:
@@ -44,7 +44,7 @@ strategies:
         validation_playbook_id: "AC-01"
     governance:
       ticket_id: "TICKET-ASIA-COMP-EXP"
-      last_board_decision: "2026-02-11T00:00:00Z"
+      last_board_decision: "2026-02-23T00:00:00Z"
       reviewers:
         - Quant Lead
         - Ops Manager
@@ -53,8 +53,8 @@ strategies:
         timeframe: 5m
         session_utc_range: "00-14"
         compression_start_utc: "00:00"
-        compression_minutes: 240
-        breakout_session_utc_range: "06-14"
+        compression_minutes: 180
+        breakout_session_utc_range: "08-14"
         max_signals_per_session: 1
         allowed_directions:
           - long
@@ -62,13 +62,13 @@ strategies:
         trend_min_abs: 0.01
         filters:
           min_compression_abs: 1.00
-          compression_atr_mult: 4.00
-          min_breakout_abs: 0.04
-          breakout_atr_mult: 0.15
-          breakout_cost_mult: 1.5
+          compression_atr_mult: 3.00
+          min_breakout_abs: 0.03
+          breakout_atr_mult: 0.10
+          breakout_cost_mult: 1.0
           expansion_min_abs: 0.01
           expansion_atr_mult: 0.05
-          max_cost_to_range_ratio: 1.00
+          max_cost_to_range_ratio: 1.30
           spread_max: 0.007
           kill_switch_blocked_states: [soft_stop, hard_stop, triggered]
           board_modes: [normal, guarded]
