@@ -1,0 +1,86 @@
+# config/strategy_manifest.asia_compression_expansion_production.yaml
+# Production-candidate manifest for Asia compression -> expansion breakout.
+
+schema_version: 0
+manifest_name: "Asia Compression Expansion Production Candidate (USDJPY M5 UTC)"
+revision_tag: "ASIA-COMP-EXP-PROD-2026Q1"
+last_reviewed_at: "2026-02-23T00:00:00Z"
+notes: |
+  本番候補manifest。USDJPY/M5/UTC固定で
+  m1_asia_compression_expansion_breakout を独立シグナルとして運用する。
+  配分ロジックへの依存は持たず、後段レイヤーで採否を判断する。
+
+strategies:
+  m1_asia_compression_expansion_breakout:
+    enabled: true
+    priority: 57
+    weight: 1.00
+    determinism_key: "asia_compression_expansion_breakout_v1"
+    metadata:
+      name: "M1 Asia Compression Expansion Breakout"
+      version: "0.1.0"
+      required_features:
+        - open_5m
+        - high_5m
+        - low_5m
+        - close_5m
+        - volume_5m
+        - atr_14_1h
+        - session_tag_5m
+        - regime_trend_1h
+    watchlist:
+      - USDJPY
+    lifecycle:
+      status: active
+      last_validated_at: "2026-02-23T00:00:00Z"
+      deprecated_after_days: 365
+      runbook_ref: "docs/runbooks/GOV-STRAT-01.md#asia_compression_expansion_production_candidate"
+    feature_flags:
+      determinism_enforced: true
+      guarded_board_required: false
+    datasets:
+      - id: "reports/data_manifest.json::m1_baseline_ma_rsi"
+        version: "2024Q1"
+        validation_playbook_id: "AC-01"
+    governance:
+      ticket_id: "TICKET-ASIA-COMP-EXP-PROD"
+      last_board_decision: "2026-02-23"
+      reviewers:
+        - Quant Lead
+        - Ops Manager
+    parameters:
+      entry:
+        timeframe: 5m
+        session_utc_range: "00-14"
+        compression_start_utc: "00:00"
+        compression_minutes: 180
+        breakout_session_utc_range: "08-14"
+        max_signals_per_session: 1
+        allowed_directions:
+          - long
+        require_regime_alignment: true
+        trend_min_abs: 0.01
+        filters:
+          min_compression_abs: 1.00
+          compression_atr_mult: 3.00
+          min_breakout_abs: 0.03
+          breakout_atr_mult: 0.10
+          breakout_cost_mult: 1.0
+          expansion_min_abs: 0.01
+          expansion_atr_mult: 0.05
+          max_cost_to_range_ratio: 1.30
+          spread_max: 0.007
+          kill_switch_blocked_states: [soft_stop, hard_stop, triggered]
+          board_modes: [normal, guarded]
+      sizing:
+        per_trade_risk_pct: 0.60
+        atr_sl_mult: 1.0
+        tp_r_multiple: 1.8
+        ttl_bars: 10
+        max_concurrent_positions:
+          overall: 2
+          per_currency_bucket: 1
+      execution:
+        spread: 0.005
+        slippage: 0.0015
+        slippage_std: 0.001
