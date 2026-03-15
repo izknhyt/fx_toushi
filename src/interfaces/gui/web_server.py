@@ -22,7 +22,7 @@ import pandas as pd
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_SIGNAL_LOG = Path("logs") / "events" / "signal.generated.jsonl"
+DEFAULT_SIGNAL_LOG = Path("logs") / "events" / "signal.gui.jsonl"
 DEFAULT_EXPORT_DIR = Path("ui") / "web"
 DEFAULT_PRICE_PREFERRED = Path("reports") / "price" / "usdjpy_m5.csv"
 DEFAULT_PRICE_FALLBACK = Path("usdjpy_5m_2018-2024_utc.csv")
@@ -34,6 +34,43 @@ SYNC_STAGE_LABELS: dict[str, str] = {
     "sync.refresh.start": "最新データを更新中",
     "sync.refresh.done": "最新データ更新が完了",
     "sync.done": "同期完了",
+}
+GUI_STRATEGY_DISPLAY_OVERRIDES: dict[str, dict[str, str]] = {
+    "m1_asia_compression_expansion_breakout": {
+        "state": "recommended",
+        "label": "本線",
+        "note": "shadow/live候補",
+    },
+    "m1_baseline_donchian_upper_only": {
+        "state": "recommended",
+        "label": "採用",
+        "note": "Donchian系の残し枠",
+    },
+    "m1_us_session_trend_pullback": {
+        "state": "recommended",
+        "label": "採用",
+        "note": "US時間帯の残し枠",
+    },
+    "m1_baseline_donchian_long_only": {
+        "state": "excluded",
+        "label": "外す",
+        "note": "upper_onlyと重複するためGUIでは区別表示",
+    },
+    "m1_baseline_donchian": {
+        "state": "excluded",
+        "label": "外す",
+        "note": "fixed-assumption fail",
+    },
+    "m1_baseline_ma_rsi": {
+        "state": "excluded",
+        "label": "外す",
+        "note": "fixed-assumption fail",
+    },
+    "m1_us_orb_vwap_retest": {
+        "state": "excluded",
+        "label": "外す",
+        "note": "research-only fail",
+    },
 }
 
 
@@ -219,6 +256,7 @@ class GuiOpsRuntimeController:
                     "id": strategy_id,
                     "name": str(meta.get("name") or strategy_id),
                     "source_manifest": _display_path(Path(str(meta.get("source_manifest")))),
+                    **_strategy_ops_display(strategy_id),
                 }
                 for strategy_id, meta in sorted(
                     self._strategy_catalog.items(), key=lambda item: item[0]
@@ -629,7 +667,22 @@ def _build_handler(config: GuiServerConfig):
             if parsed.path == "/api/signals":
                 params = parse_qs(parsed.query)
                 limit = _parse_int(params.get("limit"), default=100)
-                payload = _signals_payload(config.signal_log_path, limit=limit)
+                selected_symbols: frozenset[str] | None = None
+                selected_strategy_ids: frozenset[str] | None = None
+                if config.ops_controller is not None:
+                    snapshot = config.ops_controller.snapshot()
+                    selected_symbols = _normalise_filter_symbols(
+                        snapshot.get("symbols"), fallback=snapshot.get("symbol")
+                    )
+                    selected_strategy_ids = _normalise_filter_strategy_ids(
+                        snapshot.get("selected_strategy_ids")
+                    )
+                payload = _signals_payload(
+                    config.signal_log_path,
+                    limit=limit,
+                    symbols=selected_symbols,
+                    strategy_ids=selected_strategy_ids,
+                )
                 self._json(payload)
                 return
             if parsed.path == "/api/price":
@@ -721,9 +774,60 @@ def _status_payload(config: GuiServerConfig) -> dict[str, Any]:
     return payload
 
 
-def _signals_payload(path: Path, *, limit: int) -> dict[str, Any]:
+def _signals_payload(
+    path: Path,
+    *,
+    limit: int,
+    symbols: frozenset[str] | None = None,
+    strategy_ids: frozenset[str] | None = None,
+) -> dict[str, Any]:
     records = _load_signal_records(path, limit=limit)
+    records = [
+        record
+        for record in records
+        if record.get("event") == "signal.generated"
+        and record.get("status") == "generated"
+        and record.get("symbol")
+        and _is_signal_time_order_valid(record)
+    ]
+    if symbols:
+        records = [
+            record
+            for record in records
+            if str(record.get("symbol", "")).strip().upper() in symbols
+        ]
+    if strategy_ids:
+        records = [
+            record
+            for record in records
+            if str(record.get("strategy_id", "")).strip() in strategy_ids
+        ]
     return {"status": "ok", "count": len(records), "signals": records}
+
+
+def _is_signal_time_order_valid(record: Mapping[str, Any]) -> bool:
+    ts = _parse_utc_datetime(record.get("ts"))
+    expire_at = _parse_utc_datetime(record.get("expire_at"))
+    if ts is None or expire_at is None:
+        return True
+    return expire_at >= ts
+
+
+def _parse_utc_datetime(value: Any) -> datetime | None:
+    if not isinstance(value, str):
+        return None
+    token = value.strip()
+    if not token:
+        return None
+    if token.endswith("Z"):
+        token = token[:-1] + "+00:00"
+    try:
+        parsed = datetime.fromisoformat(token)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
 
 
 def _price_payload(config: GuiServerConfig) -> dict[str, Any]:
@@ -840,6 +944,32 @@ def _parse_int(values: list[str] | None, *, default: int) -> int:
         return int(values[0])
     except ValueError:
         return default
+
+
+def _normalise_filter_symbols(
+    symbols: Any,
+    *,
+    fallback: Any = None,
+) -> frozenset[str] | None:
+    values: list[str] = []
+    if isinstance(symbols, (list, tuple, set, frozenset)):
+        values.extend(str(item).strip().upper() for item in symbols if str(item).strip())
+    elif isinstance(symbols, str) and symbols.strip():
+        values.extend(token.strip().upper() for token in symbols.split(",") if token.strip())
+    if not values and isinstance(fallback, str) and fallback.strip():
+        values.append(fallback.strip().upper())
+    if not values:
+        return None
+    return frozenset(values)
+
+
+def _normalise_filter_strategy_ids(value: Any) -> frozenset[str] | None:
+    if not isinstance(value, (list, tuple, set, frozenset)):
+        return None
+    values = [str(item).strip() for item in value if str(item).strip()]
+    if not values:
+        return None
+    return frozenset(values)
 
 
 def _utcnow_iso() -> str:
@@ -995,6 +1125,17 @@ def _build_strategy_catalog(
     return catalog
 
 
+def _strategy_ops_display(strategy_id: str) -> dict[str, str]:
+    override = GUI_STRATEGY_DISPLAY_OVERRIDES.get(strategy_id)
+    if override is None:
+        return {"ops_state": "default", "ops_state_label": "", "ops_state_note": ""}
+    return {
+        "ops_state": override.get("state", "default"),
+        "ops_state_label": override.get("label", ""),
+        "ops_state_note": override.get("note", ""),
+    }
+
+
 def _materialize_runtime_manifest(
     *,
     selected_manifest: Path,
@@ -1032,6 +1173,8 @@ def _materialize_runtime_manifest(
         clone["enabled"] = True
         strategies[strategy_id] = clone
 
+    _normalise_enabled_strategy_weights(strategies)
+
     runtime_payload["manifest_name"] = f"{runtime_payload.get('manifest_name', 'GUI Runtime')} [GUI Selected]"
     runtime_payload["revision_tag"] = "GUI-RUNTIME-SELECTED"
     runtime_payload["last_reviewed_at"] = _utcnow_iso()
@@ -1044,6 +1187,35 @@ def _materialize_runtime_manifest(
         encoding="utf-8",
     )
     return runtime_path.resolve()
+
+
+def _normalise_enabled_strategy_weights(strategies: Mapping[str, Any]) -> None:
+    enabled_entries: list[dict[str, Any]] = []
+    total_weight = 0.0
+    for entry in strategies.values():
+        if not isinstance(entry, dict):
+            continue
+        if not bool(entry.get("enabled")):
+            continue
+        try:
+            weight = float(entry.get("weight", 0.0))
+        except (TypeError, ValueError):
+            weight = 0.0
+        if weight < 0.0:
+            weight = 0.0
+        entry["weight"] = weight
+        enabled_entries.append(entry)
+        total_weight += weight
+
+    if not enabled_entries:
+        return
+    if total_weight <= 1.0 + 1e-9:
+        return
+
+    scale = 1.0 / total_weight
+    for entry in enabled_entries:
+        weight = float(entry.get("weight", 0.0))
+        entry["weight"] = max(0.0, weight * scale)
 
 
 def resolve_sync_source_dir(symbol: str, source_dir: Path | None = None) -> Path:

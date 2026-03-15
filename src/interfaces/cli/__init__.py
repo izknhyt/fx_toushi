@@ -1995,7 +1995,7 @@ def create_cli_app() -> typer.Typer:
         port: int = typer.Option(8787, "--port", help="Bind port"),
         refresh_sec: int = typer.Option(30, "--refresh-sec", help="UI refresh interval (sec)"),
         signal_log: Path = typer.Option(
-            Path("logs") / "events" / "signal.generated.jsonl",
+            Path("logs") / "events" / "signal.gui.jsonl",
             "--signal-log",
             help="Signal JSONL log path",
             show_default=False,

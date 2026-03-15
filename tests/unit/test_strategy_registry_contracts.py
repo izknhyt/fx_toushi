@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Iterable
+from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -248,3 +249,50 @@ def test_strategy_engine_rotates_large_logs(monkeypatch, tmp_path: Path) -> None
     assert det_log.read_text(encoding="utf-8").strip()
     assert det_metrics.read_text(encoding="utf-8").strip()
     assert signal_log.read_text(encoding="utf-8").strip()
+
+
+def test_emit_signal_event_derives_trade_levels(monkeypatch, tmp_path: Path) -> None:
+    signal_log = tmp_path / "signal.generated.jsonl"
+    monkeypatch.setenv("TRADECTL_SIGNAL_EVENT_LOG", str(signal_log))
+    engine = StrategyEngine(
+        determinism_log_path=tmp_path / "registry.log",
+        determinism_metrics_path=tmp_path / "determinism.jsonl",
+    )
+
+    class _Features:
+        def lookup(self, *, symbol: str, feature: str, timeframe: str) -> float:
+            if symbol != "USDJPY":
+                raise KeyError(symbol)
+            if feature == "close_5m":
+                return 155.0
+            if feature == "atr_14_1h":
+                return 0.2
+            raise KeyError(feature)
+
+    context = SimpleNamespace(
+        seed=7,
+        watchlist=frozenset({"USDJPY"}),
+        features=_Features(),
+        clock=SimpleNamespace(now=datetime(2026, 2, 24, 13, 0, tzinfo=timezone.utc)),
+        parameters={
+            "entry": {"timeframe": "5m"},
+            "sizing": {"atr_sl_mult": 1.0, "tp_r_multiple": 1.8, "ttl_bars": 10},
+            "execution": {"spread": 0.005, "slippage": 0.0015, "slippage_std": 0.001},
+        },
+    )
+    engine._emit_signal_event(
+        strategy_id="m1_asia_compression_expansion_breakout",
+        signal=SimpleNamespace(symbol="USDJPY", direction="long"),
+        context=context,
+        feature_flags={},
+        status="generated",
+        reason=None,
+    )
+    payload = json.loads(signal_log.read_text(encoding="utf-8").splitlines()[-1])
+    assert payload["symbol"] == "USDJPY"
+    assert payload["entry"] is not None
+    assert payload["stop"] is not None
+    assert payload["target"] is not None
+    assert payload["level"] is not None
+    assert payload["expire_at"] is not None
+    assert payload["ttl_bars"] == 10

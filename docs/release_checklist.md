@@ -1,41 +1,34 @@
-# Release Checklist (Template)
+# Release Checklist (Personal Use)
 
-リリース前に必ず以下を確認し、署名を残す。Runbookと証跡パスは詳細設計 §8.8 / §13 / §31 と整合させる。
-このチェックリストは`tradectl release prepare --version <tag>`で読み込まれるため、更新後はCLIの出力に反映される。進捗は`tradectl release record`で記録する。
+個人利用の shadow / live candidate 出荷前チェック。  
+多人数承認や重い監査パックは前提にしない。必要なのは「壊れていないこと」「再現できること」「すぐ止められること」。
 
-## 1. リスク・コンプライアンス
-- [ ] `risk_state.json` が `status: accepted` で `consent_reference_id` / `accepted_at` がセットされている（consent_reference_id=`<id>`）
-- [ ] `docs/development_plan.md` のBacklogにリリース対象の未完了項目がない
-- [ ] Kill Switch/Spread/Reduce-Only 状態が `tradectl status --json` で正常（Exit Code 0 または 21）である証跡: `reports/validation_log/release_status_<date>.json`
+このチェックリストは `tradectl release prepare --version <tag>` から参照される前提で維持する。
 
-## 2. テスト・品質
-- [ ] `pytest -k smoke` 実行結果を添付（ログまたはサマリ）: `reports/implementation/<date>_smoke.log`
-- [ ] Packet対応テストが緑（config_schema_smoke / strategy_determinism / strategy_manifest / ticket_builder / json_schema_validation）
-- [ ] Lint/format: `ruff <version>` と `black --check <version>` の結果を記録
+## 1. Architecture And Scope
+- [ ] 変更内容が [FX Portfolio Operating System](architecture/fx_portfolio_operating_system.md) と矛盾していない
+- [ ] `docs/development_plan.md` に対象タスクの結果、証跡、残課題が反映されている
+- [ ] 今回の変更が `standalone` 改善なのか `portfolio` 改善なのかを明確に言える
 
-## 3. データ・設定
-- [ ] `config/` の変更は `schema-validate` 済み（証跡: `reports/validation_log/config_schema_<date>.json`）
-- [ ] スナップショット/バックアップ最新: `snapshots/latest/gate_state.json`（更新時刻を記載）
-- [ ] `metrics/guardrails.jsonl` 最新行に `exit_code` / `spread_status` / `reduce_only` が記録されている
+## 2. Tests And Reproducibility
+- [ ] 実行した `pytest` / backtest / shadow コマンドを記録した
+- [ ] 重要な結果の evidence path が残っている
+- [ ] seed, cost assumptions, manifest/profile が再現可能な形で固定されている
 
-## 4. 運用・Runbook
-- [ ] `tradectl status --json` 出力をRunbookに添付（`RUN-DATA-05`/`RUN-RISK-02`）: `reports/validation_log/release_status_<date>.json`
-- [ ] `tradectl resync --failover-report` の最新証跡: `reports/ops/resync/<date>.md`
-- [ ] 日次/週次アジェンダ連携: `docs/runbooks/daily_agenda/*.md` にオープン項目なし
-- [ ] メトリクス清掃cron登録（毎日03:00）と手動初回実行: `logs/cleanup/metrics_<date>.log`
+## 3. Data And Config
+- [ ] 変更した `config/` は必要な validation を通した
+- [ ] 利用するデータの最終 timestamp と source が把握できている
+- [ ] `snapshots/latest/` または同等の復旧起点が存在する
 
-## 5. Lint/Format
-- [ ] `ruff <version>` 実行（既存違反数と差分扱いを記録）
-- [ ] `black --check <version>` 実行（要整形ファイル数を記録）
+## 4. Runtime Safety
+- [ ] `tradectl status --json` か同等の確認で kill switch / spread / provider 状態に致命傷がない
+- [ ] stop / rollback 手順を 1-2 分で説明できる
+- [ ] shadow から上げる場合、shadow 乖離が許容内である
 
-## 6. 承認
-- [ ] Product Owner: ____________________ Date: __________
-- [ ] Ops Manager: ____________________ Date: __________
-- [ ] Risk Officer (必要に応じて): ____________________ Date: __________
+## 5. Operator Sign-Off
+- [ ] Operator confirmation: ____________________ Date: __________
+- [ ] Rollback note/path: _______________________________________
 
-## 備考
-- Hands-off/auto_execute はデフォルト無効。`check-profit-readiness-hands-off-all`が緑かつOps判断でのみ有効化する。
-- 動的補正は`src/execution/alpha_overlay.apply_hands_off_sizing`を経由し、CIゲートは`check-profit-readiness-hands-off-all`で担保する。
-
-## 付録
-- 参考コマンド: `poetry run pytest -k smoke`, `poetry run schema-validate config/*.yaml --schema docs/schemas/*.json`, `python -m tradectl status --json`, `python -m tradectl resync --failover-report --json`
+## Notes
+- 旧来の Product Owner / Ops Manager / Risk Officer 承認欄は personal-use default から外す。
+- 監査用の補助資料が必要なら任意で追加してよいが、通常リリースの必須条件にはしない。

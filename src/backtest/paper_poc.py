@@ -1045,7 +1045,18 @@ def simulate_paper_poc(
             dd_curve.append(equity)
             continue
 
-        account = SimpleNamespace(equity=equity)
+        account = SimpleNamespace(
+            equity=equity,
+            positions=[
+                {
+                    "strategy_id": pos.get("strategy_id"),
+                    "symbol": pos.get("symbol"),
+                    "direction": pos.get("direction"),
+                    "opened_at": pos.get("opened_at"),
+                }
+                for pos in open_positions
+            ],
+        )
         config_snapshot = SimpleNamespace(cfg_hash="poc")
         regime = SimpleNamespace(mode="normal")
         signals = engine.run_all(

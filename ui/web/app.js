@@ -1,6 +1,8 @@
 const statusEl = document.getElementById("status");
 const updatedEl = document.getElementById("updated");
 const refreshEl = document.getElementById("refresh");
+const timezoneLabelEl = document.getElementById("timezone-label");
+const timezoneToggleEl = document.getElementById("timezone-toggle");
 const priceEl = document.getElementById("price");
 const priceMetaEl = document.getElementById("price-meta");
 const signalListEl = document.getElementById("latest-signals");
@@ -15,15 +17,56 @@ const opsStrategyListEl = document.getElementById("ops-strategy-list");
 const opsProgressLabelEl = document.getElementById("ops-progress-label");
 const opsProgressEtaEl = document.getElementById("ops-progress-eta");
 const opsProgressFillEl = document.getElementById("ops-progress-fill");
+const TIMEZONE_STORAGE_KEY = "signal_board_timezone_mode";
 
 let refreshMs = 30000;
 let latestPrice = null;
 let opsRunning = false;
 let selectedStrategyIds = new Set();
+let refreshTimerId = null;
+let timezoneMode = _loadTimezoneMode();
+
+function _errorText(err) {
+  if (err instanceof Error && err.message) return err.message;
+  return String(err || "unknown error");
+}
+
+async function _readApiResponse(res) {
+  const contentType = String(res.headers.get("content-type") || "").toLowerCase();
+  let payload = null;
+  let rawText = "";
+
+  if (contentType.includes("application/json")) {
+    try {
+      payload = await res.json();
+    } catch (err) {
+      payload = null;
+    }
+  } else {
+    rawText = await res.text();
+    const trimmed = rawText.trim();
+    if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
+      try {
+        payload = JSON.parse(trimmed);
+      } catch (err) {
+        payload = null;
+      }
+    }
+  }
+
+  if (!res.ok) {
+    const detail =
+      (payload && (payload.error || payload.reason || payload.message)) ||
+      rawText ||
+      `HTTP ${res.status}`;
+    throw new Error(detail);
+  }
+  return payload || {};
+}
 
 async function fetchJson(path) {
   const res = await fetch(path, { cache: "no-store" });
-  return await res.json();
+  return _readApiResponse(res);
 }
 
 async function postJson(path, payload = {}) {
@@ -33,12 +76,53 @@ async function postJson(path, payload = {}) {
     body: JSON.stringify(payload),
     cache: "no-store",
   });
-  return await res.json();
+  return _readApiResponse(res);
+}
+
+function _loadTimezoneMode() {
+  try {
+    const stored = window.localStorage.getItem(TIMEZONE_STORAGE_KEY);
+    if (stored === "utc" || stored === "local") return stored;
+  } catch (err) {
+    // ignore storage failures
+  }
+  return "local";
+}
+
+function _saveTimezoneMode(mode) {
+  try {
+    window.localStorage.setItem(TIMEZONE_STORAGE_KEY, mode);
+  } catch (err) {
+    // ignore storage failures
+  }
+}
+
+function _formatUtc(date) {
+  return date.toISOString().replace("T", " ").replace("Z", " UTC");
+}
+
+function renderTimezoneMode() {
+  if (timezoneLabelEl) {
+    timezoneLabelEl.textContent = timezoneMode === "utc" ? "UTC" : "Local";
+  }
+  if (timezoneToggleEl) {
+    timezoneToggleEl.textContent = timezoneMode === "utc" ? "ローカル表示" : "UTC表示";
+  }
+}
+
+function toggleTimezoneMode() {
+  timezoneMode = timezoneMode === "utc" ? "local" : "utc";
+  _saveTimezoneMode(timezoneMode);
+  renderTimezoneMode();
+  refresh();
 }
 
 function formatTs(ts) {
   if (!ts) return "-";
-  return new Date(ts).toLocaleString();
+  const parsed = new Date(ts);
+  if (Number.isNaN(parsed.getTime())) return String(ts);
+  if (timezoneMode === "utc") return _formatUtc(parsed);
+  return parsed.toLocaleString();
 }
 
 function formatDuration(sec) {
@@ -67,7 +151,7 @@ function renderPrice(payload) {
     return;
   }
   const price = payload.price ?? "--";
-  const ts = payload.ts ? `(${payload.ts})` : "";
+  const ts = payload.ts ? `(${formatTs(payload.ts)})` : "";
   priceEl.textContent = price;
   priceMetaEl.textContent = `取得元: ${payload.source} ${ts}`;
   latestPrice = payload.price ?? null;
@@ -118,27 +202,58 @@ function fmtPrice(value, symbol) {
   return normalized.toFixed(3);
 }
 
+function _signalExpireMs(signal) {
+  if (!signal || !signal.expire_at) return null;
+  const value = new Date(signal.expire_at).getTime();
+  return Number.isFinite(value) ? value : null;
+}
+
+function _signalEntryPrice(signal) {
+  const symbol = signal?.symbol;
+  const entry = _normalizePrice(signal?.entry, symbol);
+  if (entry !== null) return entry;
+  return _normalizePrice(signal?.level, symbol);
+}
+
+function _isEntryFilled(signal, price) {
+  if (price === null) return false;
+  const entry = _signalEntryPrice(signal);
+  if (entry === null) return false;
+  const direction = (signal?.direction || "").toLowerCase();
+  if (direction === "short") return price <= entry;
+  return price >= entry;
+}
+
 function computeStatus(signal) {
   const tsMs = _signalTimestampMs(signal);
-  const expireAt = signal.expire_at ? new Date(signal.expire_at).getTime() : null;
+  const expireAt = _signalExpireMs(signal);
   const now = Date.now();
-  if (expireAt && now >= expireAt) return "expired";
-  if (!expireAt && tsMs !== null && now - tsMs > 24 * 60 * 60 * 1000) return "historical";
+  const priceNow = _normalizePrice(latestPrice, signal?.symbol);
+  const filled = _isEntryFilled(signal, priceNow);
+
+  if (!expireAt && tsMs !== null && now - tsMs > 24 * 60 * 60 * 1000) {
+    return filled ? "filled" : "historical";
+  }
+
   if (latestPrice !== null && signal.target && signal.stop) {
-    const price = _normalizePrice(latestPrice, signal.symbol);
     const target = _normalizePrice(signal.target, signal.symbol);
     const stop = _normalizePrice(signal.stop, signal.symbol);
     const direction = (signal.direction || "").toLowerCase();
-    if (price !== null && target !== null && stop !== null) {
+    if (priceNow !== null && target !== null && stop !== null) {
       if (direction === "short") {
-        if (price <= target) return "tp_hit";
-        if (price >= stop) return "sl_hit";
+        if (priceNow <= target) return "tp_hit";
+        if (priceNow >= stop) return "sl_hit";
       } else {
-        if (price >= target) return "tp_hit";
-        if (price <= stop) return "sl_hit";
+        if (priceNow >= target) return "tp_hit";
+        if (priceNow <= stop) return "sl_hit";
       }
     }
   }
+
+  if (expireAt && now >= expireAt) return filled ? "expired" : "missed";
+
+  if (filled) return "filled";
+  if (_signalEntryPrice(signal) !== null) return "pending";
   return "active";
 }
 
@@ -205,7 +320,7 @@ function renderSignals(payload, opsPayload) {
     const target = fmtPrice(signal.target, signal.symbol);
     const expire = signal.expire_at ? formatTs(signal.expire_at) : "-";
     const status = computeStatus(signal);
-    li.innerHTML = `<strong>${title}</strong><span>${direction} / level ${level}</span><span>entry ${entry} / SL ${stop} / TP ${target}</span><span>期限 ${expire} / ${status}</span>`;
+    li.innerHTML = `<strong>${title}</strong><span>${direction} / level ${level}</span><span>entry ${entry} / SL ${stop} / TP ${target}</span><span>期限(TTL) ${expire} / ${status}</span>`;
     signalListEl.appendChild(li);
   });
 
@@ -213,7 +328,7 @@ function renderSignals(payload, opsPayload) {
     const status = computeStatus(signal);
     const tr = document.createElement("tr");
     tr.innerHTML = `
-      <td>${signal.ts || ""}</td>
+      <td>${formatTs(signal.ts)}</td>
       <td>${signal.strategy_id || ""}</td>
       <td>${signal.symbol || ""}</td>
       <td>${(signal.direction || "").toUpperCase()}</td>
@@ -221,7 +336,7 @@ function renderSignals(payload, opsPayload) {
       <td>${fmtPrice(signal.entry, signal.symbol)}</td>
       <td>${fmtPrice(signal.stop, signal.symbol)}</td>
       <td>${fmtPrice(signal.target, signal.symbol)}</td>
-      <td>${signal.expire_at ? formatTs(signal.expire_at) : ""}</td>
+      <td>${signal.expire_at ? formatTs(signal.expire_at) : "-"}</td>
       <td>${status}</td>
       <td>${signal.reason || signal.rationale || ""}</td>
     `;
@@ -263,6 +378,10 @@ function _renderStrategyChecklist(payload) {
     if (!id) return;
     const item = document.createElement("label");
     item.className = "ops-strategy-item";
+    const opsState = String(strategy.ops_state || "default").trim().toLowerCase();
+    if (opsState) {
+      item.classList.add(`is-${opsState}`);
+    }
     const input = document.createElement("input");
     input.type = "checkbox";
     input.value = id;
@@ -272,10 +391,25 @@ function _renderStrategyChecklist(payload) {
       const checked = _collectCheckedStrategyIds();
       selectedStrategyIds = new Set(checked);
     });
+    const textWrap = document.createElement("span");
+    textWrap.className = "ops-strategy-text";
     const text = document.createElement("span");
+    text.className = "ops-strategy-name";
     text.textContent = _strategyLabel(strategy);
+    textWrap.appendChild(text);
+    const badgeLabel = String(strategy.ops_state_label || "").trim();
+    if (badgeLabel) {
+      const badge = document.createElement("span");
+      badge.className = "ops-strategy-badge";
+      badge.textContent = badgeLabel;
+      textWrap.appendChild(badge);
+    }
+    const note = String(strategy.ops_state_note || "").trim();
+    if (note) {
+      item.title = note;
+    }
     item.appendChild(input);
-    item.appendChild(text);
+    item.appendChild(textWrap);
     opsStrategyListEl.appendChild(item);
   });
 }
@@ -404,7 +538,7 @@ async function startOpsWithMode(runSync, runLoop, buttonEl) {
     const payload = await postJson("/api/ops/start", startPayload);
     renderOps(payload);
   } catch (err) {
-    opsMetaEl.textContent = "状態: start error";
+    opsMetaEl.textContent = `状態: start error（${_errorText(err)}）`;
     if (buttonEl) buttonEl.disabled = false;
   }
 }
@@ -428,7 +562,8 @@ async function stopOps() {
     const payload = await postJson("/api/ops/stop");
     renderOps(payload);
   } catch (err) {
-    opsMetaEl.textContent = "状態: stop error";
+    opsMetaEl.textContent = `状態: stop error（${_errorText(err)}）`;
+    opsStopEl.disabled = false;
   }
 }
 
@@ -446,13 +581,27 @@ async function refresh() {
     renderSignals(signals, ops);
   } catch (err) {
     statusEl.textContent = "error";
+    if (opsMetaEl) {
+      opsMetaEl.textContent = `状態: refresh error（${_errorText(err)}）`;
+    }
   }
+}
+
+function scheduleNextRefresh() {
+  if (refreshTimerId !== null) {
+    clearTimeout(refreshTimerId);
+  }
+  refreshTimerId = window.setTimeout(async () => {
+    await refresh();
+    scheduleNextRefresh();
+  }, refreshMs);
 }
 
 if (opsStartEl) opsStartEl.addEventListener("click", startOps);
 if (opsSyncOnlyEl) opsSyncOnlyEl.addEventListener("click", startSyncOnly);
 if (opsLoopOnlyEl) opsLoopOnlyEl.addEventListener("click", startLoopOnly);
 if (opsStopEl) opsStopEl.addEventListener("click", stopOps);
+if (timezoneToggleEl) timezoneToggleEl.addEventListener("click", toggleTimezoneMode);
 
-refresh();
-setInterval(refresh, refreshMs);
+renderTimezoneMode();
+refresh().finally(scheduleNextRefresh);

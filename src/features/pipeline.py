@@ -347,8 +347,8 @@ class FeaturePipeline:
             outputs[indicator.output_keys["signal"]] = signal
             outputs[indicator.output_keys["histogram"]] = hist
         elif indicator.identifier.startswith("donchian"):
-            upper = high.rolling(window=window, min_periods=window).max()
-            lower = low.rolling(window=window, min_periods=window).min()
+            upper = high.rolling(window=window, min_periods=window).max().shift(1)
+            lower = low.rolling(window=window, min_periods=window).min().shift(1)
             mid = (upper + lower) / 2
             outputs[indicator.output_keys.get("upper", "upper")] = upper
             outputs[indicator.output_keys.get("lower", "lower")] = lower

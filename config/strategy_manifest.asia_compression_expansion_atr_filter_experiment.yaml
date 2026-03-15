@@ -1,15 +1,13 @@
-# config/strategy_manifest.asia_compression_expansion_production.yaml
-# Production-candidate manifest for Asia compression -> expansion breakout.
+# config/strategy_manifest.asia_compression_expansion_atr_filter_experiment.yaml
+# Research manifest for Asia compression with ATR floor filter.
 
 schema_version: 0
-manifest_name: "Asia Compression Expansion Production Candidate (USDJPY M5 UTC)"
-revision_tag: "ASIA-COMP-EXP-PROD-2026Q1"
+manifest_name: "Asia Compression Expansion ATR Filter Experiment (USDJPY M5 UTC)"
+revision_tag: "ASIA-COMP-EXP-ATR-FILTER-2026Q1"
 last_reviewed_at: "2026-03-09T00:00:00Z"
 notes: |
-  本番候補manifest。USDJPY/M5/UTC固定で
-  m1_asia_compression_expansion_breakout を独立シグナルとして運用する。
-  配分ロジックへの依存は持たず、後段レイヤーで採否を判断する。
-  2026-03-09: low ATR bucket の弱さを抑えるため `atr_min=0.155` を追加。
+  研究用manifest。production candidateの c0539 条件を維持したまま、
+  low ATR bucket の弱さを抑えるため `atr_min=0.155` を追加して比較する。
 
 strategies:
   m1_asia_compression_expansion_breakout:
@@ -44,7 +42,7 @@ strategies:
         version: "2024Q1"
         validation_playbook_id: "AC-01"
     governance:
-      ticket_id: "TICKET-ASIA-COMP-EXP-PROD"
+      ticket_id: "TICKET-ASIA-COMP-EXP-ATR-FILTER"
       last_board_decision: "2026-03-09"
       reviewers:
         - Quant Lead

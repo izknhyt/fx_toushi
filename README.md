@@ -1,5 +1,10 @@
 # fx_toushi
 
+Current architecture reference: [docs/architecture/fx_portfolio_operating_system.md](docs/architecture/fx_portfolio_operating_system.md)
+
+This project is moving from a strategy-by-strategy research tool toward a `USDJPY-first, multi-pair-ready FX portfolio operating system`.
+New development should follow the portfolio-first design and personal-use simplification in the architecture doc and [docs/development_plan.md](docs/development_plan.md).
+
 ## Tools roadmap
 
 The project reserves the `tools/` directory for operational utilities described in the design docs. Each script ships with its own runbook hooks and validation requirements.

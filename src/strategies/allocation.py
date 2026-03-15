@@ -120,6 +120,11 @@ def _signal_score(signal: Any) -> float:
     return 1.0
 
 
+def _positive_int_or_none(value: Any) -> int | None:
+    parsed = _coerce_int(value, 0)
+    return parsed if parsed > 0 else None
+
+
 def _extract_execution(parameters: Mapping[str, Any]) -> Mapping[str, Any]:
     execution = parameters.get("execution")
     if isinstance(execution, Mapping):
@@ -137,11 +142,20 @@ class AllocationCandidate:
 
 
 @dataclass(frozen=True, slots=True)
+class AllocationActivePosition:
+    strategy_id: str
+    symbol: str
+    direction: str
+    opened_at: datetime | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class AllocationContext:
     now: datetime
     board_mode: str
     kill_switch_state: str
     regime_value: float | None = None
+    open_positions: tuple[AllocationActivePosition, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -166,6 +180,7 @@ class _EvaluatedCandidate:
     score: float | None
     accepted: bool
     reason: str
+    role_priority: int = 100
 
 
 class StrategyAllocationPolicy:
@@ -393,6 +408,8 @@ class StrategyAllocationPolicy:
                 accepted=False,
                 reason="strategy_disabled",
             )
+        portfolio_cfg = self._resolve_portfolio_cfg(strategy_cfg)
+        role_priority = _coerce_int(portfolio_cfg.get("role_priority"), 100)
 
         hard_filters = self._resolve_hard_filters(strategy_cfg)
         kill_switch_state = _normalize_text(context.kill_switch_state)
@@ -443,9 +460,25 @@ class StrategyAllocationPolicy:
                 reason="session_blocked",
             )
 
+        position_conflict = self._resolve_active_position_conflict(
+            candidate=candidate,
+            context=context,
+            strategy_cfg=strategy_cfg,
+        )
+        if position_conflict is not None:
+            return _EvaluatedCandidate(
+                candidate=candidate,
+                symbol=symbol,
+                score=None,
+                accepted=False,
+                reason=position_conflict,
+                role_priority=role_priority,
+            )
+
         score = self._compute_score(
             candidate=candidate,
             strategy_cfg=strategy_cfg,
+            context=context,
             regime_value=context.regime_value,
             spread=spread,
             slippage=slippage,
@@ -462,6 +495,7 @@ class StrategyAllocationPolicy:
                 score=score,
                 accepted=False,
                 reason="score_below_min",
+                role_priority=role_priority,
             )
 
         return _EvaluatedCandidate(
@@ -470,6 +504,7 @@ class StrategyAllocationPolicy:
             score=score,
             accepted=True,
             reason="candidate_ok",
+            role_priority=role_priority,
         )
 
     def _resolve_hard_filters(self, strategy_cfg: Mapping[str, Any]) -> dict[str, Any]:
@@ -488,6 +523,7 @@ class StrategyAllocationPolicy:
         *,
         candidate: AllocationCandidate,
         strategy_cfg: Mapping[str, Any],
+        context: AllocationContext,
         regime_value: float | None,
         spread: float,
         slippage: float,
@@ -503,6 +539,53 @@ class StrategyAllocationPolicy:
         slippage_weight = _coerce_float(penalty_cfg.get("slippage_weight"), 0.0)
         score -= spread * spread_weight
         score -= slippage * slippage_weight
+
+        portfolio_cfg = self._resolve_portfolio_cfg(strategy_cfg)
+        expected_holding_minutes = _coerce_float(
+            portfolio_cfg.get("expected_holding_minutes"),
+            0.0,
+        )
+        holding_minute_weight = _coerce_float(
+            portfolio_cfg.get("holding_minute_weight"),
+            0.0,
+        )
+        if expected_holding_minutes > 0 and holding_minute_weight > 0:
+            score -= expected_holding_minutes * holding_minute_weight
+
+        slot_cost = _coerce_float(portfolio_cfg.get("slot_cost"), 0.0)
+        if slot_cost > 0:
+            score -= slot_cost
+
+        symbol_matches = self._active_symbol_matches(candidate=candidate, context=context)
+        same_symbol_policy = _normalize_text(portfolio_cfg.get("active_symbol_policy")) or "allow"
+        same_symbol_penalty = _coerce_float(portfolio_cfg.get("active_symbol_penalty"), 0.0)
+        if symbol_matches > 0 and same_symbol_policy == "penalize" and same_symbol_penalty > 0:
+            score -= symbol_matches * same_symbol_penalty
+
+        group_matches = self._active_group_matches(
+            candidate=candidate,
+            context=context,
+            strategy_cfg=strategy_cfg,
+        )
+        same_group_policy = _normalize_text(portfolio_cfg.get("active_group_policy")) or "allow"
+        same_group_penalty = _coerce_float(portfolio_cfg.get("active_group_penalty"), 0.0)
+        if group_matches > 0 and same_group_policy == "penalize" and same_group_penalty > 0:
+            score -= group_matches * same_group_penalty
+
+        exposure_matches = self._active_exposure_matches(
+            candidate=candidate,
+            context=context,
+            strategy_cfg=strategy_cfg,
+        )
+        same_exposure_policy = _normalize_text(portfolio_cfg.get("active_exposure_policy")) or "allow"
+        same_exposure_penalty = _coerce_float(portfolio_cfg.get("active_exposure_penalty"), 0.0)
+        if (
+            exposure_matches > 0
+            and same_exposure_policy == "penalize"
+            and same_exposure_penalty > 0
+        ):
+            score -= exposure_matches * same_exposure_penalty
+
         return round(score, 8)
 
     def _resolve_cost_penalty(self, strategy_cfg: Mapping[str, Any]) -> dict[str, Any]:
@@ -554,6 +637,128 @@ class StrategyAllocationPolicy:
         slippage = _coerce_float(execution.get("slippage"), 0.0)
         return spread, slippage
 
+    def _resolve_portfolio_cfg(self, strategy_cfg: Mapping[str, Any]) -> dict[str, Any]:
+        global_portfolio = self._global_config.get("portfolio", {})
+        strategy_portfolio = strategy_cfg.get("portfolio", {})
+        if not isinstance(global_portfolio, Mapping):
+            global_portfolio = {}
+        if not isinstance(strategy_portfolio, Mapping):
+            strategy_portfolio = {}
+        return _deep_merge(global_portfolio, strategy_portfolio)
+
+    def _resolve_active_position_conflict(
+        self,
+        *,
+        candidate: AllocationCandidate,
+        context: AllocationContext,
+        strategy_cfg: Mapping[str, Any],
+    ) -> str | None:
+        if not context.open_positions:
+            return None
+
+        portfolio_cfg = self._resolve_portfolio_cfg(strategy_cfg)
+        same_symbol_policy = _normalize_text(portfolio_cfg.get("active_symbol_policy")) or "allow"
+        symbol_matches = self._active_symbol_matches(candidate=candidate, context=context)
+        if symbol_matches > 0:
+            if same_symbol_policy == "block":
+                return "active_symbol_conflict"
+            if same_symbol_policy == "defer":
+                return "active_symbol_deferred"
+
+        same_group_policy = _normalize_text(portfolio_cfg.get("active_group_policy")) or "allow"
+        group_matches = self._active_group_matches(
+            candidate=candidate,
+            context=context,
+            strategy_cfg=strategy_cfg,
+        )
+        max_active_per_group = _positive_int_or_none(portfolio_cfg.get("max_active_per_group"))
+        if max_active_per_group is not None and group_matches >= max_active_per_group:
+            return "active_group_limit"
+        if group_matches > 0:
+            if same_group_policy == "block":
+                return "active_group_conflict"
+            if same_group_policy == "defer":
+                return "active_group_deferred"
+
+        same_exposure_policy = _normalize_text(portfolio_cfg.get("active_exposure_policy")) or "allow"
+        exposure_matches = self._active_exposure_matches(
+            candidate=candidate,
+            context=context,
+            strategy_cfg=strategy_cfg,
+        )
+        max_active_per_exposure = _positive_int_or_none(
+            portfolio_cfg.get("max_active_per_exposure_bucket")
+        )
+        if max_active_per_exposure is not None and exposure_matches >= max_active_per_exposure:
+            return "active_exposure_limit"
+        if exposure_matches > 0:
+            if same_exposure_policy == "block":
+                return "active_exposure_conflict"
+            if same_exposure_policy == "defer":
+                return "active_exposure_deferred"
+        return None
+
+    def _active_symbol_matches(
+        self,
+        *,
+        candidate: AllocationCandidate,
+        context: AllocationContext,
+    ) -> int:
+        symbol = _signal_symbol(candidate.signal)
+        return sum(1 for position in context.open_positions if position.symbol == symbol)
+
+    def _active_group_matches(
+        self,
+        *,
+        candidate: AllocationCandidate,
+        context: AllocationContext,
+        strategy_cfg: Mapping[str, Any],
+    ) -> int:
+        candidate_group = self._portfolio_group(strategy_cfg)
+        if not candidate_group:
+            return 0
+        matches = 0
+        for position in context.open_positions:
+            if self._strategy_portfolio_group(position.strategy_id) == candidate_group:
+                matches += 1
+        return matches
+
+    def _active_exposure_matches(
+        self,
+        *,
+        candidate: AllocationCandidate,
+        context: AllocationContext,
+        strategy_cfg: Mapping[str, Any],
+    ) -> int:
+        candidate_bucket = self._exposure_bucket(strategy_cfg)
+        if not candidate_bucket:
+            return 0
+        matches = 0
+        for position in context.open_positions:
+            if self._strategy_exposure_bucket(position.strategy_id) == candidate_bucket:
+                matches += 1
+        return matches
+
+    def _portfolio_group(self, strategy_cfg: Mapping[str, Any]) -> str:
+        portfolio_cfg = self._resolve_portfolio_cfg(strategy_cfg)
+        return str(portfolio_cfg.get("group") or "").strip()
+
+    def _strategy_portfolio_group(self, strategy_id: str) -> str:
+        strategy_cfg = self._strategy_config.get(strategy_id, {})
+        if not isinstance(strategy_cfg, Mapping):
+            return ""
+        return self._portfolio_group(strategy_cfg)
+
+    def _exposure_bucket(self, strategy_cfg: Mapping[str, Any]) -> str:
+        portfolio_cfg = self._resolve_portfolio_cfg(strategy_cfg)
+        return str(portfolio_cfg.get("exposure_bucket") or "").strip()
+
+    def _strategy_exposure_bucket(self, strategy_id: str) -> str:
+        strategy_cfg = self._strategy_config.get(strategy_id, {})
+        if not isinstance(strategy_cfg, Mapping):
+            return ""
+        return self._exposure_bucket(strategy_cfg)
+
     def _tie_break_sort_key(self, item: _EvaluatedCandidate) -> tuple[Any, ...]:
         score = item.score if item.score is not None else float("-inf")
         keys: list[Any] = []
@@ -567,6 +772,10 @@ class StrategyAllocationPolicy:
                 keys.append(item.candidate.priority)
             elif token == "priority_desc":
                 keys.append(-item.candidate.priority)
+            elif token == "role_priority_asc":
+                keys.append(item.role_priority)
+            elif token == "role_priority_desc":
+                keys.append(-item.role_priority)
             elif token == "weight_desc":
                 keys.append(-item.candidate.weight)
             elif token == "weight_asc":
@@ -583,6 +792,7 @@ class StrategyAllocationPolicy:
 
 
 __all__ = [
+    "AllocationActivePosition",
     "AllocationCandidate",
     "AllocationContext",
     "AllocationOutcome",

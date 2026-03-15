@@ -275,7 +275,7 @@ strategies:
       - AUDUSD
     lifecycle:
       status: active
-      last_validated_at: "2025-11-21T00:00:00Z"
+      last_validated_at: "2026-03-09T00:00:00Z"
       deprecated_after_days: 365
       runbook_ref: "docs/runbooks/GOV-STRAT-01.md#2025-10-01"
     feature_flags:
@@ -312,7 +312,7 @@ strategies:
         r_eff_cap: 2.0
         reduce_only_on_guarded: true
       filters:
-        session_utc_range: "06-21"
+        session_utc_range: "06-14"
         news_block_minutes: [-15, 30]
         spread_guard_multiplier: 2.0
         board_mode_guarded_size_factor: 0.6

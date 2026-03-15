@@ -170,7 +170,7 @@ def _write_policy(path: Path, *, selection_mode: str = "select_one") -> None:
     )
 
 
-def _run(engine: StrategyEngine) -> list:
+def _run(engine: StrategyEngine, *, account: SimpleNamespace | None = None) -> list:
     features = _FeatureStub(
         available_keys=frozenset({"close_5m", "regime_trend_1h"}),
         symbols=frozenset({"USDJPY"}),
@@ -184,7 +184,7 @@ def _run(engine: StrategyEngine) -> list:
         features=features,
         regime=SimpleNamespace(mode="normal"),
         gate=gate,
-        account=SimpleNamespace(equity=1_000_000.0),
+        account=account or SimpleNamespace(equity=1_000_000.0),
         config=SimpleNamespace(cfg_hash="test"),
         clock=clock,
         watchlist=["USDJPY"],
@@ -241,3 +241,75 @@ def test_strategy_engine_allocation_select_many_keeps_multiple_candidates(tmp_pa
 
     assert len(signals) == 2
     assert {signal.strategy_id for signal in signals} == {"alpha", "beta"}
+
+
+def test_strategy_engine_allocation_respects_open_positions_from_account(tmp_path: Path) -> None:
+    manifest_path = tmp_path / "strategy_manifest.yaml"
+    policy_path = tmp_path / "strategy_allocation.yaml"
+    _write_manifest(manifest_path)
+    payload = {
+        "profiles": {
+            "active": {
+                "mode": "active",
+                "global": {
+                    "require_strategy_config": True,
+                    "selection": {"mode": "select_one"},
+                    "hard_filters": {"session_utc_range": "00-23"},
+                    "score": {"min_score": 0.0},
+                },
+                "tie_break": ["score_desc", "role_priority_asc", "priority_asc", "strategy_id_asc"],
+                "strategies": {
+                    "alpha_live": {
+                        "enabled": True,
+                        "weight": 1.0,
+                        "portfolio": {"group": "trend_breakout"},
+                    },
+                    "alpha": {
+                        "enabled": True,
+                        "weight": 1.0,
+                        "portfolio": {
+                            "group": "trend_breakout",
+                            "active_group_policy": "block",
+                            "role_priority": 10,
+                        },
+                    },
+                    "beta": {
+                        "enabled": True,
+                        "weight": 1.0,
+                        "portfolio": {
+                            "group": "us_pullback",
+                            "role_priority": 20,
+                        },
+                    },
+                },
+            }
+        }
+    }
+    policy_path.write_text(
+        "# JSON\n" + json.dumps(payload, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+    engine = StrategyEngine()
+    engine.register_plugin(_AlphaStrategy())
+    engine.register_plugin(_BetaStrategy())
+    engine.load_manifest(manifest_path)
+    engine.set_allocation_policy(StrategyAllocationPolicy.load(policy_path, profile="active"))
+
+    signals = _run(
+        engine,
+        account=SimpleNamespace(
+            equity=1_000_000.0,
+            positions=[
+                {
+                    "strategy_id": "alpha_live",
+                    "symbol": "USDJPY",
+                    "direction": "long",
+                    "opened_at": datetime(2026, 1, 1, 17, 30, tzinfo=timezone.utc),
+                }
+            ],
+        ),
+    )
+
+    assert len(signals) == 1
+    assert signals[0].strategy_id == "beta"

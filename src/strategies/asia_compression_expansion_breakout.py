@@ -348,6 +348,7 @@ class AsiaCompressionExpansionBreakoutStrategy(StrategyPluginProtocol):
         trend_min_abs = max(0.0, self._coerce_float(entry.get("trend_min_abs"), 0.0))
 
         min_volume = max(0.0, self._coerce_float(filters.get("min_volume"), 0.0))
+        atr_min = max(0.0, self._coerce_float(filters.get("atr_min"), 0.0))
         min_compression_abs = max(0.0, self._coerce_float(filters.get("min_compression_abs"), 0.10))
         compression_atr_mult = max(0.0, self._coerce_float(filters.get("compression_atr_mult"), 0.90))
         min_breakout_abs = max(0.0, self._coerce_float(filters.get("min_breakout_abs"), 0.04))
@@ -440,6 +441,8 @@ class AsiaCompressionExpansionBreakoutStrategy(StrategyPluginProtocol):
             if high_value <= 0 or low_value <= 0 or close_value <= 0:
                 continue
             if min_volume > 0 and volume_value < min_volume:
+                continue
+            if atr_value < atr_min:
                 continue
 
             session_tag = self._normalize_token(session_tag_raw)

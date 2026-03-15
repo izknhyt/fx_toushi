@@ -354,6 +354,86 @@ def test_backfill_signals_uses_latest_dataset_when_manifest_path_is_stale(
     assert payload["appended"] > 0
 
 
+def test_backfill_signals_isolates_engine_signal_log_side_effects(
+    tmp_path: Path, monkeypatch
+) -> None:
+    now = pd.Timestamp.now(tz="UTC").floor("5min")
+    timestamps = pd.date_range(end=now, periods=240, freq="5min", tz="UTC")
+    prices = pd.Series(range(len(timestamps)), dtype="float64") * 0.01 + 156.0
+
+    data_dir = tmp_path / "curated"
+    symbol_dir = data_dir / "usdjpy"
+    symbol_dir.mkdir(parents=True, exist_ok=True)
+    pd.DataFrame(
+        {
+            "timestamp": timestamps,
+            "open": prices,
+            "high": prices + 0.03,
+            "low": prices - 0.03,
+            "close": prices + 0.01,
+            "volume": 1.0,
+        }
+    ).to_parquet(symbol_dir / "usdjpy_m5_latest.parquet", index=False)
+
+    signal_log = tmp_path / "logs/events/signal.generated.jsonl"
+    signal_log.parent.mkdir(parents=True, exist_ok=True)
+    signal_log.touch()
+    monkeypatch.setenv("TRADECTL_SIGNAL_EVENT_LOG", str(signal_log))
+
+    marker = json.dumps(
+        {
+            "event": "signal.generated",
+            "ts": "2099-01-01T00:00:00Z",
+            "status": "generated",
+            "strategy_id": "marker_side_effect",
+            "symbol": "USDJPY",
+        }
+    )
+
+    def _fake_run_all(self, **kwargs):  # noqa: ANN001
+        _ = kwargs
+        with self._signal_log_path.open("a", encoding="utf-8") as handle:
+            handle.write(marker + "\n")
+        return [
+            SimpleNamespace(
+                strategy_id="m1_us_session_trend_pullback",
+                direction="long",
+                confidence=0.7,
+                rationale="mock_signal",
+                score=0.9,
+                quality_score=1.1,
+            )
+        ]
+
+    monkeypatch.setattr("src.strategies.registry.StrategyEngine.run_all", _fake_run_all)
+
+    repo_root = Path(__file__).resolve().parents[2]
+    payload = _backfill_signals(
+        symbols=["USDJPY"],
+        data_dir=data_dir,
+        feature_config=repo_root / "config/feature_pipeline.yaml",
+        strategy_manifest=repo_root / "config/strategy_manifest.hybrid_us_experiment.yaml",
+        data_manifest=tmp_path / "missing_manifest.json",
+        signal_log_path=signal_log,
+        backfill_days=2,
+        target_r_multiple=0.8,
+        ttl_bars=4,
+        trail_atr_mult=1.2,
+        spread_pips=0.005,
+        slippage_pips=0.0015,
+        slippage_std=0.001,
+    )
+    assert payload is not None
+    assert payload["status"] == "ok"
+    assert payload["appended"] > 0
+    assert os.getenv("TRADECTL_SIGNAL_EVENT_LOG") == str(signal_log)
+
+    lines = [line for line in signal_log.read_text(encoding="utf-8").splitlines() if line.strip()]
+    assert lines
+    assert not any("marker_side_effect" in line for line in lines)
+    assert any("m1_us_session_trend_pullback" in line for line in lines)
+
+
 def test_engine_signal_payload_sets_order_fields() -> None:
     ts = pd.Timestamp("2026-02-09T10:00:00Z", tz="UTC").to_pydatetime()
     row = pd.Series({"close_5m": 156.5, "atr_14_1h": 0.12})
@@ -386,6 +466,8 @@ def test_engine_signal_payload_sets_order_fields() -> None:
     assert payload["stop"] is not None
     assert payload["target"] is not None
     assert payload["expire_at"] is not None
+    assert payload["level"] is not None
+    assert payload["buffer"] is not None
     assert payload["ttl_bars"] == 8
     assert payload["entry"] > 100.0
 

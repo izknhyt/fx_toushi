@@ -3,14 +3,19 @@ import json
 from pathlib import Path
 
 import pandas as pd
+import yaml
 
 from src.interfaces.cli.gui_sync import GuiDataSyncStopped
 from src.interfaces.gui.web_server import (
     GuiOpsRuntimeConfig,
     GuiOpsRuntimeController,
+    _build_strategy_catalog,
     _load_signal_records,
+    _load_manifest_payloads,
+    _materialize_runtime_manifest,
     _read_last_line,
     _read_latest_price_from_csv,
+    _signals_payload,
     resolve_sync_source_dir,
 )
 
@@ -118,6 +123,71 @@ def test_load_signal_records_reads_tail_only(tmp_path: Path) -> None:
     assert len(records) == 1000
     assert records[0]["idx"] == 1000
     assert records[-1]["idx"] == 1999
+
+
+def test_signals_payload_filters_scope_and_generated_status(tmp_path: Path) -> None:
+    path = tmp_path / "signal.generated.jsonl"
+    rows = [
+        {
+            "event": "signal.generated",
+            "status": "generated",
+            "ts": "2026-02-23T13:00:00Z",
+            "strategy_id": "m1_asia_compression_expansion_breakout",
+            "symbol": "USDJPY",
+            "direction": "long",
+            "entry": 155.1,
+        },
+        {
+            "event": "signal.generated",
+            "status": "generated",
+            "ts": "2026-02-23T13:01:00Z",
+            "strategy_id": "m1_asia_compression_expansion_breakout",
+            "symbol": "EURUSD",
+            "direction": "long",
+            "entry": 1.08,
+        },
+        {
+            "event": "signal.generated",
+            "status": "generated",
+            "ts": "2026-02-23T13:02:00Z",
+            "strategy_id": "m1_us_session_trend_pullback",
+            "symbol": "USDJPY",
+            "direction": "short",
+            "entry": 154.9,
+        },
+        {
+            "event": "signal.generated",
+            "status": "suppressed_guarded",
+            "ts": "2026-02-23T13:03:00Z",
+            "strategy_id": "m1_asia_compression_expansion_breakout",
+            "symbol": "USDJPY",
+        },
+        {
+            "event": "signal.generated",
+            "status": "generated",
+            "ts": "2026-02-23T13:04:00Z",
+            "strategy_id": "m1_asia_compression_expansion_breakout",
+            "symbol": "USDJPY",
+            "direction": "long",
+            "entry": 155.2,
+            "expire_at": "2026-02-23T13:00:00Z",
+        },
+    ]
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8") as handle:
+        for row in rows:
+            handle.write(json.dumps(row, ensure_ascii=False) + "\n")
+
+    payload = _signals_payload(
+        path,
+        limit=100,
+        symbols=frozenset({"USDJPY"}),
+        strategy_ids=frozenset({"m1_asia_compression_expansion_breakout"}),
+    )
+    assert payload["count"] == 1
+    assert payload["signals"][0]["symbol"] == "USDJPY"
+    assert payload["signals"][0]["strategy_id"] == "m1_asia_compression_expansion_breakout"
+    assert payload["signals"][0]["status"] == "generated"
 
 
 def test_resolve_sync_source_dir_chooses_freshest_dataset_dir(tmp_path: Path, monkeypatch) -> None:
@@ -267,6 +337,77 @@ def test_gui_ops_runtime_controller_accepts_strategy_override(monkeypatch, tmp_p
     assert snapshot["sync_progress"]["state"] == "done"
     assert "signal_warning" not in "\n".join(snapshot["recent_logs"])
     controller.stop()
+
+
+def test_gui_ops_runtime_controller_marks_recommended_and_excluded_strategies(
+    monkeypatch, tmp_path: Path
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    config_dir = tmp_path / "config"
+    config_dir.mkdir(parents=True, exist_ok=True)
+    _write_manifest(
+        config_dir / "strategy_manifest.yaml",
+        strategy_id="m1_baseline_donchian_upper_only",
+        strategy_name="M1 Baseline Donchian (Upper Only)",
+        enabled=True,
+    )
+    _write_manifest(
+        config_dir / "strategy_manifest.extra.yaml",
+        strategy_id="m1_baseline_donchian_long_only",
+        strategy_name="M1 Baseline Donchian (Long Only)",
+        enabled=False,
+    )
+
+    config = _build_runtime_config(tmp_path)
+    controller = GuiOpsRuntimeController(config)
+    snapshot = controller.snapshot()
+    strategies = {entry["id"]: entry for entry in snapshot["available_strategies"]}
+
+    assert strategies["m1_baseline_donchian_upper_only"]["ops_state"] == "recommended"
+    assert strategies["m1_baseline_donchian_upper_only"]["ops_state_label"] == "採用"
+    assert strategies["m1_baseline_donchian_long_only"]["ops_state"] == "excluded"
+    assert strategies["m1_baseline_donchian_long_only"]["ops_state_label"] == "外す"
+
+
+def test_materialize_runtime_manifest_normalizes_enabled_weights(tmp_path: Path) -> None:
+    config_dir = tmp_path / "config"
+    config_dir.mkdir(parents=True, exist_ok=True)
+    base_manifest = config_dir / "strategy_manifest.yaml"
+    alt_manifest = config_dir / "strategy_manifest.extra.yaml"
+    _write_manifest(
+        base_manifest,
+        strategy_id="m1_baseline_donchian_upper_only",
+        strategy_name="M1 Baseline Donchian (Upper Only)",
+        enabled=True,
+    )
+    _write_manifest(
+        alt_manifest,
+        strategy_id="m1_us_session_trend_pullback",
+        strategy_name="M1 US Session Trend Pullback",
+        enabled=True,
+    )
+
+    payloads = _load_manifest_payloads((base_manifest, alt_manifest))
+    catalog = _build_strategy_catalog(payloads)
+    runtime_manifest = _materialize_runtime_manifest(
+        selected_manifest=base_manifest,
+        manifest_payloads=payloads,
+        strategy_catalog=catalog,
+        selected_strategy_ids=(
+            "m1_baseline_donchian_upper_only",
+            "m1_us_session_trend_pullback",
+        ),
+    )
+
+    payload = yaml.safe_load(runtime_manifest.read_text(encoding="utf-8"))
+    strategies = payload["strategies"]
+    enabled_weights = [
+        float(entry.get("weight", 0.0))
+        for entry in strategies.values()
+        if isinstance(entry, dict) and bool(entry.get("enabled"))
+    ]
+    assert len(enabled_weights) == 2
+    assert sum(enabled_weights) <= 1.0 + 1e-9
 
 
 def test_gui_ops_runtime_controller_exposes_sync_progress_while_running_sync(

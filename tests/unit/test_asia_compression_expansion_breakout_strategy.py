@@ -266,6 +266,27 @@ def test_cost_threshold_blocks_when_compression_too_narrow_for_cost() -> None:
     assert list(strategy.generate_signals(breakout_bar)) == []
 
 
+def test_atr_floor_blocks_low_atr_breakout() -> None:
+    strategy = AsiaCompressionExpansionBreakoutStrategy(default_watchlist=("USDJPY",))
+    params = _strategy_params()
+    params["entry"]["filters"]["atr_min"] = 0.25  # type: ignore[index]
+    _prime_compression(strategy, params)
+
+    breakout_bar = _context(
+        now=datetime(2025, 1, 2, 0, 30, tzinfo=timezone.utc),
+        payloads=_bar_payload(
+            open_v=150.04,
+            high_v=150.30,
+            low_v=150.03,
+            close_v=150.28,
+            volume_v=110,
+            atr_v=0.20,
+        ),
+        params=params,
+    )
+    assert list(strategy.generate_signals(breakout_bar)) == []
+
+
 def test_allowed_directions_blocks_short_breakout_when_long_only() -> None:
     strategy = AsiaCompressionExpansionBreakoutStrategy(default_watchlist=("USDJPY",))
     params = _strategy_params()

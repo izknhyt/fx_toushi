@@ -26,6 +26,7 @@ from pydantic import BaseModel, Field, ValidationError, field_validator, model_v
 
 from src.features.pipeline import FeatureContext, FeaturePipeline
 from src.strategies.allocation import (
+    AllocationActivePosition,
     AllocationCandidate,
     AllocationContext,
     StrategyAllocationPolicy,
@@ -140,6 +141,198 @@ def _utcnow_iso() -> str:
     """Return a compact UTC timestamp for logging."""
 
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def _coerce_float(value: Any) -> float | None:
+    if value is None:
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    getter = getattr(value, "iloc", None)
+    if getter is not None:
+        try:
+            return float(value.iloc[-1])
+        except Exception:
+            return None
+    try:
+        return float(value)
+    except Exception:
+        return None
+
+
+def _extract_map(value: Any) -> Mapping[str, Any]:
+    if isinstance(value, Mapping):
+        return value
+    return {}
+
+
+def _timeframe_to_minutes(value: str | None) -> int:
+    token = (value or "5m").strip().lower()
+    if token.endswith("m"):
+        try:
+            return max(1, int(token[:-1]))
+        except ValueError:
+            return 5
+    if token.endswith("h"):
+        try:
+            return max(1, int(token[:-1])) * 60
+        except ValueError:
+            return 60
+    if token.endswith("d"):
+        try:
+            return max(1, int(token[:-1])) * 1440
+        except ValueError:
+            return 1440
+    return 5
+
+
+def _latest_feature(
+    *,
+    context: Any,
+    symbol: str,
+    feature: str,
+    timeframe: str,
+) -> float | None:
+    features = getattr(context, "features", None)
+    if features is None:
+        return None
+    try:
+        value = features.lookup(symbol=symbol, feature=feature, timeframe=timeframe)
+    except Exception:
+        return None
+    return _coerce_float(value)
+
+
+def _iso_or_none(value: Any) -> str | None:
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return value
+    if isinstance(value, datetime):
+        if value.tzinfo is None:
+            value = value.replace(tzinfo=timezone.utc)
+        else:
+            value = value.astimezone(timezone.utc)
+        return value.isoformat().replace("+00:00", "Z")
+    return None
+
+
+def _derive_signal_trade_fields(*, signal: Any, context: Any) -> dict[str, Any]:
+    symbol_raw = getattr(signal, "symbol", None)
+    symbol = str(symbol_raw).upper() if isinstance(symbol_raw, str) and symbol_raw.strip() else None
+    direction_raw = getattr(signal, "direction", None)
+    direction = str(direction_raw).lower() if isinstance(direction_raw, str) else None
+
+    params = _extract_map(getattr(context, "parameters", {}))
+    entry_cfg = _extract_map(params.get("entry"))
+    sizing_cfg = _extract_map(params.get("sizing"))
+    execution_cfg = _extract_map(params.get("execution"))
+
+    level = _coerce_float(getattr(signal, "level", None))
+    buffer = _coerce_float(getattr(signal, "buffer", None))
+    entry = _coerce_float(getattr(signal, "entry", None))
+    stop = _coerce_float(getattr(signal, "stop", None))
+    target = _coerce_float(getattr(signal, "target", None))
+    expire_at = _iso_or_none(getattr(signal, "expire_at", None))
+
+    ttl_bars = int(sizing_cfg.get("ttl_bars") or getattr(signal, "ttl_bars", None) or 0)
+    if ttl_bars <= 0:
+        ttl_bars = 1
+    entry_minutes = int(
+        getattr(signal, "entry_timeframe_minutes", None)
+        or _timeframe_to_minutes(str(entry_cfg.get("timeframe", "5m")))
+    )
+    entry_minutes = max(1, entry_minutes)
+    target_r_multiple = _coerce_float(
+        getattr(signal, "target_r_multiple", None)
+    ) or _coerce_float(sizing_cfg.get("tp_r_multiple")) or 1.0
+    atr_sl_mult = _coerce_float(sizing_cfg.get("atr_sl_mult")) or 1.0
+    spread_pips = _coerce_float(
+        getattr(signal, "spread_pips", None)
+    ) or _coerce_float(execution_cfg.get("spread")) or 0.0
+    slippage_pips = _coerce_float(
+        getattr(signal, "slippage_pips", None)
+    ) or _coerce_float(execution_cfg.get("slippage")) or 0.0
+    slippage_std = _coerce_float(
+        getattr(signal, "slippage_std", None)
+    ) or _coerce_float(execution_cfg.get("slippage_std")) or 0.0
+    trail_atr_mult = _coerce_float(
+        getattr(signal, "trail_atr_mult", None)
+    ) or _coerce_float(sizing_cfg.get("atr_sl_mult"))
+
+    close_price = _coerce_float(getattr(signal, "price", None))
+    atr_value = None
+    if symbol is not None:
+        close_price = close_price or _latest_feature(
+            context=context,
+            symbol=symbol,
+            feature="close_5m",
+            timeframe="5m",
+        )
+        atr_value = _latest_feature(
+            context=context,
+            symbol=symbol,
+            feature="atr_14_1h",
+            timeframe="1h",
+        )
+    atr_value = atr_value or 0.08
+
+    if entry is None and close_price is not None and direction in {"long", "short"}:
+        if direction == "long":
+            entry = close_price + spread_pips + slippage_pips
+        else:
+            entry = close_price - spread_pips - slippage_pips
+
+    risk_distance = None
+    if entry is not None and stop is not None:
+        risk_distance = abs(entry - stop)
+    if risk_distance is None and close_price is not None:
+        raw = max(atr_value * max(0.1, atr_sl_mult), 0.0)
+        min_distance = max(close_price * 0.0002, 0.0005)
+        max_distance = max(close_price * 0.02, min_distance)
+        risk_distance = min(max(raw, min_distance), max_distance)
+
+    if stop is None and entry is not None and risk_distance is not None and direction in {"long", "short"}:
+        if direction == "long":
+            stop = entry - risk_distance
+        else:
+            stop = entry + risk_distance
+    if target is None and entry is not None and risk_distance is not None and direction in {"long", "short"}:
+        if direction == "long":
+            target = entry + target_r_multiple * risk_distance
+        else:
+            target = entry - target_r_multiple * risk_distance
+    if level is None and entry is not None:
+        level = entry
+    if buffer is None and risk_distance is not None:
+        buffer = risk_distance
+    if expire_at is None:
+        now = getattr(getattr(context, "clock", None), "now", None)
+        if isinstance(now, datetime):
+            if now.tzinfo is None:
+                now = now.replace(tzinfo=timezone.utc)
+            else:
+                now = now.astimezone(timezone.utc)
+            expire_at = (now + timedelta(minutes=entry_minutes * ttl_bars)).isoformat().replace(
+                "+00:00", "Z"
+            )
+
+    return {
+        "entry": entry,
+        "stop": stop,
+        "target": target,
+        "level": level,
+        "buffer": buffer,
+        "expire_at": expire_at,
+        "ttl_bars": ttl_bars,
+        "entry_timeframe_minutes": entry_minutes,
+        "target_r_multiple": target_r_multiple,
+        "trail_atr_mult": trail_atr_mult,
+        "spread_pips": spread_pips,
+        "slippage_pips": slippage_pips,
+        "slippage_std": slippage_std,
+        "atr_value": atr_value,
+    }
 
 
 def compute_deterministic_hash(
@@ -895,6 +1088,7 @@ class StrategyEngine:
 
         return self._apply_allocation(
             candidates=allocation_candidates,
+            account=account,
             clock=clock,
             gate=gate,
             config=config,
@@ -972,8 +1166,18 @@ class StrategyEngine:
                     "quality_score": getattr(signal, "quality_score", None),
                     "score": getattr(signal, "score", None),
                     "badges": getattr(signal, "badges", None),
+                    "compression_high": getattr(signal, "compression_high", None),
+                    "compression_low": getattr(signal, "compression_low", None),
+                    "compression_range": getattr(signal, "compression_range", None),
+                    "breakout_distance": getattr(signal, "breakout_distance", None),
+                    "cost_estimate": getattr(signal, "cost_estimate", None),
+                    "orb_high": getattr(signal, "orb_high", None),
+                    "orb_low": getattr(signal, "orb_low", None),
+                    "orb_width": getattr(signal, "orb_width", None),
+                    "vwap": getattr(signal, "vwap", None),
                 }
             )
+            payload.update(_derive_signal_trade_fields(signal=signal, context=context))
         try:
             _append_jsonl(
                 self._signal_log_path,
@@ -1016,6 +1220,7 @@ class StrategyEngine:
         self,
         *,
         candidates: Iterable[AllocationCandidate],
+        account: Any,
         clock: Any,
         gate: Any,
         config: Any,
@@ -1035,12 +1240,15 @@ class StrategyEngine:
             by_symbol.setdefault(symbol, []).append(candidate)
 
         selected: list[Any] = []
+        allocation_now = self._allocation_now(clock)
+        open_positions = self._allocation_open_positions(account=account)
         for symbol, symbol_candidates in sorted(by_symbol.items()):
             context = AllocationContext(
-                now=self._allocation_now(clock),
+                now=allocation_now,
                 board_mode=self._allocation_board_mode(gate=gate, config=config),
                 kill_switch_state=self._allocation_kill_switch_state(gate=gate, config=config),
                 regime_value=self._allocation_regime_value(features=features, symbol=symbol),
+                open_positions=open_positions,
             )
             allocation = policy.allocate(candidates=symbol_candidates, context=context)
             selected.extend(candidate.signal for candidate in allocation.selected)
@@ -1053,6 +1261,47 @@ class StrategyEngine:
         if isinstance(now, datetime):
             return _as_utc(now)
         return datetime.now(timezone.utc)
+
+    @staticmethod
+    def _allocation_open_positions(account: Any) -> tuple[AllocationActivePosition, ...]:
+        raw_positions = getattr(account, "positions", None)
+        if raw_positions is None:
+            raw_positions = getattr(account, "open_positions", None)
+        if raw_positions is None or isinstance(raw_positions, (str, bytes, Mapping)):
+            return ()
+        if not isinstance(raw_positions, Iterable):
+            return ()
+
+        positions: list[AllocationActivePosition] = []
+        for raw in raw_positions:
+            if isinstance(raw, Mapping):
+                strategy_id = str(raw.get("strategy_id") or "").strip()
+                symbol = str(raw.get("symbol") or "").strip().upper()
+                direction = str(raw.get("direction") or "").strip().lower()
+                opened_at_raw = raw.get("opened_at")
+            else:
+                strategy_id = str(getattr(raw, "strategy_id", "") or "").strip()
+                symbol = str(getattr(raw, "symbol", "") or "").strip().upper()
+                direction = str(getattr(raw, "direction", "") or "").strip().lower()
+                opened_at_raw = getattr(raw, "opened_at", None)
+            if not symbol:
+                continue
+            opened_at: datetime | None = None
+            if isinstance(opened_at_raw, datetime):
+                opened_at = _as_utc(opened_at_raw)
+            elif hasattr(opened_at_raw, "to_pydatetime"):
+                converted = opened_at_raw.to_pydatetime()
+                if isinstance(converted, datetime):
+                    opened_at = _as_utc(converted)
+            positions.append(
+                AllocationActivePosition(
+                    strategy_id=strategy_id,
+                    symbol=symbol,
+                    direction=direction,
+                    opened_at=opened_at,
+                )
+            )
+        return tuple(positions)
 
     @staticmethod
     def _allocation_board_mode(*, gate: Any, config: Any) -> str:

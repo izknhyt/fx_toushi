@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from src.strategies.allocation import (
+    AllocationActivePosition,
     AllocationCandidate,
     AllocationContext,
     StrategyAllocationPolicy,
@@ -49,12 +50,33 @@ def _candidate(
     )
 
 
-def _context(*, hour: int = 18, board_mode: str = "normal", kill_switch: str = "normal") -> AllocationContext:
+def _position(
+    *,
+    strategy_id: str = "open_strat",
+    symbol: str = "USDJPY",
+    direction: str = "long",
+) -> AllocationActivePosition:
+    return AllocationActivePosition(
+        strategy_id=strategy_id,
+        symbol=symbol,
+        direction=direction,
+        opened_at=datetime(2026, 1, 1, 17, 0, tzinfo=timezone.utc),
+    )
+
+
+def _context(
+    *,
+    hour: int = 18,
+    board_mode: str = "normal",
+    kill_switch: str = "normal",
+    open_positions: tuple[AllocationActivePosition, ...] = (),
+) -> AllocationContext:
     return AllocationContext(
         now=datetime(2026, 1, 1, hour, 0, tzinfo=timezone.utc),
         board_mode=board_mode,
         kill_switch_state=kill_switch,
         regime_value=0.2,
+        open_positions=open_positions,
     )
 
 
@@ -350,3 +372,289 @@ def test_allocation_select_many_handles_duplicate_strategy_ids(tmp_path: Path) -
     assert len(selected) == 1
     assert len(rejected) == 1
     assert rejected[0].reason == "selection_limit"
+
+
+def test_allocation_blocks_candidate_when_same_portfolio_group_is_open(tmp_path: Path) -> None:
+    config_path = _write_policy(
+        tmp_path,
+        {
+            "profiles": {
+                "active": {
+                    "mode": "active",
+                    "global": {
+                        "require_strategy_config": True,
+                        "hard_filters": {"session_utc_range": "00-23"},
+                        "score": {"min_score": 0.0},
+                    },
+                    "strategies": {
+                        "open_strat": {
+                            "enabled": True,
+                            "weight": 1.0,
+                            "portfolio": {"group": "trend_breakout"},
+                        },
+                        "strat_a": {
+                            "enabled": True,
+                            "weight": 1.0,
+                            "portfolio": {
+                                "group": "trend_breakout",
+                                "active_group_policy": "block",
+                            },
+                        },
+                    },
+                }
+            }
+        },
+    )
+    policy = StrategyAllocationPolicy.load(config_path, profile="active")
+    result = policy.allocate(
+        candidates=(_candidate(strategy_id="strat_a", score=1.1),),
+        context=_context(open_positions=(_position(),)),
+    )
+
+    assert result.selected == ()
+    assert result.outcomes[0].reason == "active_group_conflict"
+
+
+def test_allocation_penalizes_long_expected_holding_minutes(tmp_path: Path) -> None:
+    config_path = _write_policy(
+        tmp_path,
+        {
+            "profiles": {
+                "active": {
+                    "mode": "active",
+                    "global": {
+                        "require_strategy_config": True,
+                        "hard_filters": {"session_utc_range": "00-23"},
+                        "score": {"min_score": 0.0},
+                        "portfolio": {"holding_minute_weight": 0.001},
+                    },
+                    "tie_break": ["score_desc", "role_priority_asc", "priority_asc", "strategy_id_asc"],
+                    "strategies": {
+                        "fast": {
+                            "enabled": True,
+                            "weight": 1.0,
+                            "portfolio": {"expected_holding_minutes": 45, "role_priority": 10},
+                        },
+                        "slow": {
+                            "enabled": True,
+                            "weight": 1.0,
+                            "portfolio": {"expected_holding_minutes": 240, "role_priority": 20},
+                        },
+                    },
+                }
+            }
+        },
+    )
+    policy = StrategyAllocationPolicy.load(config_path, profile="active")
+    result = policy.allocate(
+        candidates=(
+            _candidate(strategy_id="fast", score=1.0),
+            _candidate(strategy_id="slow", score=1.0),
+        ),
+        context=_context(),
+    )
+
+    assert [item.strategy_id for item in result.selected] == ["fast"]
+    by_id = {outcome.strategy_id: outcome for outcome in result.outcomes}
+    assert by_id["slow"].selected is False
+    assert by_id["slow"].reason == "tie_break_lost"
+
+
+def test_allocation_blocks_same_symbol_when_configured(tmp_path: Path) -> None:
+    config_path = _write_policy(
+        tmp_path,
+        {
+            "profiles": {
+                "active": {
+                    "mode": "active",
+                    "global": {
+                        "require_strategy_config": True,
+                        "hard_filters": {"session_utc_range": "00-23"},
+                        "score": {"min_score": 0.0},
+                    },
+                    "strategies": {
+                        "strat_a": {
+                            "enabled": True,
+                            "weight": 1.0,
+                            "portfolio": {"active_symbol_policy": "block"},
+                        },
+                    },
+                }
+            }
+        },
+    )
+    policy = StrategyAllocationPolicy.load(config_path, profile="active")
+    result = policy.allocate(
+        candidates=(_candidate(strategy_id="strat_a", score=1.0),),
+        context=_context(open_positions=(_position(strategy_id="other_group", symbol="USDJPY"),)),
+    )
+
+    assert result.selected == ()
+    assert result.outcomes[0].reason == "active_symbol_conflict"
+
+
+def test_allocation_defers_same_portfolio_group_when_configured(tmp_path: Path) -> None:
+    config_path = _write_policy(
+        tmp_path,
+        {
+            "profiles": {
+                "active": {
+                    "mode": "active",
+                    "global": {
+                        "require_strategy_config": True,
+                        "hard_filters": {"session_utc_range": "00-23"},
+                        "score": {"min_score": 0.0},
+                    },
+                    "strategies": {
+                        "open_strat": {
+                            "enabled": True,
+                            "weight": 1.0,
+                            "portfolio": {"group": "trend_breakout"},
+                        },
+                        "strat_a": {
+                            "enabled": True,
+                            "weight": 1.0,
+                            "portfolio": {
+                                "group": "trend_breakout",
+                                "active_group_policy": "defer",
+                            },
+                        },
+                    },
+                }
+            }
+        },
+    )
+    policy = StrategyAllocationPolicy.load(config_path, profile="active")
+    result = policy.allocate(
+        candidates=(_candidate(strategy_id="strat_a", score=1.1),),
+        context=_context(open_positions=(_position(),)),
+    )
+
+    assert result.selected == ()
+    assert result.outcomes[0].reason == "active_group_deferred"
+
+
+def test_allocation_blocks_same_exposure_bucket_when_configured(tmp_path: Path) -> None:
+    config_path = _write_policy(
+        tmp_path,
+        {
+            "profiles": {
+                "active": {
+                    "mode": "active",
+                    "global": {
+                        "require_strategy_config": True,
+                        "hard_filters": {"session_utc_range": "00-23"},
+                        "score": {"min_score": 0.0},
+                    },
+                    "strategies": {
+                        "open_strat": {
+                            "enabled": True,
+                            "weight": 1.0,
+                            "portfolio": {"exposure_bucket": "usd_jpy_breakout_long"},
+                        },
+                        "strat_a": {
+                            "enabled": True,
+                            "weight": 1.0,
+                            "portfolio": {
+                                "exposure_bucket": "usd_jpy_breakout_long",
+                                "active_exposure_policy": "block",
+                            },
+                        },
+                    },
+                }
+            }
+        },
+    )
+    policy = StrategyAllocationPolicy.load(config_path, profile="active")
+    result = policy.allocate(
+        candidates=(_candidate(strategy_id="strat_a", score=1.0),),
+        context=_context(open_positions=(_position(),)),
+    )
+
+    assert result.selected == ()
+    assert result.outcomes[0].reason == "active_exposure_conflict"
+
+
+def test_allocation_blocks_when_group_limit_reached(tmp_path: Path) -> None:
+    config_path = _write_policy(
+        tmp_path,
+        {
+            "profiles": {
+                "active": {
+                    "mode": "active",
+                    "global": {
+                        "require_strategy_config": True,
+                        "hard_filters": {"session_utc_range": "00-23"},
+                        "score": {"min_score": 0.0},
+                    },
+                    "strategies": {
+                        "open_strat": {
+                            "enabled": True,
+                            "weight": 1.0,
+                            "portfolio": {"group": "trend_breakout"},
+                        },
+                        "strat_a": {
+                            "enabled": True,
+                            "weight": 1.0,
+                            "portfolio": {
+                                "group": "trend_breakout",
+                                "max_active_per_group": 1,
+                            },
+                        },
+                    },
+                }
+            }
+        },
+    )
+    policy = StrategyAllocationPolicy.load(config_path, profile="active")
+    result = policy.allocate(
+        candidates=(_candidate(strategy_id="strat_a", score=1.0),),
+        context=_context(open_positions=(_position(),)),
+    )
+
+    assert result.selected == ()
+    assert result.outcomes[0].reason == "active_group_limit"
+
+
+def test_allocation_penalizes_slot_cost(tmp_path: Path) -> None:
+    config_path = _write_policy(
+        tmp_path,
+        {
+            "profiles": {
+                "active": {
+                    "mode": "active",
+                    "global": {
+                        "require_strategy_config": True,
+                        "hard_filters": {"session_utc_range": "00-23"},
+                        "score": {"min_score": 0.0},
+                    },
+                    "tie_break": ["score_desc", "role_priority_asc", "priority_asc", "strategy_id_asc"],
+                    "strategies": {
+                        "cheap_slot": {
+                            "enabled": True,
+                            "weight": 1.0,
+                            "portfolio": {"slot_cost": 0.01, "role_priority": 10},
+                        },
+                        "expensive_slot": {
+                            "enabled": True,
+                            "weight": 1.0,
+                            "portfolio": {"slot_cost": 0.20, "role_priority": 20},
+                        },
+                    },
+                }
+            }
+        },
+    )
+    policy = StrategyAllocationPolicy.load(config_path, profile="active")
+    result = policy.allocate(
+        candidates=(
+            _candidate(strategy_id="cheap_slot", score=1.0),
+            _candidate(strategy_id="expensive_slot", score=1.0),
+        ),
+        context=_context(),
+    )
+
+    assert [item.strategy_id for item in result.selected] == ["cheap_slot"]
+    by_id = {outcome.strategy_id: outcome for outcome in result.outcomes}
+    assert by_id["expensive_slot"].selected is False
+    assert by_id["expensive_slot"].reason == "tie_break_lost"

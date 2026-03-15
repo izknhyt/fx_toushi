@@ -365,10 +365,20 @@ def _backfill_signals(
     history_engine: StrategyEngine | None = None
     history_manifest = None
     if non_donchian_strategy_ids:
-        history_engine = StrategyEngine()
-        for plugin in build_default_plugins().values():
-            history_engine.register_plugin(plugin)
-        history_manifest = history_engine.load_manifest(strategy_manifest)
+        # Backfill replays use run_all() per historical row; route internal signal logs to
+        # os.devnull so we only append normalized GUI backfill payloads once.
+        previous_signal_log = os.getenv("TRADECTL_SIGNAL_EVENT_LOG")
+        os.environ["TRADECTL_SIGNAL_EVENT_LOG"] = os.devnull
+        try:
+            history_engine = StrategyEngine()
+            for plugin in build_default_plugins().values():
+                history_engine.register_plugin(plugin)
+            history_manifest = history_engine.load_manifest(strategy_manifest)
+        finally:
+            if previous_signal_log is None:
+                os.environ.pop("TRADECTL_SIGNAL_EVENT_LOG", None)
+            else:
+                os.environ["TRADECTL_SIGNAL_EVENT_LOG"] = previous_signal_log
 
     strategy_variants: list[tuple[str, str, int]] = []
     for strategy_id, mode in DONCHIAN_VARIANT_MODES.items():
@@ -856,6 +866,11 @@ def _engine_signal_payload(
     rationale = str(getattr(signal, "rationale", "") or "")
     score = _coerce_float(getattr(signal, "score", None))
     quality_score = _coerce_float(getattr(signal, "quality_score", None))
+    level = _coerce_float(getattr(signal, "level", None))
+    buffer = _coerce_float(getattr(signal, "buffer", None))
+    breakout = getattr(signal, "breakout", None)
+    breakout_width = _coerce_float(getattr(signal, "breakout_width", None))
+    filter_flags = getattr(signal, "filter_flags", None)
     params = strategy_parameters if isinstance(strategy_parameters, Mapping) else {}
     entry_cfg = params.get("entry") if isinstance(params, Mapping) else {}
     sizing_cfg = params.get("sizing") if isinstance(params, Mapping) else {}
@@ -900,6 +915,10 @@ def _engine_signal_payload(
             stop_price = entry_price + risk_distance
             target_price = entry_price - target_r * risk_distance
         expire_at = (ts + timedelta(minutes=entry_minutes * ttl_value)).isoformat().replace("+00:00", "Z")
+        if level is None:
+            level = entry_price
+        if buffer is None:
+            buffer = risk_distance
 
     return {
         "event": "signal.generated",
@@ -914,11 +933,11 @@ def _engine_signal_payload(
         "direction": direction,
         "confidence": confidence,
         "rationale": rationale,
-        "breakout": None,
-        "level": None,
-        "buffer": None,
-        "breakout_width": None,
-        "filter_flags": None,
+        "breakout": breakout,
+        "level": level,
+        "buffer": buffer,
+        "breakout_width": breakout_width,
+        "filter_flags": filter_flags,
         "quality_score": quality_score,
         "entry": entry_price,
         "stop": stop_price,
