@@ -234,6 +234,7 @@ def test_strategy_engine_rotates_large_logs(monkeypatch, tmp_path: Path) -> None
         engine._emit_signal_event(
             strategy_id="m1_baseline_ma_rsi",
             signal=SimpleNamespace(symbol="USDJPY", direction="long"),
+            candidate_trade=None,
             context=context,
             feature_flags={"fx_enabled": True},
             status="accepted",
@@ -283,6 +284,7 @@ def test_emit_signal_event_derives_trade_levels(monkeypatch, tmp_path: Path) -> 
     engine._emit_signal_event(
         strategy_id="m1_asia_compression_expansion_breakout",
         signal=SimpleNamespace(symbol="USDJPY", direction="long"),
+        candidate_trade=None,
         context=context,
         feature_flags={},
         status="generated",

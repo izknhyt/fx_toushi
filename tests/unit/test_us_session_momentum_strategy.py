@@ -248,3 +248,43 @@ def test_us_session_strategy_blocks_all_utc_monday_directions() -> None:
 
     assert long_signals == []
     assert short_signals == []
+
+
+def test_us_session_strategy_blocks_utc_hours_for_short_only() -> None:
+    strategy = UsSessionTrendPullbackStrategy(default_watchlist=("USDJPY",))
+    params = {
+        "entry": {
+            "blocked_local_direction_windows": [
+                {
+                    "timezone": "UTC",
+                    "hours": [23],
+                    "directions": ["short"],
+                }
+            ]
+        }
+    }
+    blocked_short_context = _context(
+        hour=23,
+        now=datetime(2026, 2, 3, 23, 15, tzinfo=timezone.utc),
+        params=params,
+        overrides={
+            "ema_fast_5m": 149.8,
+            "ema_slow_5m": 150.4,
+            "rsi_14_5m": 45.0,
+            "ema55_slope_1h": -0.07,
+            "close_5m": 149.7,
+            "regime_trend_1h": -0.4,
+        },
+    )
+    allowed_long_context = _context(
+        hour=23,
+        now=datetime(2026, 2, 3, 23, 15, tzinfo=timezone.utc),
+        params=params,
+    )
+
+    blocked_short_signals = list(strategy.generate_signals(blocked_short_context))
+    allowed_long_signals = list(strategy.generate_signals(allowed_long_context))
+
+    assert blocked_short_signals == []
+    assert len(allowed_long_signals) == 1
+    assert allowed_long_signals[0].direction == "long"

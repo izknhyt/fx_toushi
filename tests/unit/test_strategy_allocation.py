@@ -101,6 +101,8 @@ def test_allocation_pass_through_keeps_all_candidates() -> None:
     assert [item.strategy_id for item in result.selected] == ["strat_a", "strat_b"]
     assert all(outcome.selected for outcome in result.outcomes)
     assert {outcome.reason for outcome in result.outcomes} == {"pass_through"}
+    assert {outcome.decision for outcome in result.outcomes} == {"accept"}
+    assert {outcome.estimated_cost for outcome in result.outcomes} == {0.003}
 
 
 def test_allocation_tie_break_uses_priority_then_strategy_id(tmp_path: Path) -> None:
@@ -134,9 +136,13 @@ def test_allocation_tie_break_uses_priority_then_strategy_id(tmp_path: Path) -> 
     )
 
     assert [item.strategy_id for item in result.selected] == ["strat_a"]
+    by_id = {item.strategy_id: item for item in result.outcomes}
+    assert by_id["strat_a"].decision == "accept"
+    assert by_id["strat_a"].estimated_cost == 0.003
     rejected = [item for item in result.outcomes if not item.selected]
     assert len(rejected) == 1
     assert rejected[0].reason == "tie_break_lost"
+    assert rejected[0].decision == "reject"
 
 
 def test_allocation_excludes_kill_switch_board_mode_spread_and_session(tmp_path: Path) -> None:
@@ -532,6 +538,60 @@ def test_allocation_defers_same_portfolio_group_when_configured(tmp_path: Path) 
 
     assert result.selected == ()
     assert result.outcomes[0].reason == "active_group_deferred"
+    assert result.outcomes[0].decision == "defer"
+    assert result.outcomes[0].portfolio_group == "trend_breakout"
+
+
+def test_allocation_result_as_dict_includes_admission_contract_fields(tmp_path: Path) -> None:
+    config_path = _write_policy(
+        tmp_path,
+        {
+            "profiles": {
+                "active": {
+                    "mode": "active",
+                    "global": {
+                        "require_strategy_config": True,
+                        "hard_filters": {"session_utc_range": "00-23"},
+                        "score": {"min_score": 0.0},
+                    },
+                    "strategies": {
+                        "strat_a": {
+                            "enabled": True,
+                            "weight": 1.0,
+                            "portfolio": {
+                                "group": "asia_primary",
+                                "exposure_bucket": "usd_jpy_breakout_long",
+                                "slot_cost": 0.05,
+                            },
+                        },
+                    },
+                }
+            }
+        },
+    )
+    policy = StrategyAllocationPolicy.load(config_path, profile="active")
+
+    payload = policy.allocate(
+        candidates=(_candidate(strategy_id="strat_a", score=1.1),),
+        context=_context(),
+    ).as_dict()
+
+    assert payload["selected_strategy_ids"] == ["strat_a"]
+    assert payload["outcomes"] == [
+        {
+            "strategy_id": "strat_a",
+            "symbol": "USDJPY",
+            "selected": True,
+            "decision": "accept",
+            "reason": "selected",
+            "reason_code": "selected",
+            "score": 1.05,
+            "portfolio_group": "asia_primary",
+            "exposure_bucket": "usd_jpy_breakout_long",
+            "estimated_cost": 0.003,
+            "slot_cost": 0.05,
+        }
+    ]
 
 
 def test_allocation_blocks_same_exposure_bucket_when_configured(tmp_path: Path) -> None:

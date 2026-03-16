@@ -14,6 +14,7 @@ from src.shadow.store import ShadowStateStore
 
 DEFAULT_TOKEN_PATH = Path("config/shadow/tokens.yaml")
 DEFAULT_EVENT_LOG = Path("logs/events/shadow_session.jsonl")
+DEFAULT_SIGNAL_LOG = Path("logs/events/signal.generated.jsonl")
 DEFAULT_METRICS_PATH = Path("metrics/shadow_gui.jsonl")
 DEFAULT_AUDIT_LOG = Path("logs/audit/shadow_gui.jsonl")
 
@@ -27,6 +28,7 @@ class ShadowGuiApi:
     store: ShadowStateStore
     token_path: Path = DEFAULT_TOKEN_PATH
     event_log: Path = DEFAULT_EVENT_LOG
+    signal_log: Path = DEFAULT_SIGNAL_LOG
     metrics_path: Path = DEFAULT_METRICS_PATH
     audit_log: Path = DEFAULT_AUDIT_LOG
 
@@ -166,8 +168,19 @@ class ShadowGuiApi:
             "status": "ok",
             "token_count": len(tokens),
             "event_log": str(self.event_log),
+            "signal_log": str(self.signal_log),
+            "allocation_summary": _summarize_allocation_decisions(self.signal_log, limit=200),
             "schema_path": "docs/schema/shadow_gui.yaml",
         }
+
+    def allocation_summary(
+        self,
+        *,
+        token: str | None = None,
+        limit: int = 200,
+    ) -> dict[str, object]:
+        self._require_token(token)
+        return _summarize_allocation_decisions(self.signal_log, limit=limit)
 
     def _require_token(self, token: str | None) -> None:
         tokens = _load_tokens(self.token_path)
@@ -242,6 +255,44 @@ def _utcnow_iso() -> str:
 def _shadow_ack_id(reference_id: str) -> str:
     stamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S%f")
     return f"shadow_ack_{reference_id}_{stamp}"
+
+
+def _summarize_allocation_decisions(path: Path, *, limit: int) -> dict[str, object]:
+    summary = {"accept": 0, "reject": 0, "defer": 0, "resize": 0, "replace": 0}
+    if not path.exists():
+        return {"status": "ok", "count": 0, "summary": summary, "recent": []}
+
+    records: list[dict[str, object]] = []
+    for line in path.read_text(encoding="utf-8").splitlines()[-max(1, limit) :]:
+        if not line.strip():
+            continue
+        try:
+            payload = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if payload.get("event") not in {"signal.generated", "portfolio.admission"}:
+            continue
+        if not payload.get("allocation_decision"):
+            continue
+        status = str(payload.get("status") or "").strip().lower()
+        if status not in summary:
+            continue
+        summary[status] += 1
+        decision = payload.get("allocation_decision")
+        reason_code = None
+        if isinstance(decision, dict):
+            reason_code = decision.get("reason_code")
+        records.append(
+            {
+                "ts": payload.get("ts"),
+                "strategy_id": payload.get("strategy_id"),
+                "symbol": payload.get("symbol"),
+                "status": status,
+                "reason_code": reason_code,
+            }
+        )
+    records.sort(key=lambda item: str(item.get("ts") or ""))
+    return {"status": "ok", "count": len(records), "summary": summary, "recent": records[-5:]}
 
 
 __all__ = ["ShadowAuthError", "ShadowGuiApi"]

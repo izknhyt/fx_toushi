@@ -9,6 +9,7 @@ from src.interfaces.cli.gui_sync import GuiDataSyncStopped
 from src.interfaces.gui.web_server import (
     GuiOpsRuntimeConfig,
     GuiOpsRuntimeController,
+    _allocation_decisions_payload,
     _build_strategy_catalog,
     _load_signal_records,
     _load_manifest_payloads,
@@ -188,6 +189,60 @@ def test_signals_payload_filters_scope_and_generated_status(tmp_path: Path) -> N
     assert payload["signals"][0]["symbol"] == "USDJPY"
     assert payload["signals"][0]["strategy_id"] == "m1_asia_compression_expansion_breakout"
     assert payload["signals"][0]["status"] == "generated"
+
+
+def test_allocation_decisions_payload_filters_scope_and_summarizes(tmp_path: Path) -> None:
+    path = tmp_path / "signal.generated.jsonl"
+    rows = [
+        {
+            "event": "portfolio.admission",
+            "status": "accept",
+            "ts": "2026-03-16T13:20:00Z",
+            "strategy_id": "alpha",
+            "symbol": "USDJPY",
+            "allocation_decision": {"decision": "accept", "reason_code": "selected"},
+        },
+        {
+            "event": "portfolio.admission",
+            "status": "reject",
+            "ts": "2026-03-16T13:21:00Z",
+            "strategy_id": "beta",
+            "symbol": "USDJPY",
+            "allocation_decision": {"decision": "reject", "reason_code": "tie_break_lost"},
+        },
+        {
+            "event": "portfolio.admission",
+            "status": "defer",
+            "ts": "2026-03-16T13:22:00Z",
+            "strategy_id": "gamma",
+            "symbol": "EURUSD",
+            "allocation_decision": {"decision": "defer", "reason_code": "active_group_deferred"},
+        },
+        {
+            "event": "signal.generated",
+            "status": "generated",
+            "ts": "2026-03-16T13:23:00Z",
+            "strategy_id": "alpha",
+            "symbol": "USDJPY",
+        },
+    ]
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8") as handle:
+        for row in rows:
+            handle.write(json.dumps(row, ensure_ascii=False) + "\n")
+
+    payload = _allocation_decisions_payload(
+        path,
+        limit=100,
+        symbols=frozenset({"USDJPY"}),
+        strategy_ids=frozenset({"alpha", "beta"}),
+    )
+
+    assert payload["count"] == 2
+    assert payload["summary"]["accept"] == 1
+    assert payload["summary"]["reject"] == 1
+    assert payload["summary"]["defer"] == 0
+    assert {item["strategy_id"] for item in payload["decisions"]} == {"alpha", "beta"}
 
 
 def test_resolve_sync_source_dir_chooses_freshest_dataset_dir(tmp_path: Path, monkeypatch) -> None:

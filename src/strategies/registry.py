@@ -29,9 +29,11 @@ from src.strategies.allocation import (
     AllocationActivePosition,
     AllocationCandidate,
     AllocationContext,
+    AllocationOutcome,
     StrategyAllocationPolicy,
 )
 from src.strategies.base import StrategyContext, StrategyMetadata, StrategyPluginProtocol
+from src.strategies.candidate import CandidateTrade
 
 __all__ = [
     "ManifestLoadError",
@@ -215,6 +217,11 @@ def _iso_or_none(value: Any) -> str | None:
             value = value.astimezone(timezone.utc)
         return value.isoformat().replace("+00:00", "Z")
     return None
+
+
+def _candidate_id_from_parts(*parts: Any) -> str:
+    payload = "|".join("" if part is None else str(part) for part in parts)
+    return hashlib.sha1(payload.encode("utf-8")).hexdigest()[:16]
 
 
 def _derive_signal_trade_fields(*, signal: Any, context: Any) -> dict[str, Any]:
@@ -754,6 +761,8 @@ class StrategyEngine:
         self._plugins: dict[str, StrategyPluginProtocol] = {}
         self._manifest: StrategyManifest | None = None
         self._last_determinism_events: list[Mapping[str, Any]] = []
+        self._last_allocation_outcomes: list[Mapping[str, Any]] = []
+        self._last_candidate_trades: list[Mapping[str, Any]] = []
         self._determinism_log_path = (
             Path("logs") / "strategy" / "registry.log"
             if determinism_log_path is None
@@ -858,6 +867,18 @@ class StrategyEngine:
         return tuple(self._last_determinism_events)
 
     @property
+    def last_run_allocation_outcomes(self) -> tuple[Mapping[str, Any], ...]:
+        """Return allocation decision payloads emitted during the most recent run."""
+
+        return tuple(self._last_allocation_outcomes)
+
+    @property
+    def last_run_candidate_trades(self) -> tuple[Mapping[str, Any], ...]:
+        """Return canonical candidate payloads emitted during the most recent run."""
+
+        return tuple(self._last_candidate_trades)
+
+    @property
     def allocation_policy(self) -> StrategyAllocationPolicy | None:
         """Return the configured allocation policy (if any)."""
 
@@ -930,6 +951,8 @@ class StrategyEngine:
             raise ManifestLoadError(msg)
 
         self._last_determinism_events = []
+        self._last_allocation_outcomes = []
+        self._last_candidate_trades = []
         self._manifest.validate_feature_contract(features.available_keys)
         self._manifest.validate_watchlists(features.symbols)
         resolved_watchlist: frozenset[str]
@@ -1013,6 +1036,7 @@ class StrategyEngine:
                 self._emit_signal_event(
                     strategy_id=strategy_id,
                     signal=None,
+                    candidate_trade=None,
                     context=context,
                     feature_flags=entry.feature_flags,
                     status="suppressed_guarded",
@@ -1028,6 +1052,11 @@ class StrategyEngine:
             signal_count = 0
             try:
                 for signal in signals:
+                    candidate_trade = self._build_candidate_trade(
+                        strategy_id=strategy_id,
+                        signal=signal,
+                        context=context,
+                    )
                     results.append(signal)
                     allocation_candidates.append(
                         AllocationCandidate(
@@ -1036,11 +1065,14 @@ class StrategyEngine:
                             priority=entry.priority,
                             weight=entry.weight,
                             parameters=entry.parameters,
+                            trade=candidate_trade,
                         )
                     )
+                    self._last_candidate_trades.append(candidate_trade.as_dict())
                     self._emit_signal_event(
                         strategy_id=strategy_id,
                         signal=signal,
+                        candidate_trade=candidate_trade,
                         context=context,
                         feature_flags=entry.feature_flags,
                         status="generated",
@@ -1135,6 +1167,7 @@ class StrategyEngine:
         *,
         strategy_id: str,
         signal: Any,
+        candidate_trade: CandidateTrade | None,
         context: StrategyContext,
         feature_flags: Mapping[str, bool],
         status: str,
@@ -1178,10 +1211,54 @@ class StrategyEngine:
                 }
             )
             payload.update(_derive_signal_trade_fields(signal=signal, context=context))
+        if candidate_trade is not None:
+            payload["candidate"] = candidate_trade.as_dict()
+            payload["candidate_id"] = candidate_trade.candidate_id
         try:
             _append_jsonl(
                 self._signal_log_path,
                 payload,
+                max_bytes=self._signal_log_max_bytes,
+                keep_bytes=self._signal_log_keep_bytes,
+            )
+        except OSError as exc:  # pragma: no cover - best-effort logging
+            logger.warning("strategy.registry.signal_log_failed", extra={"error": str(exc)})
+
+    def _emit_portfolio_admission_event(
+        self,
+        *,
+        strategy_id: str,
+        signal: Any,
+        candidate_trade: CandidateTrade | None,
+        payload: Mapping[str, Any],
+        feature_flags: Mapping[str, bool],
+    ) -> None:
+        record = {
+            "event": "portfolio.admission",
+            "ts": payload.get("ts") or _utcnow_iso(),
+            "strategy_id": strategy_id,
+            "status": payload.get("decision"),
+            "reason": payload.get("reason_code"),
+            "feature_flags": dict(feature_flags),
+            "allocation_decision": dict(payload),
+        }
+        if signal is not None:
+            record.update(
+                {
+                    "symbol": getattr(signal, "symbol", None),
+                    "direction": getattr(signal, "direction", None),
+                    "confidence": getattr(signal, "confidence", None),
+                    "score": getattr(signal, "score", None),
+                    "quality_score": getattr(signal, "quality_score", None),
+                }
+            )
+        if candidate_trade is not None:
+            record["candidate"] = candidate_trade.as_dict()
+            record["candidate_id"] = candidate_trade.candidate_id
+        try:
+            _append_jsonl(
+                self._signal_log_path,
+                record,
                 max_bytes=self._signal_log_max_bytes,
                 keep_bytes=self._signal_log_keep_bytes,
             )
@@ -1251,9 +1328,120 @@ class StrategyEngine:
                 open_positions=open_positions,
             )
             allocation = policy.allocate(candidates=symbol_candidates, context=context)
+            self._record_allocation_outcomes(
+                allocation=allocation.outcomes,
+                candidates=symbol_candidates,
+                context=context,
+            )
             selected.extend(candidate.signal for candidate in allocation.selected)
 
         return selected
+
+    def _record_allocation_outcomes(
+        self,
+        *,
+        allocation: Iterable[AllocationOutcome],
+        candidates: Iterable[AllocationCandidate],
+        context: AllocationContext,
+    ) -> None:
+        candidate_lookup = {
+            (
+                candidate.strategy_id,
+                str(getattr(candidate.signal, "symbol", "UNKNOWN")).strip().upper() or "UNKNOWN",
+            ): candidate
+            for candidate in candidates
+        }
+        context_payload = {
+            "ts": context.now.isoformat().replace("+00:00", "Z"),
+            "board_mode": context.board_mode,
+            "kill_switch_state": context.kill_switch_state,
+            "regime_value": context.regime_value,
+            "open_position_count": len(context.open_positions),
+        }
+        for outcome in allocation:
+            payload = outcome.as_dict()
+            payload.update(context_payload)
+            self._last_allocation_outcomes.append(payload)
+
+            candidate = candidate_lookup.get((outcome.strategy_id, outcome.symbol))
+            if candidate is None:
+                continue
+
+            feature_flags: Mapping[str, bool] = {}
+            if self._manifest is not None:
+                entry = self._manifest.strategies.get(outcome.strategy_id)
+                if entry is not None:
+                    feature_flags = entry.feature_flags
+
+            self._emit_portfolio_admission_event(
+                strategy_id=outcome.strategy_id,
+                signal=candidate.signal,
+                candidate_trade=candidate.trade,
+                payload=payload,
+                feature_flags=feature_flags,
+            )
+
+    def _build_candidate_trade(
+        self,
+        *,
+        strategy_id: str,
+        signal: Any,
+        context: StrategyContext,
+    ) -> CandidateTrade:
+        trade_fields = _derive_signal_trade_fields(signal=signal, context=context)
+        allocation_metadata: Mapping[str, Any] = {}
+        if self._allocation_policy is not None:
+            allocation_metadata = self._allocation_policy.candidate_metadata(strategy_id)
+        timestamp = _iso_or_none(getattr(signal, "timestamp", None)) or _iso_or_none(
+            getattr(getattr(context, "clock", None), "now", None)
+        ) or _utcnow_iso()
+        symbol = str(getattr(signal, "symbol", "") or "").strip().upper() or "UNKNOWN"
+        side = str(getattr(signal, "direction", "") or "").strip().lower() or "unknown"
+        session_tag = getattr(signal, "session_tag", None)
+        metadata = {
+            "rationale": getattr(signal, "rationale", None),
+            "breakout": getattr(signal, "breakout", None),
+            "level": getattr(signal, "level", None),
+            "buffer": getattr(signal, "buffer", None),
+            "badges": getattr(signal, "badges", None),
+            "expire_at": trade_fields.get("expire_at"),
+            "ttl_bars": trade_fields.get("ttl_bars"),
+            "target_r_multiple": trade_fields.get("target_r_multiple"),
+            "slippage_std": trade_fields.get("slippage_std"),
+        }
+        candidate_id = _candidate_id_from_parts(
+            strategy_id,
+            symbol,
+            side,
+            timestamp,
+            trade_fields.get("entry"),
+            trade_fields.get("stop"),
+            trade_fields.get("target"),
+        )
+        return CandidateTrade(
+            candidate_id=candidate_id,
+            strategy_id=strategy_id,
+            symbol=symbol,
+            side=side,
+            timestamp=timestamp,
+            entry=_coerce_float(trade_fields.get("entry")),
+            stop=_coerce_float(trade_fields.get("stop")),
+            target=_coerce_float(trade_fields.get("target")),
+            confidence=_coerce_float(getattr(signal, "confidence", None)),
+            expected_holding_minutes=_coerce_float(
+                allocation_metadata.get("expected_holding_minutes")
+            ),
+            portfolio_group=str(allocation_metadata.get("portfolio_group") or "").strip(),
+            exposure_bucket=str(allocation_metadata.get("exposure_bucket") or "").strip(),
+            estimated_cost=_coerce_float(trade_fields.get("cost_estimate")),
+            quality_score=_coerce_float(getattr(signal, "quality_score", None)),
+            regime_fit=_coerce_float(getattr(signal, "score", None)),
+            session_tag=str(session_tag).strip().lower() if session_tag is not None else None,
+            atr_value=_coerce_float(getattr(signal, "atr_value", None)),
+            trend_value=_coerce_float(getattr(signal, "trend_value", None)),
+            cost_ratio=_coerce_float(getattr(signal, "cost_ratio", None)),
+            metadata={key: value for key, value in metadata.items() if value is not None},
+        )
 
     @staticmethod
     def _allocation_now(clock: Any) -> datetime:

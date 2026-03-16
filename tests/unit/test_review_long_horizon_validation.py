@@ -3,7 +3,11 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from tools.review_long_horizon_validation import build_review, render_review_md
+from tools.review_long_horizon_validation import (
+    _summary_from_run_stamp,
+    build_review,
+    render_review_md,
+)
 
 
 def _write_json(path: Path, payload: dict) -> None:
@@ -165,3 +169,37 @@ def test_build_review_skips_passing_windows_by_default(tmp_path: Path) -> None:
     assert review["window_count"] == 0
     assert review["windows"] == []
     assert review["persistent_strategy_drags"] == []
+
+
+def test_summary_from_run_stamp_reconstructs_results(tmp_path: Path) -> None:
+    validation_dir = tmp_path / "validation_log"
+    analysis_dir = tmp_path / "analysis"
+    raw_path = validation_dir / "long_horizon_portfolio_20260315T132308Z_2016_2021.json"
+    report_json_path = analysis_dir / "long_horizon_portfolio_20260315T132308Z_2016_2021_report.json"
+    report_md_path = analysis_dir / "long_horizon_portfolio_20260315T132308Z_2016_2021_report.md"
+
+    _write_json(raw_path, {"trades": []})
+    _write_json(
+        report_json_path,
+        {
+            "metrics": {"max_drawdown": 0.12},
+            "summary": {"pf": 1.08, "avg_r": 0.01, "count": 423, "win_rate": 0.44},
+            "acceptance_gate": {"status": "fail", "checks": {"pf_min_1_10": False}},
+        },
+    )
+    report_md_path.write_text("# report\n", encoding="utf-8")
+
+    summary = _summary_from_run_stamp(
+        run_stamp="20260315T132308Z",
+        validation_log_dir=validation_dir,
+        analysis_dir=analysis_dir,
+    )
+
+    assert summary["_source_path"] == "run_stamp:20260315T132308Z"
+    assert len(summary["results"]) == 1
+    row = summary["results"][0]
+    assert row["window_name"] == "2016_2021"
+    assert row["summary"]["pf"] == 1.08
+    assert row["summary"]["max_drawdown"] == 0.12
+    assert row["acceptance"]["status"] == "fail"
+    assert row["evidence"]["raw"] == str(raw_path)

@@ -17,6 +17,8 @@ from typing import Any
 
 import yaml
 
+from src.strategies.candidate import CandidateTrade
+
 
 def _coerce_float(value: Any, default: float = 0.0) -> float:
     if value is None:
@@ -120,6 +122,29 @@ def _signal_score(signal: Any) -> float:
     return 1.0
 
 
+def _candidate_symbol(candidate: AllocationCandidate) -> str:
+    if candidate.trade is not None and candidate.trade.symbol:
+        return candidate.trade.symbol
+    return _signal_symbol(candidate.signal)
+
+
+def _candidate_direction(candidate: AllocationCandidate) -> str:
+    if candidate.trade is not None and candidate.trade.side:
+        return _normalize_text(candidate.trade.side)
+    return _signal_direction(candidate.signal)
+
+
+def _candidate_score(candidate: AllocationCandidate) -> float:
+    if candidate.trade is not None:
+        if candidate.trade.expected_edge is not None:
+            return float(candidate.trade.expected_edge)
+        if candidate.trade.confidence is not None:
+            return float(candidate.trade.confidence)
+        if candidate.trade.quality_score is not None:
+            return float(candidate.trade.quality_score)
+    return _signal_score(candidate.signal)
+
+
 def _positive_int_or_none(value: Any) -> int | None:
     parsed = _coerce_int(value, 0)
     return parsed if parsed > 0 else None
@@ -132,6 +157,18 @@ def _extract_execution(parameters: Mapping[str, Any]) -> Mapping[str, Any]:
     return {}
 
 
+def _decision_from_reason(*, selected: bool, reason: str) -> str:
+    if selected:
+        return "accept"
+    if reason.endswith("_deferred"):
+        return "defer"
+    if reason.startswith("replace_"):
+        return "replace"
+    if reason.startswith("resize_"):
+        return "resize"
+    return "reject"
+
+
 @dataclass(frozen=True, slots=True)
 class AllocationCandidate:
     strategy_id: str
@@ -139,6 +176,7 @@ class AllocationCandidate:
     priority: int
     weight: float
     parameters: Mapping[str, Any]
+    trade: CandidateTrade | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -165,12 +203,42 @@ class AllocationOutcome:
     selected: bool
     reason: str
     score: float | None
+    decision: str = "reject"
+    portfolio_group: str = ""
+    exposure_bucket: str = ""
+    estimated_cost: float | None = None
+    slot_cost: float | None = None
+
+    @property
+    def reason_code(self) -> str:
+        return self.reason
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "strategy_id": self.strategy_id,
+            "symbol": self.symbol,
+            "selected": self.selected,
+            "decision": self.decision,
+            "reason": self.reason,
+            "reason_code": self.reason,
+            "score": self.score,
+            "portfolio_group": self.portfolio_group or None,
+            "exposure_bucket": self.exposure_bucket or None,
+            "estimated_cost": self.estimated_cost,
+            "slot_cost": self.slot_cost,
+        }
 
 
 @dataclass(frozen=True, slots=True)
 class AllocationResult:
     selected: tuple[AllocationCandidate, ...]
     outcomes: tuple[AllocationOutcome, ...]
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "selected_strategy_ids": [item.strategy_id for item in self.selected],
+            "outcomes": [item.as_dict() for item in self.outcomes],
+        }
 
 
 @dataclass(frozen=True, slots=True)
@@ -181,6 +249,10 @@ class _EvaluatedCandidate:
     accepted: bool
     reason: str
     role_priority: int = 100
+    portfolio_group: str = ""
+    exposure_bucket: str = ""
+    estimated_cost: float | None = None
+    slot_cost: float | None = None
 
 
 class StrategyAllocationPolicy:
@@ -303,10 +375,12 @@ class StrategyAllocationPolicy:
             outcomes = tuple(
                 AllocationOutcome(
                     strategy_id=candidate.strategy_id,
-                    symbol=_signal_symbol(candidate.signal),
+                    symbol=_candidate_symbol(candidate),
                     selected=True,
                     reason="pass_through",
-                    score=_signal_score(candidate.signal),
+                    score=_candidate_score(candidate),
+                    decision="accept",
+                    estimated_cost=self._candidate_estimated_cost(candidate),
                 )
                 for candidate in materialized
             )
@@ -326,13 +400,7 @@ class StrategyAllocationPolicy:
             accepted = [item for item in evaluated if item.accepted and item.score is not None]
             if not accepted:
                 outcomes.extend(
-                    AllocationOutcome(
-                        strategy_id=item.candidate.strategy_id,
-                        symbol=symbol,
-                        selected=False,
-                        reason=item.reason,
-                        score=item.score,
-                    )
+                    self._build_outcome(item=item, selected=False)
                     for item in evaluated
                 )
                 continue
@@ -349,38 +417,45 @@ class StrategyAllocationPolicy:
             for item in accepted_sorted:
                 if id(item.candidate) in selected_refs:
                     outcomes.append(
-                        AllocationOutcome(
-                            strategy_id=item.candidate.strategy_id,
-                            symbol=symbol,
-                            selected=True,
-                            reason="selected",
-                            score=item.score,
-                        )
+                        self._build_outcome(item=item, selected=True, reason="selected")
                     )
                     continue
                 outcomes.append(
-                    AllocationOutcome(
-                        strategy_id=item.candidate.strategy_id,
-                        symbol=symbol,
+                    self._build_outcome(
+                        item=item,
                         selected=False,
                         reason="selection_limit" if self.selection_mode == "select_many" else "tie_break_lost",
-                        score=item.score,
                     )
                 )
             for item in evaluated:
                 if item.accepted:
                     continue
                 outcomes.append(
-                    AllocationOutcome(
-                        strategy_id=item.candidate.strategy_id,
-                        symbol=symbol,
-                        selected=False,
-                        reason=item.reason,
-                        score=item.score,
-                    )
+                    self._build_outcome(item=item, selected=False)
                 )
 
         return AllocationResult(selected=tuple(selected), outcomes=tuple(outcomes))
+
+    def _build_outcome(
+        self,
+        *,
+        item: _EvaluatedCandidate,
+        selected: bool,
+        reason: str | None = None,
+    ) -> AllocationOutcome:
+        reason_code = reason or item.reason
+        return AllocationOutcome(
+            strategy_id=item.candidate.strategy_id,
+            symbol=item.symbol,
+            selected=selected,
+            reason=reason_code,
+            score=item.score,
+            decision=_decision_from_reason(selected=selected, reason=reason_code),
+            portfolio_group=item.portfolio_group,
+            exposure_bucket=item.exposure_bucket,
+            estimated_cost=item.estimated_cost,
+            slot_cost=item.slot_cost,
+        )
 
     def _evaluate_candidate(
         self,
@@ -388,7 +463,7 @@ class StrategyAllocationPolicy:
         candidate: AllocationCandidate,
         context: AllocationContext,
     ) -> _EvaluatedCandidate:
-        symbol = _signal_symbol(candidate.signal)
+        symbol = _candidate_symbol(candidate)
         strategy_cfg = self._strategy_config.get(candidate.strategy_id)
         require_strategy_config = bool(self._global_config.get("require_strategy_config", True))
         if strategy_cfg is None and require_strategy_config:
@@ -400,6 +475,11 @@ class StrategyAllocationPolicy:
                 reason="strategy_not_configured",
             )
         strategy_cfg = strategy_cfg or {}
+        portfolio_cfg = self._resolve_portfolio_cfg(strategy_cfg)
+        role_priority = _coerce_int(portfolio_cfg.get("role_priority"), 100)
+        portfolio_group = self._portfolio_group(strategy_cfg)
+        exposure_bucket = self._exposure_bucket(strategy_cfg)
+        slot_cost = _coerce_float(portfolio_cfg.get("slot_cost"), 0.0)
         if not bool(strategy_cfg.get("enabled", True)):
             return _EvaluatedCandidate(
                 candidate=candidate,
@@ -407,9 +487,11 @@ class StrategyAllocationPolicy:
                 score=None,
                 accepted=False,
                 reason="strategy_disabled",
+                role_priority=role_priority,
+                portfolio_group=portfolio_group,
+                exposure_bucket=exposure_bucket,
+                slot_cost=slot_cost,
             )
-        portfolio_cfg = self._resolve_portfolio_cfg(strategy_cfg)
-        role_priority = _coerce_int(portfolio_cfg.get("role_priority"), 100)
 
         hard_filters = self._resolve_hard_filters(strategy_cfg)
         kill_switch_state = _normalize_text(context.kill_switch_state)
@@ -423,6 +505,10 @@ class StrategyAllocationPolicy:
                 score=None,
                 accepted=False,
                 reason="kill_switch_blocked",
+                role_priority=role_priority,
+                portfolio_group=portfolio_group,
+                exposure_bucket=exposure_bucket,
+                slot_cost=slot_cost,
             )
 
         allowed_board_modes = hard_filters.get("board_modes")
@@ -435,9 +521,14 @@ class StrategyAllocationPolicy:
                     score=None,
                     accepted=False,
                     reason="board_mode_blocked",
+                    role_priority=role_priority,
+                    portfolio_group=portfolio_group,
+                    exposure_bucket=exposure_bucket,
+                    slot_cost=slot_cost,
                 )
 
         spread, slippage = self._extract_cost_estimate(candidate.parameters)
+        estimated_cost = self._candidate_estimated_cost(candidate)
         spread_max = _coerce_float(hard_filters.get("spread_max"), -1.0)
         if spread_max >= 0 and spread > spread_max:
             return _EvaluatedCandidate(
@@ -446,6 +537,11 @@ class StrategyAllocationPolicy:
                 score=None,
                 accepted=False,
                 reason="spread_blocked",
+                role_priority=role_priority,
+                portfolio_group=portfolio_group,
+                exposure_bucket=exposure_bucket,
+                estimated_cost=estimated_cost,
+                slot_cost=slot_cost,
             )
 
         ranges = _parse_session_ranges(hard_filters.get("session_utc_ranges"))
@@ -458,6 +554,11 @@ class StrategyAllocationPolicy:
                 score=None,
                 accepted=False,
                 reason="session_blocked",
+                role_priority=role_priority,
+                portfolio_group=portfolio_group,
+                exposure_bucket=exposure_bucket,
+                estimated_cost=estimated_cost,
+                slot_cost=slot_cost,
             )
 
         position_conflict = self._resolve_active_position_conflict(
@@ -473,6 +574,10 @@ class StrategyAllocationPolicy:
                 accepted=False,
                 reason=position_conflict,
                 role_priority=role_priority,
+                portfolio_group=portfolio_group,
+                exposure_bucket=exposure_bucket,
+                estimated_cost=estimated_cost,
+                slot_cost=slot_cost,
             )
 
         score = self._compute_score(
@@ -496,6 +601,10 @@ class StrategyAllocationPolicy:
                 accepted=False,
                 reason="score_below_min",
                 role_priority=role_priority,
+                portfolio_group=portfolio_group,
+                exposure_bucket=exposure_bucket,
+                estimated_cost=estimated_cost,
+                slot_cost=slot_cost,
             )
 
         return _EvaluatedCandidate(
@@ -505,6 +614,10 @@ class StrategyAllocationPolicy:
             accepted=True,
             reason="candidate_ok",
             role_priority=role_priority,
+            portfolio_group=portfolio_group,
+            exposure_bucket=exposure_bucket,
+            estimated_cost=estimated_cost,
+            slot_cost=slot_cost,
         )
 
     def _resolve_hard_filters(self, strategy_cfg: Mapping[str, Any]) -> dict[str, Any]:
@@ -531,8 +644,8 @@ class StrategyAllocationPolicy:
         strategy_weight = _coerce_float(strategy_cfg.get("weight"), candidate.weight or 1.0)
         strategy_bias = _coerce_float(strategy_cfg.get("score", {}).get("bias"), 0.0)
 
-        score = _signal_score(candidate.signal) * strategy_weight + strategy_bias
-        score *= self._regime_multiplier(candidate.signal, strategy_cfg, regime_value)
+        score = _candidate_score(candidate) * strategy_weight + strategy_bias
+        score *= self._regime_multiplier(candidate, strategy_cfg, regime_value)
 
         penalty_cfg = self._resolve_cost_penalty(strategy_cfg)
         spread_weight = _coerce_float(penalty_cfg.get("spread_weight"), 0.0)
@@ -541,10 +654,13 @@ class StrategyAllocationPolicy:
         score -= slippage * slippage_weight
 
         portfolio_cfg = self._resolve_portfolio_cfg(strategy_cfg)
-        expected_holding_minutes = _coerce_float(
-            portfolio_cfg.get("expected_holding_minutes"),
-            0.0,
-        )
+        if candidate.trade is not None and candidate.trade.expected_holding_minutes is not None:
+            expected_holding_minutes = float(candidate.trade.expected_holding_minutes)
+        else:
+            expected_holding_minutes = _coerce_float(
+                portfolio_cfg.get("expected_holding_minutes"),
+                0.0,
+            )
         holding_minute_weight = _coerce_float(
             portfolio_cfg.get("holding_minute_weight"),
             0.0,
@@ -609,7 +725,10 @@ class StrategyAllocationPolicy:
         threshold = _coerce_float(regime_cfg.get("trend_threshold"), 0.0)
         align_bonus = _coerce_float(regime_cfg.get("align_bonus"), 0.0)
         mismatch_penalty = _coerce_float(regime_cfg.get("mismatch_penalty"), 1.0)
-        direction = _signal_direction(signal)
+        if isinstance(signal, AllocationCandidate):
+            direction = _candidate_direction(signal)
+        else:
+            direction = _signal_direction(signal)
 
         if direction == "long":
             aligned = regime_value > threshold
@@ -637,6 +756,12 @@ class StrategyAllocationPolicy:
         slippage = _coerce_float(execution.get("slippage"), 0.0)
         return spread, slippage
 
+    def _candidate_estimated_cost(self, candidate: AllocationCandidate) -> float:
+        if candidate.trade is not None and candidate.trade.estimated_cost is not None:
+            return float(candidate.trade.estimated_cost)
+        spread, slippage = self._extract_cost_estimate(candidate.parameters)
+        return spread + slippage
+
     def _resolve_portfolio_cfg(self, strategy_cfg: Mapping[str, Any]) -> dict[str, Any]:
         global_portfolio = self._global_config.get("portfolio", {})
         strategy_portfolio = strategy_cfg.get("portfolio", {})
@@ -645,6 +770,22 @@ class StrategyAllocationPolicy:
         if not isinstance(strategy_portfolio, Mapping):
             strategy_portfolio = {}
         return _deep_merge(global_portfolio, strategy_portfolio)
+
+    def candidate_metadata(self, strategy_id: str) -> dict[str, Any]:
+        strategy_cfg = self._strategy_config.get(strategy_id, {})
+        if not isinstance(strategy_cfg, Mapping):
+            return {}
+        portfolio_cfg = self._resolve_portfolio_cfg(strategy_cfg)
+        return {
+            "portfolio_group": self._portfolio_group(strategy_cfg),
+            "exposure_bucket": self._exposure_bucket(strategy_cfg),
+            "expected_holding_minutes": _coerce_float(
+                portfolio_cfg.get("expected_holding_minutes"),
+                0.0,
+            ),
+            "slot_cost": _coerce_float(portfolio_cfg.get("slot_cost"), 0.0),
+            "role_priority": _coerce_int(portfolio_cfg.get("role_priority"), 100),
+        }
 
     def _resolve_active_position_conflict(
         self,
@@ -704,7 +845,7 @@ class StrategyAllocationPolicy:
         candidate: AllocationCandidate,
         context: AllocationContext,
     ) -> int:
-        symbol = _signal_symbol(candidate.signal)
+        symbol = _candidate_symbol(candidate)
         return sum(1 for position in context.open_positions if position.symbol == symbol)
 
     def _active_group_matches(

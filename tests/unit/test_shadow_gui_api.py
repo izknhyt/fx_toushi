@@ -62,3 +62,49 @@ def test_shadow_gui_lists_and_acks(tmp_path: Path) -> None:
     assert audit_log.exists()
     last_metric = json.loads(metrics_path.read_text(encoding="utf-8").splitlines()[-1])
     assert last_metric["event"] == "shadow.gui.ack_received"
+
+
+def test_shadow_gui_status_and_allocation_summary_include_admission_counts(tmp_path: Path) -> None:
+    token_path = tmp_path / "tokens.yaml"
+    _write_tokens(token_path, "secret")
+    store = ShadowStateStore(db_path=tmp_path / "shadow.db")
+    signal_log = tmp_path / "logs" / "events" / "signal.generated.jsonl"
+    signal_log.parent.mkdir(parents=True, exist_ok=True)
+    signal_log.write_text(
+        "\n".join(
+            [
+                    json.dumps(
+                        {
+                            "event": "portfolio.admission",
+                            "ts": "2026-03-16T13:00:00Z",
+                            "strategy_id": "alpha",
+                            "symbol": "USDJPY",
+                            "status": "accept",
+                        "allocation_decision": {"reason_code": "selected"},
+                    }
+                ),
+                    json.dumps(
+                        {
+                            "event": "portfolio.admission",
+                            "ts": "2026-03-16T13:01:00Z",
+                            "strategy_id": "beta",
+                            "symbol": "USDJPY",
+                            "status": "reject",
+                        "allocation_decision": {"reason_code": "tie_break_lost"},
+                    }
+                ),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    api = ShadowGuiApi(store=store, token_path=token_path, signal_log=signal_log)
+
+    summary = api.allocation_summary(token="secret")
+    assert summary["count"] == 2
+    assert summary["summary"]["accept"] == 1
+    assert summary["summary"]["reject"] == 1
+
+    status = api.status()
+    assert status["signal_log"] == str(signal_log)
+    assert status["allocation_summary"]["summary"]["accept"] == 1

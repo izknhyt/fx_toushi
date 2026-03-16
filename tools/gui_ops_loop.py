@@ -33,6 +33,7 @@ class GuiOpsResult:
     price_csv: list[dict[str, Any]]
     signal_preview: dict[str, Any]
     signal_csv: dict[str, Any]
+    allocation_summary: dict[str, Any]
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -40,6 +41,7 @@ class GuiOpsResult:
             "price_csv": self.price_csv,
             "signal_preview": self.signal_preview,
             "signal_csv": self.signal_csv,
+            "allocation_summary": self.allocation_summary,
         }
 
 
@@ -139,12 +141,14 @@ def run_gui_ops_once(
         )
     except FileNotFoundError as exc:
         signal_csv_payload = {"status": "missing", "error": str(exc)}
+    allocation_summary = _summarize_allocation_decisions(signal_log_path, limit=200)
 
     return GuiOpsResult(
         ingestion=ingestion_payloads,
         price_csv=price_payloads,
         signal_preview=signal_preview_payload,
         signal_csv=signal_csv_payload,
+        allocation_summary=allocation_summary,
     )
 
 
@@ -508,6 +512,51 @@ def _backfill_signals(
         "appended": len(records),
         "start_ts": start_ts.isoformat().replace("+00:00", "Z") if start_ts else None,
     }
+
+
+def _summarize_allocation_decisions(
+    signal_log_path: Path | None,
+    *,
+    limit: int,
+) -> dict[str, Any]:
+    summary = {"accept": 0, "reject": 0, "defer": 0, "resize": 0, "replace": 0}
+    if signal_log_path is None or not signal_log_path.exists():
+        return {"status": "ok", "count": 0, "summary": summary, "recent": []}
+
+    try:
+        lines = signal_log_path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return {"status": "error", "count": 0, "summary": summary, "recent": []}
+
+    records: list[dict[str, Any]] = []
+    for raw in lines[-max(1, limit):]:
+        if not raw.strip():
+            continue
+        try:
+            payload = json.loads(raw)
+        except json.JSONDecodeError:
+            continue
+        if payload.get("event") not in {"signal.generated", "portfolio.admission"}:
+            continue
+        if not payload.get("allocation_decision"):
+            continue
+        status = str(payload.get("status") or "").strip().lower()
+        if status not in summary:
+            continue
+        summary[status] += 1
+        records.append(
+            {
+                "ts": payload.get("ts"),
+                "strategy_id": payload.get("strategy_id"),
+                "symbol": payload.get("symbol"),
+                "status": status,
+                "reason_code": (
+                    payload.get("allocation_decision", {}) or {}
+                ).get("reason_code"),
+            }
+        )
+    records.sort(key=lambda item: item.get("ts") or "")
+    return {"status": "ok", "count": len(records), "summary": summary, "recent": records[-5:]}
 
 
 def _detect_breakouts(

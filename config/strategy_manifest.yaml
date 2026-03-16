@@ -319,10 +319,10 @@ strategies:
         volatility_floor_quantile: 0.4
         trend_required: true
         trend_threshold: 0.0
-        atr_min: 0.08
+        atr_min: 0.10
         min_breakout_abs: 0.05
-        breakout_min_atr_mult: 0.3
-        breakout_min_cost_mult: 3.0
+        breakout_min_atr_mult: 0.4
+        breakout_min_cost_mult: 4.0
       execution:
         spread: 0.005
         slippage: 0.0015

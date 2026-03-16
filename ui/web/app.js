@@ -502,8 +502,28 @@ function renderOps(payload) {
   opsMetaEl.textContent = `状態: ${phase} / mode=${runMode} / running=${opsRunning} / loop=${loopCount}${syncText}${error}`;
   const logs = Array.isArray(payload.recent_logs) ? payload.recent_logs : [];
   const warnings = payload.last_loop?.signal_preview?.warnings || [];
+  const allocationPayload =
+    payload && typeof payload.recent_allocation_decisions === "object"
+      ? payload.recent_allocation_decisions
+      : null;
+  const allocationSummary = allocationPayload && typeof allocationPayload.summary === "object"
+    ? allocationPayload.summary
+    : null;
+  const allocationDecisions = allocationPayload && Array.isArray(allocationPayload.decisions)
+    ? allocationPayload.decisions.slice(-3)
+    : [];
   const warningLine =
     Array.isArray(warnings) && warnings.length > 0 ? [`signal_warning: ${warnings[0]}`] : [];
+  const allocationLine = allocationSummary
+    ? [
+        `allocation: accept=${allocationSummary.accept || 0} / reject=${allocationSummary.reject || 0} / defer=${allocationSummary.defer || 0}`,
+      ]
+    : [];
+  const allocationRecentLines = allocationDecisions.map((entry) => {
+    const decision = entry.allocation_decision || {};
+    const reason = decision.reason_code || entry.reason || "-";
+    return `allocation_recent: ${entry.strategy_id || "-"} ${entry.status || "-"} ${reason}`;
+  });
   const header = [
     `symbols: ${symbols}`,
     `provider/timeframe: ${payload.provider || "-"} / ${payload.timeframe || "-"}`,
@@ -512,7 +532,13 @@ function renderOps(payload) {
     `data_manifest: ${dataManifest}`,
     `source_dir: ${sourceDir}`,
   ];
-  opsLogEl.textContent = [...header, ...warningLine, ...(logs.length ? logs : ["ログなし"])].join("\n");
+  opsLogEl.textContent = [
+    ...header,
+    ...allocationLine,
+    ...allocationRecentLines,
+    ...warningLine,
+    ...(logs.length ? logs : ["ログなし"]),
+  ].join("\n");
   if (opsStartEl) opsStartEl.disabled = opsRunning;
   if (opsSyncOnlyEl) opsSyncOnlyEl.disabled = opsRunning;
   if (opsLoopOnlyEl) opsLoopOnlyEl.disabled = opsRunning;

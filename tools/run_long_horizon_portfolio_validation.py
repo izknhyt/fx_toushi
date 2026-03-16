@@ -13,9 +13,10 @@ import sys
 from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Iterable, Mapping
 
 import pandas as pd
+import yaml
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
@@ -31,6 +32,69 @@ RISK_POLICY = PROJECT_ROOT / "config" / "risk_policy.yaml"
 DATA_MANIFEST = PROJECT_ROOT / "reports" / "data_manifest.json"
 DEFAULT_MANIFEST = PROJECT_ROOT / "config" / "strategy_manifest.parallel_portfolio_v2.yaml"
 DEFAULT_ALLOCATION = PROJECT_ROOT / "config" / "strategy_allocation.yaml"
+
+
+def _yaml_scalar(value: Any) -> str:
+    if value is None:
+        return "null"
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return str(value)
+    return json.dumps(value, ensure_ascii=False)
+
+
+def _yaml_dump_lines(value: Any, *, indent: int = 0) -> list[str]:
+    prefix = " " * indent
+    if isinstance(value, Mapping):
+        if not value:
+            return [f"{prefix}{{}}"]
+        lines: list[str] = []
+        for key, item in value.items():
+            key_prefix = f"{prefix}{key}:"
+            if isinstance(item, Mapping):
+                if item:
+                    lines.append(key_prefix)
+                    lines.extend(_yaml_dump_lines(item, indent=indent + 2))
+                else:
+                    lines.append(f"{key_prefix} {{}}")
+            elif isinstance(item, (list, tuple)):
+                if item:
+                    lines.append(key_prefix)
+                    lines.extend(_yaml_dump_lines(list(item), indent=indent + 2))
+                else:
+                    lines.append(f"{key_prefix} []")
+            else:
+                lines.append(f"{key_prefix} {_yaml_scalar(item)}")
+        return lines
+    if isinstance(value, (list, tuple)):
+        if not value:
+            return [f"{prefix}[]"]
+        lines = []
+        for item in value:
+            if isinstance(item, Mapping):
+                if item:
+                    lines.append(f"{prefix}-")
+                    lines.extend(_yaml_dump_lines(item, indent=indent + 2))
+                else:
+                    lines.append(f"{prefix}- {{}}")
+            elif isinstance(item, (list, tuple)):
+                if item:
+                    lines.append(f"{prefix}-")
+                    lines.extend(_yaml_dump_lines(list(item), indent=indent + 2))
+                else:
+                    lines.append(f"{prefix}- []")
+            else:
+                lines.append(f"{prefix}- {_yaml_scalar(item)}")
+        return lines
+    return [f"{prefix}{_yaml_scalar(value)}"]
+
+
+def _yaml_dump_text(payload: Mapping[str, Any]) -> str:
+    dumper = getattr(yaml, "safe_dump", None)
+    if dumper is not None:
+        return dumper(dict(payload), allow_unicode=True, sort_keys=False)
+    return "\n".join(_yaml_dump_lines(dict(payload))) + "\n"
 
 
 @dataclass(frozen=True, slots=True)
@@ -68,6 +132,136 @@ WINDOW_PROFILES: dict[str, tuple[ValidationWindow, ...]] = {
 
 def _utc_stamp() -> str:
     return datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+
+
+def _effective_manifest_output_path(*, stamp: str, variant: str) -> Path:
+    suffix = {"subset": "focused", "override": "override"}[variant]
+    return VALIDATION_LOG_DIR / f"long_horizon_portfolio_{stamp}_effective_manifest.{suffix}.yaml"
+
+
+def _resolve_windows(
+    *,
+    window_profile: str,
+    selected_names: Iterable[str] | None = None,
+) -> tuple[ValidationWindow, ...]:
+    windows = WINDOW_PROFILES[window_profile]
+    if not selected_names:
+        return windows
+    selected = {str(name).strip() for name in selected_names if str(name).strip()}
+    if not selected:
+        return windows
+    filtered = tuple(window for window in windows if window.name in selected)
+    missing = sorted(selected - {window.name for window in filtered})
+    if missing:
+        raise ValueError(
+            f"unknown windows for profile {window_profile}: {', '.join(missing)}"
+        )
+    return filtered
+
+
+def _resolve_strategy_ids(
+    *,
+    manifest_path: Path,
+    selected_ids: Iterable[str] | None = None,
+) -> tuple[str, ...]:
+    if not selected_ids:
+        return ()
+    payload = yaml.safe_load(manifest_path.read_text(encoding="utf-8")) or {}
+    strategies = payload.get("strategies") or {}
+    selected = tuple(str(item).strip() for item in selected_ids if str(item).strip())
+    if not selected:
+        return ()
+    missing = sorted(set(selected) - set(strategies))
+    if missing:
+        raise ValueError(
+            f"unknown strategies for manifest {manifest_path}: {', '.join(missing)}"
+        )
+    return tuple(strategy_id for strategy_id in strategies if strategy_id in selected)
+
+
+def _deep_merge(base: Mapping[str, Any], override: Mapping[str, Any]) -> dict[str, Any]:
+    merged = dict(base)
+    for key, value in override.items():
+        current = merged.get(key)
+        if isinstance(current, Mapping) and isinstance(value, Mapping):
+            merged[key] = _deep_merge(current, value)
+        else:
+            merged[key] = value
+    return merged
+
+
+def _load_strategy_overrides(path: Path | None) -> dict[str, Mapping[str, Any]]:
+    if path is None:
+        return {}
+    payload = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    if not isinstance(payload, Mapping):
+        raise ValueError(f"strategy overrides must be a mapping: {path}")
+    overrides: dict[str, Mapping[str, Any]] = {}
+    for strategy_id, config in payload.items():
+        if not isinstance(strategy_id, str) or not strategy_id.strip():
+            raise ValueError(f"strategy override key must be a non-empty string: {path}")
+        if not isinstance(config, Mapping):
+            raise ValueError(f"strategy override for {strategy_id} must be a mapping: {path}")
+        overrides[strategy_id.strip()] = config
+    return overrides
+
+
+def _materialize_strategy_subset_manifest(
+    *,
+    source_manifest_path: Path,
+    selected_strategy_ids: Iterable[str],
+    strategy_overrides: Mapping[str, Mapping[str, Any]] | None,
+    output_path: Path,
+) -> Path:
+    selected = tuple(selected_strategy_ids)
+    if not selected:
+        raise ValueError("selected_strategy_ids must not be empty")
+    payload = yaml.safe_load(source_manifest_path.read_text(encoding="utf-8")) or {}
+    strategies = payload.get("strategies") or {}
+    for strategy_id, config in strategies.items():
+        strategy_payload = dict(config or {})
+        strategy_payload["enabled"] = strategy_id in selected
+        override = (strategy_overrides or {}).get(strategy_id)
+        if override is not None:
+            strategy_payload = _deep_merge(strategy_payload, override)
+        strategies[strategy_id] = strategy_payload
+    payload["strategies"] = strategies
+    payload["manifest_name"] = f"{payload.get('manifest_name', 'Strategy Manifest')} [subset]"
+    notes = [str(payload.get("notes", "")).rstrip(), f"Focused validation subset: {', '.join(selected)}"]
+    if strategy_overrides:
+        notes.append("Focused validation overrides: " + ", ".join(sorted(strategy_overrides)))
+    payload["notes"] = "\n".join(part for part in notes if part).strip()
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(_yaml_dump_text(payload), encoding="utf-8")
+    return output_path
+
+
+def _materialize_override_manifest(
+    *,
+    source_manifest_path: Path,
+    strategy_overrides: Mapping[str, Mapping[str, Any]],
+    output_path: Path,
+) -> Path:
+    if not strategy_overrides:
+        raise ValueError("strategy_overrides must not be empty")
+    payload = yaml.safe_load(source_manifest_path.read_text(encoding="utf-8")) or {}
+    strategies = payload.get("strategies") or {}
+    missing = sorted(set(strategy_overrides) - set(strategies))
+    if missing:
+        raise ValueError(
+            f"unknown strategies for manifest {source_manifest_path}: {', '.join(missing)}"
+        )
+    for strategy_id, override in strategy_overrides.items():
+        strategies[strategy_id] = _deep_merge(dict(strategies[strategy_id] or {}), override)
+    payload["strategies"] = strategies
+    payload["manifest_name"] = f"{payload.get('manifest_name', 'Strategy Manifest')} [override]"
+    payload["notes"] = (
+        f"{payload.get('notes', '').rstrip()}\nFocused validation overrides: "
+        + ", ".join(sorted(strategy_overrides))
+    ).strip()
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(_yaml_dump_text(payload), encoding="utf-8")
+    return output_path
 
 
 def _resolve_latest_merged(symbol: str) -> Path:
@@ -164,6 +358,18 @@ def _render_summary_md(payload: Mapping[str, Any]) -> str:
     lines.append("")
     lines.append(f"- generated_at_utc: `{payload['generated_at_utc']}`")
     lines.append(f"- manifest: `{payload['manifest_path']}`")
+    selected_strategy_ids = payload.get("selected_strategy_ids") or []
+    if selected_strategy_ids:
+        lines.append(f"- selected_strategy_ids: `{', '.join(selected_strategy_ids)}`")
+    strategy_override_ids = payload.get("strategy_override_ids") or []
+    if strategy_override_ids:
+        lines.append(f"- strategy_override_ids: `{', '.join(strategy_override_ids)}`")
+    strategy_overrides_path = payload.get("strategy_overrides_path")
+    if strategy_overrides_path:
+        lines.append(f"- strategy_overrides_path: `{strategy_overrides_path}`")
+    effective_manifest_path = payload.get("effective_manifest_path")
+    if effective_manifest_path:
+        lines.append(f"- effective_manifest: `{effective_manifest_path}`")
     lines.append(f"- allocation_profile: `{payload['allocation_profile']}`")
     lines.append(f"- symbol_scope: `{', '.join(payload['fixed_assumptions']['symbols'])}`")
     lines.append("")
@@ -218,7 +424,7 @@ def _build_summary_row(
             "avg_r": summary.get("avg_r"),
             "win_rate": summary.get("win_rate"),
             "trades": summary.get("count"),
-            "max_drawdown": metrics.get("max_drawdown_all"),
+            "max_drawdown": metrics.get("max_drawdown", metrics.get("max_drawdown_all")),
         },
         "acceptance": {
             "status": gate.get("status"),
@@ -241,9 +447,22 @@ def build_plan(
     data_path: Path | None,
     expected_minutes: int,
     window_profile: str,
+    selected_windows: Iterable[str] | None = None,
+    selected_strategy_ids: Iterable[str] | None = None,
+    strategy_overrides_path: Path | None = None,
 ) -> dict[str, Any]:
     merged_path = data_path or _resolve_latest_merged(symbol)
-    windows = WINDOW_PROFILES[window_profile]
+    windows = _resolve_windows(window_profile=window_profile, selected_names=selected_windows)
+    strategies = _resolve_strategy_ids(
+        manifest_path=manifest_path,
+        selected_ids=selected_strategy_ids,
+    )
+    strategy_overrides = _load_strategy_overrides(strategy_overrides_path)
+    if strategy_overrides:
+        _resolve_strategy_ids(
+            manifest_path=manifest_path,
+            selected_ids=tuple(strategy_overrides),
+        )
     quality = _load_quality_snapshot(merged_path, expected_minutes=expected_minutes)
     return {
         "generated_at_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
@@ -251,6 +470,10 @@ def build_plan(
         "allocation_config_path": str(allocation_config_path),
         "allocation_profile": allocation_profile,
         "window_profile": window_profile,
+        "selected_windows": [window.name for window in windows],
+        "selected_strategy_ids": list(strategies),
+        "strategy_overrides_path": str(strategy_overrides_path) if strategy_overrides_path else None,
+        "strategy_override_ids": sorted(strategy_overrides),
         "fixed_assumptions": asdict(FIXED),
         "data_quality": quality,
         "windows": [asdict(window) for window in windows],
@@ -288,6 +511,18 @@ def main() -> int:
         default=5,
         help="Expected bar interval for gap checks",
     )
+    parser.add_argument(
+        "--windows",
+        help="Comma-separated subset of window names to run/plan (for example: 2016_2021,2016_2025)",
+    )
+    parser.add_argument(
+        "--strategies",
+        help="Comma-separated subset of strategy ids to enable for focused validation",
+    )
+    parser.add_argument(
+        "--strategy-overrides-path",
+        help="Optional YAML/JSON file with partial strategy config overrides for focused validation",
+    )
     parser.add_argument("--plan-json", help="Optional JSON output for the plan/summary payload")
     parser.add_argument("--summary-md", help="Optional markdown output for the summary")
     parser.add_argument("--run", action="store_true", help="Execute PoC runs after planning")
@@ -296,6 +531,15 @@ def main() -> int:
     manifest_path = Path(args.manifest_path)
     allocation_config_path = Path(args.allocation_config_path)
     data_path = Path(args.data_path) if args.data_path else None
+    selected_windows = tuple(
+        part.strip() for part in str(args.windows or "").split(",") if part.strip()
+    )
+    selected_strategy_ids = tuple(
+        part.strip() for part in str(args.strategies or "").split(",") if part.strip()
+    )
+    strategy_overrides_path = (
+        Path(args.strategy_overrides_path) if args.strategy_overrides_path else None
+    )
     payload = build_plan(
         manifest_path=manifest_path,
         allocation_config_path=allocation_config_path,
@@ -304,14 +548,37 @@ def main() -> int:
         data_path=data_path,
         expected_minutes=args.expected_minutes,
         window_profile=args.window_profile,
+        selected_windows=selected_windows,
+        selected_strategy_ids=selected_strategy_ids,
+        strategy_overrides_path=strategy_overrides_path,
     )
 
     if args.run:
         stamp = _utc_stamp()
         results: list[dict[str, Any]] = []
-        for window in WINDOW_PROFILES[args.window_profile]:
+        effective_manifest_path = manifest_path
+        strategy_overrides = _load_strategy_overrides(strategy_overrides_path)
+        if selected_strategy_ids:
+            effective_manifest_path = _materialize_strategy_subset_manifest(
+                source_manifest_path=manifest_path,
+                selected_strategy_ids=payload["selected_strategy_ids"],
+                strategy_overrides=strategy_overrides,
+                output_path=_effective_manifest_output_path(stamp=stamp, variant="subset"),
+            )
+            payload["effective_manifest_path"] = str(effective_manifest_path)
+        elif strategy_overrides:
+            effective_manifest_path = _materialize_override_manifest(
+                source_manifest_path=manifest_path,
+                strategy_overrides=strategy_overrides,
+                output_path=_effective_manifest_output_path(stamp=stamp, variant="override"),
+            )
+            payload["effective_manifest_path"] = str(effective_manifest_path)
+        for window in _resolve_windows(
+            window_profile=args.window_profile,
+            selected_names=selected_windows,
+        ):
             raw_path, report_json_path, report_md_path, report = _run_poc(
-                manifest_path=manifest_path,
+                manifest_path=effective_manifest_path,
                 allocation_config_path=allocation_config_path,
                 allocation_profile=args.allocation_profile,
                 window=window,

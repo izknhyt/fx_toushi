@@ -5724,6 +5724,35 @@ def create_cli_app() -> typer.Typer:
 
     portfolio_app = typer.Typer(help="Portfolio utilities")
     portfolio_reallocate_app = typer.Typer(help="Portfolio reallocation utilities")
+    portfolio_output_dir = Path("reports") / "portfolio_cli"
+
+    def _run_portfolio_tool(
+        *,
+        command_name: str,
+        command: list[str],
+        output_json: Path,
+        output_md: Path,
+    ) -> dict[str, Any]:
+        try:
+            proc = subprocess.run(
+                command,
+                check=True,
+                capture_output=True,
+                text=True,
+                cwd=Path.cwd(),
+            )
+        except subprocess.CalledProcessError as exc:
+            message = exc.stderr.strip() or exc.stdout.strip() or str(exc)
+            typer.echo(f"[portfolio.{command_name}] {message}", err=True)
+            raise typer.Exit(1) from exc
+        payload = json.loads(proc.stdout)
+        return {
+            "status": "ok",
+            "command": command_name,
+            "summary_json": str(output_json),
+            "summary_md": str(output_md),
+            "result": payload,
+        }
 
     @portfolio_reallocate_app.command("suggest")
     def portfolio_reallocate_suggest_command(
@@ -5753,6 +5782,303 @@ def create_cli_app() -> typer.Typer:
         _render_payload(console, payload, json_output=effective_json)
 
     portfolio_app.add_typer(portfolio_reallocate_app, name="reallocate")
+
+    @portfolio_app.command("evaluate")
+    def portfolio_evaluate_command(
+        ctx: typer.Context,
+        baseline_strategies: str = typer.Option(..., "--baseline-strategies", help="Comma-separated baseline strategy ids"),
+        candidate_strategies: str = typer.Option(..., "--candidate-strategies", help="Comma-separated candidate strategy ids"),
+        data_path: Path = typer.Option(..., "--data-path", help="Merged parquet path"),
+        windows: str = typer.Option("2016_2025,2016_2021", "--windows", help="Comma-separated window names"),
+        manifest_path: Path = typer.Option(
+            Path("config") / "strategy_manifest.parallel_portfolio_v2.yaml",
+            "--manifest-path",
+            help="Portfolio manifest path",
+        ),
+        allocation_config_path: Path = typer.Option(
+            Path("config") / "strategy_allocation.yaml",
+            "--allocation-config-path",
+            help="Allocation config path",
+        ),
+        allocation_profile: str = typer.Option(
+            "portfolio_admission_v2",
+            "--allocation-profile",
+            help="Allocation profile name",
+        ),
+        output_prefix: str = typer.Option(
+            "portfolio_candidate_evaluation",
+            "--output-prefix",
+            help="Output prefix used for generated artifacts",
+        ),
+        output_dir: Path = typer.Option(
+            portfolio_output_dir,
+            "--output-dir",
+            help="Directory for deterministic CLI summary artifacts",
+        ),
+        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
+    ) -> None:
+        effective_json = _effective_json_output(ctx, json_output)
+        output_dir.mkdir(parents=True, exist_ok=True)
+        summary_json = output_dir / f"{output_prefix}.json"
+        summary_md = output_dir / f"{output_prefix}.md"
+        payload = _run_portfolio_tool(
+            command_name="evaluate",
+            command=[
+                sys.executable,
+                "tools/evaluate_portfolio_candidates.py",
+                "--baseline-strategies",
+                baseline_strategies,
+                "--candidate-strategies",
+                candidate_strategies,
+                "--data-path",
+                str(data_path),
+                "--windows",
+                windows,
+                "--manifest-path",
+                str(manifest_path),
+                "--allocation-config-path",
+                str(allocation_config_path),
+                "--allocation-profile",
+                allocation_profile,
+                "--output-prefix",
+                output_prefix,
+                "--output-json",
+                str(summary_json),
+                "--output-md",
+                str(summary_md),
+            ],
+            output_json=summary_json,
+            output_md=summary_md,
+        )
+        _render_payload(console, payload, json_output=effective_json)
+
+    @portfolio_app.command("review")
+    def portfolio_review_command(
+        ctx: typer.Context,
+        summary_json: Path | None = typer.Option(None, "--summary-json", help="Long-horizon summary JSON path"),
+        run_stamp: str | None = typer.Option(None, "--run-stamp", help="Reconstruct review from run stamp"),
+        validation_log_dir: Path = typer.Option(
+            Path("reports") / "validation_log",
+            "--validation-log-dir",
+            help="Validation log directory",
+        ),
+        analysis_dir: Path = typer.Option(
+            Path("reports") / "analysis",
+            "--analysis-dir",
+            help="Analysis directory",
+        ),
+        output_prefix: str = typer.Option(
+            "portfolio_validation_review",
+            "--output-prefix",
+            help="Output prefix used for generated artifacts",
+        ),
+        output_dir: Path = typer.Option(
+            portfolio_output_dir,
+            "--output-dir",
+            help="Directory for deterministic CLI summary artifacts",
+        ),
+        include_pass: bool = typer.Option(False, "--include-pass", help="Include passing windows"),
+        top_n: int = typer.Option(5, "--top-n", help="Top drag rows per section"),
+        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
+    ) -> None:
+        effective_json = _effective_json_output(ctx, json_output)
+        output_dir.mkdir(parents=True, exist_ok=True)
+        review_json = output_dir / f"{output_prefix}.json"
+        review_md = output_dir / f"{output_prefix}.md"
+        command = [
+            sys.executable,
+            "tools/review_long_horizon_validation.py",
+            "--validation-log-dir",
+            str(validation_log_dir),
+            "--analysis-dir",
+            str(analysis_dir),
+            "--output-json",
+            str(review_json),
+            "--output-md",
+            str(review_md),
+            "--top-n",
+            str(top_n),
+        ]
+        if run_stamp:
+            command.extend(["--run-stamp", run_stamp])
+        elif summary_json is not None:
+            command.extend(["--summary-json", str(summary_json)])
+        if include_pass:
+            command.append("--include-pass")
+        payload = _run_portfolio_tool(
+            command_name="review",
+            command=command,
+            output_json=review_json,
+            output_md=review_md,
+        )
+        _render_payload(console, payload, json_output=effective_json)
+
+    @portfolio_app.command("candidates")
+    def portfolio_candidates_command(
+        ctx: typer.Context,
+        symbols: str | None = typer.Option(None, "--symbols", help="Comma-separated symbols"),
+        profile_path: Path = typer.Option(
+            Path("config") / "profiles" / "paper.yaml",
+            "--profile",
+            help="Profile path for symbol defaults",
+        ),
+        data_dir: Path = typer.Option(
+            Path("data") / "research" / "curated",
+            "--data-dir",
+            help="Curated data root",
+        ),
+        feature_config: Path = typer.Option(
+            Path("config") / "feature_pipeline.yaml",
+            "--feature-config",
+            help="Feature pipeline config",
+        ),
+        strategy_manifest: Path = typer.Option(
+            Path("config") / "strategy_manifest.yaml",
+            "--strategy-manifest",
+            help="Strategy manifest path",
+        ),
+        allocation_config: Path | None = typer.Option(
+            Path("config") / "strategy_allocation.yaml",
+            "--allocation-config",
+            help="Allocation config path",
+        ),
+        allocation_profile: str | None = typer.Option(
+            "portfolio_admission_v2",
+            "--allocation-profile",
+            help="Allocation profile name",
+        ),
+        data_manifest: Path = typer.Option(
+            Path("reports") / "data_manifest.json",
+            "--data-manifest",
+            help="Data manifest path",
+        ),
+        output_dir: Path = typer.Option(
+            portfolio_output_dir,
+            "--output-dir",
+            help="Directory for deterministic CLI summary artifacts",
+        ),
+        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
+    ) -> None:
+        effective_json = _effective_json_output(ctx, json_output)
+        output_dir.mkdir(parents=True, exist_ok=True)
+        snapshot_json = output_dir / "portfolio_candidates_snapshot.json"
+        command = [
+            sys.executable,
+            "tools/portfolio_candidates_snapshot.py",
+            "--profile",
+            str(profile_path),
+            "--data-dir",
+            str(data_dir),
+            "--feature-config",
+            str(feature_config),
+            "--strategy-manifest",
+            str(strategy_manifest),
+            "--data-manifest",
+            str(data_manifest),
+            "--output",
+            str(snapshot_json),
+        ]
+        if symbols:
+            command.extend(["--symbols", symbols])
+        if allocation_config is not None:
+            command.extend(["--allocation-config", str(allocation_config)])
+        if allocation_profile:
+            command.extend(["--allocation-profile", allocation_profile])
+        payload = _run_portfolio_tool(
+            command_name="candidates",
+            command=command,
+            output_json=snapshot_json,
+            output_md=snapshot_json,
+        )
+        _render_payload(console, payload, json_output=effective_json)
+
+    @portfolio_app.command("admit")
+    def portfolio_admit_command(
+        ctx: typer.Context,
+        symbols: str | None = typer.Option(None, "--symbols", help="Comma-separated symbols"),
+        profile_path: Path = typer.Option(
+            Path("config") / "profiles" / "paper.yaml",
+            "--profile",
+            help="Profile path for symbol defaults",
+        ),
+        data_dir: Path = typer.Option(
+            Path("data") / "research" / "curated",
+            "--data-dir",
+            help="Curated data root",
+        ),
+        feature_config: Path = typer.Option(
+            Path("config") / "feature_pipeline.yaml",
+            "--feature-config",
+            help="Feature pipeline config",
+        ),
+        strategy_manifest: Path = typer.Option(
+            Path("config") / "strategy_manifest.yaml",
+            "--strategy-manifest",
+            help="Strategy manifest path",
+        ),
+        allocation_config: Path | None = typer.Option(
+            Path("config") / "strategy_allocation.yaml",
+            "--allocation-config",
+            help="Allocation config path",
+        ),
+        allocation_profile: str | None = typer.Option(
+            "portfolio_admission_v2",
+            "--allocation-profile",
+            help="Allocation profile name",
+        ),
+        data_manifest: Path = typer.Option(
+            Path("reports") / "data_manifest.json",
+            "--data-manifest",
+            help="Data manifest path",
+        ),
+        output_dir: Path = typer.Option(
+            portfolio_output_dir,
+            "--output-dir",
+            help="Directory for deterministic CLI summary artifacts",
+        ),
+        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
+    ) -> None:
+        effective_json = _effective_json_output(ctx, json_output)
+        output_dir.mkdir(parents=True, exist_ok=True)
+        snapshot_json = output_dir / "portfolio_admit_snapshot.json"
+        command = [
+            sys.executable,
+            "tools/portfolio_candidates_snapshot.py",
+            "--profile",
+            str(profile_path),
+            "--data-dir",
+            str(data_dir),
+            "--feature-config",
+            str(feature_config),
+            "--strategy-manifest",
+            str(strategy_manifest),
+            "--data-manifest",
+            str(data_manifest),
+            "--output",
+            str(snapshot_json),
+        ]
+        if symbols:
+            command.extend(["--symbols", symbols])
+        if allocation_config is not None:
+            command.extend(["--allocation-config", str(allocation_config)])
+        if allocation_profile:
+            command.extend(["--allocation-profile", allocation_profile])
+        snapshot_payload = _run_portfolio_tool(
+            command_name="admit",
+            command=command,
+            output_json=snapshot_json,
+            output_md=snapshot_json,
+        )
+        result_payload = dict(snapshot_payload)
+        result_payload["result"] = {
+            "generated_at": snapshot_payload["result"].get("generated_at"),
+            "symbols": snapshot_payload["result"].get("symbols", []),
+            "selected_strategy_ids": snapshot_payload["result"].get("selected_strategy_ids", []),
+            "admission_outcomes": snapshot_payload["result"].get("admission_outcomes", []),
+            "warnings": snapshot_payload["result"].get("warnings", []),
+        }
+        _render_payload(console, result_payload, json_output=effective_json)
+
     app.add_typer(portfolio_app, name="portfolio")
 
     scoreboard_app = typer.Typer(help="Scoreboard utilities")

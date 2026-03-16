@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -208,6 +209,17 @@ def test_strategy_engine_allocation_selects_one_candidate(tmp_path: Path) -> Non
 
     assert len(signals) == 1
     assert signals[0].strategy_id == "alpha"
+    outcomes = engine.last_run_allocation_outcomes
+    assert len(outcomes) == 2
+    by_id = {item["strategy_id"]: item for item in outcomes}
+    assert by_id["alpha"]["decision"] == "accept"
+    assert by_id["beta"]["decision"] == "reject"
+    assert by_id["beta"]["reason_code"] == "tie_break_lost"
+    candidate_trades = engine.last_run_candidate_trades
+    assert len(candidate_trades) == 2
+    assert candidate_trades[0]["candidate_id"]
+    assert candidate_trades[0]["strategy_id"] == "alpha"
+    assert candidate_trades[0]["symbol"] == "USDJPY"
 
 
 def test_strategy_engine_without_allocation_keeps_all_candidates(tmp_path: Path) -> None:
@@ -313,3 +325,42 @@ def test_strategy_engine_allocation_respects_open_positions_from_account(tmp_pat
 
     assert len(signals) == 1
     assert signals[0].strategy_id == "beta"
+    outcomes = engine.last_run_allocation_outcomes
+    by_id = {item["strategy_id"]: item for item in outcomes}
+    assert by_id["alpha"]["decision"] == "reject"
+    assert by_id["alpha"]["reason_code"] == "active_group_conflict"
+    assert by_id["beta"]["decision"] == "accept"
+
+
+def test_strategy_engine_logs_allocation_decisions_to_portfolio_admission_events(
+    monkeypatch, tmp_path: Path
+) -> None:
+    manifest_path = tmp_path / "strategy_manifest.yaml"
+    policy_path = tmp_path / "strategy_allocation.yaml"
+    signal_log = tmp_path / "signal.generated.jsonl"
+    monkeypatch.setenv("TRADECTL_SIGNAL_EVENT_LOG", str(signal_log))
+    _write_manifest(manifest_path)
+    _write_policy(policy_path)
+
+    engine = StrategyEngine()
+    engine.register_plugin(_AlphaStrategy())
+    engine.register_plugin(_BetaStrategy())
+    engine.load_manifest(manifest_path)
+    engine.set_allocation_policy(StrategyAllocationPolicy.load(policy_path, profile="active"))
+
+    try:
+        signals = _run(engine)
+    finally:
+        os.environ.pop("TRADECTL_SIGNAL_EVENT_LOG", None)
+
+    assert len(signals) == 1
+    lines = [json.loads(line) for line in signal_log.read_text(encoding="utf-8").splitlines()]
+    allocation_events = [line for line in lines if line.get("event") == "portfolio.admission"]
+    assert len(allocation_events) == 2
+    by_id = {line["strategy_id"]: line for line in allocation_events}
+    assert by_id["alpha"]["status"] == "accept"
+    assert by_id["alpha"]["allocation_decision"]["decision"] == "accept"
+    assert by_id["alpha"]["candidate"]["strategy_id"] == "alpha"
+    assert by_id["alpha"]["candidate_id"] == by_id["alpha"]["candidate"]["candidate_id"]
+    assert by_id["beta"]["status"] == "reject"
+    assert by_id["beta"]["allocation_decision"]["reason_code"] == "tie_break_lost"

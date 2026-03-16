@@ -12,6 +12,7 @@ from tools.gui_ops_loop import (
     _engine_signal_payload,
     _ensure_signal_log,
     _load_dotenv,
+    _summarize_allocation_decisions,
     append_price_csv,
 )
 
@@ -108,6 +109,53 @@ def test_ensure_signal_log_creates_file(tmp_path: Path) -> None:
     path = tmp_path / "logs" / "events" / "signal.gui.jsonl"
     _ensure_signal_log(path)
     assert path.exists()
+
+
+def test_summarize_allocation_decisions_counts_recent_statuses(tmp_path: Path) -> None:
+    path = tmp_path / "logs" / "events" / "signal.gui.jsonl"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    rows = [
+        {
+            "event": "portfolio.admission",
+            "ts": "2026-03-16T13:00:00Z",
+            "strategy_id": "alpha",
+            "symbol": "USDJPY",
+            "status": "accept",
+            "allocation_decision": {"reason_code": "selected"},
+        },
+        {
+            "event": "portfolio.admission",
+            "ts": "2026-03-16T13:01:00Z",
+            "strategy_id": "beta",
+            "symbol": "USDJPY",
+            "status": "reject",
+            "allocation_decision": {"reason_code": "tie_break_lost"},
+        },
+        {
+            "event": "portfolio.admission",
+            "ts": "2026-03-16T13:02:00Z",
+            "strategy_id": "gamma",
+            "symbol": "USDJPY",
+            "status": "defer",
+            "allocation_decision": {"reason_code": "active_group_deferred"},
+        },
+        {
+            "event": "signal.generated",
+            "ts": "2026-03-16T13:03:00Z",
+            "strategy_id": "delta",
+            "symbol": "USDJPY",
+            "status": "generated",
+        },
+    ]
+    path.write_text("\n".join(json.dumps(row, ensure_ascii=False) for row in rows) + "\n", encoding="utf-8")
+
+    payload = _summarize_allocation_decisions(path, limit=50)
+
+    assert payload["count"] == 3
+    assert payload["summary"]["accept"] == 1
+    assert payload["summary"]["reject"] == 1
+    assert payload["summary"]["defer"] == 1
+    assert [item["strategy_id"] for item in payload["recent"]] == ["alpha", "beta", "gamma"]
 
 
 def test_detect_breakouts_emits_records() -> None:

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
@@ -13,6 +14,8 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_SUMMARY_JSON = (
     PROJECT_ROOT / "reports" / "validation_log" / "usdjpy_long_horizon_validation_run_20260315.json"
 )
+DEFAULT_VALIDATION_LOG_DIR = PROJECT_ROOT / "reports" / "validation_log"
+DEFAULT_ANALYSIS_DIR = PROJECT_ROOT / "reports" / "analysis"
 
 
 def _utc_now() -> str:
@@ -64,6 +67,54 @@ def _year_from_trade(trade: dict[str, Any]) -> str:
 def _direction_from_trade(trade: dict[str, Any]) -> str:
     direction = str(trade.get("direction") or "").strip().lower()
     return direction or "unknown"
+
+
+def _summary_from_run_stamp(
+    *,
+    run_stamp: str,
+    validation_log_dir: Path = DEFAULT_VALIDATION_LOG_DIR,
+    analysis_dir: Path = DEFAULT_ANALYSIS_DIR,
+) -> dict[str, Any]:
+    pattern = re.compile(rf"^long_horizon_portfolio_{re.escape(run_stamp)}_(.+)\.json$")
+    results: list[dict[str, Any]] = []
+    for raw_path in sorted(validation_log_dir.glob(f"long_horizon_portfolio_{run_stamp}_*.json")):
+        match = pattern.match(raw_path.name)
+        if not match:
+            continue
+        window_name = match.group(1)
+        report_json_path = analysis_dir / f"long_horizon_portfolio_{run_stamp}_{window_name}_report.json"
+        report_md_path = analysis_dir / f"long_horizon_portfolio_{run_stamp}_{window_name}_report.md"
+        if not report_json_path.exists():
+            continue
+        report_payload = json.loads(report_json_path.read_text(encoding="utf-8"))
+        acceptance = report_payload.get("acceptance_gate", {})
+        results.append(
+            {
+                "window_name": window_name,
+                "purpose": None,
+                "summary": {
+                    "pf": report_payload.get("summary", {}).get("pf"),
+                    "avg_r": report_payload.get("summary", {}).get("avg_r"),
+                    "max_drawdown": report_payload.get("metrics", {}).get("max_drawdown"),
+                    "trades": report_payload.get("summary", {}).get("count"),
+                    "win_rate": report_payload.get("summary", {}).get("win_rate"),
+                },
+                "acceptance": {
+                    "status": acceptance.get("status"),
+                    "checks": acceptance.get("checks", {}),
+                },
+                "evidence": {
+                    "raw": str(raw_path),
+                    "report_json": str(report_json_path),
+                    "report_md": str(report_md_path),
+                },
+            }
+        )
+    return {
+        "_source_path": f"run_stamp:{run_stamp}",
+        "run_stamp": run_stamp,
+        "results": results,
+    }
 
 
 def _summarise_trades(trades: list[dict[str, Any]]) -> dict[str, Any]:
@@ -395,14 +446,24 @@ def main() -> int:
         description="Review long-horizon portfolio validation outputs and rank improvement candidates."
     )
     parser.add_argument("--summary-json", type=Path, default=DEFAULT_SUMMARY_JSON)
+    parser.add_argument("--run-stamp", help="Reconstruct summary payload from existing long_horizon_portfolio evidence")
+    parser.add_argument("--validation-log-dir", type=Path, default=DEFAULT_VALIDATION_LOG_DIR)
+    parser.add_argument("--analysis-dir", type=Path, default=DEFAULT_ANALYSIS_DIR)
     parser.add_argument("--output-json", type=Path)
     parser.add_argument("--output-md", type=Path)
     parser.add_argument("--include-pass", action="store_true")
     parser.add_argument("--top-n", type=int, default=5)
     args = parser.parse_args()
 
-    summary_payload = json.loads(args.summary_json.read_text(encoding="utf-8"))
-    summary_payload["_source_path"] = str(args.summary_json)
+    if args.run_stamp:
+        summary_payload = _summary_from_run_stamp(
+            run_stamp=args.run_stamp,
+            validation_log_dir=args.validation_log_dir,
+            analysis_dir=args.analysis_dir,
+        )
+    else:
+        summary_payload = json.loads(args.summary_json.read_text(encoding="utf-8"))
+        summary_payload["_source_path"] = str(args.summary_json)
     review = build_review(summary_payload, failed_only=not args.include_pass, top_n=args.top_n)
 
     if args.output_json:

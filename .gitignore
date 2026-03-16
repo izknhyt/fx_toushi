@@ -4,6 +4,7 @@ logs/
 *.log
 __pycache__/
 *.pyc
+.DS_Store
 metrics/determinism.jsonl
 
 # python virtual env
@@ -23,10 +24,14 @@ reports/price/
 reports/gui/runtime/
 reports/validation_log/*.json
 reports/validation_log/*.sh
+reports/validation_log/*.yaml
 reports/validation_log/**/*.json
+reports/validation_log/*/
 data/cache/dukascopy/
 data/raw/auto/
 data/raw/dukascopy/
 data/raw/twelvedata/
+data/research/curated/usdjpy/*_dukascopy.parquet
+data/research/curated/usdjpy/*_merged.parquet
 data/research/curated/usdjpy_m5_clean/
 data/research/curated/*/*_latest.parquet

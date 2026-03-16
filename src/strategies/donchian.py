@@ -252,6 +252,14 @@ class _BaseDonchianBreakoutStrategy(StrategyPluginProtocol):
                 if not filter_flags["breakout_quality_ok"]:
                     filter_block_reason = filter_block_reason or "breakout_quality"
 
+            min_quality_score = self._coerce_float(filters.get("min_quality_score"))
+            if min_quality_score is not None:
+                filter_flags["quality_score_ok"] = (
+                    quality_score is not None and quality_score >= min_quality_score
+                )
+                if not filter_flags["quality_score_ok"]:
+                    filter_block_reason = filter_block_reason or "quality_score_below_min"
+
             if filter_block_reason is not None:
                 continue
 

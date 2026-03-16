@@ -2,6 +2,8 @@
 
 ## Current Reference
 - Start here: [FX Portfolio Operating System](architecture/fx_portfolio_operating_system.md) — 現行の設計方針。`USDJPY-first / multi-pair-ready / portfolio-first / personal-use` を定義する。
+- Then fix v2 shape: [FX Portfolio Tool v2 Specification](architecture/fx_portfolio_tool_v2_spec.md) — 改良版ツールの candidate schema, admission contract, evaluation contract, GUI/CLI surface を定義する。
+- Then check current gaps: [FX Portfolio Tool v2 Gap Audit](architecture/fx_portfolio_tool_v2_gap_audit.md) — v2 spec と現行実装の差分、M2 の到達点、次に formalize すべき contract を整理する。
 - Then read: [Development Plan & Task Tracker](development_plan.md) — 実装進捗、チェックリスト、証跡、backlog の管理台帳。
 
 ## Editing Policy

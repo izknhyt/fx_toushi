@@ -805,6 +805,46 @@ def _signals_payload(
     return {"status": "ok", "count": len(records), "signals": records}
 
 
+def _allocation_decisions_payload(
+    path: Path,
+    *,
+    limit: int,
+    symbols: frozenset[str] | None = None,
+    strategy_ids: frozenset[str] | None = None,
+) -> dict[str, Any]:
+    records = _load_signal_records(path, limit=limit)
+    records = [
+        record
+        for record in records
+        if (
+            record.get("event") == "portfolio.admission"
+            or (
+                record.get("event") == "signal.generated"
+                and record.get("allocation_decision")
+            )
+        )
+        and str(record.get("status") or "").strip().lower() in {"accept", "reject", "defer", "resize", "replace"}
+    ]
+    if symbols:
+        records = [
+            record
+            for record in records
+            if str(record.get("symbol", "")).strip().upper() in symbols
+        ]
+    if strategy_ids:
+        records = [
+            record
+            for record in records
+            if str(record.get("strategy_id", "")).strip() in strategy_ids
+        ]
+    summary = {"accept": 0, "reject": 0, "defer": 0, "resize": 0, "replace": 0}
+    for record in records:
+        status = str(record.get("status") or "").strip().lower()
+        if status in summary:
+            summary[status] += 1
+    return {"status": "ok", "count": len(records), "summary": summary, "decisions": records}
+
+
 def _is_signal_time_order_valid(record: Mapping[str, Any]) -> bool:
     ts = _parse_utc_datetime(record.get("ts"))
     expire_at = _parse_utc_datetime(record.get("expire_at"))
@@ -1277,7 +1317,18 @@ def _latest_bar_timestamp_in_parquet(path: Path) -> datetime | None:
 def _ops_status_payload(config: GuiServerConfig) -> dict[str, Any]:
     if config.ops_controller is None:
         return {"status": "disabled", "reason": "ops_runtime_not_configured"}
-    return config.ops_controller.snapshot()
+    payload = config.ops_controller.snapshot()
+    selected_symbols = _normalise_filter_symbols(
+        payload.get("symbols"), fallback=payload.get("symbol")
+    )
+    selected_strategy_ids = _normalise_filter_strategy_ids(payload.get("selected_strategy_ids"))
+    payload["recent_allocation_decisions"] = _allocation_decisions_payload(
+        config.signal_log_path,
+        limit=50,
+        symbols=selected_symbols,
+        strategy_ids=selected_strategy_ids,
+    )
+    return payload
 
 
 def _ops_start_payload(

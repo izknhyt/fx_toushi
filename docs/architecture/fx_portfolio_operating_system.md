@@ -240,6 +240,7 @@ Last updated: 2026-03-12
 
 ## 11. Related Documents
 
+- `docs/architecture/fx_portfolio_tool_v2_spec.md`
 - `docs/development_plan.md`
 - `docs/release_checklist.md`
 - `docs/onboarding.md`

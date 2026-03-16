@@ -157,6 +157,33 @@ def test_donchian_filters_block_on_breakout_quality() -> None:
     assert signals == []
 
 
+def test_donchian_filters_block_on_min_quality_score() -> None:
+    strategy = DonchianBreakoutStrategy(default_watchlist=("USDJPY",))
+    params = {
+        "entry": {
+            "filters": {
+                "min_breakout_abs": 0.5,
+                "min_quality_score": 3.0,
+            }
+        },
+        "execution": {"spread": 0.005, "slippage": 0.0015},
+    }
+    blocked_context = _context_for_close(102.0, trend_value=1.0, parameters=params)
+    allowed_context = _context_for_close(
+        102.6,
+        trend_value=1.0,
+        parameters=params,
+    )
+
+    blocked_signals = list(strategy.generate_signals(blocked_context))
+    allowed_signals = list(strategy.generate_signals(allowed_context))
+
+    assert blocked_signals == []
+    assert len(allowed_signals) == 1
+    assert allowed_signals[0].quality_score is not None
+    assert allowed_signals[0].quality_score >= 3.0
+
+
 def test_donchian_filters_from_root_parameters() -> None:
     strategy = DonchianBreakoutStrategy(default_watchlist=("USDJPY",))
     params = {
