@@ -21,6 +21,8 @@ from src.portfolio.allocation_review import (
     build_allocator_tuning_cases,
     load_allocation_config_payload,
 )
+from src.portfolio.shadow_feedback import build_shadow_feedback_validation_case, load_shadow_feedback_override_packet
+from src.portfolio.shadow_feedback import build_shadow_feedback_validation_case
 from tools.run_long_horizon_portfolio_validation import _yaml_dump_text
 
 VALIDATION_LOG_DIR = PROJECT_ROOT / "reports" / "validation_log"
@@ -202,8 +204,14 @@ def main() -> int:
     parser.add_argument("--manifest-path", type=Path, default=DEFAULT_MANIFEST)
     parser.add_argument("--allocation-config-path", type=Path, default=DEFAULT_ALLOCATION)
     parser.add_argument("--allocation-profile", default="portfolio_admission_v2")
+    parser.add_argument(
+        "--shadow-feedback-json",
+        type=Path,
+        help="Optional materialized shadow feedback packet to validate directly.",
+    )
     parser.add_argument("--windows", default="2016_2021,2016_2025")
     parser.add_argument("--limit", type=int, default=3)
+    parser.add_argument("--shadow-feedback-json", type=Path)
     parser.add_argument("--output-prefix", default="allocator_tuning_review")
     parser.add_argument("--output-json", type=Path)
     parser.add_argument("--output-md", type=Path)
@@ -221,6 +229,16 @@ def main() -> int:
         allocation_profile=args.allocation_profile,
         limit=args.limit,
     )
+    if args.shadow_feedback_json is not None:
+        feedback_case = build_shadow_feedback_validation_case(
+            load_shadow_feedback_override_packet(args.shadow_feedback_json),
+            case_id="shadow_feedback_override_packet",
+        )
+        if feedback_case is not None:
+            generated_cases = [feedback_case, *generated_cases]
+    shadow_feedback_case = build_shadow_feedback_validation_case(args.shadow_feedback_json)
+    if shadow_feedback_case is not None:
+        generated_cases = [shadow_feedback_case, *generated_cases]
     stamp = _utc_stamp()
     run_dir = VALIDATION_LOG_DIR / f"{args.output_prefix}_{stamp}"
     run_dir.mkdir(parents=True, exist_ok=True)

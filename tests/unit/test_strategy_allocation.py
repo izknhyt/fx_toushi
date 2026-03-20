@@ -754,3 +754,88 @@ def test_allocation_penalizes_slot_cost(tmp_path: Path) -> None:
     by_id = {outcome.strategy_id: outcome for outcome in result.outcomes}
     assert by_id["expensive_slot"].selected is False
     assert by_id["expensive_slot"].reason == "tie_break_lost"
+
+
+def test_load_applies_runtime_guardrail_overrides(tmp_path: Path) -> None:
+    config_path = _write_policy(
+        tmp_path,
+        {
+            "profiles": {
+                "active": {
+                    "mode": "active",
+                    "global": {
+                        "score": {"min_score": 0.5},
+                        "portfolio": {"slot_cost": 0.01},
+                    },
+                    "strategies": {},
+                }
+            }
+        },
+    )
+    guardrail_path = tmp_path / "runtime_guardrail.json"
+    guardrail_path.write_text(
+        """
+{
+  "status": "active",
+  "decision": "adopt",
+  "allocation_profile": "active",
+  "allocation_profile_overrides": {
+    "global": {
+      "score": {"min_score": 0.65},
+      "portfolio": {"slot_cost": 0.03}
+    }
+  }
+}
+""".strip(),
+        encoding="utf-8",
+    )
+
+    policy = StrategyAllocationPolicy.load(
+        config_path,
+        profile="active",
+        runtime_guardrail_path=guardrail_path,
+    )
+
+    assert policy._global_config["score"]["min_score"] == 0.65
+    assert policy._global_config["portfolio"]["slot_cost"] == 0.03
+
+
+def test_load_ignores_inactive_runtime_guardrail(tmp_path: Path) -> None:
+    config_path = _write_policy(
+        tmp_path,
+        {
+            "profiles": {
+                "active": {
+                    "mode": "active",
+                    "global": {
+                        "score": {"min_score": 0.5},
+                    },
+                    "strategies": {},
+                }
+            }
+        },
+    )
+    guardrail_path = tmp_path / "runtime_guardrail.json"
+    guardrail_path.write_text(
+        """
+{
+  "status": "hold",
+  "decision": "hold",
+  "allocation_profile": "active",
+  "allocation_profile_overrides": {
+    "global": {
+      "score": {"min_score": 0.65}
+    }
+  }
+}
+""".strip(),
+        encoding="utf-8",
+    )
+
+    policy = StrategyAllocationPolicy.load(
+        config_path,
+        profile="active",
+        runtime_guardrail_path=guardrail_path,
+    )
+
+    assert policy._global_config["score"]["min_score"] == 0.5

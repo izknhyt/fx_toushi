@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any, Mapping
 
 from src.portfolio.allocation_review import (
     apply_allocation_profile_overrides,
+    load_allocation_review_payload,
     load_allocation_config_payload,
 )
 
@@ -275,6 +277,181 @@ def materialize_shadow_feedback_override_packet(
     }
 
 
+def build_shadow_feedback_validation_case(
+    shadow_feedback_override_packet: Mapping[str, Any] | Path | str | None,
+    *,
+    case_id: str = "shadow_feedback_override_packet",
+) -> dict[str, Any] | None:
+    payload = load_allocation_review_payload(shadow_feedback_override_packet)
+    if payload is None:
+        return None
+    overrides = payload.get("allocation_profile_overrides")
+    if not isinstance(overrides, Mapping) or not overrides:
+        return None
+
+    runtime_guardrail = payload.get("runtime_guardrail")
+    focused_validation = payload.get("focused_validation")
+    return {
+        "case_id": case_id,
+        "note": "Validate materialized shadow feedback override packet.",
+        "source_hypothesis": {
+            "suggested_action": "apply_shadow_feedback_override",
+            "feedback_loop_state": payload.get("feedback_loop_state"),
+            "runtime_guardrail_status": (
+                str(runtime_guardrail.get("status") or "") if isinstance(runtime_guardrail, Mapping) else ""
+            ),
+        },
+        "allocation_profile_overrides": dict(overrides),
+        "runtime_guardrail": dict(runtime_guardrail) if isinstance(runtime_guardrail, Mapping) else {},
+        "focused_validation": dict(focused_validation) if isinstance(focused_validation, Mapping) else {},
+    }
+
+
+def load_shadow_feedback_override_packet(
+    payload_or_path: Mapping[str, Any] | Path | str | None,
+) -> dict[str, Any]:
+    if payload_or_path is None:
+        return {}
+    if isinstance(payload_or_path, Mapping):
+        return dict(payload_or_path)
+    path = Path(payload_or_path)
+    if not path.exists():
+        return {}
+    try:
+        loaded = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return dict(loaded) if isinstance(loaded, Mapping) else {}
+
+
+def apply_shadow_feedback_override_packet(
+    allocation_config_payload_or_path: Mapping[str, Any] | Path | str | None,
+    *,
+    override_packet_or_path: Mapping[str, Any] | Path | str | None,
+    allocation_profile: str = DEFAULT_ALLOCATION_PROFILE,
+) -> dict[str, Any] | None:
+    config_payload = load_allocation_config_payload(allocation_config_payload_or_path)
+    if config_payload is None:
+        return None
+    packet = load_shadow_feedback_override_packet(override_packet_or_path)
+    overrides = packet.get("allocation_profile_overrides")
+    if (
+        str(packet.get("status") or "") not in {"ok", "active"}
+        or not isinstance(overrides, Mapping)
+        or not overrides
+    ):
+        return dict(config_payload)
+    profile_name = str(packet.get("allocation_profile") or allocation_profile or DEFAULT_ALLOCATION_PROFILE)
+    return apply_allocation_profile_overrides(
+        config_payload,
+        allocation_profile=profile_name,
+        overrides=overrides,
+    )
+
+
+def build_shadow_feedback_validation_decision(
+    override_packet: Mapping[str, Any],
+    *,
+    baseline_results: Mapping[str, Mapping[str, Any]],
+    candidate_results: Mapping[str, Mapping[str, Any]],
+) -> dict[str, Any]:
+    windows = sorted(set(baseline_results) | set(candidate_results))
+    if str(override_packet.get("status") or "") not in {"ok", "active"}:
+        return {
+            "status": "not_applicable",
+            "decision": "hold",
+            "reasons": ["override_packet_not_actionable"],
+            "window_assessments": [],
+        }
+
+    assessments: list[dict[str, Any]] = []
+    improved_windows = 0
+    degraded_windows = 0
+    for window_name in windows:
+        baseline_summary = dict((baseline_results.get(window_name) or {}).get("summary", {}))
+        candidate_summary = dict((candidate_results.get(window_name) or {}).get("summary", {}))
+        pf_delta = _delta(candidate_summary.get("pf"), baseline_summary.get("pf"))
+        avg_r_delta = _delta(candidate_summary.get("avg_r"), baseline_summary.get("avg_r"))
+        drawdown_delta = _delta(
+            candidate_summary.get("max_drawdown"),
+            baseline_summary.get("max_drawdown"),
+        )
+        improved = bool(
+            (pf_delta is not None and pf_delta >= 0)
+            and (avg_r_delta is not None and avg_r_delta >= 0)
+            and (drawdown_delta is None or drawdown_delta <= 0.02)
+            and ((pf_delta or 0.0) > 0 or (avg_r_delta or 0.0) > 0)
+        )
+        degraded = bool(
+            ((pf_delta is not None and pf_delta < 0) and (avg_r_delta is not None and avg_r_delta <= 0))
+            or (drawdown_delta is not None and drawdown_delta > 0.03)
+        )
+        if improved:
+            improved_windows += 1
+        if degraded:
+            degraded_windows += 1
+        assessments.append(
+            {
+                "window_name": window_name,
+                "pf_delta": pf_delta,
+                "avg_r_delta": avg_r_delta,
+                "max_drawdown_delta": drawdown_delta,
+                "improved": improved,
+                "degraded": degraded,
+            }
+        )
+
+    reasons: list[str] = []
+    if improved_windows == len(windows) and improved_windows > 0:
+        decision = "adopt"
+        reasons.append("all_windows_improved")
+    elif degraded_windows == len(windows) and degraded_windows > 0:
+        decision = "reject"
+        reasons.append("all_windows_degraded")
+    else:
+        decision = "hold"
+        reasons.append("mixed_window_signal" if improved_windows > 0 else "insufficient_improvement")
+
+    return {
+        "status": "ok",
+        "decision": decision,
+        "reasons": reasons,
+        "window_assessments": assessments,
+        "improved_windows": improved_windows,
+        "degraded_windows": degraded_windows,
+    }
+
+
+def build_shadow_feedback_runtime_guardrail_state(
+    override_packet: Mapping[str, Any],
+    *,
+    validation_decision: Mapping[str, Any],
+) -> dict[str, Any]:
+    decision = str(validation_decision.get("decision") or "hold")
+    runtime_guardrail = dict(override_packet.get("runtime_guardrail") or {})
+    overrides = (
+        dict(override_packet.get("allocation_profile_overrides") or {})
+        if isinstance(override_packet.get("allocation_profile_overrides"), Mapping)
+        else {}
+    )
+    status = "inactive"
+    if decision == "adopt" and overrides:
+        status = "active"
+    elif decision == "reject":
+        status = "rejected"
+    elif decision == "hold":
+        status = "hold"
+    return {
+        "status": status,
+        "decision": decision,
+        "allocation_profile": str(override_packet.get("allocation_profile") or DEFAULT_ALLOCATION_PROFILE),
+        "allocation_profile_overrides": overrides if status == "active" else {},
+        "runtime_guardrail": runtime_guardrail,
+        "validation_reasons": [str(item) for item in (validation_decision.get("reasons") or [])],
+        "window_assessments": list(validation_decision.get("window_assessments") or []),
+    }
+
+
 def _build_runtime_guardrail(shadow_feedback_summary: Mapping[str, Any]) -> dict[str, Any]:
     state = str(shadow_feedback_summary.get("feedback_loop_state") or "monitor")
     next_action = str(shadow_feedback_summary.get("next_action") or "no_allocator_change")
@@ -324,9 +501,23 @@ def _assign_path(payload: dict[str, Any], dotted_path: str, value: Any) -> None:
     current[parts[-1]] = value
 
 
+def _delta(after: Any, before: Any) -> float | None:
+    try:
+        after_value = float(after)
+        before_value = float(before)
+    except (TypeError, ValueError):
+        return None
+    return round(after_value - before_value, 4)
+
+
 __all__ = [
     "DEFAULT_ALLOCATION_CONFIG_PATH",
     "DEFAULT_ALLOCATION_PROFILE",
+    "apply_shadow_feedback_override_packet",
+    "build_shadow_feedback_validation_case",
+    "build_shadow_feedback_runtime_guardrail_state",
+    "build_shadow_feedback_validation_decision",
     "build_shadow_feedback_summary",
+    "load_shadow_feedback_override_packet",
     "materialize_shadow_feedback_override_packet",
 ]

@@ -12,6 +12,8 @@ from collections import defaultdict
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from datetime import datetime
+import json
+import os
 from pathlib import Path
 from typing import Any
 
@@ -169,6 +171,21 @@ def _decision_from_reason(*, selected: bool, reason: str) -> str:
     return "reject"
 
 
+def _load_runtime_guardrail_payload(runtime_guardrail_path: Path | None) -> dict[str, Any]:
+    candidate_path = runtime_guardrail_path
+    if candidate_path is None:
+        env_value = os.environ.get("TRADECTL_RUNTIME_GUARDRAIL_PATH", "").strip()
+        if env_value:
+            candidate_path = Path(env_value)
+    if candidate_path is None or not candidate_path.exists():
+        return {}
+    try:
+        payload = json.loads(candidate_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return dict(payload) if isinstance(payload, Mapping) else {}
+
+
 @dataclass(frozen=True, slots=True)
 class AllocationCandidate:
     strategy_id: str
@@ -314,6 +331,7 @@ class StrategyAllocationPolicy:
         path: Path,
         *,
         profile: str | None = None,
+        runtime_guardrail_path: Path | None = None,
     ) -> StrategyAllocationPolicy:
         payload = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
         if not isinstance(payload, Mapping):
@@ -338,6 +356,17 @@ class StrategyAllocationPolicy:
             selected = _deep_merge(defaults_map, selected_payload)
         else:
             selected = _deep_merge(defaults_map, payload)
+
+        runtime_guardrail_payload = _load_runtime_guardrail_payload(runtime_guardrail_path)
+        guardrail_profile = str(runtime_guardrail_payload.get("allocation_profile") or profile or "")
+        guardrail_overrides = runtime_guardrail_payload.get("allocation_profile_overrides")
+        selected_profile = profile or payload.get("active_profile") or "pass_through"
+        if (
+            str(runtime_guardrail_payload.get("status") or "") == "active"
+            and isinstance(guardrail_overrides, Mapping)
+            and (not guardrail_profile or guardrail_profile == selected_profile)
+        ):
+            selected = _deep_merge(dict(selected), dict(guardrail_overrides))
 
         mode = _normalize_text(selected.get("mode")) or "pass_through"
         tie_break = selected.get("tie_break")

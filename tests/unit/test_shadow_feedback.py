@@ -1,6 +1,10 @@
 from __future__ import annotations
 
 from src.portfolio.shadow_feedback import (
+    apply_shadow_feedback_override_packet,
+    build_shadow_feedback_validation_case,
+    build_shadow_feedback_runtime_guardrail_state,
+    build_shadow_feedback_validation_decision,
     build_shadow_feedback_summary,
     materialize_shadow_feedback_override_packet,
 )
@@ -109,3 +113,72 @@ def test_materialize_shadow_feedback_override_packet_handles_execution_mode_only
 
     assert packet["runtime_guardrail"]["status"] == "transition_ready"
     assert packet["runtime_guardrail"]["preferred_next_phase"] == "candidate_onboarding"
+
+
+def test_build_shadow_feedback_validation_case_keeps_runtime_guardrail_context() -> None:
+    case = build_shadow_feedback_validation_case(
+        {
+            "status": "ok",
+            "feedback_loop_state": "stabilize_baseline",
+            "next_action": "review_allocator_feedback_candidates",
+            "allocation_profile_overrides": {
+                "global": {"score": {"min_score": 0.6}},
+            },
+            "runtime_guardrail": {
+                "status": "guarded",
+                "freeze_next_stage": True,
+                "recommended_action": "retain_current_profile",
+            },
+            "focused_validation": {
+                "status": "recommended",
+                "windows": ["2016_2021", "2016_2025"],
+            },
+        }
+    )
+
+    assert case is not None
+    assert case["case_id"] == "shadow_feedback_override_packet"
+    assert case["allocation_profile_overrides"]["global"]["score"]["min_score"] == 0.6
+    assert case["source_hypothesis"]["feedback_loop_state"] == "stabilize_baseline"
+    assert case["source_hypothesis"]["runtime_guardrail_status"] == "guarded"
+    assert case["runtime_guardrail"]["freeze_next_stage"] is True
+    assert case["focused_validation"]["windows"] == ["2016_2021", "2016_2025"]
+
+
+def test_build_shadow_feedback_validation_decision_rejects_when_windows_degrade() -> None:
+    packet = {
+        "status": "ok",
+        "allocation_profile_overrides": {"global": {"score": {"min_score": 0.55}}},
+    }
+    baseline = {
+        "2016_2021": {"summary": {"pf": 1.1, "avg_r": 0.03, "max_drawdown": 0.12}},
+        "2016_2025": {"summary": {"pf": 1.2, "avg_r": 0.04, "max_drawdown": 0.14}},
+    }
+    candidate = {
+        "2016_2021": {"summary": {"pf": 1.0, "avg_r": 0.01, "max_drawdown": 0.18}},
+        "2016_2025": {"summary": {"pf": 1.1, "avg_r": 0.03, "max_drawdown": 0.18}},
+    }
+    decision = build_shadow_feedback_validation_decision(
+        packet,
+        baseline_results=baseline,
+        candidate_results=candidate,
+    )
+    assert decision["decision"] == "reject"
+    state = build_shadow_feedback_runtime_guardrail_state(packet, validation_decision=decision)
+    assert state["status"] == "rejected"
+
+
+def test_apply_shadow_feedback_override_packet_returns_original_for_non_actionable_packet() -> None:
+    config = {
+        "profiles": {"portfolio_admission_v2": {"global": {"score": {"min_score": 0.5}}}},
+        "active_profile": "portfolio_admission_v2",
+    }
+    merged = apply_shadow_feedback_override_packet(
+        config,
+        override_packet_or_path={
+            "status": "hold",
+            "allocation_profile_overrides": {"global": {"score": {"min_score": 0.6}}},
+        },
+        allocation_profile="portfolio_admission_v2",
+    )
+    assert merged == config

@@ -40,6 +40,7 @@ def run_shadow_next_stage_daily(
     notification_log: Path,
     automation_config_path: Path = DEFAULT_SHADOW_NEXT_STAGE_AUTOMATION_CONFIG_PATH,
     execution_ledger_path: Path = DEFAULT_SHADOW_NEXT_STAGE_EXECUTION_LEDGER_PATH,
+    shadow_feedback_override_packet: Mapping[str, Any] | None = None,
     output_dir: Path,
     output_prefix: str = "daily_shadow_next_stage",
     limit: int = 200,
@@ -76,6 +77,8 @@ def run_shadow_next_stage_daily(
         daily_shadow_ops_summary=ops_payload["ops_summary"],
         automation_config=automation_config,
         execution_history=execution_history,
+        shadow_feedback_override_packet=shadow_feedback_override_packet
+        or review_payload["summary"].get("shadow_feedback_override_packet"),
     )
 
     if run and bool(execution_summary.get("should_execute")):
@@ -139,12 +142,18 @@ def build_shadow_next_stage_execution_summary(
     daily_shadow_ops_summary: Mapping[str, Any],
     automation_config: Mapping[str, Any],
     execution_history: list[Mapping[str, Any]],
+    shadow_feedback_override_packet: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     review_date_utc = str(daily_shadow_ops_summary.get("review_date_utc") or "")
     template_status = str(daily_shadow_ops_summary.get("next_stage_template_status") or "unknown")
     template_phase = str(daily_shadow_ops_summary.get("next_stage_template_phase") or "continue_shadow")
     runbook_ref = str(daily_shadow_ops_summary.get("next_stage_template_runbook_ref") or "")
     summary_json = str(daily_shadow_ops_summary.get("summary_json") or "")
+    runtime_guardrail_summary = (
+        dict(daily_shadow_ops_summary.get("runtime_guardrail_summary") or {})
+        if isinstance(daily_shadow_ops_summary.get("runtime_guardrail_summary"), Mapping)
+        else {}
+    )
     result: dict[str, Any] = {
         "status": "not_ready",
         "status_reason": "next_stage_template_not_ready",
@@ -160,8 +169,31 @@ def build_shadow_next_stage_execution_summary(
         "execution_runner_command": "",
         "required_inputs": [],
         "automation_command": DEFAULT_SHADOW_NEXT_STAGE_AUTOMATION_COMMAND,
+        "runtime_guardrail_summary": dict(runtime_guardrail_summary) if runtime_guardrail_summary else {},
     }
+    runtime_guardrail = dict(runtime_guardrail_summary)
+    if isinstance(shadow_feedback_override_packet, Mapping):
+        maybe_guardrail = shadow_feedback_override_packet.get("runtime_guardrail")
+        if isinstance(maybe_guardrail, Mapping):
+            runtime_guardrail = dict(maybe_guardrail)
+    result["runtime_guardrail_summary"] = runtime_guardrail
+    if runtime_guardrail:
+        result["shadow_feedback_override_packet_status"] = str(
+            (shadow_feedback_override_packet or {}).get("status") or ""
+        )
+    if runtime_guardrail.get("status") == "guarded" and bool(runtime_guardrail.get("freeze_next_stage", False)):
+        result["status"] = "blocked_by_runtime_guardrail"
+        result["status_reason"] = "shadow_runtime_guardrail_blocked"
+        result["should_execute"] = False
+        result["guardrail_blocked"] = True
+        return result
     if template_status != "ready" or template_phase not in {"candidate_onboarding", "multi_pair_preparation"}:
+        return result
+
+    if bool(runtime_guardrail_summary.get("freeze_next_stage")):
+        result["status"] = "blocked_by_runtime_guardrail"
+        result["status_reason"] = "shadow_runtime_guardrail_blocked"
+        result["guardrail_blocked"] = True
         return result
 
     packet = _build_next_stage_packet(phase=template_phase, automation_config=automation_config)

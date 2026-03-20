@@ -88,6 +88,47 @@ def test_build_shadow_next_stage_execution_summary_skips_duplicate_completion() 
     assert summary["should_execute"] is False
 
 
+def test_build_shadow_next_stage_execution_summary_blocks_runtime_guardrail() -> None:
+    summary = build_shadow_next_stage_execution_summary(
+        daily_shadow_ops_summary={
+            "review_date_utc": "2026-03-20",
+            "next_stage_template_status": "ready",
+            "next_stage_template_phase": "candidate_onboarding",
+            "next_stage_template_runbook_ref": "docs/runbooks/PORTFOLIO-CANDIDATE-01.md",
+        },
+        automation_config={
+            "shared": {
+                "manifest_path": "config/strategy_manifest.parallel_portfolio_v2.yaml",
+                "allocation_config_path": "config/strategy_allocation.yaml",
+                "allocation_profile": "portfolio_admission_v2",
+                "output_dir": "reports/analysis/shadow",
+                "data_path": "/tmp/merged.parquet",
+            },
+            "candidate_onboarding": {
+                "baseline_strategies": ["m1_asia_compression_expansion_breakout"],
+                "candidate_strategies": ["shadow_feedback_override"],
+                "windows": ["2016_2021", "2016_2025"],
+            },
+        },
+        execution_history=[],
+        shadow_feedback_override_packet={
+            "status": "ok",
+            "runtime_guardrail": {
+                "status": "guarded",
+                "freeze_next_stage": True,
+                "recommended_action": "retain_current_profile",
+                "reasons": ["open_discrepancies"],
+            },
+        },
+    )
+
+    assert summary["status"] == "blocked_by_runtime_guardrail"
+    assert summary["status_reason"] == "shadow_runtime_guardrail_blocked"
+    assert summary["should_execute"] is False
+    assert summary["guardrail_blocked"] is True
+    assert summary["runtime_guardrail_summary"]["status"] == "guarded"
+
+
 def test_append_and_load_shadow_next_stage_execution_round_trip(tmp_path: Path) -> None:
     ledger_path = tmp_path / "shadow_next_stage_execution.jsonl"
     append_shadow_next_stage_execution(
