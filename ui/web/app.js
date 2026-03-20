@@ -659,6 +659,12 @@ function renderOps(payload) {
     payload && typeof payload.shadow_feedback_override_packet === "object"
       ? payload.shadow_feedback_override_packet
       : null;
+  const shadowFeedbackValidation =
+    payload && typeof payload.shadow_feedback_validation_result === "object"
+      ? payload.shadow_feedback_validation_result
+      : payload && typeof payload.daily_shadow_ops_summary === "object"
+        ? payload.daily_shadow_ops_summary.shadow_feedback_validation_result || null
+        : null;
   const executionLatest =
     executionState && typeof executionState.latest === "object" ? executionState.latest : null;
   const executionSummary =
@@ -708,6 +714,18 @@ function renderOps(payload) {
           `focused_validation_template: status=${focusedValidationTemplate.status || "-"} action=${focusedValidationTemplate.next_action || "-"} runbook=${focusedValidationTemplate.runbook_ref || "-"}`
         ]
       : [];
+  const focusedValidationResultLine =
+    shadowFeedbackValidation && Object.keys(shadowFeedbackValidation).length > 0
+      ? [
+          `focused_validation_result: decision=${shadowFeedbackValidation.decision || "-"} status=${shadowFeedbackValidation.status || "-"} guardrail=${shadowFeedbackValidation.runtime_guardrail_status || "-"} reasons=${(shadowFeedbackValidation.reasons || []).join("|") || "-"}`
+        ]
+      : [];
+  const focusedValidationWindowLines =
+    shadowFeedbackValidation && Array.isArray(shadowFeedbackValidation.window_summary)
+      ? shadowFeedbackValidation.window_summary.slice(0, 3).map((entry) =>
+          `focused_validation_window: ${entry.window_name || "-"} pf_delta=${entry.pf_delta ?? "-"} avg_r_delta=${entry.avg_r_delta ?? "-"} dd_delta=${entry.max_drawdown_delta ?? "-"} improved=${entry.improved ? "yes" : "no"} degraded=${entry.degraded ? "yes" : "no"}`
+        )
+      : [];
   const allocationRecentLines = allocationDecisions.map((entry) => {
     const decision = entry.allocation_decision || {};
     const reason = decision.reason_code || entry.reason || "-";
@@ -756,6 +774,8 @@ function renderOps(payload) {
     ...allocatorFeedbackLines,
     ...shadowFeedbackPacketLine,
     ...focusedValidationTemplateLine,
+    ...focusedValidationResultLine,
+    ...focusedValidationWindowLines,
     ...allocationRecentLines,
     ...candidateRecentLines,
     ...warningLine,

@@ -296,6 +296,7 @@ def test_gui_ops_result_to_dict_includes_candidate_snapshot() -> None:
         shadow_next_stage_execution_state={"status": "ok", "count": 1, "latest": {"status": "planned"}},
         shadow_feedback_summary={"status": "ok", "feedback_loop_state": "monitor", "candidate_count": 0},
         shadow_feedback_override_packet={"status": "no_changes", "runtime_guardrail": {"status": "monitor"}},
+        shadow_feedback_validation_result={"status": "ok", "decision": "hold", "reasons": ["mixed_validation_result"]},
         daily_shadow_ops_summary={"status": "ok", "alert_level": "none", "should_notify": False},
     )
 
@@ -316,6 +317,7 @@ def test_gui_ops_result_to_dict_includes_candidate_snapshot() -> None:
     assert payload["shadow_next_stage_execution_state"]["latest"]["status"] == "planned"
     assert payload["shadow_feedback_summary"]["feedback_loop_state"] == "monitor"
     assert payload["shadow_feedback_override_packet"]["status"] == "no_changes"
+    assert payload["shadow_feedback_validation_result"]["decision"] == "hold"
     assert payload["daily_shadow_ops_summary"]["alert_level"] == "none"
 
 

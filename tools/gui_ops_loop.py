@@ -26,6 +26,9 @@ from src.interfaces.gui.shadow_discrepancy_ledger import (
     build_shadow_discrepancy_summary,
     load_shadow_discrepancy_ledger,
 )
+from src.interfaces.gui.shadow_feedback_validation_surface import (
+    summarize_shadow_feedback_validation_result,
+)
 from src.interfaces.gui.shadow_next_stage_surface import summarize_shadow_next_stage_execution
 from src.portfolio.shadow_stage_gate import build_shadow_stage_gate_summary
 from tools.ingestion_loop import run_once as ingestion_run_once
@@ -59,6 +62,7 @@ class GuiOpsResult:
     shadow_next_stage_execution_state: dict[str, Any]
     shadow_feedback_summary: dict[str, Any]
     shadow_feedback_override_packet: dict[str, Any]
+    shadow_feedback_validation_result: dict[str, Any]
     daily_shadow_ops_summary: dict[str, Any]
 
     def to_dict(self) -> dict[str, Any]:
@@ -79,6 +83,7 @@ class GuiOpsResult:
             "shadow_next_stage_execution_state": self.shadow_next_stage_execution_state,
             "shadow_feedback_summary": self.shadow_feedback_summary,
             "shadow_feedback_override_packet": self.shadow_feedback_override_packet,
+            "shadow_feedback_validation_result": self.shadow_feedback_validation_result,
             "daily_shadow_ops_summary": self.daily_shadow_ops_summary,
         }
 
@@ -215,7 +220,15 @@ def run_gui_ops_once(
         )
     else:
         daily_shadow_review_summary["stage_gate_summary"] = dict(stage_gate_summary)
-    daily_shadow_ops_summary = build_daily_shadow_ops_summary(daily_shadow_review_summary)
+    daily_shadow_ops_summary = build_daily_shadow_ops_summary(
+        daily_shadow_review_summary,
+        focused_validation_output_dir=Path("reports/analysis/shadow/feedback_validation"),
+    )
+    shadow_feedback_validation_result = (
+        dict(daily_shadow_ops_summary.get("shadow_feedback_validation_result") or {})
+        if isinstance(daily_shadow_ops_summary.get("shadow_feedback_validation_result"), Mapping)
+        else summarize_shadow_feedback_validation_result()
+    )
 
     return GuiOpsResult(
         ingestion=ingestion_payloads,
@@ -234,6 +247,7 @@ def run_gui_ops_once(
         shadow_next_stage_execution_state=shadow_next_stage_execution_state,
         shadow_feedback_summary=dict(daily_shadow_review_summary.get("shadow_feedback_summary") or {}),
         shadow_feedback_override_packet=dict(daily_shadow_ops_summary.get("shadow_feedback_override_packet") or {}),
+        shadow_feedback_validation_result=shadow_feedback_validation_result,
         daily_shadow_ops_summary=daily_shadow_ops_summary,
     )
 

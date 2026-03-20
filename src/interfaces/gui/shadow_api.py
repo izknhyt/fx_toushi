@@ -6,7 +6,7 @@ import json
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Iterable, Mapping
 
 import yaml
 
@@ -24,6 +24,9 @@ from src.interfaces.gui.shadow_daily_review import (
 from src.interfaces.gui.shadow_daily_ops import (
     build_daily_shadow_ops_summary,
     write_daily_shadow_ops_report,
+)
+from src.interfaces.gui.shadow_feedback_validation_surface import (
+    summarize_shadow_feedback_validation_result,
 )
 from src.interfaces.gui.shadow_next_stage_surface import (
     DEFAULT_SHADOW_NEXT_STAGE_EXECUTION_LEDGER,
@@ -236,7 +239,17 @@ class ShadowGuiApi:
         daily_shadow_review_summary["soak_summary"] = build_shadow_soak_summary(
             daily_shadow_review_summary
         )
-        daily_shadow_ops_summary = build_daily_shadow_ops_summary(daily_shadow_review_summary)
+        daily_shadow_ops_summary = build_daily_shadow_ops_summary(
+            daily_shadow_review_summary,
+            focused_validation_output_dir=self.report_dir / "feedback_validation",
+        )
+        shadow_feedback_validation_result = (
+            dict(daily_shadow_ops_summary.get("shadow_feedback_validation_result") or {})
+            if isinstance(daily_shadow_ops_summary.get("shadow_feedback_validation_result"), Mapping)
+            else summarize_shadow_feedback_validation_result(
+                output_dir=self.report_dir / "feedback_validation"
+            )
+        )
         return {
             "status": "ok",
             "token_count": len(tokens),
@@ -258,6 +271,7 @@ class ShadowGuiApi:
             "shadow_next_stage_execution_state": shadow_next_stage_execution_state,
             "shadow_feedback_summary": daily_shadow_review_summary.get("shadow_feedback_summary") or {},
             "shadow_feedback_override_packet": daily_shadow_ops_summary.get("shadow_feedback_override_packet") or {},
+            "shadow_feedback_validation_result": shadow_feedback_validation_result,
             "daily_shadow_ops_summary": daily_shadow_ops_summary,
             "schema_path": "docs/schema/shadow_gui.yaml",
         }

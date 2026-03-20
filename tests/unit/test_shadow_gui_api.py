@@ -156,6 +156,7 @@ def test_shadow_gui_status_and_allocation_summary_include_admission_counts(tmp_p
         store=store,
         token_path=token_path,
         signal_log=signal_log,
+        report_dir=tmp_path / "reports" / "analysis" / "shadow",
         daily_shadow_history_path=tmp_path / "history" / "daily_shadow_review_history.jsonl",
         daily_shadow_discrepancy_ledger_path=tmp_path / "history" / "daily_shadow_discrepancy_ledger.jsonl",
         shadow_next_stage_execution_ledger_path=tmp_path / "logs" / "ops" / "shadow_next_stage_execution.jsonl",
@@ -170,6 +171,45 @@ def test_shadow_gui_status_and_allocation_summary_include_admission_counts(tmp_p
                 "phase": "candidate_onboarding",
                 "status": "planned",
                 "runner_command": "tradectl portfolio next-stage --phase candidate_onboarding --run",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    focused_validation_dir = api.report_dir / "feedback_validation"
+    focused_validation_dir.mkdir(parents=True, exist_ok=True)
+    (focused_validation_dir / "shadow_feedback_validation.json").write_text(
+        json.dumps(
+            {
+                "generated_at_utc": "2026-03-20T12:30:00+00:00",
+                "validation_decision": {
+                    "status": "ok",
+                    "decision": "hold",
+                    "reasons": ["mixed_validation_result"],
+                    "improved_windows": 1,
+                    "degraded_windows": 0,
+                    "window_assessments": [
+                        {
+                            "window_name": "2016_2021",
+                            "improved": True,
+                            "degraded": False,
+                        }
+                    ],
+                },
+                "runtime_guardrail_state": {
+                    "status": "hold",
+                    "decision": "hold",
+                },
+                "windows": [
+                    {
+                        "window_name": "2016_2021",
+                        "delta_vs_baseline": {
+                            "pf": 0.012,
+                            "avg_r": 0.001,
+                            "max_drawdown": -0.005,
+                        },
+                    }
+                ],
             }
         )
         + "\n",
@@ -215,6 +255,8 @@ def test_shadow_gui_status_and_allocation_summary_include_admission_counts(tmp_p
     assert "feedback_loop_state" in status["shadow_feedback_summary"]
     assert "allocator_feedback_candidates" in status["shadow_feedback_summary"]
     assert status["shadow_feedback_override_packet"]["status"] in {"ok", "no_changes"}
+    assert status["shadow_feedback_validation_result"]["status"] == "ok"
+    assert status["shadow_feedback_validation_result"]["decision"] == "hold"
     assert status["daily_shadow_ops_summary"]["status"] == "ok"
     assert "alert_level" in status["daily_shadow_ops_summary"]
     assert "readiness_status" in status["daily_shadow_ops_summary"]
@@ -224,6 +266,7 @@ def test_shadow_gui_status_and_allocation_summary_include_admission_counts(tmp_p
     assert "next_stage_template_runbook_ref" in status["daily_shadow_ops_summary"]
     assert "shadow_feedback_loop_state" in status["daily_shadow_ops_summary"]
     assert "shadow_feedback_override_packet" in status["daily_shadow_ops_summary"]
+    assert status["daily_shadow_ops_summary"]["shadow_feedback_validation_decision"] == "hold"
     assert status["candidate_snapshot"]["candidates"][0]["decision_status"] == "accept"
     assert status["candidate_snapshot"]["candidates"][1]["decision_status"] == "accept"
     assert status["candidate_snapshot"]["decision_summary"] == [{"decision_status": "accept", "count": 2}]

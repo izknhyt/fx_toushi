@@ -1,6 +1,7 @@
 import time
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pandas as pd
 import yaml
@@ -12,6 +13,7 @@ from src.interfaces.gui.web_server import (
     GuiOpsRuntimeController,
     _allocation_decisions_payload,
     _build_strategy_catalog,
+    _ops_status_payload,
     _load_signal_records,
     _load_manifest_payloads,
     _materialize_runtime_manifest,
@@ -385,6 +387,53 @@ def test_candidate_surface_joins_generated_candidates_with_admission_reason(tmp_
     assert payload["candidates"][0]["decision_status"] == "accept"
     assert payload["candidates"][0]["decision_reason_code"] == "selected"
     assert payload["decision_summary"] == [{"decision_status": "accept", "count": 1}]
+
+
+def test_ops_status_payload_includes_shadow_feedback_validation_result(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    signal_log = tmp_path / "logs" / "events" / "signal.gui.jsonl"
+    signal_log.parent.mkdir(parents=True, exist_ok=True)
+    signal_log.write_text("", encoding="utf-8")
+
+    validation_dir = tmp_path / "reports" / "analysis" / "shadow" / "feedback_validation"
+    validation_dir.mkdir(parents=True, exist_ok=True)
+    (validation_dir / "shadow_feedback_validation.json").write_text(
+        json.dumps(
+            {
+                "generated_at_utc": "2026-03-20T12:30:00+00:00",
+                "validation_decision": {
+                    "status": "ok",
+                    "decision": "reject",
+                    "reasons": ["full_history_regressed"],
+                },
+                "runtime_guardrail_state": {
+                    "status": "rejected",
+                    "decision": "reject",
+                },
+                "windows": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    class _Controller:
+        def snapshot(self) -> dict[str, object]:
+            return {
+                "status": "ok",
+                "symbols": ["USDJPY"],
+                "selected_strategy_ids": ["alpha"],
+            }
+
+    config = _build_runtime_config(tmp_path)
+    payload = _ops_status_payload(
+        SimpleNamespace(
+            ops_controller=_Controller(),
+            signal_log_path=signal_log,
+        )
+    )
+
+    assert payload["shadow_feedback_validation_result"]["status"] == "ok"
+    assert payload["shadow_feedback_validation_result"]["decision"] == "reject"
 
 
 def test_resolve_sync_source_dir_chooses_freshest_dataset_dir(tmp_path: Path, monkeypatch) -> None:

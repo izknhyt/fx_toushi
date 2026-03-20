@@ -22,6 +22,9 @@ import pandas as pd
 
 from src.interfaces.gui.allocation_surface import summarize_allocation_surface
 from src.interfaces.gui.candidate_surface import summarize_candidate_surface
+from src.interfaces.gui.shadow_feedback_validation_surface import (
+    summarize_shadow_feedback_validation_result,
+)
 from src.interfaces.gui.shadow_next_stage_surface import summarize_shadow_next_stage_execution
 
 logger = logging.getLogger(__name__)
@@ -1314,6 +1317,7 @@ def _ops_status_payload(config: GuiServerConfig) -> dict[str, Any]:
         strategy_ids=selected_strategy_ids,
     )
     payload["shadow_next_stage_execution_state"] = summarize_shadow_next_stage_execution()
+    payload["shadow_feedback_validation_result"] = summarize_shadow_feedback_validation_result()
     return payload
 
 

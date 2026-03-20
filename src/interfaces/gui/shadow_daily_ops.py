@@ -7,11 +7,18 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping
 
+from src.interfaces.gui.shadow_feedback_validation_surface import (
+    summarize_shadow_feedback_validation_result,
+)
 from src.portfolio.shadow_feedback import materialize_shadow_feedback_override_packet
 from src.portfolio.shadow_feedback_template import build_shadow_feedback_validation_template
 
 
-def build_daily_shadow_ops_summary(summary: Mapping[str, Any]) -> dict[str, Any]:
+def build_daily_shadow_ops_summary(
+    summary: Mapping[str, Any],
+    *,
+    focused_validation_output_dir: Path | None = None,
+) -> dict[str, Any]:
     alert = summary.get("alert_summary") or {}
     trend = summary.get("trend_summary") or {}
     readiness = summary.get("shadow_readiness_summary") or {}
@@ -32,6 +39,28 @@ def build_daily_shadow_ops_summary(summary: Mapping[str, Any]) -> dict[str, Any]
     focused_validation_template = build_shadow_feedback_validation_template(
         shadow_feedback_override_packet
     )
+    focused_validation_artifacts = (
+        dict(focused_validation_template.get("artifacts") or {})
+        if isinstance(focused_validation_template.get("artifacts"), Mapping)
+        else {}
+    )
+    focused_validation_summary_json = (
+        Path(str(focused_validation_artifacts.get("summary_json")))
+        if focused_validation_artifacts.get("summary_json")
+        else None
+    )
+    validation_output_dir = focused_validation_output_dir
+    if validation_output_dir is None and focused_validation_summary_json is not None:
+        validation_output_dir = focused_validation_summary_json.parent
+    if validation_output_dir is None:
+        latest_focused_validation_result = summarize_shadow_feedback_validation_result(
+            summary_json_path=focused_validation_summary_json,
+        )
+    else:
+        latest_focused_validation_result = summarize_shadow_feedback_validation_result(
+            summary_json_path=focused_validation_summary_json,
+            output_dir=validation_output_dir,
+        )
     active_rows = discrepancy.get("active_discrepancies") if isinstance(discrepancy.get("active_discrepancies"), list) else []
     readiness_status = str(readiness.get("readiness_status") or "unknown")
     stage_gate_status = str(stage_gate.get("status") or stage_gate.get("stage_gate_status") or "unknown")
@@ -108,6 +137,9 @@ def build_daily_shadow_ops_summary(summary: Mapping[str, Any]) -> dict[str, Any]
         "focused_validation_template_required_inputs": [
             str(item) for item in (focused_validation_template.get("required_inputs") or [])
         ],
+        "shadow_feedback_validation_result": latest_focused_validation_result,
+        "shadow_feedback_validation_result_status": str(latest_focused_validation_result.get("status") or "unknown"),
+        "shadow_feedback_validation_decision": str(latest_focused_validation_result.get("decision") or "unknown"),
         "active_discrepancy_count": int(discrepancy.get("active_discrepancy_count") or 0),
         "max_consecutive_open_days": int(discrepancy.get("max_consecutive_open_days") or 0),
         "reasons": [str(item) for item in (alert.get("reasons") or [])],
@@ -245,6 +277,19 @@ def render_daily_shadow_ops_report(ops_summary: Mapping[str, Any]) -> str:
             lines.append(
                 f"- runner_command: `{ops_summary.get('focused_validation_template_runner_command')}`"
             )
+        validation_result = (
+            ops_summary.get("shadow_feedback_validation_result")
+            if isinstance(ops_summary.get("shadow_feedback_validation_result"), Mapping)
+            else {}
+        )
+        if validation_result:
+            lines.append(
+                f"- latest_result: `{validation_result.get('decision')}` status=`{validation_result.get('status')}` guardrail=`{validation_result.get('runtime_guardrail_status')}`"
+            )
+            for row in validation_result.get("window_summary", []):
+                lines.append(
+                    f"- window {row.get('window_name')}: pf_delta={row.get('pf_delta')} avg_r_delta={row.get('avg_r_delta')} dd_delta={row.get('max_drawdown_delta')}"
+                )
     else:
         lines.append("- none")
     lines.extend(["", "## Allocator Feedback Candidates", ""])
@@ -333,7 +378,10 @@ def write_daily_shadow_ops_report(
     notification_log: Path | None = None,
     output_prefix: str = "daily_shadow_ops_summary",
 ) -> dict[str, Any]:
-    ops_summary = build_daily_shadow_ops_summary(summary)
+    ops_summary = build_daily_shadow_ops_summary(
+        summary,
+        focused_validation_output_dir=output_dir / "feedback_validation",
+    )
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     output_dir.mkdir(parents=True, exist_ok=True)
     json_path = output_dir / f"{output_prefix}_{stamp}.json"
