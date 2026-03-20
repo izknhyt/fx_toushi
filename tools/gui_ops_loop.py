@@ -14,6 +14,20 @@ from typing import Any
 
 import pandas as pd
 
+from src.brokers.fill_shadow import FillShadowStore
+from src.interfaces.gui.allocation_surface import summarize_allocation_surface
+from src.interfaces.gui.candidate_surface import summarize_candidate_surface
+from src.interfaces.gui.shadow_baseline import build_shadow_baseline_summary
+from src.interfaces.gui.shadow_daily_ops import build_daily_shadow_ops_summary
+from src.interfaces.gui.shadow_daily_review import build_daily_shadow_review_summary
+from src.interfaces.gui.shadow_discrepancy_ledger import (
+    DEFAULT_DISCREPANCY_LEDGER_PATH,
+    build_shadow_baseline_readiness_summary,
+    build_shadow_discrepancy_summary,
+    load_shadow_discrepancy_ledger,
+)
+from src.interfaces.gui.shadow_next_stage_surface import summarize_shadow_next_stage_execution
+from src.portfolio.shadow_stage_gate import build_shadow_stage_gate_summary
 from tools.ingestion_loop import run_once as ingestion_run_once
 from tools.signal_preview import run_preview as signal_preview_run
 
@@ -34,6 +48,18 @@ class GuiOpsResult:
     signal_preview: dict[str, Any]
     signal_csv: dict[str, Any]
     allocation_summary: dict[str, Any]
+    candidate_snapshot: dict[str, Any]
+    shadow_baseline_summary: dict[str, Any]
+    daily_shadow_review_summary: dict[str, Any]
+    shadow_discrepancy_summary: dict[str, Any]
+    shadow_readiness_summary: dict[str, Any]
+    stage_gate_summary: dict[str, Any]
+    soak_summary: dict[str, Any]
+    next_stage_execution_template: dict[str, Any]
+    shadow_next_stage_execution_state: dict[str, Any]
+    shadow_feedback_summary: dict[str, Any]
+    shadow_feedback_override_packet: dict[str, Any]
+    daily_shadow_ops_summary: dict[str, Any]
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -42,6 +68,18 @@ class GuiOpsResult:
             "signal_preview": self.signal_preview,
             "signal_csv": self.signal_csv,
             "allocation_summary": self.allocation_summary,
+            "candidate_snapshot": self.candidate_snapshot,
+            "shadow_baseline_summary": self.shadow_baseline_summary,
+            "daily_shadow_review_summary": self.daily_shadow_review_summary,
+            "shadow_discrepancy_summary": self.shadow_discrepancy_summary,
+            "shadow_readiness_summary": self.shadow_readiness_summary,
+            "stage_gate_summary": self.stage_gate_summary,
+            "soak_summary": self.soak_summary,
+            "next_stage_execution_template": self.next_stage_execution_template,
+            "shadow_next_stage_execution_state": self.shadow_next_stage_execution_state,
+            "shadow_feedback_summary": self.shadow_feedback_summary,
+            "shadow_feedback_override_packet": self.shadow_feedback_override_packet,
+            "daily_shadow_ops_summary": self.daily_shadow_ops_summary,
         }
 
 
@@ -75,6 +113,7 @@ def run_gui_ops_once(
     slippage_std: float,
     signals_csv_append: bool,
     signals_csv_monthly: bool,
+    stage_gate_summary: dict[str, Any] | None = None,
 ) -> GuiOpsResult:
     _load_dotenv(Path(".env"))
     ingestion_results = ingestion_run_once(
@@ -142,6 +181,41 @@ def run_gui_ops_once(
     except FileNotFoundError as exc:
         signal_csv_payload = {"status": "missing", "error": str(exc)}
     allocation_summary = _summarize_allocation_decisions(signal_log_path, limit=200)
+    candidate_snapshot = (
+        summarize_candidate_surface(signal_log_path, limit=200)
+        if signal_log_path is not None
+        else {"status": "ok", "count": 0, "candidates": []}
+    )
+    shadow_baseline_summary = build_shadow_baseline_summary(
+        allocation_summary=allocation_summary,
+        candidate_snapshot=candidate_snapshot,
+    )
+    shadow_next_stage_execution_state = summarize_shadow_next_stage_execution()
+    daily_shadow_review_summary = build_daily_shadow_review_summary(
+        allocation_summary=allocation_summary,
+        candidate_snapshot=candidate_snapshot,
+        fill_store=FillShadowStore(),
+        broker_shadow_event_log=Path("logs/broker/shadow_events.jsonl"),
+        shadow_next_stage_execution_state=shadow_next_stage_execution_state,
+        history_path=Path("reports/analysis/shadow/daily_shadow_review_history.jsonl"),
+        discrepancy_ledger_path=DEFAULT_DISCREPANCY_LEDGER_PATH,
+        stage_gate_summary=stage_gate_summary,
+    )
+    discrepancy_ledger = load_shadow_discrepancy_ledger(DEFAULT_DISCREPANCY_LEDGER_PATH)
+    shadow_discrepancy_summary = build_shadow_discrepancy_summary(daily_shadow_review_summary, discrepancy_ledger)
+    shadow_readiness_summary = build_shadow_baseline_readiness_summary(
+        daily_shadow_review_summary,
+        shadow_discrepancy_summary,
+    )
+    daily_shadow_review_summary["discrepancy_summary"] = shadow_discrepancy_summary
+    daily_shadow_review_summary["shadow_readiness_summary"] = shadow_readiness_summary
+    if stage_gate_summary is None:
+        daily_shadow_review_summary["stage_gate_summary"] = build_shadow_stage_gate_summary(
+            daily_shadow_review_summary
+        )
+    else:
+        daily_shadow_review_summary["stage_gate_summary"] = dict(stage_gate_summary)
+    daily_shadow_ops_summary = build_daily_shadow_ops_summary(daily_shadow_review_summary)
 
     return GuiOpsResult(
         ingestion=ingestion_payloads,
@@ -149,6 +223,18 @@ def run_gui_ops_once(
         signal_preview=signal_preview_payload,
         signal_csv=signal_csv_payload,
         allocation_summary=allocation_summary,
+        candidate_snapshot=candidate_snapshot,
+        shadow_baseline_summary=shadow_baseline_summary,
+        daily_shadow_review_summary=daily_shadow_review_summary,
+        shadow_discrepancy_summary=shadow_discrepancy_summary,
+        shadow_readiness_summary=shadow_readiness_summary,
+        stage_gate_summary=dict(daily_shadow_review_summary.get("stage_gate_summary") or {}),
+        soak_summary=dict(daily_shadow_review_summary.get("soak_summary") or {}),
+        next_stage_execution_template=dict(daily_shadow_review_summary.get("next_stage_execution_template") or {}),
+        shadow_next_stage_execution_state=shadow_next_stage_execution_state,
+        shadow_feedback_summary=dict(daily_shadow_review_summary.get("shadow_feedback_summary") or {}),
+        shadow_feedback_override_packet=dict(daily_shadow_ops_summary.get("shadow_feedback_override_packet") or {}),
+        daily_shadow_ops_summary=daily_shadow_ops_summary,
     )
 
 
@@ -181,6 +267,7 @@ def run_gui_ops_loop(
     max_iterations: int | None,
     signals_csv_append: bool,
     signals_csv_monthly: bool,
+    stage_gate_summary: dict[str, Any] | None = None,
 ) -> list[GuiOpsResult] | None:
     if not once and max_iterations is None:
         while True:
@@ -209,6 +296,7 @@ def run_gui_ops_loop(
                 slippage_std=slippage_std,
                 signals_csv_append=signals_csv_append,
                 signals_csv_monthly=signals_csv_monthly,
+                stage_gate_summary=stage_gate_summary,
             )
             time.sleep(interval_sec)
         return None
@@ -243,6 +331,7 @@ def run_gui_ops_loop(
                 slippage_std=slippage_std,
                 signals_csv_append=signals_csv_append,
                 signals_csv_monthly=signals_csv_monthly,
+                stage_gate_summary=stage_gate_summary,
             )
         )
         if once:
@@ -519,44 +608,34 @@ def _summarize_allocation_decisions(
     *,
     limit: int,
 ) -> dict[str, Any]:
-    summary = {"accept": 0, "reject": 0, "defer": 0, "resize": 0, "replace": 0}
     if signal_log_path is None or not signal_log_path.exists():
-        return {"status": "ok", "count": 0, "summary": summary, "recent": []}
+        return {
+            "status": "ok",
+            "count": 0,
+            "summary": {"accept": 0, "reject": 0, "defer": 0, "resize": 0, "replace": 0},
+            "recent": [],
+            "portfolio_surface": {
+                "active_slots": {"count": 0, "slots": []},
+                "portfolio_group_occupancy": [],
+                "exposure_bucket_occupancy": [],
+            },
+        }
 
-    try:
-        lines = signal_log_path.read_text(encoding="utf-8").splitlines()
-    except OSError:
-        return {"status": "error", "count": 0, "summary": summary, "recent": []}
-
-    records: list[dict[str, Any]] = []
-    for raw in lines[-max(1, limit):]:
-        if not raw.strip():
-            continue
-        try:
-            payload = json.loads(raw)
-        except json.JSONDecodeError:
-            continue
-        if payload.get("event") not in {"signal.generated", "portfolio.admission"}:
-            continue
-        if not payload.get("allocation_decision"):
-            continue
-        status = str(payload.get("status") or "").strip().lower()
-        if status not in summary:
-            continue
-        summary[status] += 1
-        records.append(
-            {
-                "ts": payload.get("ts"),
-                "strategy_id": payload.get("strategy_id"),
-                "symbol": payload.get("symbol"),
-                "status": status,
-                "reason_code": (
-                    payload.get("allocation_decision", {}) or {}
-                ).get("reason_code"),
-            }
-        )
-    records.sort(key=lambda item: item.get("ts") or "")
-    return {"status": "ok", "count": len(records), "summary": summary, "recent": records[-5:]}
+    payload = summarize_allocation_surface(signal_log_path, limit=limit)
+    decisions = payload.get("decisions")
+    recent = decisions[-5:] if isinstance(decisions, list) else []
+    return {
+        "status": payload.get("status", "ok"),
+        "count": payload.get("count", 0),
+        "summary": payload.get("summary", {}),
+        "reason_summary": payload.get("reason_summary", []),
+        "conflict_summary": payload.get("conflict_summary", []),
+        "winner_conflict_summary": payload.get("winner_conflict_summary", []),
+        "winner_bias_summary": payload.get("winner_bias_summary", []),
+        "winner_review_summary": payload.get("winner_review_summary", []),
+        "recent": recent,
+        "portfolio_surface": payload.get("portfolio_surface", {}),
+    }
 
 
 def _detect_breakouts(

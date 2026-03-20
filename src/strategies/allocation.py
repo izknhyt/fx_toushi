@@ -185,6 +185,7 @@ class AllocationActivePosition:
     symbol: str
     direction: str
     opened_at: datetime | None = None
+    position_id: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -208,6 +209,10 @@ class AllocationOutcome:
     exposure_bucket: str = ""
     estimated_cost: float | None = None
     slot_cost: float | None = None
+    blocked_by_strategy_id: str | None = None
+    blocked_by_position_id: str | None = None
+    replaced_candidate_id: str | None = None
+    notes: str | None = None
 
     @property
     def reason_code(self) -> str:
@@ -226,6 +231,10 @@ class AllocationOutcome:
             "exposure_bucket": self.exposure_bucket or None,
             "estimated_cost": self.estimated_cost,
             "slot_cost": self.slot_cost,
+            "blocked_by_strategy_id": self.blocked_by_strategy_id,
+            "blocked_by_position_id": self.blocked_by_position_id,
+            "replaced_candidate_id": self.replaced_candidate_id,
+            "notes": self.notes,
         }
 
 
@@ -253,6 +262,10 @@ class _EvaluatedCandidate:
     exposure_bucket: str = ""
     estimated_cost: float | None = None
     slot_cost: float | None = None
+    blocked_by_strategy_id: str | None = None
+    blocked_by_position_id: str | None = None
+    replaced_candidate_id: str | None = None
+    notes: str | None = None
 
 
 class StrategyAllocationPolicy:
@@ -414,6 +427,7 @@ class StrategyAllocationPolicy:
             selected_items = accepted_sorted[:keep_count]
             selected.extend(item.candidate for item in selected_items)
             selected_refs = {id(item.candidate) for item in selected_items}
+            winner = selected_items[0] if selected_items else None
             for item in accepted_sorted:
                 if id(item.candidate) in selected_refs:
                     outcomes.append(
@@ -425,6 +439,12 @@ class StrategyAllocationPolicy:
                         item=item,
                         selected=False,
                         reason="selection_limit" if self.selection_mode == "select_many" else "tie_break_lost",
+                        blocked_by_strategy_id=winner.candidate.strategy_id if winner is not None else None,
+                        replaced_candidate_id=(
+                            winner.candidate.trade.candidate_id
+                            if winner is not None and winner.candidate.trade is not None
+                            else None
+                        ),
                     )
                 )
             for item in evaluated:
@@ -442,6 +462,9 @@ class StrategyAllocationPolicy:
         item: _EvaluatedCandidate,
         selected: bool,
         reason: str | None = None,
+        blocked_by_strategy_id: str | None = None,
+        blocked_by_position_id: str | None = None,
+        replaced_candidate_id: str | None = None,
     ) -> AllocationOutcome:
         reason_code = reason or item.reason
         return AllocationOutcome(
@@ -455,6 +478,10 @@ class StrategyAllocationPolicy:
             exposure_bucket=item.exposure_bucket,
             estimated_cost=item.estimated_cost,
             slot_cost=item.slot_cost,
+            blocked_by_strategy_id=blocked_by_strategy_id or item.blocked_by_strategy_id,
+            blocked_by_position_id=blocked_by_position_id or item.blocked_by_position_id,
+            replaced_candidate_id=replaced_candidate_id or item.replaced_candidate_id,
+            notes=item.notes,
         )
 
     def _evaluate_candidate(
@@ -567,17 +594,21 @@ class StrategyAllocationPolicy:
             strategy_cfg=strategy_cfg,
         )
         if position_conflict is not None:
+            reason_code, blocked_by_strategy_id, blocked_by_position_id = position_conflict
             return _EvaluatedCandidate(
                 candidate=candidate,
                 symbol=symbol,
                 score=None,
                 accepted=False,
-                reason=position_conflict,
+                reason=reason_code,
                 role_priority=role_priority,
                 portfolio_group=portfolio_group,
                 exposure_bucket=exposure_bucket,
                 estimated_cost=estimated_cost,
                 slot_cost=slot_cost,
+                blocked_by_strategy_id=blocked_by_strategy_id,
+                blocked_by_position_id=blocked_by_position_id,
+                notes="blocked by active position policy",
             )
 
         score = self._compute_score(
@@ -793,18 +824,27 @@ class StrategyAllocationPolicy:
         candidate: AllocationCandidate,
         context: AllocationContext,
         strategy_cfg: Mapping[str, Any],
-    ) -> str | None:
+    ) -> tuple[str, str | None, str | None] | None:
         if not context.open_positions:
             return None
 
         portfolio_cfg = self._resolve_portfolio_cfg(strategy_cfg)
         same_symbol_policy = _normalize_text(portfolio_cfg.get("active_symbol_policy")) or "allow"
         symbol_matches = self._active_symbol_matches(candidate=candidate, context=context)
+        symbol_blocker = self._first_symbol_match(candidate=candidate, context=context)
         if symbol_matches > 0:
             if same_symbol_policy == "block":
-                return "active_symbol_conflict"
+                return (
+                    "active_symbol_conflict",
+                    symbol_blocker.strategy_id if symbol_blocker is not None else None,
+                    symbol_blocker.position_id if symbol_blocker is not None else None,
+                )
             if same_symbol_policy == "defer":
-                return "active_symbol_deferred"
+                return (
+                    "active_symbol_deferred",
+                    symbol_blocker.strategy_id if symbol_blocker is not None else None,
+                    symbol_blocker.position_id if symbol_blocker is not None else None,
+                )
 
         same_group_policy = _normalize_text(portfolio_cfg.get("active_group_policy")) or "allow"
         group_matches = self._active_group_matches(
@@ -812,14 +852,30 @@ class StrategyAllocationPolicy:
             context=context,
             strategy_cfg=strategy_cfg,
         )
+        group_blocker = self._first_group_match(
+            context=context,
+            strategy_cfg=strategy_cfg,
+        )
         max_active_per_group = _positive_int_or_none(portfolio_cfg.get("max_active_per_group"))
         if max_active_per_group is not None and group_matches >= max_active_per_group:
-            return "active_group_limit"
+            return (
+                "active_group_limit",
+                group_blocker.strategy_id if group_blocker is not None else None,
+                group_blocker.position_id if group_blocker is not None else None,
+            )
         if group_matches > 0:
             if same_group_policy == "block":
-                return "active_group_conflict"
+                return (
+                    "active_group_conflict",
+                    group_blocker.strategy_id if group_blocker is not None else None,
+                    group_blocker.position_id if group_blocker is not None else None,
+                )
             if same_group_policy == "defer":
-                return "active_group_deferred"
+                return (
+                    "active_group_deferred",
+                    group_blocker.strategy_id if group_blocker is not None else None,
+                    group_blocker.position_id if group_blocker is not None else None,
+                )
 
         same_exposure_policy = _normalize_text(portfolio_cfg.get("active_exposure_policy")) or "allow"
         exposure_matches = self._active_exposure_matches(
@@ -827,16 +883,32 @@ class StrategyAllocationPolicy:
             context=context,
             strategy_cfg=strategy_cfg,
         )
+        exposure_blocker = self._first_exposure_match(
+            context=context,
+            strategy_cfg=strategy_cfg,
+        )
         max_active_per_exposure = _positive_int_or_none(
             portfolio_cfg.get("max_active_per_exposure_bucket")
         )
         if max_active_per_exposure is not None and exposure_matches >= max_active_per_exposure:
-            return "active_exposure_limit"
+            return (
+                "active_exposure_limit",
+                exposure_blocker.strategy_id if exposure_blocker is not None else None,
+                exposure_blocker.position_id if exposure_blocker is not None else None,
+            )
         if exposure_matches > 0:
             if same_exposure_policy == "block":
-                return "active_exposure_conflict"
+                return (
+                    "active_exposure_conflict",
+                    exposure_blocker.strategy_id if exposure_blocker is not None else None,
+                    exposure_blocker.position_id if exposure_blocker is not None else None,
+                )
             if same_exposure_policy == "defer":
-                return "active_exposure_deferred"
+                return (
+                    "active_exposure_deferred",
+                    exposure_blocker.strategy_id if exposure_blocker is not None else None,
+                    exposure_blocker.position_id if exposure_blocker is not None else None,
+                )
         return None
 
     def _active_symbol_matches(
@@ -847,6 +919,18 @@ class StrategyAllocationPolicy:
     ) -> int:
         symbol = _candidate_symbol(candidate)
         return sum(1 for position in context.open_positions if position.symbol == symbol)
+
+    def _first_symbol_match(
+        self,
+        *,
+        candidate: AllocationCandidate,
+        context: AllocationContext,
+    ) -> AllocationActivePosition | None:
+        symbol = _candidate_symbol(candidate)
+        for position in context.open_positions:
+            if position.symbol == symbol:
+                return position
+        return None
 
     def _active_group_matches(
         self,
@@ -864,6 +948,20 @@ class StrategyAllocationPolicy:
                 matches += 1
         return matches
 
+    def _first_group_match(
+        self,
+        *,
+        context: AllocationContext,
+        strategy_cfg: Mapping[str, Any],
+    ) -> AllocationActivePosition | None:
+        candidate_group = self._portfolio_group(strategy_cfg)
+        if not candidate_group:
+            return None
+        for position in context.open_positions:
+            if self._strategy_portfolio_group(position.strategy_id) == candidate_group:
+                return position
+        return None
+
     def _active_exposure_matches(
         self,
         *,
@@ -879,6 +977,20 @@ class StrategyAllocationPolicy:
             if self._strategy_exposure_bucket(position.strategy_id) == candidate_bucket:
                 matches += 1
         return matches
+
+    def _first_exposure_match(
+        self,
+        *,
+        context: AllocationContext,
+        strategy_cfg: Mapping[str, Any],
+    ) -> AllocationActivePosition | None:
+        candidate_bucket = self._exposure_bucket(strategy_cfg)
+        if not candidate_bucket:
+            return None
+        for position in context.open_positions:
+            if self._strategy_exposure_bucket(position.strategy_id) == candidate_bucket:
+                return position
+        return None
 
     def _portfolio_group(self, strategy_cfg: Mapping[str, Any]) -> str:
         portfolio_cfg = self._resolve_portfolio_cfg(strategy_cfg)

@@ -1,0 +1,2 @@
+# Daily shadow next-stage automation (every day at 09:15 JST)
+15 9 * * * cd /Users/izumimotohayato/development/codex_invest && /bin/bash tools/scripts/run_shadow_next_stage_daily.sh --run >> logs/ops/shadow_next_stage_daily.log 2>> logs/ops/shadow_next_stage_daily.err.log

@@ -11,6 +11,13 @@ from pathlib import Path
 from typing import Any, Iterable
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+import sys
+
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from src.portfolio.allocation_review import build_allocator_hypotheses
+
 DEFAULT_SUMMARY_JSON = (
     PROJECT_ROOT / "reports" / "validation_log" / "usdjpy_long_horizon_validation_run_20260315.json"
 )
@@ -239,7 +246,12 @@ def build_review(
     *,
     failed_only: bool = True,
     top_n: int = 5,
+    allocation_review_payload: Mapping[str, Any] | Path | str | None = None,
 ) -> dict[str, Any]:
+    allocator_hypotheses = build_allocator_hypotheses(
+        allocation_review_payload,
+        limit=top_n,
+    )
     windows: list[dict[str, Any]] = []
     strategy_persistence: dict[str, dict[str, Any]] = defaultdict(
         lambda: {"failed_windows": 0, "total_r": 0.0, "trades": 0}
@@ -309,6 +321,7 @@ def build_review(
                     by_strategy_year=by_strategy_year,
                     existing_next_actions=list(report_payload.get("next_actions", [])),
                 ),
+                "allocator_hypotheses": allocator_hypotheses,
                 "evidence": {
                     "raw": str(raw_path),
                     "report_json": str(report_json_path),
@@ -340,6 +353,11 @@ def build_review(
             "Use this review to decide whether to disable a strategy, add directional gating, "
             "or add regime/session filters before the next long-horizon rerun."
         )
+    for row in allocator_hypotheses[:2]:
+        next_steps.append(
+            "Allocator follow-up: "
+            f"{row['summary']} -> {row['suggested_action']}."
+        )
 
     return {
         "generated_at_utc": _utc_now(),
@@ -347,6 +365,7 @@ def build_review(
         "failed_only": failed_only,
         "window_count": len(windows),
         "persistent_strategy_drags": persistent_drags[:top_n],
+        "allocator_hypotheses": allocator_hypotheses,
         "windows": windows,
         "next_steps": next_steps,
     }
@@ -355,6 +374,20 @@ def build_review(
 def render_review_md(payload: dict[str, Any]) -> str:
     lines: list[str] = []
     lines.append("# Long-Horizon Validation Review")
+    lines.append("")
+
+    lines.append("## Allocator Hypotheses")
+    lines.append("")
+    lines.append("| Winner | Group | Bucket | Share % | Reason | Action |")
+    lines.append("| --- | --- | --- | ---: | --- | --- |")
+    for row in payload.get("allocator_hypotheses", []):
+        lines.append(
+            f"| `{row['winner_strategy_id']}` | `{row.get('winner_portfolio_group')}` | "
+            f"`{row.get('winner_exposure_bucket')}` | {row.get('share_pct')} | "
+            f"`{row.get('top_reason_code')}` | `{row.get('suggested_action')}` |"
+        )
+    if not payload.get("allocator_hypotheses"):
+        lines.append("| _none_ | _none_ | _none_ | 0 | _none_ | _none_ |")
     lines.append("")
     lines.append(f"- generated_at_utc: `{payload['generated_at_utc']}`")
     lines.append(f"- source_summary_json: `{payload.get('source_summary_json')}`")
@@ -451,6 +484,7 @@ def main() -> int:
     parser.add_argument("--analysis-dir", type=Path, default=DEFAULT_ANALYSIS_DIR)
     parser.add_argument("--output-json", type=Path)
     parser.add_argument("--output-md", type=Path)
+    parser.add_argument("--allocation-summary-json", type=Path)
     parser.add_argument("--include-pass", action="store_true")
     parser.add_argument("--top-n", type=int, default=5)
     args = parser.parse_args()
@@ -464,7 +498,12 @@ def main() -> int:
     else:
         summary_payload = json.loads(args.summary_json.read_text(encoding="utf-8"))
         summary_payload["_source_path"] = str(args.summary_json)
-    review = build_review(summary_payload, failed_only=not args.include_pass, top_n=args.top_n)
+    review = build_review(
+        summary_payload,
+        failed_only=not args.include_pass,
+        top_n=args.top_n,
+        allocation_review_payload=args.allocation_summary_json,
+    )
 
     if args.output_json:
         args.output_json.parent.mkdir(parents=True, exist_ok=True)

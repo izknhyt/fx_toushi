@@ -11,6 +11,7 @@ from src.strategies.allocation import (
     AllocationContext,
     StrategyAllocationPolicy,
 )
+from src.strategies.candidate import CandidateTrade
 
 
 @dataclass(frozen=True, slots=True)
@@ -33,7 +34,27 @@ def _candidate(
     weight: float = 1.0,
     spread: float = 0.002,
     slippage: float = 0.001,
+    candidate_id: str | None = None,
 ) -> AllocationCandidate:
+    trade = None
+    if candidate_id is not None:
+        trade = CandidateTrade(
+            candidate_id=candidate_id,
+            strategy_id=strategy_id,
+            symbol=symbol,
+            side=direction,
+            timestamp="2026-01-01T18:00:00Z",
+            entry=150.0,
+            stop=149.0,
+            target=151.0,
+            confidence=score,
+            expected_holding_minutes=60.0,
+            portfolio_group="test_group",
+            exposure_bucket="test_bucket",
+            expected_edge=score,
+            estimated_cost=spread + slippage,
+            quality_score=score,
+        )
     return AllocationCandidate(
         strategy_id=strategy_id,
         signal=_Signal(
@@ -47,6 +68,7 @@ def _candidate(
         priority=priority,
         weight=weight,
         parameters={"execution": {"spread": spread, "slippage": slippage}},
+        trade=trade,
     )
 
 
@@ -55,12 +77,14 @@ def _position(
     strategy_id: str = "open_strat",
     symbol: str = "USDJPY",
     direction: str = "long",
+    position_id: str = "pos-1",
 ) -> AllocationActivePosition:
     return AllocationActivePosition(
         strategy_id=strategy_id,
         symbol=symbol,
         direction=direction,
         opened_at=datetime(2026, 1, 1, 17, 0, tzinfo=timezone.utc),
+        position_id=position_id,
     )
 
 
@@ -129,8 +153,8 @@ def test_allocation_tie_break_uses_priority_then_strategy_id(tmp_path: Path) -> 
     policy = StrategyAllocationPolicy.load(config_path, profile="active")
     result = policy.allocate(
         candidates=(
-            _candidate(strategy_id="strat_b", score=1.0, priority=20),
-            _candidate(strategy_id="strat_a", score=1.0, priority=10),
+            _candidate(strategy_id="strat_b", score=1.0, priority=20, candidate_id="cand-b"),
+            _candidate(strategy_id="strat_a", score=1.0, priority=10, candidate_id="cand-a"),
         ),
         context=_context(),
     )
@@ -143,6 +167,8 @@ def test_allocation_tie_break_uses_priority_then_strategy_id(tmp_path: Path) -> 
     assert len(rejected) == 1
     assert rejected[0].reason == "tie_break_lost"
     assert rejected[0].decision == "reject"
+    assert rejected[0].blocked_by_strategy_id == "strat_a"
+    assert rejected[0].replaced_candidate_id == "cand-a"
 
 
 def test_allocation_excludes_kill_switch_board_mode_spread_and_session(tmp_path: Path) -> None:
@@ -329,9 +355,9 @@ def test_allocation_select_many_honors_max_per_symbol(tmp_path: Path) -> None:
     policy = StrategyAllocationPolicy.load(config_path, profile="active")
     result = policy.allocate(
         candidates=(
-            _candidate(strategy_id="strat_a", score=1.3, priority=30),
-            _candidate(strategy_id="strat_b", score=1.2, priority=20),
-            _candidate(strategy_id="strat_c", score=1.1, priority=10),
+            _candidate(strategy_id="strat_a", score=1.3, priority=30, candidate_id="cand-a"),
+            _candidate(strategy_id="strat_b", score=1.2, priority=20, candidate_id="cand-b"),
+            _candidate(strategy_id="strat_c", score=1.1, priority=10, candidate_id="cand-c"),
         ),
         context=_context(),
     )
@@ -340,6 +366,8 @@ def test_allocation_select_many_honors_max_per_symbol(tmp_path: Path) -> None:
     by_id = {outcome.strategy_id: outcome for outcome in result.outcomes}
     assert by_id["strat_c"].selected is False
     assert by_id["strat_c"].reason == "selection_limit"
+    assert by_id["strat_c"].blocked_by_strategy_id == "strat_a"
+    assert by_id["strat_c"].replaced_candidate_id == "cand-a"
 
 
 def test_allocation_select_many_handles_duplicate_strategy_ids(tmp_path: Path) -> None:
@@ -540,6 +568,8 @@ def test_allocation_defers_same_portfolio_group_when_configured(tmp_path: Path) 
     assert result.outcomes[0].reason == "active_group_deferred"
     assert result.outcomes[0].decision == "defer"
     assert result.outcomes[0].portfolio_group == "trend_breakout"
+    assert result.outcomes[0].blocked_by_strategy_id == "open_strat"
+    assert result.outcomes[0].blocked_by_position_id == "pos-1"
 
 
 def test_allocation_result_as_dict_includes_admission_contract_fields(tmp_path: Path) -> None:
@@ -590,6 +620,10 @@ def test_allocation_result_as_dict_includes_admission_contract_fields(tmp_path: 
             "exposure_bucket": "usd_jpy_breakout_long",
             "estimated_cost": 0.003,
             "slot_cost": 0.05,
+            "blocked_by_strategy_id": None,
+            "blocked_by_position_id": None,
+            "replaced_candidate_id": None,
+            "notes": None,
         }
     ]
 
@@ -633,6 +667,8 @@ def test_allocation_blocks_same_exposure_bucket_when_configured(tmp_path: Path) 
 
     assert result.selected == ()
     assert result.outcomes[0].reason == "active_exposure_conflict"
+    assert result.outcomes[0].blocked_by_strategy_id == "open_strat"
+    assert result.outcomes[0].blocked_by_position_id == "pos-1"
 
 
 def test_allocation_blocks_when_group_limit_reached(tmp_path: Path) -> None:

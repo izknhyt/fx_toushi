@@ -506,12 +506,60 @@ function renderOps(payload) {
     payload && typeof payload.recent_allocation_decisions === "object"
       ? payload.recent_allocation_decisions
       : null;
+  const candidatePayload =
+    payload && typeof payload.recent_candidates === "object"
+      ? payload.recent_candidates
+      : null;
   const allocationSummary = allocationPayload && typeof allocationPayload.summary === "object"
     ? allocationPayload.summary
     : null;
+  const allocationReasonSummary =
+    allocationPayload && Array.isArray(allocationPayload.reason_summary)
+      ? allocationPayload.reason_summary.slice(0, 4)
+      : [];
+  const conflictSummary =
+    allocationPayload && Array.isArray(allocationPayload.conflict_summary)
+      ? allocationPayload.conflict_summary.slice(0, 4)
+      : [];
+  const winnerConflictSummary =
+    allocationPayload && Array.isArray(allocationPayload.winner_conflict_summary)
+      ? allocationPayload.winner_conflict_summary.slice(0, 4)
+      : [];
+  const winnerBiasSummary =
+    allocationPayload && Array.isArray(allocationPayload.winner_bias_summary)
+      ? allocationPayload.winner_bias_summary.slice(0, 4)
+      : [];
+  const winnerReviewSummary =
+    allocationPayload && Array.isArray(allocationPayload.winner_review_summary)
+      ? allocationPayload.winner_review_summary.slice(0, 4)
+      : [];
+  const portfolioSurface =
+    allocationPayload && typeof allocationPayload.portfolio_surface === "object"
+      ? allocationPayload.portfolio_surface
+      : null;
   const allocationDecisions = allocationPayload && Array.isArray(allocationPayload.decisions)
     ? allocationPayload.decisions.slice(-3)
     : [];
+  const recentCandidates =
+    candidatePayload && Array.isArray(candidatePayload.candidates)
+      ? candidatePayload.candidates.slice(-3)
+      : [];
+  const candidateDecisionSummary =
+    candidatePayload && Array.isArray(candidatePayload.decision_summary)
+      ? candidatePayload.decision_summary.slice(0, 4)
+      : [];
+  const activeSlots =
+    portfolioSurface && typeof portfolioSurface.active_slots === "object"
+      ? portfolioSurface.active_slots
+      : null;
+  const groupOccupancy =
+    portfolioSurface && Array.isArray(portfolioSurface.portfolio_group_occupancy)
+      ? portfolioSurface.portfolio_group_occupancy.slice(0, 3)
+      : [];
+  const bucketOccupancy =
+    portfolioSurface && Array.isArray(portfolioSurface.exposure_bucket_occupancy)
+      ? portfolioSurface.exposure_bucket_occupancy.slice(0, 3)
+      : [];
   const warningLine =
     Array.isArray(warnings) && warnings.length > 0 ? [`signal_warning: ${warnings[0]}`] : [];
   const allocationLine = allocationSummary
@@ -519,10 +567,158 @@ function renderOps(payload) {
         `allocation: accept=${allocationSummary.accept || 0} / reject=${allocationSummary.reject || 0} / defer=${allocationSummary.defer || 0}`,
       ]
     : [];
+  const activeSlotLine =
+    activeSlots && typeof activeSlots.count === "number"
+      ? [`active_slots: ${activeSlots.count}`]
+      : [];
+  const groupLine =
+    groupOccupancy.length > 0
+      ? [
+          `portfolio_groups: ${groupOccupancy
+            .map((entry) => `${entry.portfolio_group || "(unassigned)"}=${entry.active_count || 0}`)
+            .join(", ")}`,
+        ]
+      : [];
+  const bucketLine =
+    bucketOccupancy.length > 0
+      ? [
+          `exposure_buckets: ${bucketOccupancy
+            .map((entry) => `${entry.exposure_bucket || "(unassigned)"}=${entry.active_count || 0}`)
+            .join(", ")}`,
+        ]
+      : [];
+  const reasonLine =
+    allocationReasonSummary.length > 0
+      ? [
+          `reason_breakdown: ${allocationReasonSummary
+            .map((entry) => `${entry.reason_code || "-"}=${entry.count || 0}`)
+            .join(", ")}`,
+        ]
+      : [];
+  const conflictLine =
+    conflictSummary.length > 0
+      ? [
+          `slot_conflicts: ${conflictSummary
+            .map(
+              (entry) =>
+                `${entry.reason_code || "-"}@${entry.portfolio_group || "-"}:${entry.exposure_bucket || "-"}=${entry.count || 0}`
+            )
+            .join(", ")}`,
+        ]
+      : [];
+  const winnerConflictLine =
+    winnerConflictSummary.length > 0
+      ? [
+          `winner_conflicts: ${winnerConflictSummary
+            .map(
+              (entry) =>
+                `${entry.reason_code || "-"}->${entry.winner_strategy_id || "-"}@${entry.winner_portfolio_group || "-"}:${entry.winner_exposure_bucket || "-"}=${entry.count || 0}`
+            )
+            .join(", ")}`,
+        ]
+      : [];
+  const winnerBiasLine =
+    winnerBiasSummary.length > 0
+      ? [
+          `winner_bias: ${winnerBiasSummary
+            .map(
+              (entry) =>
+                `${entry.winner_strategy_id || "-"}=${entry.count || 0} (${entry.share_pct || 0}%) reason=${entry.top_reason_code || "-"}`
+            )
+            .join(", ")}`,
+        ]
+      : [];
+  const winnerReviewLine =
+    winnerReviewSummary.length > 0
+      ? [
+          `winner_review: ${winnerReviewSummary
+            .map(
+              (entry) =>
+                `${entry.winner_strategy_id || "-"} action=${entry.suggested_action || "-"} share=${entry.share_pct || 0}% reason=${entry.top_reason_code || "-"}`
+            )
+            .join(", ")}`,
+        ]
+      : [];
+  const candidateDecisionLine =
+    candidateDecisionSummary.length > 0
+      ? [
+          `candidate_decisions: ${candidateDecisionSummary
+            .map((entry) => `${entry.decision_status || "pending"}=${entry.count || 0}`)
+            .join(", ")}`,
+        ]
+      : [];
+  const executionState =
+    payload && typeof payload.shadow_next_stage_execution_state === "object"
+      ? payload.shadow_next_stage_execution_state
+      : null;
+  const shadowFeedback =
+    payload && typeof payload.shadow_feedback_summary === "object"
+      ? payload.shadow_feedback_summary
+      : null;
+  const shadowFeedbackOverride =
+    payload && typeof payload.shadow_feedback_override_packet === "object"
+      ? payload.shadow_feedback_override_packet
+      : null;
+  const executionLatest =
+    executionState && typeof executionState.latest === "object" ? executionState.latest : null;
+  const executionSummary =
+    executionState && typeof executionState.summary === "object" ? executionState.summary : null;
+  const executionLine =
+    executionLatest && Object.keys(executionLatest).length > 0
+      ? [
+          `next_stage_execution: status=${executionLatest.status || "-"} phase=${executionLatest.phase || "-"} ts=${executionLatest.ts || "-"} reason=${executionLatest.reason || "-"} result=${executionLatest.result_status || "-"}`
+        ]
+      : [];
+  const executionSummaryLine =
+    executionSummary && Object.keys(executionSummary).length > 0
+      ? [
+          `next_stage_summary: ${Object.entries(executionSummary)
+            .map(([key, value]) => `${key}=${value}`)
+            .join(", ")}`,
+        ]
+      : [];
+  const shadowFeedbackLine =
+    shadowFeedback && Object.keys(shadowFeedback).length > 0
+      ? [
+          `shadow_feedback: state=${shadowFeedback.feedback_loop_state || "-"} next=${shadowFeedback.next_action || "-"} latest=${shadowFeedback.latest_execution_status || "-"} candidates=${shadowFeedback.candidate_count || 0}`,
+        ]
+      : [];
+  const allocatorFeedbackLines =
+    shadowFeedback && Array.isArray(shadowFeedback.allocator_feedback_candidates)
+      ? shadowFeedback.allocator_feedback_candidates.slice(0, 3).map((entry) => {
+          const target = entry.target_strategy_id || entry.target_scope || "-";
+          const change =
+            entry.suggested_path || entry.suggested_value || entry.suggested_adjustment || "-";
+          return `allocator_feedback: ${entry.kind || "-"} target=${target} change=${change}`;
+        })
+      : [];
+  const shadowFeedbackPacketLine =
+    shadowFeedbackOverride && Object.keys(shadowFeedbackOverride).length > 0
+      ? [
+          `feedback_override: status=${shadowFeedbackOverride.status || "-"} runtime=${((shadowFeedbackOverride.runtime_guardrail || {}).status) || "-"} validation=${((shadowFeedbackOverride.focused_validation || {}).status) || "-"}`
+        ]
+      : [];
   const allocationRecentLines = allocationDecisions.map((entry) => {
     const decision = entry.allocation_decision || {};
     const reason = decision.reason_code || entry.reason || "-";
-    return `allocation_recent: ${entry.strategy_id || "-"} ${entry.status || "-"} ${reason}`;
+    const blockedBy = entry.blocked_by_strategy_id || "-";
+    const blockedPosition = entry.blocked_by_position_id || "-";
+    const replacedBy = entry.replaced_candidate_id || "-";
+    const replacedCandidate = entry.replaced_candidate || {};
+    const replacedStrategy = replacedCandidate.strategy_id || "-";
+    const replacedGroup = replacedCandidate.portfolio_group || "-";
+    const replacedBucket = replacedCandidate.exposure_bucket || "-";
+    return `allocation_recent: ${entry.strategy_id || "-"} ${entry.status || "-"} ${reason} blocked_by=${blockedBy} blocked_pos=${blockedPosition} replaced_by=${replacedBy} winner=${replacedStrategy} winner_group=${replacedGroup} winner_bucket=${replacedBucket}`;
+  });
+  const candidateRecentLines = recentCandidates.map((entry) => {
+    const side = entry.side || "-";
+    const decision = entry.decision_status || "pending";
+    const reason = entry.decision_reason_code || "-";
+    const group = entry.portfolio_group || "-";
+    const bucket = entry.exposure_bucket || "-";
+    const hold = entry.expected_holding_minutes ?? "-";
+    const quality = entry.quality_score ?? "-";
+    return `candidate_recent: ${entry.strategy_id || "-"} ${side} ${decision} ${reason} group=${group} bucket=${bucket} hold=${hold} q=${quality}`;
   });
   const header = [
     `symbols: ${symbols}`,
@@ -535,7 +731,22 @@ function renderOps(payload) {
   opsLogEl.textContent = [
     ...header,
     ...allocationLine,
+    ...activeSlotLine,
+    ...groupLine,
+    ...bucketLine,
+    ...reasonLine,
+    ...conflictLine,
+    ...winnerConflictLine,
+    ...winnerBiasLine,
+    ...winnerReviewLine,
+    ...candidateDecisionLine,
+    ...executionSummaryLine,
+    ...executionLine,
+    ...shadowFeedbackLine,
+    ...allocatorFeedbackLines,
+    ...shadowFeedbackPacketLine,
     ...allocationRecentLines,
+    ...candidateRecentLines,
     ...warningLine,
     ...(logs.length ? logs : ["ログなし"]),
   ].join("\n");

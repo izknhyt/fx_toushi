@@ -1463,11 +1463,15 @@ class StrategyEngine:
         positions: list[AllocationActivePosition] = []
         for raw in raw_positions:
             if isinstance(raw, Mapping):
+                position_id = str(raw.get("position_id") or raw.get("id") or "").strip()
                 strategy_id = str(raw.get("strategy_id") or "").strip()
                 symbol = str(raw.get("symbol") or "").strip().upper()
                 direction = str(raw.get("direction") or "").strip().lower()
                 opened_at_raw = raw.get("opened_at")
             else:
+                position_id = str(
+                    getattr(raw, "position_id", "") or getattr(raw, "id", "") or ""
+                ).strip()
                 strategy_id = str(getattr(raw, "strategy_id", "") or "").strip()
                 symbol = str(getattr(raw, "symbol", "") or "").strip().upper()
                 direction = str(getattr(raw, "direction", "") or "").strip().lower()
@@ -1487,6 +1491,7 @@ class StrategyEngine:
                     symbol=symbol,
                     direction=direction,
                     opened_at=opened_at,
+                    position_id=position_id,
                 )
             )
         return tuple(positions)

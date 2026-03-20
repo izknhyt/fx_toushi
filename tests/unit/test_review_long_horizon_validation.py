@@ -102,7 +102,25 @@ def test_build_review_ranks_strategy_direction_and_year_drags(tmp_path: Path) ->
         ],
     }
 
-    review = build_review(summary_payload, top_n=3)
+    allocation_summary_path = tmp_path / "allocation_summary.json"
+    _write_json(
+        allocation_summary_path,
+        {
+            "winner_review_summary": [
+                {
+                    "winner_strategy_id": "bad_breakout",
+                    "winner_portfolio_group": "usd_jpy_breakout",
+                    "winner_exposure_bucket": "usd_jpy_short",
+                    "count": 3,
+                    "share_pct": 75.0,
+                    "top_reason_code": "tie_break_lost",
+                    "suggested_action": "review_role_priority",
+                }
+            ]
+        },
+    )
+
+    review = build_review(summary_payload, top_n=3, allocation_review_payload=allocation_summary_path)
 
     assert review["window_count"] == 1
     window = review["windows"][0]
@@ -112,11 +130,14 @@ def test_build_review_ranks_strategy_direction_and_year_drags(tmp_path: Path) ->
     assert any("Gate or de-prioritize `bad_breakout`" in item for item in window["recommendations"])
     assert any("directional gating" in item for item in window["recommendations"])
     assert review["persistent_strategy_drags"][0]["strategy_id"] == "bad_breakout"
+    assert review["allocator_hypotheses"][0]["winner_strategy_id"] == "bad_breakout"
+    assert review["next_steps"][-1].endswith("review_role_priority.")
 
     rendered = render_review_md(review)
     assert "Long-Horizon Validation Review" in rendered
     assert "bad_breakout" in rendered
     assert "2016_2021" in rendered
+    assert "Allocator Hypotheses" in rendered
 
 
 def test_build_review_skips_passing_windows_by_default(tmp_path: Path) -> None:

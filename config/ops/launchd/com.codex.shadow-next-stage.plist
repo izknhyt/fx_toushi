@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+  <dict>
+    <key>Label</key>
+    <string>com.codex.shadow-next-stage</string>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/izumimotohayato/development/codex_invest</string>
+
+    <key>ProgramArguments</key>
+    <array>
+      <string>/bin/bash</string>
+      <string>tools/scripts/run_shadow_next_stage_daily.sh</string>
+      <string>--run</string>
+    </array>
+
+    <key>StartCalendarInterval</key>
+    <dict>
+      <key>Hour</key>
+      <integer>9</integer>
+      <key>Minute</key>
+      <integer>15</integer>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>/Users/izumimotohayato/development/codex_invest/logs/ops/shadow_next_stage_daily.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/izumimotohayato/development/codex_invest/logs/ops/shadow_next_stage_daily.err.log</string>
+
+    <key>RunAtLoad</key>
+    <true/>
+  </dict>
+</plist>

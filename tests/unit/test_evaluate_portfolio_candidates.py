@@ -68,6 +68,19 @@ def test_build_evaluation_payload_computes_delta_vs_baseline(tmp_path: Path) -> 
         standalone_payloads=standalone_payloads,
         combo_payloads=combo_payloads,
         run_dir=tmp_path,
+        allocation_review_payload={
+            "winner_review_summary": [
+                {
+                    "winner_strategy_id": "alpha",
+                    "winner_portfolio_group": "usd_jpy_breakout",
+                    "winner_exposure_bucket": "usd_jpy_long",
+                    "count": 2,
+                    "share_pct": 66.7,
+                    "top_reason_code": "tie_break_lost",
+                    "suggested_action": "review_role_priority",
+                }
+            ]
+        },
     )
 
     candidate = payload["candidates"][0]
@@ -77,6 +90,8 @@ def test_build_evaluation_payload_computes_delta_vs_baseline(tmp_path: Path) -> 
     assert window["delta_vs_baseline"]["pf"] == 0.08
     assert window["delta_vs_baseline"]["avg_r"] == 0.02
     assert window["delta_vs_baseline"]["trades"] == 20.0
+    assert payload["allocator_follow_up"][0]["winner_strategy_id"] == "alpha"
+    assert candidate["allocator_follow_up"][0]["winner_strategy_id"] == "alpha"
 
 
 def test_render_summary_md_lists_candidate_rows() -> None:
@@ -85,9 +100,25 @@ def test_render_summary_md_lists_candidate_rows() -> None:
         "baseline_strategy_ids": ["alpha", "beta"],
         "candidate_strategy_ids": ["candidate_x"],
         "selected_windows": ["2016_2025"],
+        "allocator_follow_up": [
+            {
+                "winner_strategy_id": "alpha",
+                "suggested_action": "review_role_priority",
+                "share_pct": 66.7,
+                "top_reason_code": "tie_break_lost",
+            }
+        ],
         "candidates": [
             {
                 "strategy_id": "candidate_x",
+                "allocator_follow_up": [
+                    {
+                        "winner_strategy_id": "alpha",
+                        "suggested_action": "review_role_priority",
+                        "share_pct": 66.7,
+                        "top_reason_code": "tie_break_lost",
+                    }
+                ],
                 "windows": [
                     {
                         "window_name": "2016_2025",
@@ -105,3 +136,4 @@ def test_render_summary_md_lists_candidate_rows() -> None:
     assert "Portfolio Candidate Evaluation" in rendered
     assert "candidate_x" in rendered
     assert "0.08" in rendered
+    assert "Allocator Follow-up" in rendered

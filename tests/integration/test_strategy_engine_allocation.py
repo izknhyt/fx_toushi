@@ -215,11 +215,14 @@ def test_strategy_engine_allocation_selects_one_candidate(tmp_path: Path) -> Non
     assert by_id["alpha"]["decision"] == "accept"
     assert by_id["beta"]["decision"] == "reject"
     assert by_id["beta"]["reason_code"] == "tie_break_lost"
+    assert by_id["beta"]["blocked_by_strategy_id"] == "alpha"
     candidate_trades = engine.last_run_candidate_trades
     assert len(candidate_trades) == 2
     assert candidate_trades[0]["candidate_id"]
     assert candidate_trades[0]["strategy_id"] == "alpha"
     assert candidate_trades[0]["symbol"] == "USDJPY"
+    alpha_candidate = next(item for item in candidate_trades if item["strategy_id"] == "alpha")
+    assert by_id["beta"]["replaced_candidate_id"] == alpha_candidate["candidate_id"]
 
 
 def test_strategy_engine_without_allocation_keeps_all_candidates(tmp_path: Path) -> None:
@@ -314,6 +317,7 @@ def test_strategy_engine_allocation_respects_open_positions_from_account(tmp_pat
             equity=1_000_000.0,
             positions=[
                 {
+                    "position_id": "alpha-live-1",
                     "strategy_id": "alpha_live",
                     "symbol": "USDJPY",
                     "direction": "long",
@@ -329,6 +333,8 @@ def test_strategy_engine_allocation_respects_open_positions_from_account(tmp_pat
     by_id = {item["strategy_id"]: item for item in outcomes}
     assert by_id["alpha"]["decision"] == "reject"
     assert by_id["alpha"]["reason_code"] == "active_group_conflict"
+    assert by_id["alpha"]["blocked_by_strategy_id"] == "alpha_live"
+    assert by_id["alpha"]["blocked_by_position_id"] == "alpha-live-1"
     assert by_id["beta"]["decision"] == "accept"
 
 
@@ -364,3 +370,5 @@ def test_strategy_engine_logs_allocation_decisions_to_portfolio_admission_events
     assert by_id["alpha"]["candidate_id"] == by_id["alpha"]["candidate"]["candidate_id"]
     assert by_id["beta"]["status"] == "reject"
     assert by_id["beta"]["allocation_decision"]["reason_code"] == "tie_break_lost"
+    assert by_id["beta"]["allocation_decision"]["blocked_by_strategy_id"] == "alpha"
+    assert by_id["beta"]["allocation_decision"]["replaced_candidate_id"] == by_id["alpha"]["candidate_id"]

@@ -14,6 +14,8 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+from src.portfolio.allocation_review import build_allocator_hypotheses
+
 VALIDATION_LOG_DIR = PROJECT_ROOT / "reports" / "validation_log"
 ANALYSIS_DIR = PROJECT_ROOT / "reports" / "analysis"
 RUNNER = PROJECT_ROOT / "tools" / "run_long_horizon_portfolio_validation.py"
@@ -137,12 +139,21 @@ def build_evaluation_payload(
     standalone_payloads: Mapping[str, Mapping[str, Any]],
     combo_payloads: Mapping[str, Mapping[str, Any]],
     run_dir: Path,
+    allocation_review_payload: Mapping[str, Any] | Path | str | None = None,
 ) -> dict[str, Any]:
     baseline_index = _result_index(baseline_payload)
+    global_allocator_follow_up = build_allocator_hypotheses(
+        allocation_review_payload,
+        focus_strategy_ids=set(baseline_strategy_ids),
+    )
     candidates: list[dict[str, Any]] = []
     for strategy_id in candidate_strategy_ids:
         standalone_index = _result_index(standalone_payloads[strategy_id])
         combo_index = _result_index(combo_payloads[strategy_id])
+        candidate_allocator_follow_up = build_allocator_hypotheses(
+            allocation_review_payload,
+            focus_strategy_ids={strategy_id},
+        )
         windows_payload: list[dict[str, Any]] = []
         for window_name in windows:
             windows_payload.append(
@@ -160,6 +171,7 @@ def build_evaluation_payload(
                 "strategy_id": strategy_id,
                 "standalone_plan_json": str(run_dir / f"{strategy_id}.standalone.json"),
                 "combo_plan_json": str(run_dir / f"{strategy_id}.combo.json"),
+                "allocator_follow_up": candidate_allocator_follow_up or global_allocator_follow_up,
                 "windows": windows_payload,
             }
         )
@@ -170,6 +182,7 @@ def build_evaluation_payload(
         "candidate_strategy_ids": candidate_strategy_ids,
         "selected_windows": list(windows),
         "baseline_plan_json": str(run_dir / "baseline.json"),
+        "allocator_follow_up": global_allocator_follow_up,
         "candidates": candidates,
     }
 
@@ -184,9 +197,28 @@ def render_summary_md(payload: Mapping[str, Any]) -> str:
         f"- windows: `{', '.join(payload['selected_windows'])}`",
         "",
     ]
+    if payload.get("allocator_follow_up"):
+        lines.append("## Allocator Follow-up")
+        lines.append("")
+        for row in payload.get("allocator_follow_up", []):
+            lines.append(
+                "- "
+                + f"`{row['winner_strategy_id']}` {row['suggested_action']} "
+                + f"(share={row['share_pct']}%, reason={row['top_reason_code']})"
+            )
+        lines.append("")
     for candidate in payload.get("candidates", []):
         lines.append(f"## Candidate `{candidate['strategy_id']}`")
         lines.append("")
+        if candidate.get("allocator_follow_up"):
+            lines.append("Allocator overlap / follow-up:")
+            for row in candidate.get("allocator_follow_up", []):
+                lines.append(
+                    "- "
+                    + f"`{row['winner_strategy_id']}` {row['suggested_action']} "
+                    + f"(share={row['share_pct']}%, reason={row['top_reason_code']})"
+                )
+            lines.append("")
         lines.append("| Window | Standalone PF | Combo PF | Delta PF | Standalone AvgR | Combo AvgR | Delta AvgR |")
         lines.append("| --- | ---: | ---: | ---: | ---: | ---: | ---: |")
         for row in candidate.get("windows", []):
@@ -214,6 +246,7 @@ def main() -> int:
     parser.add_argument("--manifest-path", default=str(DEFAULT_MANIFEST))
     parser.add_argument("--allocation-config-path", default=str(DEFAULT_ALLOCATION))
     parser.add_argument("--allocation-profile", default="portfolio_admission_v2")
+    parser.add_argument("--allocation-summary-json", type=Path)
     parser.add_argument("--output-prefix", default="portfolio_candidate_evaluation")
     parser.add_argument("--output-json", type=Path, help="Optional explicit summary JSON path")
     parser.add_argument("--output-md", type=Path, help="Optional explicit summary Markdown path")
@@ -275,6 +308,7 @@ def main() -> int:
         standalone_payloads=standalone_payloads,
         combo_payloads=combo_payloads,
         run_dir=run_dir,
+        allocation_review_payload=args.allocation_summary_json,
     )
     summary_json = args.output_json or (VALIDATION_LOG_DIR / f"{args.output_prefix}_{stamp}.json")
     summary_md = args.output_md or (ANALYSIS_DIR / f"{args.output_prefix}_{stamp}.md")

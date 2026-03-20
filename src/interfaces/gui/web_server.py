@@ -20,6 +20,10 @@ from urllib.parse import parse_qs, urlparse
 import yaml
 import pandas as pd
 
+from src.interfaces.gui.allocation_surface import summarize_allocation_surface
+from src.interfaces.gui.candidate_surface import summarize_candidate_surface
+from src.interfaces.gui.shadow_next_stage_surface import summarize_shadow_next_stage_execution
+
 logger = logging.getLogger(__name__)
 
 DEFAULT_SIGNAL_LOG = Path("logs") / "events" / "signal.gui.jsonl"
@@ -812,37 +816,12 @@ def _allocation_decisions_payload(
     symbols: frozenset[str] | None = None,
     strategy_ids: frozenset[str] | None = None,
 ) -> dict[str, Any]:
-    records = _load_signal_records(path, limit=limit)
-    records = [
-        record
-        for record in records
-        if (
-            record.get("event") == "portfolio.admission"
-            or (
-                record.get("event") == "signal.generated"
-                and record.get("allocation_decision")
-            )
-        )
-        and str(record.get("status") or "").strip().lower() in {"accept", "reject", "defer", "resize", "replace"}
-    ]
-    if symbols:
-        records = [
-            record
-            for record in records
-            if str(record.get("symbol", "")).strip().upper() in symbols
-        ]
-    if strategy_ids:
-        records = [
-            record
-            for record in records
-            if str(record.get("strategy_id", "")).strip() in strategy_ids
-        ]
-    summary = {"accept": 0, "reject": 0, "defer": 0, "resize": 0, "replace": 0}
-    for record in records:
-        status = str(record.get("status") or "").strip().lower()
-        if status in summary:
-            summary[status] += 1
-    return {"status": "ok", "count": len(records), "summary": summary, "decisions": records}
+    return summarize_allocation_surface(
+        path,
+        limit=limit,
+        symbols=symbols,
+        strategy_ids=strategy_ids,
+    )
 
 
 def _is_signal_time_order_valid(record: Mapping[str, Any]) -> bool:
@@ -1328,6 +1307,13 @@ def _ops_status_payload(config: GuiServerConfig) -> dict[str, Any]:
         symbols=selected_symbols,
         strategy_ids=selected_strategy_ids,
     )
+    payload["recent_candidates"] = summarize_candidate_surface(
+        config.signal_log_path,
+        limit=50,
+        symbols=selected_symbols,
+        strategy_ids=selected_strategy_ids,
+    )
+    payload["shadow_next_stage_execution_state"] = summarize_shadow_next_stage_execution()
     return payload
 
 

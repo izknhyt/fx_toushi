@@ -49,6 +49,8 @@ OPS_AGENDA_METRICS_PATH = Path("metrics/ops_agenda.jsonl")
 OPS_AGENDA_AUDIT_PATH = Path("logs/audit/ops_agenda_generated.jsonl")
 """Audit trail for Ops agenda generation."""
 BROKER_ALERT_EVENT_LOG_PATH = Path("logs/events/broker_alerts.jsonl")
+SHADOW_DAILY_NOTIFICATION_LOG_PATH = Path("logs/ops/shadow_daily_notifications.jsonl")
+SHADOW_NEXT_STAGE_EXECUTION_LOG_PATH = Path("logs/ops/shadow_next_stage_execution.jsonl")
 AUTONOMY_STAGE_EVENT_LOG_PATH = Path("logs/events/autonomy_stage.jsonl")
 
 COACHING_INSIGHTS_LOG_PATH = Path("metrics/coaching_insights.jsonl")
@@ -209,6 +211,11 @@ class OpsAgendaService:
         broker_monitor_tasks = _collect_broker_monitor_tasks(
             target_date=target_date, alert_log=BROKER_ALERT_EVENT_LOG_PATH
         )
+        shadow_review_tasks = _collect_shadow_daily_review_tasks(
+            target_date=target_date,
+            notification_log=SHADOW_DAILY_NOTIFICATION_LOG_PATH,
+            execution_log=SHADOW_NEXT_STAGE_EXECUTION_LOG_PATH,
+        )
         autonomy_stage_tasks = _collect_autonomy_stage_tasks(
             target_date=target_date, event_log=AUTONOMY_STAGE_EVENT_LOG_PATH
         )
@@ -230,6 +237,7 @@ class OpsAgendaService:
                 + access_review_tasks
                 + experiment_tasks
                 + broker_monitor_tasks
+                + shadow_review_tasks
                 + autonomy_stage_tasks
                 + agenda_events
             ),
@@ -907,6 +915,137 @@ def _collect_broker_monitor_tasks(
             }
         )
     return tasks
+
+
+def _collect_shadow_daily_review_tasks(
+    *,
+    target_date: date,
+    notification_log: Path = SHADOW_DAILY_NOTIFICATION_LOG_PATH,
+    execution_log: Path = SHADOW_NEXT_STAGE_EXECUTION_LOG_PATH,
+) -> list[dict[str, object]]:
+    if not notification_log.exists():
+        return []
+    latest: dict[str, object] | None = None
+    for line in notification_log.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        try:
+            record = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if str(record.get("event") or "") != "shadow.daily_alert":
+            continue
+        review_date = str(record.get("review_date_utc") or "")
+        if review_date and review_date > str(target_date):
+            continue
+        if latest is None or str(record.get("ts") or "") >= str(latest.get("ts") or ""):
+            latest = record
+    if latest is None:
+        return []
+    alert_level = str(latest.get("alert_level") or "none")
+    readiness_status = str(latest.get("readiness_status") or "unknown")
+    soak_ready = bool(
+        latest.get("soak_ready_for_transition")
+        or latest.get("qualified_next_phase") in {"candidate_onboarding", "multi_pair_preparation"}
+    )
+    qualified_next_phase = str(latest.get("qualified_next_phase") or "continue_shadow")
+    headline = str(latest.get("headline") or "shadow review")
+    next_stage_template_phase = str(latest.get("next_stage_template_phase") or "continue_shadow")
+    next_stage_template_action = str(latest.get("next_stage_template_action") or "continue_shadow")
+    next_stage_template_runbook_ref = str(latest.get("next_stage_template_runbook_ref") or "")
+    next_stage_template_runner_command = str(latest.get("next_stage_template_runner_command") or "")
+    execution = _latest_shadow_next_stage_execution(
+        execution_log,
+        review_date_utc=str(latest.get("review_date_utc") or ""),
+        phase=next_stage_template_phase,
+    )
+    execution_status = str((execution or {}).get("status") or "")
+    execution_runner_command = str((execution or {}).get("runner_command") or "")
+    automation_command = str((execution or {}).get("automation_command") or "tradectl ops shadow-next-stage --run")
+    estimate = 30 if alert_level == "warn" else 60 if alert_level == "critical" or readiness_status == "blocked" else 15
+    task = "Review shadow daily summary"
+    if readiness_status == "blocked" or alert_level == "critical":
+        task = "Immediate shadow discrepancy review"
+    elif soak_ready and qualified_next_phase == "multi_pair_preparation":
+        task = "Start multi-pair preparation"
+    elif soak_ready and qualified_next_phase == "candidate_onboarding":
+        task = "Start candidate onboarding review"
+        estimate = 30
+    if execution_status == "completed":
+        task = "Monitor shadow next-stage rollout"
+        estimate = max(estimate, 20)
+    return [
+        {
+            "task": task,
+            "owner": "ops",
+            "due": str(target_date),
+            "estimate_min": estimate,
+            "last_worklog": latest.get("ts", "n/a"),
+            "notes": headline
+            + (
+                f" / next_phase={qualified_next_phase}"
+                if soak_ready and qualified_next_phase != "continue_shadow"
+                else ""
+            )
+            + (
+                f" / template_phase={next_stage_template_phase} / template_action={next_stage_template_action}"
+                if next_stage_template_phase != "continue_shadow"
+                else ""
+            )
+            + (
+                f" / runbook={next_stage_template_runbook_ref}"
+                if next_stage_template_runbook_ref
+                else ""
+            )
+            + (
+                f" / runner={next_stage_template_runner_command}"
+                if next_stage_template_runner_command
+                else ""
+            )
+            + (
+                f" / automation={automation_command}"
+                if automation_command
+                else ""
+            )
+            + (
+                f" / execution_status={execution_status}"
+                if execution_status
+                else ""
+            )
+            + (
+                f" / execution_runner={execution_runner_command}"
+                if execution_runner_command
+                else ""
+            ),
+        }
+    ]
+
+
+def _latest_shadow_next_stage_execution(
+    execution_log: Path,
+    *,
+    review_date_utc: str,
+    phase: str,
+) -> dict[str, object] | None:
+    if not execution_log.exists():
+        return None
+    latest: dict[str, object] | None = None
+    for line in execution_log.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        try:
+            record = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if str(record.get("event") or "") != "shadow.next_stage.execution":
+            continue
+        if review_date_utc and str(record.get("review_date_utc") or "") != review_date_utc:
+            continue
+        if phase and str(record.get("phase") or "") != phase:
+            continue
+        if latest is None or str(record.get("ts") or "") >= str(latest.get("ts") or ""):
+            latest = record
+    return latest
 
 
 def _collect_autonomy_stage_tasks(

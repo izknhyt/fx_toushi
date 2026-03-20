@@ -7,6 +7,7 @@ import json
 import os
 
 from tools.gui_ops_loop import (
+    GuiOpsResult,
     _backfill_signals,
     _detect_breakouts,
     _engine_signal_payload,
@@ -121,7 +122,17 @@ def test_summarize_allocation_decisions_counts_recent_statuses(tmp_path: Path) -
             "strategy_id": "alpha",
             "symbol": "USDJPY",
             "status": "accept",
-            "allocation_decision": {"reason_code": "selected"},
+            "candidate_id": "cand-alpha",
+            "candidate": {
+                "candidate_id": "cand-alpha",
+                "portfolio_group": "usd_jpy_breakout",
+                "exposure_bucket": "usd_jpy_long",
+            },
+            "allocation_decision": {
+                "reason_code": "selected",
+                "portfolio_group": "usd_jpy_breakout",
+                "exposure_bucket": "usd_jpy_long",
+            },
         },
         {
             "event": "portfolio.admission",
@@ -129,7 +140,12 @@ def test_summarize_allocation_decisions_counts_recent_statuses(tmp_path: Path) -
             "strategy_id": "beta",
             "symbol": "USDJPY",
             "status": "reject",
-            "allocation_decision": {"reason_code": "tie_break_lost"},
+            "allocation_decision": {
+                "reason_code": "tie_break_lost",
+                "blocked_by_strategy_id": "alpha",
+                "blocked_by_position_id": "pos-alpha-1",
+                "replaced_candidate_id": "cand-alpha",
+            },
         },
         {
             "event": "portfolio.admission",
@@ -138,6 +154,24 @@ def test_summarize_allocation_decisions_counts_recent_statuses(tmp_path: Path) -
             "symbol": "USDJPY",
             "status": "defer",
             "allocation_decision": {"reason_code": "active_group_deferred"},
+        },
+        {
+            "event": "signal.generated",
+            "ts": "2026-03-16T13:02:30Z",
+            "strategy_id": "alpha",
+            "symbol": "USDJPY",
+            "status": "generated",
+            "candidate_id": "cand-alpha",
+            "candidate": {
+                "candidate_id": "cand-alpha",
+                "strategy_id": "alpha",
+                "symbol": "USDJPY",
+                "portfolio_group": "usd_jpy_breakout",
+                "exposure_bucket": "usd_jpy_long",
+                "side": "long",
+                "expected_holding_minutes": 60,
+                "quality_score": 1.1,
+            },
         },
         {
             "event": "signal.generated",
@@ -155,7 +189,134 @@ def test_summarize_allocation_decisions_counts_recent_statuses(tmp_path: Path) -
     assert payload["summary"]["accept"] == 1
     assert payload["summary"]["reject"] == 1
     assert payload["summary"]["defer"] == 1
+    assert payload["reason_summary"] == [
+        {"reason_code": "active_group_deferred", "count": 1},
+        {"reason_code": "selected", "count": 1},
+        {"reason_code": "tie_break_lost", "count": 1},
+    ]
+    assert payload["conflict_summary"] == [
+        {
+            "reason_code": "active_group_deferred",
+            "portfolio_group": "(unassigned)",
+            "exposure_bucket": "(unassigned)",
+            "count": 1,
+        },
+        {
+            "reason_code": "tie_break_lost",
+            "portfolio_group": "(unassigned)",
+            "exposure_bucket": "(unassigned)",
+            "count": 1,
+        },
+    ]
+    assert payload["winner_conflict_summary"] == [
+        {
+            "reason_code": "active_group_deferred",
+            "winner_strategy_id": "(unknown)",
+            "winner_portfolio_group": "(unassigned)",
+            "winner_exposure_bucket": "(unassigned)",
+            "count": 1,
+        },
+        {
+            "reason_code": "tie_break_lost",
+            "winner_strategy_id": "alpha",
+            "winner_portfolio_group": "usd_jpy_breakout",
+            "winner_exposure_bucket": "usd_jpy_long",
+            "count": 1,
+        },
+    ]
+    assert payload["winner_bias_summary"] == [
+        {
+            "winner_strategy_id": "(unknown)",
+            "winner_portfolio_group": "(unassigned)",
+            "winner_exposure_bucket": "(unassigned)",
+            "count": 1,
+            "top_reason_code": "active_group_deferred",
+            "share_pct": 50.0,
+        },
+        {
+            "winner_strategy_id": "alpha",
+            "winner_portfolio_group": "usd_jpy_breakout",
+            "winner_exposure_bucket": "usd_jpy_long",
+            "count": 1,
+            "top_reason_code": "tie_break_lost",
+            "share_pct": 50.0,
+        },
+    ]
+    assert payload["winner_review_summary"] == [
+        {
+            "winner_strategy_id": "(unknown)",
+            "winner_portfolio_group": "(unassigned)",
+            "winner_exposure_bucket": "(unassigned)",
+            "count": 1,
+            "share_pct": 50.0,
+            "top_reason_code": "active_group_deferred",
+            "suggested_action": "review_tie_break",
+        },
+        {
+            "winner_strategy_id": "alpha",
+            "winner_portfolio_group": "usd_jpy_breakout",
+            "winner_exposure_bucket": "usd_jpy_long",
+            "count": 1,
+            "share_pct": 50.0,
+            "top_reason_code": "tie_break_lost",
+            "suggested_action": "review_tie_break",
+        },
+    ]
     assert [item["strategy_id"] for item in payload["recent"]] == ["alpha", "beta", "gamma"]
+    assert payload["portfolio_surface"]["active_slots"]["count"] == 1
+    assert payload["portfolio_surface"]["portfolio_group_occupancy"][0]["portfolio_group"] == "usd_jpy_breakout"
+    assert payload["portfolio_surface"]["exposure_bucket_occupancy"][0]["exposure_bucket"] == "usd_jpy_long"
+    assert payload["recent"][1]["blocked_by_strategy_id"] == "alpha"
+    assert payload["recent"][1]["blocked_by_position_id"] == "pos-alpha-1"
+    assert payload["recent"][1]["replaced_candidate_id"] == "cand-alpha"
+    assert payload["recent"][1]["replaced_candidate"]["strategy_id"] == "alpha"
+    assert payload["recent"][1]["replaced_candidate"]["portfolio_group"] == "usd_jpy_breakout"
+
+
+def test_gui_ops_result_to_dict_includes_candidate_snapshot() -> None:
+    result = GuiOpsResult(
+        ingestion=[],
+        price_csv=[],
+        signal_preview={"signals": 1},
+        signal_csv={"status": "ok"},
+        allocation_summary={"status": "ok", "count": 0},
+        candidate_snapshot={
+            "status": "ok",
+            "count": 1,
+            "candidates": [{"strategy_id": "alpha"}],
+            "decision_summary": [{"decision_status": "pending", "count": 1}],
+        },
+        shadow_baseline_summary={"status": "ok", "posture": "shadow_monitor"},
+        daily_shadow_review_summary={"status": "ok", "posture": "shadow_monitor", "trend_summary": {"history_days": 1}},
+        shadow_discrepancy_summary={"status": "ok", "active_discrepancy_count": 0},
+        shadow_readiness_summary={"status": "ok", "readiness_status": "ready"},
+        stage_gate_summary={"status": "ready", "stage_gate_status": "ready", "recommended_next_phase": "candidate_onboarding"},
+        soak_summary={"status": "qualified", "qualified_next_phase": "candidate_onboarding", "ready_for_transition": True},
+        next_stage_execution_template={"status": "ready", "phase": "candidate_onboarding", "next_action": "advance_to_candidate_onboarding"},
+        shadow_next_stage_execution_state={"status": "ok", "count": 1, "latest": {"status": "planned"}},
+        shadow_feedback_summary={"status": "ok", "feedback_loop_state": "monitor", "candidate_count": 0},
+        shadow_feedback_override_packet={"status": "no_changes", "runtime_guardrail": {"status": "monitor"}},
+        daily_shadow_ops_summary={"status": "ok", "alert_level": "none", "should_notify": False},
+    )
+
+    payload = result.to_dict()
+
+    assert payload["candidate_snapshot"]["count"] == 1
+    assert payload["candidate_snapshot"]["candidates"][0]["strategy_id"] == "alpha"
+    assert payload["candidate_snapshot"]["decision_summary"] == [{"decision_status": "pending", "count": 1}]
+    assert payload["shadow_baseline_summary"]["posture"] == "shadow_monitor"
+    assert payload["daily_shadow_review_summary"]["posture"] == "shadow_monitor"
+    assert payload["daily_shadow_review_summary"]["trend_summary"]["history_days"] == 1
+    assert payload["shadow_discrepancy_summary"]["active_discrepancy_count"] == 0
+    assert payload["shadow_readiness_summary"]["readiness_status"] == "ready"
+    assert payload["stage_gate_summary"]["stage_gate_status"] == "ready"
+    assert payload["stage_gate_summary"]["recommended_next_phase"] == "candidate_onboarding"
+    assert payload["soak_summary"]["qualified_next_phase"] == "candidate_onboarding"
+    assert payload["next_stage_execution_template"]["phase"] == "candidate_onboarding"
+    assert payload["shadow_next_stage_execution_state"]["latest"]["status"] == "planned"
+    assert payload["shadow_feedback_summary"]["feedback_loop_state"] == "monitor"
+    assert payload["shadow_feedback_override_packet"]["status"] == "no_changes"
+    assert payload["daily_shadow_ops_summary"]["alert_level"] == "none"
 
 
 def test_detect_breakouts_emits_records() -> None:

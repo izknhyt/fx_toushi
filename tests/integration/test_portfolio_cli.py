@@ -174,3 +174,53 @@ def test_portfolio_admit_cli_wraps_snapshot_tool(monkeypatch, tmp_path: Path) ->
     assert payload["command"] == "admit"
     assert payload["result"]["selected_strategy_ids"] == ["alpha"]
     assert payload["result"]["admission_outcomes"][0]["decision"] == "accept"
+
+
+def test_portfolio_next_stage_cli_wraps_tool(monkeypatch, tmp_path: Path) -> None:
+    def _fake_run(cmd: list[str], **kwargs) -> subprocess.CompletedProcess[str]:
+        output_dir = Path(cmd[cmd.index("--output-dir") + 1])
+        output_prefix = cmd[cmd.index("--output-prefix") + 1]
+        output_json = output_dir / f"{output_prefix}.json"
+        output_md = output_dir / f"{output_prefix}.md"
+        payload = {
+            "status": "ok",
+            "packet": {
+                "phase": "candidate_onboarding",
+                "status": "ready",
+                "runbook_ref": "docs/runbooks/PORTFOLIO-CANDIDATE-01.md",
+            },
+        }
+        output_dir.mkdir(parents=True, exist_ok=True)
+        output_json.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        output_md.write_text("# next-stage\n", encoding="utf-8")
+        return subprocess.CompletedProcess(cmd, 0, stdout=json.dumps(payload), stderr="")
+
+    monkeypatch.setattr(subprocess, "run", _fake_run)
+    app = create_cli_app()
+    runner = CliRunner()
+    data_path = tmp_path / "data.parquet"
+    data_path.write_text("stub", encoding="utf-8")
+
+    result = runner.invoke(
+        app,
+        [
+            "portfolio",
+            "next-stage",
+            "--phase",
+            "candidate_onboarding",
+            "--candidate-strategies",
+            "alpha_candidate",
+            "--data-path",
+            str(data_path),
+            "--output-dir",
+            str(tmp_path / "out"),
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["status"] == "ok"
+    assert payload["command"] == "next-stage"
+    assert payload["summary_json"].endswith("shadow_next_stage.json")
+    assert payload["result"]["packet"]["phase"] == "candidate_onboarding"

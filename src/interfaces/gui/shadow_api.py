@@ -10,6 +10,33 @@ from typing import Any, Iterable
 
 import yaml
 
+from src.brokers.fill_shadow import FillShadowStore
+from src.interfaces.gui.allocation_surface import summarize_allocation_surface
+from src.interfaces.gui.candidate_surface import summarize_candidate_surface
+from src.interfaces.gui.shadow_baseline import (
+    build_shadow_baseline_summary,
+    write_shadow_baseline_report,
+)
+from src.interfaces.gui.shadow_daily_review import (
+    build_daily_shadow_review_summary,
+    write_daily_shadow_review_report,
+)
+from src.interfaces.gui.shadow_daily_ops import (
+    build_daily_shadow_ops_summary,
+    write_daily_shadow_ops_report,
+)
+from src.interfaces.gui.shadow_next_stage_surface import (
+    DEFAULT_SHADOW_NEXT_STAGE_EXECUTION_LEDGER,
+    summarize_shadow_next_stage_execution,
+)
+from src.interfaces.gui.shadow_discrepancy_ledger import (
+    DEFAULT_DISCREPANCY_LEDGER_PATH,
+    build_shadow_baseline_readiness_summary,
+    build_shadow_discrepancy_summary,
+    load_shadow_discrepancy_ledger,
+)
+from src.portfolio.shadow_stage_gate import build_shadow_stage_gate_summary
+from src.portfolio.shadow_soak import build_shadow_soak_summary
 from src.shadow.store import ShadowStateStore
 
 DEFAULT_TOKEN_PATH = Path("config/shadow/tokens.yaml")
@@ -17,6 +44,12 @@ DEFAULT_EVENT_LOG = Path("logs/events/shadow_session.jsonl")
 DEFAULT_SIGNAL_LOG = Path("logs/events/signal.generated.jsonl")
 DEFAULT_METRICS_PATH = Path("metrics/shadow_gui.jsonl")
 DEFAULT_AUDIT_LOG = Path("logs/audit/shadow_gui.jsonl")
+DEFAULT_REPORT_DIR = Path("reports/analysis/shadow")
+DEFAULT_DAILY_SHADOW_HISTORY = Path("reports/analysis/shadow/daily_shadow_review_history.jsonl")
+DEFAULT_DAILY_SHADOW_DISCREPANCY_LEDGER = DEFAULT_DISCREPANCY_LEDGER_PATH
+DEFAULT_DAILY_SHADOW_NOTIFICATION_LOG = Path("logs/ops/shadow_daily_notifications.jsonl")
+DEFAULT_BROKER_SHADOW_EVENT_LOG = Path("logs/broker/shadow_events.jsonl")
+DEFAULT_BROKER_SHADOW_SESSION_LOG = Path("logs/broker/shadow_sessions.jsonl")
 
 
 class ShadowAuthError(Exception):
@@ -31,6 +64,13 @@ class ShadowGuiApi:
     signal_log: Path = DEFAULT_SIGNAL_LOG
     metrics_path: Path = DEFAULT_METRICS_PATH
     audit_log: Path = DEFAULT_AUDIT_LOG
+    report_dir: Path = DEFAULT_REPORT_DIR
+    daily_shadow_history_path: Path = DEFAULT_DAILY_SHADOW_HISTORY
+    daily_shadow_discrepancy_ledger_path: Path = DEFAULT_DAILY_SHADOW_DISCREPANCY_LEDGER
+    daily_shadow_notification_log: Path = DEFAULT_DAILY_SHADOW_NOTIFICATION_LOG
+    broker_shadow_event_log: Path = DEFAULT_BROKER_SHADOW_EVENT_LOG
+    broker_shadow_session_log: Path = DEFAULT_BROKER_SHADOW_SESSION_LOG
+    shadow_next_stage_execution_ledger_path: Path = DEFAULT_SHADOW_NEXT_STAGE_EXECUTION_LEDGER
 
     def list_tickets(
         self,
@@ -162,14 +202,63 @@ class ShadowGuiApi:
             "recorded_at": recorded_at,
         }
 
-    def status(self) -> dict[str, object]:
+    def status(self, *, stage_gate_summary: dict[str, Any] | None = None) -> dict[str, object]:
         tokens = _load_tokens(self.token_path)
+        allocation_summary = _summarize_allocation_decisions(self.signal_log, limit=200)
+        candidate_snapshot = summarize_candidate_surface(self.signal_log, limit=200)
+        shadow_next_stage_execution_state = summarize_shadow_next_stage_execution(
+            self.shadow_next_stage_execution_ledger_path
+        )
+        daily_shadow_review_summary = build_daily_shadow_review_summary(
+            allocation_summary=allocation_summary,
+            candidate_snapshot=candidate_snapshot,
+            fill_store=self._fill_shadow_store(),
+            broker_shadow_event_log=self.broker_shadow_event_log,
+            shadow_next_stage_execution_state=shadow_next_stage_execution_state,
+            history_path=self.daily_shadow_history_path,
+            discrepancy_ledger_path=self.daily_shadow_discrepancy_ledger_path,
+            stage_gate_summary=stage_gate_summary,
+        )
+        discrepancy_ledger = load_shadow_discrepancy_ledger(self.daily_shadow_discrepancy_ledger_path)
+        shadow_discrepancy_summary = build_shadow_discrepancy_summary(
+            daily_shadow_review_summary,
+            discrepancy_ledger,
+        )
+        shadow_readiness_summary = build_shadow_baseline_readiness_summary(
+            daily_shadow_review_summary,
+            shadow_discrepancy_summary,
+        )
+        daily_shadow_review_summary["discrepancy_summary"] = shadow_discrepancy_summary
+        daily_shadow_review_summary["shadow_readiness_summary"] = shadow_readiness_summary
+        daily_shadow_review_summary["stage_gate_summary"] = build_shadow_stage_gate_summary(
+            daily_shadow_review_summary
+        )
+        daily_shadow_review_summary["soak_summary"] = build_shadow_soak_summary(
+            daily_shadow_review_summary
+        )
+        daily_shadow_ops_summary = build_daily_shadow_ops_summary(daily_shadow_review_summary)
         return {
             "status": "ok",
             "token_count": len(tokens),
             "event_log": str(self.event_log),
             "signal_log": str(self.signal_log),
-            "allocation_summary": _summarize_allocation_decisions(self.signal_log, limit=200),
+            "allocation_summary": allocation_summary,
+            "candidate_snapshot": candidate_snapshot,
+            "shadow_baseline_summary": build_shadow_baseline_summary(
+                allocation_summary=allocation_summary,
+                candidate_snapshot=candidate_snapshot,
+            ),
+            "stage_gate_summary": daily_shadow_review_summary.get("stage_gate_summary"),
+            "daily_shadow_review_summary": daily_shadow_review_summary,
+            "shadow_discrepancy_summary": shadow_discrepancy_summary,
+            "shadow_readiness_summary": shadow_readiness_summary,
+            "shadow_stage_gate_summary": daily_shadow_review_summary.get("stage_gate_summary") or {},
+            "shadow_soak_summary": daily_shadow_review_summary.get("soak_summary") or {},
+            "shadow_next_stage_execution_template": daily_shadow_review_summary.get("next_stage_execution_template") or {},
+            "shadow_next_stage_execution_state": shadow_next_stage_execution_state,
+            "shadow_feedback_summary": daily_shadow_review_summary.get("shadow_feedback_summary") or {},
+            "shadow_feedback_override_packet": daily_shadow_ops_summary.get("shadow_feedback_override_packet") or {},
+            "daily_shadow_ops_summary": daily_shadow_ops_summary,
             "schema_path": "docs/schema/shadow_gui.yaml",
         }
 
@@ -181,6 +270,76 @@ class ShadowGuiApi:
     ) -> dict[str, object]:
         self._require_token(token)
         return _summarize_allocation_decisions(self.signal_log, limit=limit)
+
+    def shadow_baseline_report(
+        self,
+        *,
+        token: str | None = None,
+    ) -> dict[str, object]:
+        self._require_token(token)
+        allocation_summary = _summarize_allocation_decisions(self.signal_log, limit=200)
+        candidate_snapshot = summarize_candidate_surface(self.signal_log, limit=200)
+        return write_shadow_baseline_report(
+            allocation_summary=allocation_summary,
+            candidate_snapshot=candidate_snapshot,
+            output_dir=self.report_dir,
+        )
+
+    def daily_shadow_review_report(
+        self,
+        *,
+        token: str | None = None,
+        stage_gate_summary: dict[str, Any] | None = None,
+        window_hours: int = 24,
+    ) -> dict[str, object]:
+        self._require_token(token)
+        allocation_summary = _summarize_allocation_decisions(self.signal_log, limit=200)
+        candidate_snapshot = summarize_candidate_surface(self.signal_log, limit=200)
+        shadow_next_stage_execution_state = summarize_shadow_next_stage_execution(
+            self.shadow_next_stage_execution_ledger_path
+        )
+        return write_daily_shadow_review_report(
+            allocation_summary=allocation_summary,
+            candidate_snapshot=candidate_snapshot,
+            fill_store=self._fill_shadow_store(),
+            broker_shadow_event_log=self.broker_shadow_event_log,
+            shadow_next_stage_execution_state=shadow_next_stage_execution_state,
+            history_path=self.daily_shadow_history_path,
+            discrepancy_ledger_path=self.daily_shadow_discrepancy_ledger_path,
+            stage_gate_summary=stage_gate_summary,
+            output_dir=self.report_dir,
+            window_hours=window_hours,
+        )
+
+    def daily_shadow_ops_report(
+        self,
+        *,
+        token: str | None = None,
+        stage_gate_summary: dict[str, Any] | None = None,
+        window_hours: int = 24,
+    ) -> dict[str, object]:
+        self._require_token(token)
+        allocation_summary = _summarize_allocation_decisions(self.signal_log, limit=200)
+        candidate_snapshot = summarize_candidate_surface(self.signal_log, limit=200)
+        shadow_next_stage_execution_state = summarize_shadow_next_stage_execution(
+            self.shadow_next_stage_execution_ledger_path
+        )
+        review_summary = build_daily_shadow_review_summary(
+            allocation_summary=allocation_summary,
+            candidate_snapshot=candidate_snapshot,
+            fill_store=self._fill_shadow_store(),
+            broker_shadow_event_log=self.broker_shadow_event_log,
+            shadow_next_stage_execution_state=shadow_next_stage_execution_state,
+            history_path=self.daily_shadow_history_path,
+            discrepancy_ledger_path=self.daily_shadow_discrepancy_ledger_path,
+            stage_gate_summary=stage_gate_summary,
+            window_hours=window_hours,
+        )
+        return write_daily_shadow_ops_report(
+            summary=review_summary,
+            output_dir=self.report_dir,
+            notification_log=self.daily_shadow_notification_log,
+        )
 
     def _require_token(self, token: str | None) -> None:
         tokens = _load_tokens(self.token_path)
@@ -200,6 +359,12 @@ class ShadowGuiApi:
         with self.audit_log.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(payload, ensure_ascii=False))
             handle.write("\n")
+
+    def _fill_shadow_store(self) -> FillShadowStore:
+        return FillShadowStore(
+            event_log_path=self.broker_shadow_event_log,
+            session_log_path=self.broker_shadow_session_log,
+        )
 
 
 def _load_tokens(path: Path) -> set[str]:
@@ -258,41 +423,34 @@ def _shadow_ack_id(reference_id: str) -> str:
 
 
 def _summarize_allocation_decisions(path: Path, *, limit: int) -> dict[str, object]:
-    summary = {"accept": 0, "reject": 0, "defer": 0, "resize": 0, "replace": 0}
     if not path.exists():
-        return {"status": "ok", "count": 0, "summary": summary, "recent": []}
+        return {
+            "status": "ok",
+            "count": 0,
+            "summary": {"accept": 0, "reject": 0, "defer": 0, "resize": 0, "replace": 0},
+            "recent": [],
+            "portfolio_surface": {
+                "active_slots": {"count": 0, "slots": []},
+                "portfolio_group_occupancy": [],
+                "exposure_bucket_occupancy": [],
+            },
+        }
 
-    records: list[dict[str, object]] = []
-    for line in path.read_text(encoding="utf-8").splitlines()[-max(1, limit) :]:
-        if not line.strip():
-            continue
-        try:
-            payload = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if payload.get("event") not in {"signal.generated", "portfolio.admission"}:
-            continue
-        if not payload.get("allocation_decision"):
-            continue
-        status = str(payload.get("status") or "").strip().lower()
-        if status not in summary:
-            continue
-        summary[status] += 1
-        decision = payload.get("allocation_decision")
-        reason_code = None
-        if isinstance(decision, dict):
-            reason_code = decision.get("reason_code")
-        records.append(
-            {
-                "ts": payload.get("ts"),
-                "strategy_id": payload.get("strategy_id"),
-                "symbol": payload.get("symbol"),
-                "status": status,
-                "reason_code": reason_code,
-            }
-        )
-    records.sort(key=lambda item: str(item.get("ts") or ""))
-    return {"status": "ok", "count": len(records), "summary": summary, "recent": records[-5:]}
+    payload = summarize_allocation_surface(path, limit=limit)
+    decisions = payload.get("decisions")
+    recent = decisions[-5:] if isinstance(decisions, list) else []
+    return {
+        "status": payload.get("status", "ok"),
+        "count": payload.get("count", 0),
+        "summary": payload.get("summary", {}),
+        "reason_summary": payload.get("reason_summary", []),
+        "conflict_summary": payload.get("conflict_summary", []),
+        "winner_conflict_summary": payload.get("winner_conflict_summary", []),
+        "winner_bias_summary": payload.get("winner_bias_summary", []),
+        "winner_review_summary": payload.get("winner_review_summary", []),
+        "recent": recent,
+        "portfolio_surface": payload.get("portfolio_surface", {}),
+    }
 
 
 __all__ = ["ShadowAuthError", "ShadowGuiApi"]

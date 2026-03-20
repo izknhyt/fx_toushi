@@ -1,7 +1,7 @@
 # FX Portfolio Tool v2 Specification
 
 Status: draft implementation spec for the next major revision  
-Last updated: 2026-03-16  
+Last updated: 2026-03-20  
 Parent architecture: [FX Portfolio Operating System](/Users/izumimotohayato/development/codex_invest/docs/architecture/fx_portfolio_operating_system.md)
 
 ## 1. Purpose
@@ -38,6 +38,7 @@ v2 で後回しにする範囲:
 - `cost-aware sparse trading`
 - `no-trade is valid`
 - `single decision path`
+- `shadow-feedback closed loop`
 - `USDJPY-first, multi-pair-ready`
 - `personal-use default`
 
@@ -206,6 +207,28 @@ v2 では戦略採用を 3 段階で判断する。
 - runtime stability
 - data freshness
 
+### 8.4 Feedback-To-Admission Loop
+
+v2 では `shadow gate` を pass/fail 判定だけで終わらせない。  
+shadow で観測した discrepancy は admission layer へ戻す。
+
+minimum actionable outputs:
+
+- `admission_penalty`
+- `role_priority_override`
+- `session_block_recommendation`
+- `execution_mode_override`
+
+適用原則:
+
+1. まず `penalty / resize / defer` で edge を削らずに悪化を抑える
+2. 継続的な discrepancy がある場合に `session` や `portfolio_group` を block する
+3. それでも安定しない場合に candidate demotion / replacement を行う
+
+つまり、v2 の主眼は「見つけて止める」ではなく  
+`shadow -> feedback -> admission adjustment`
+の閉ループを作ることにある。
+
 ## 9. Runtime / Shadow / Backtest Parity
 
 v2 の最重要ルールは parity である。
@@ -289,6 +312,18 @@ v2 初期基準 portfolio は、現時点では次を baseline として扱う�
 
 - new strategy onboarding を `standalone + marginal contribution` 必須へ切り替える
 - USDJPY 以外の pair へ水平展開する
+
+### Resolved Rollout Order
+
+現時点での最善の rollout order は次の通りに固定する。
+
+1. `USDJPY baseline` を固定する
+2. `shadow-feedback closed loop` を admission へ接続する
+3. execution / cost 差を calibration する
+4. その baseline に対して `candidate onboarding` を行う
+5. baseline が壊れないことを確認してから `multi-pair preparation` へ進む
+
+この順序より先に multi-pair や strategy count を広げることは、v2 では推奨しない。
 
 ## 14. Acceptance For v2 Roll-In
 

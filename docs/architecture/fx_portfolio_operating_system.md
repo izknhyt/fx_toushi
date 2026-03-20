@@ -1,7 +1,7 @@
 # FX Portfolio Operating System
 
 Status: active architecture reference for new development  
-Last updated: 2026-03-12
+Last updated: 2026-03-20
 
 ## 1. Purpose
 
@@ -26,6 +26,28 @@ Last updated: 2026-03-12
 
 新しい戦略を増やすこと自体は目的ではない。  
 既存ポートフォリオに対して `marginal contribution` が正である場合にのみ採用する。
+
+### 2.1 Best Current Method (Resolved)
+
+現時点で最善なのは、`USDJPY` 上で似た intraday 戦略をさらに増やすことではない。  
+いまのこのリポジトリで最も勝ちやすい方法は、次の順序で進める `closed-loop portfolio operating system` である。
+
+1. `USDJPY` の小さく強い baseline portfolio を固定する
+2. `portfolio admission` で sparse, cost-aware に候補を選別する
+3. `shadow` の drift / missed fills / discrepancy を翌日の admission penalty や `role_priority` override に戻す
+4. `session × liquidity × side` の execution / cost 差を admission と risk に反映する
+5. baseline が shadow で安定してから新戦略を onboarding する
+6. その後に `multi-pair` へ広げる
+
+この順が最善である理由は次の通り。
+
+- 単独戦略の見かけ上の PF より、実運用の slot utility を直接改善できる
+- 過学習しやすい個別戦略チューニングより、運用で観測された悪さを system-wide に是正できる
+- `USDJPY-first` の速い検証速度を保ったまま、将来の `multi-pair` に自然に接続できる
+
+結論として、今後の主軸は `strategy tuning` ではなく  
+`shadow feedback -> admission adjustment -> stable baseline -> candidate onboarding -> multi-pair`
+の順で回すこととする。
 
 ## 3. Non-Goals
 
@@ -130,6 +152,25 @@ Last updated: 2026-03-12
 - 長く居座る候補は厳しく評価
 - 既存ポジションを邪魔する候補は reject/defer
 
+### 5.4 Feedback Layer Is A Control Loop
+
+feedback layer は observability 用の dashboard ではなく、admission を改善する制御ループとして使う。
+
+最低限、shadow / discrepancy から次の action へ変換できることを目標にする。
+
+- `admission_penalty`
+- `role_priority_override`
+- `session_block_recommendation`
+- `execution_mode_override`
+
+原則として、悪化を見つけたらすぐ full disable するのではなく、
+
+1. penalty / resize / defer
+2. session or group block
+3. strategy demotion or replacement
+
+の順で介入する。これにより、期待値を残しつつ実運用差だけを削る。
+
 を実施する。
 
 ## 6. USDJPY-First Build Strategy
@@ -230,13 +271,14 @@ Last updated: 2026-03-12
 
 次の優先順位で進める。
 
-1. `portfolio_admission_v2`
-   `replace/defer`, `slot_cost`, `exposure_bucket`, `max_active_per_group`
-2. runtime / shadow / backtest の decision path 統一
-3. candidate schema の明文化
-4. USDJPY 上の主力 2-3 系統を安定運用
-5. multi-pair expansion
-6. data/execution quality の強化
+1. `shadow feedback -> admission adjustment` の閉ループ化
+   `discrepancy`, `drift`, `missed fills` を penalty / override / block に変換する
+2. execution / cost model の較正
+   `session × liquidity × side` ごとの差を admission と risk に反映する
+3. runtime / shadow / backtest の decision path を運用面まで揃える
+4. `USDJPY` baseline portfolio を shadow で安定運用する
+5. baseline を壊さない形で `candidate onboarding` を進める
+6. `multi-pair expansion`
 
 ## 11. Related Documents
 

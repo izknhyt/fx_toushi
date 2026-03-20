@@ -6,6 +6,7 @@ import pandas as pd
 import yaml
 
 from src.interfaces.cli.gui_sync import GuiDataSyncStopped
+from src.interfaces.gui.candidate_surface import summarize_candidate_surface
 from src.interfaces.gui.web_server import (
     GuiOpsRuntimeConfig,
     GuiOpsRuntimeController,
@@ -200,7 +201,18 @@ def test_allocation_decisions_payload_filters_scope_and_summarizes(tmp_path: Pat
             "ts": "2026-03-16T13:20:00Z",
             "strategy_id": "alpha",
             "symbol": "USDJPY",
-            "allocation_decision": {"decision": "accept", "reason_code": "selected"},
+            "candidate_id": "cand-alpha",
+            "candidate": {
+                "candidate_id": "cand-alpha",
+                "portfolio_group": "usd_jpy_breakout",
+                "exposure_bucket": "usd_jpy_long",
+            },
+            "allocation_decision": {
+                "decision": "accept",
+                "reason_code": "selected",
+                "portfolio_group": "usd_jpy_breakout",
+                "exposure_bucket": "usd_jpy_long",
+            },
         },
         {
             "event": "portfolio.admission",
@@ -208,7 +220,31 @@ def test_allocation_decisions_payload_filters_scope_and_summarizes(tmp_path: Pat
             "ts": "2026-03-16T13:21:00Z",
             "strategy_id": "beta",
             "symbol": "USDJPY",
-            "allocation_decision": {"decision": "reject", "reason_code": "tie_break_lost"},
+            "allocation_decision": {
+                "decision": "reject",
+                "reason_code": "tie_break_lost",
+                "blocked_by_strategy_id": "alpha",
+                "blocked_by_position_id": "pos-alpha-1",
+                "replaced_candidate_id": "cand-alpha",
+            },
+        },
+        {
+            "event": "signal.generated",
+            "status": "generated",
+            "ts": "2026-03-16T13:21:30Z",
+            "strategy_id": "alpha",
+            "symbol": "USDJPY",
+            "candidate_id": "cand-alpha",
+            "candidate": {
+                "candidate_id": "cand-alpha",
+                "strategy_id": "alpha",
+                "symbol": "USDJPY",
+                "portfolio_group": "usd_jpy_breakout",
+                "exposure_bucket": "usd_jpy_long",
+                "side": "long",
+                "expected_holding_minutes": 60,
+                "quality_score": 1.1,
+            },
         },
         {
             "event": "portfolio.admission",
@@ -242,7 +278,113 @@ def test_allocation_decisions_payload_filters_scope_and_summarizes(tmp_path: Pat
     assert payload["summary"]["accept"] == 1
     assert payload["summary"]["reject"] == 1
     assert payload["summary"]["defer"] == 0
+    assert payload["reason_summary"] == [
+        {"reason_code": "selected", "count": 1},
+        {"reason_code": "tie_break_lost", "count": 1},
+    ]
+    assert payload["winner_conflict_summary"] == [
+        {
+            "reason_code": "tie_break_lost",
+            "winner_strategy_id": "alpha",
+            "winner_portfolio_group": "usd_jpy_breakout",
+            "winner_exposure_bucket": "usd_jpy_long",
+            "count": 1,
+        }
+    ]
+    assert payload["winner_bias_summary"] == [
+        {
+            "winner_strategy_id": "alpha",
+            "winner_portfolio_group": "usd_jpy_breakout",
+            "winner_exposure_bucket": "usd_jpy_long",
+            "count": 1,
+            "top_reason_code": "tie_break_lost",
+            "share_pct": 100.0,
+        }
+    ]
+    assert payload["winner_review_summary"] == [
+        {
+            "winner_strategy_id": "alpha",
+            "winner_portfolio_group": "usd_jpy_breakout",
+            "winner_exposure_bucket": "usd_jpy_long",
+            "count": 1,
+            "share_pct": 100.0,
+            "top_reason_code": "tie_break_lost",
+            "suggested_action": "review_role_priority",
+        }
+    ]
+    assert payload["decisions"][1]["blocked_by_position_id"] == "pos-alpha-1"
+    assert payload["decisions"][1]["replaced_candidate"]["strategy_id"] == "alpha"
+    assert payload["decisions"][1]["replaced_candidate"]["exposure_bucket"] == "usd_jpy_long"
+    assert payload["conflict_summary"] == [
+        {
+            "reason_code": "tie_break_lost",
+            "portfolio_group": "(unassigned)",
+            "exposure_bucket": "(unassigned)",
+            "count": 1,
+        }
+    ]
     assert {item["strategy_id"] for item in payload["decisions"]} == {"alpha", "beta"}
+    assert payload["portfolio_surface"]["active_slots"]["count"] == 1
+    assert payload["portfolio_surface"]["portfolio_group_occupancy"] == [
+        {
+            "portfolio_group": "usd_jpy_breakout",
+            "active_count": 1,
+            "strategy_ids": ["alpha"],
+            "symbols": ["USDJPY"],
+        }
+    ]
+    assert payload["portfolio_surface"]["exposure_bucket_occupancy"] == [
+        {
+            "exposure_bucket": "usd_jpy_long",
+            "active_count": 1,
+            "strategy_ids": ["alpha"],
+            "symbols": ["USDJPY"],
+        }
+    ]
+
+
+def test_candidate_surface_joins_generated_candidates_with_admission_reason(tmp_path: Path) -> None:
+    path = tmp_path / "signal.generated.jsonl"
+    rows = [
+        {
+            "event": "signal.generated",
+            "status": "generated",
+            "ts": "2026-03-16T13:19:00Z",
+            "strategy_id": "alpha",
+            "symbol": "USDJPY",
+            "candidate_id": "cand-alpha",
+            "candidate": {
+                "candidate_id": "cand-alpha",
+                "strategy_id": "alpha",
+                "symbol": "USDJPY",
+                "side": "long",
+                "confidence": 0.7,
+                "estimated_cost": 0.02,
+                "expected_holding_minutes": 120.0,
+                "portfolio_group": "usd_jpy_breakout",
+                "exposure_bucket": "usd_jpy_long",
+                "quality_score": 1.4,
+            },
+        },
+        {
+            "event": "portfolio.admission",
+            "status": "accept",
+            "ts": "2026-03-16T13:20:00Z",
+            "strategy_id": "alpha",
+            "symbol": "USDJPY",
+            "candidate_id": "cand-alpha",
+            "allocation_decision": {"decision": "accept", "reason_code": "selected"},
+        },
+    ]
+    path.write_text("\n".join(json.dumps(row, ensure_ascii=False) for row in rows) + "\n", encoding="utf-8")
+
+    payload = summarize_candidate_surface(path, limit=50)
+
+    assert payload["count"] == 1
+    assert payload["candidates"][0]["strategy_id"] == "alpha"
+    assert payload["candidates"][0]["decision_status"] == "accept"
+    assert payload["candidates"][0]["decision_reason_code"] == "selected"
+    assert payload["decision_summary"] == [{"decision_status": "accept", "count": 1}]
 
 
 def test_resolve_sync_source_dir_chooses_freshest_dataset_dir(tmp_path: Path, monkeypatch) -> None:

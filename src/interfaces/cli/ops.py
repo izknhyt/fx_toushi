@@ -23,6 +23,11 @@ from src.ops import (
 from src.ops.action_sync import ActionSyncError, sync_action_items
 from src.ops.automation import AutomationEffectDelta
 from src.ops.coaching import CoachingPlaybook
+from src.ops.shadow_next_stage import (
+    DEFAULT_SHADOW_NEXT_STAGE_AUTOMATION_CONFIG_PATH,
+    DEFAULT_SHADOW_NEXT_STAGE_EXECUTION_LEDGER_PATH,
+    run_shadow_next_stage_daily,
+)
 from src.ops.profit_readiness import (
     DEFAULT_PROFIT_READINESS_PATH,
     EXIT_GUARDED,
@@ -65,12 +70,20 @@ __all__ = [
     "OpsAgendaService",
     "OpsDrillService",
     "OpsWorklogEntry",
+    "shadow_next_stage_daily",
 ]
 
 DEFAULT_GATE_STATE_PATH = Path("snapshots/latest/gate_state.json")
 DEFAULT_OPS_WORKLOG_PATH = Path("ops_worklog.jsonl")
 DEFAULT_OPS_READINESS_CONFIG = Path("config/ops_readiness.yaml")
 DEFAULT_OPS_READINESS_METRICS = Path("metrics/ops_readiness.jsonl")
+DEFAULT_SHADOW_SIGNAL_LOG = Path("logs/events/signal.generated.jsonl")
+DEFAULT_SHADOW_NOTIFICATION_LOG = Path("logs/ops/shadow_daily_notifications.jsonl")
+DEFAULT_SHADOW_HISTORY_PATH = Path("reports/analysis/shadow/daily_shadow_review_history.jsonl")
+DEFAULT_SHADOW_DISCREPANCY_LEDGER_PATH = Path("reports/analysis/shadow/shadow_discrepancy_ledger.jsonl")
+DEFAULT_SHADOW_BROKER_EVENT_LOG = Path("logs/broker/shadow_events.jsonl")
+DEFAULT_SHADOW_BROKER_SESSION_LOG = Path("logs/broker/shadow_sessions.jsonl")
+DEFAULT_SHADOW_REPORT_DIR = Path("reports/analysis/shadow")
 
 
 def _utcnow() -> str:
@@ -251,6 +264,41 @@ def worklog_list(
         for entry in service.query(window=window, task=task)
     ]
     return {"status": "ok", "count": len(entries), "entries": entries}
+
+
+def shadow_next_stage_daily(
+    *,
+    signal_log: Path = DEFAULT_SHADOW_SIGNAL_LOG,
+    broker_shadow_event_log: Path = DEFAULT_SHADOW_BROKER_EVENT_LOG,
+    broker_shadow_session_log: Path = DEFAULT_SHADOW_BROKER_SESSION_LOG,
+    history_path: Path = DEFAULT_SHADOW_HISTORY_PATH,
+    discrepancy_ledger_path: Path = DEFAULT_SHADOW_DISCREPANCY_LEDGER_PATH,
+    notification_log: Path = DEFAULT_SHADOW_NOTIFICATION_LOG,
+    automation_config_path: Path = DEFAULT_SHADOW_NEXT_STAGE_AUTOMATION_CONFIG_PATH,
+    execution_ledger_path: Path = DEFAULT_SHADOW_NEXT_STAGE_EXECUTION_LEDGER_PATH,
+    output_dir: Path = DEFAULT_SHADOW_REPORT_DIR,
+    output_prefix: str = "daily_shadow_next_stage",
+    limit: int = 200,
+    window_hours: int = 24,
+    run: bool = False,
+) -> dict[str, object]:
+    """Render daily shadow review/ops summary and optionally execute qualified next-stage."""
+
+    return run_shadow_next_stage_daily(
+        signal_log=signal_log,
+        broker_shadow_event_log=broker_shadow_event_log,
+        broker_shadow_session_log=broker_shadow_session_log,
+        history_path=history_path,
+        discrepancy_ledger_path=discrepancy_ledger_path,
+        notification_log=notification_log,
+        automation_config_path=automation_config_path,
+        execution_ledger_path=execution_ledger_path,
+        output_dir=output_dir,
+        output_prefix=output_prefix,
+        limit=limit,
+        window_hours=window_hours,
+        run=run,
+    )
 
 
 def readiness(

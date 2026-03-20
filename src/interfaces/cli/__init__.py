@@ -248,6 +248,7 @@ from .ops import (
     drill_start,
     drill_step,
     readiness,
+    shadow_next_stage_daily,
     agenda,
     automation_add,
     worklog_add,
@@ -6079,6 +6080,114 @@ def create_cli_app() -> typer.Typer:
         }
         _render_payload(console, result_payload, json_output=effective_json)
 
+    @portfolio_app.command("next-stage")
+    def portfolio_next_stage_command(
+        ctx: typer.Context,
+        summary_json: Path | None = typer.Option(None, "--summary-json", help="Shadow review or ops summary JSON path"),
+        phase: str | None = typer.Option(None, "--phase", help="Explicit next-stage phase override"),
+        manifest_path: Path = typer.Option(
+            Path("config") / "strategy_manifest.parallel_portfolio_v2.yaml",
+            "--manifest-path",
+            help="Portfolio manifest path",
+        ),
+        allocation_config_path: Path = typer.Option(
+            Path("config") / "strategy_allocation.yaml",
+            "--allocation-config-path",
+            help="Allocation config path",
+        ),
+        allocation_profile: str = typer.Option(
+            "portfolio_admission_v2",
+            "--allocation-profile",
+            help="Allocation profile name",
+        ),
+        data_path: Path | None = typer.Option(None, "--data-path", help="Merged parquet path"),
+        candidate_strategies: str | None = typer.Option(None, "--candidate-strategies", help="Comma-separated candidate strategy ids"),
+        baseline_strategies: str | None = typer.Option(None, "--baseline-strategies", help="Comma-separated baseline strategy ids"),
+        next_symbol: str | None = typer.Option(None, "--next-symbol", help="Next symbol for multi-pair preparation"),
+        profile_path: Path = typer.Option(
+            Path("config") / "profiles" / "paper.yaml",
+            "--profile",
+            help="Profile path for symbol defaults",
+        ),
+        data_dir: Path = typer.Option(
+            Path("data") / "research" / "curated",
+            "--data-dir",
+            help="Curated data root",
+        ),
+        feature_config: Path = typer.Option(
+            Path("config") / "feature_pipeline.yaml",
+            "--feature-config",
+            help="Feature pipeline config",
+        ),
+        data_manifest: Path = typer.Option(
+            Path("reports") / "data_manifest.json",
+            "--data-manifest",
+            help="Data manifest path",
+        ),
+        windows: str = typer.Option("", "--windows", help="Comma-separated windows override"),
+        output_prefix: str = typer.Option(
+            "shadow_next_stage",
+            "--output-prefix",
+            help="Output prefix used for generated artifacts",
+        ),
+        output_dir: Path = typer.Option(
+            portfolio_output_dir,
+            "--output-dir",
+            help="Directory for deterministic CLI summary artifacts",
+        ),
+        run: bool = typer.Option(False, "--run", help="Execute the generated next-stage packet"),
+        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
+    ) -> None:
+        effective_json = _effective_json_output(ctx, json_output)
+        output_dir.mkdir(parents=True, exist_ok=True)
+        summary_json_path = output_dir / f"{output_prefix}.json"
+        summary_md_path = output_dir / f"{output_prefix}.md"
+        command = [
+            sys.executable,
+            "tools/run_shadow_next_stage.py",
+            "--manifest-path",
+            str(manifest_path),
+            "--allocation-config-path",
+            str(allocation_config_path),
+            "--allocation-profile",
+            allocation_profile,
+            "--profile",
+            str(profile_path),
+            "--data-dir",
+            str(data_dir),
+            "--feature-config",
+            str(feature_config),
+            "--data-manifest",
+            str(data_manifest),
+            "--output-dir",
+            str(output_dir),
+            "--output-prefix",
+            output_prefix,
+        ]
+        if summary_json is not None:
+            command.extend(["--summary-json", str(summary_json)])
+        if phase:
+            command.extend(["--phase", phase])
+        if data_path is not None:
+            command.extend(["--data-path", str(data_path)])
+        if candidate_strategies:
+            command.extend(["--candidate-strategies", candidate_strategies])
+        if baseline_strategies:
+            command.extend(["--baseline-strategies", baseline_strategies])
+        if next_symbol:
+            command.extend(["--next-symbol", next_symbol])
+        if windows:
+            command.extend(["--windows", windows])
+        if run:
+            command.append("--run")
+        payload = _run_portfolio_tool(
+            command_name="next-stage",
+            command=command,
+            output_json=summary_json_path,
+            output_md=summary_md_path,
+        )
+        _render_payload(console, payload, json_output=effective_json)
+
     app.add_typer(portfolio_app, name="portfolio")
 
     scoreboard_app = typer.Typer(help="Scoreboard utilities")
@@ -9149,6 +9258,82 @@ def create_cli_app() -> typer.Typer:
             export=export,
             json_output=effective_json,
             console=console,
+        )
+        _render_payload(console, payload, json_output=effective_json)
+
+    @ops_app.command("shadow-next-stage")
+    def ops_shadow_next_stage_command(
+        ctx: typer.Context,
+        signal_log: Path = typer.Option(
+            Path("logs") / "events" / "signal.generated.jsonl",
+            "--signal-log",
+            help="Signal event log path.",
+        ),
+        broker_shadow_event_log: Path = typer.Option(
+            Path("logs") / "broker" / "shadow_events.jsonl",
+            "--broker-shadow-event-log",
+            help="Broker shadow event log path.",
+        ),
+        broker_shadow_session_log: Path = typer.Option(
+            Path("logs") / "broker" / "shadow_sessions.jsonl",
+            "--broker-shadow-session-log",
+            help="Broker shadow session log path.",
+        ),
+        history_path: Path = typer.Option(
+            Path("reports") / "analysis" / "shadow" / "daily_shadow_review_history.jsonl",
+            "--history-path",
+            help="Daily shadow review history path.",
+        ),
+        discrepancy_ledger_path: Path = typer.Option(
+            Path("reports") / "analysis" / "shadow" / "shadow_discrepancy_ledger.jsonl",
+            "--discrepancy-ledger-path",
+            help="Shadow discrepancy ledger path.",
+        ),
+        notification_log: Path = typer.Option(
+            Path("logs") / "ops" / "shadow_daily_notifications.jsonl",
+            "--notification-log",
+            help="Daily shadow notification log path.",
+        ),
+        automation_config_path: Path = typer.Option(
+            Path("config") / "shadow_next_stage_automation.yaml",
+            "--automation-config-path",
+            help="Shadow next-stage automation config path.",
+        ),
+        execution_ledger_path: Path = typer.Option(
+            Path("logs") / "ops" / "shadow_next_stage_execution.jsonl",
+            "--execution-ledger-path",
+            help="Shadow next-stage execution ledger path.",
+        ),
+        output_dir: Path = typer.Option(
+            Path("reports") / "analysis" / "shadow",
+            "--output-dir",
+            help="Output directory for daily shadow automation artifacts.",
+        ),
+        output_prefix: str = typer.Option(
+            "daily_shadow_next_stage",
+            "--output-prefix",
+            help="Output prefix for daily shadow automation artifacts.",
+        ),
+        limit: int = typer.Option(200, "--limit", help="Maximum recent rows to summarize."),
+        window_hours: int = typer.Option(24, "--window-hours", help="Lookback window in hours."),
+        run: bool = typer.Option(False, "--run", help="Execute the qualified next-stage command when ready."),
+        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
+    ) -> None:
+        effective_json = _effective_json_output(ctx, json_output)
+        payload = shadow_next_stage_daily(
+            signal_log=signal_log,
+            broker_shadow_event_log=broker_shadow_event_log,
+            broker_shadow_session_log=broker_shadow_session_log,
+            history_path=history_path,
+            discrepancy_ledger_path=discrepancy_ledger_path,
+            notification_log=notification_log,
+            automation_config_path=automation_config_path,
+            execution_ledger_path=execution_ledger_path,
+            output_dir=output_dir,
+            output_prefix=output_prefix,
+            limit=limit,
+            window_hours=window_hours,
+            run=run,
         )
         _render_payload(console, payload, json_output=effective_json)
 
