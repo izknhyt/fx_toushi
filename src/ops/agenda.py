@@ -954,6 +954,10 @@ def _collect_shadow_daily_review_tasks(
     next_stage_template_action = str(latest.get("next_stage_template_action") or "continue_shadow")
     next_stage_template_runbook_ref = str(latest.get("next_stage_template_runbook_ref") or "")
     next_stage_template_runner_command = str(latest.get("next_stage_template_runner_command") or "")
+    focused_validation_template_status = str(latest.get("focused_validation_template_status") or "unknown")
+    focused_validation_template_action = str(latest.get("focused_validation_template_action") or "skip_focused_validation")
+    focused_validation_template_runbook_ref = str(latest.get("focused_validation_template_runbook_ref") or "")
+    focused_validation_template_runner_command = str(latest.get("focused_validation_template_runner_command") or "")
     execution = _latest_shadow_next_stage_execution(
         execution_log,
         review_date_utc=str(latest.get("review_date_utc") or ""),
@@ -971,6 +975,9 @@ def _collect_shadow_daily_review_tasks(
     elif soak_ready and qualified_next_phase == "candidate_onboarding":
         task = "Start candidate onboarding review"
         estimate = 30
+    elif focused_validation_template_status in {"ready", "pending_inputs"}:
+        task = "Run shadow feedback validation"
+        estimate = max(estimate, 20)
     if execution_status == "completed":
         task = "Monitor shadow next-stage rollout"
         estimate = max(estimate, 20)
@@ -1000,6 +1007,21 @@ def _collect_shadow_daily_review_tasks(
             + (
                 f" / runner={next_stage_template_runner_command}"
                 if next_stage_template_runner_command
+                else ""
+            )
+            + (
+                f" / focused_validation={focused_validation_template_status}:{focused_validation_template_action}"
+                if focused_validation_template_status not in {"", "unknown", "not_required"}
+                else ""
+            )
+            + (
+                f" / focused_runbook={focused_validation_template_runbook_ref}"
+                if focused_validation_template_runbook_ref
+                else ""
+            )
+            + (
+                f" / focused_runner={focused_validation_template_runner_command}"
+                if focused_validation_template_runner_command
                 else ""
             )
             + (

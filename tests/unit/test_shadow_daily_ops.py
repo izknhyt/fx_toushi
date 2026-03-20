@@ -111,6 +111,9 @@ def test_build_daily_shadow_ops_summary_sets_notification_fields() -> None:
     assert ops_summary["shadow_feedback_override_packet"]["status"] == "ok"
     assert ops_summary["runtime_guardrail_summary"]["status"] == "guarded"
     assert ops_summary["focused_validation_summary"]["status"] == "recommended"
+    assert ops_summary["focused_validation_template_status"] == "pending_inputs"
+    assert ops_summary["focused_validation_template_runbook_ref"].endswith("PORTFOLIO-SHADOW-FEEDBACK-01.md")
+    assert "tradectl portfolio shadow-feedback-validate" in ops_summary["focused_validation_template_runner_command"]
 
 
 def test_build_daily_shadow_ops_summary_notifies_on_blocked_readiness_without_alert() -> None:
@@ -224,3 +227,4 @@ def test_render_daily_shadow_ops_report_contains_sections() -> None:
     assert "Stage Gate" in text
     assert "next_stage_template_runbook_ref" in text
     assert "Allocator Feedback Candidates" in text
+    assert "PORTFOLIO-SHADOW-FEEDBACK-01.md" in text

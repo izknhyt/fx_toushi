@@ -6188,6 +6188,89 @@ def create_cli_app() -> typer.Typer:
         )
         _render_payload(console, payload, json_output=effective_json)
 
+    @portfolio_app.command("shadow-feedback-validate")
+    def portfolio_shadow_feedback_validate_command(
+        ctx: typer.Context,
+        shadow_review_json: Path | None = typer.Option(None, "--shadow-review-json", help="Daily shadow review summary JSON path"),
+        shadow_ops_json: Path | None = typer.Option(None, "--shadow-ops-json", help="Daily shadow ops summary JSON path"),
+        override_packet_json: Path | None = typer.Option(None, "--override-packet-json", help="Materialized shadow feedback override packet JSON path"),
+        data_path: Path = typer.Option(..., "--data-path", help="Merged parquet path"),
+        manifest_path: Path = typer.Option(
+            Path("config") / "strategy_manifest.parallel_portfolio_v2.yaml",
+            "--manifest-path",
+            help="Portfolio manifest path",
+        ),
+        allocation_config_path: Path = typer.Option(
+            Path("config") / "strategy_allocation.yaml",
+            "--allocation-config-path",
+            help="Allocation config path",
+        ),
+        allocation_profile: str = typer.Option(
+            "portfolio_admission_v2",
+            "--allocation-profile",
+            help="Allocation profile name",
+        ),
+        windows: str = typer.Option("2016_2021,2016_2025", "--windows", help="Comma-separated focused validation windows"),
+        output_prefix: str = typer.Option(
+            "shadow_feedback_validation",
+            "--output-prefix",
+            help="Output prefix used for generated artifacts",
+        ),
+        output_dir: Path = typer.Option(
+            portfolio_output_dir,
+            "--output-dir",
+            help="Directory for deterministic CLI summary artifacts",
+        ),
+        runtime_guardrail_path: Path | None = typer.Option(
+            None,
+            "--runtime-guardrail-path",
+            help="Optional JSON path to write an active runtime guardrail payload.",
+        ),
+        run: bool = typer.Option(False, "--run", help="Execute focused validation before rendering summary"),
+        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
+    ) -> None:
+        effective_json = _effective_json_output(ctx, json_output)
+        output_dir.mkdir(parents=True, exist_ok=True)
+        summary_json_path = output_dir / f"{output_prefix}.json"
+        summary_md_path = output_dir / f"{output_prefix}.md"
+        command = [
+            sys.executable,
+            "tools/run_shadow_feedback_validation.py",
+            "--data-path",
+            str(data_path),
+            "--manifest-path",
+            str(manifest_path),
+            "--allocation-config-path",
+            str(allocation_config_path),
+            "--allocation-profile",
+            allocation_profile,
+            "--windows",
+            windows,
+            "--output-prefix",
+            output_prefix,
+            "--output-json",
+            str(summary_json_path),
+            "--output-md",
+            str(summary_md_path),
+        ]
+        if shadow_review_json is not None:
+            command.extend(["--shadow-review-json", str(shadow_review_json)])
+        if shadow_ops_json is not None:
+            command.extend(["--shadow-ops-json", str(shadow_ops_json)])
+        if override_packet_json is not None:
+            command.extend(["--override-packet-json", str(override_packet_json)])
+        if runtime_guardrail_path is not None:
+            command.extend(["--runtime-guardrail-path", str(runtime_guardrail_path)])
+        if run:
+            command.append("--run")
+        payload = _run_portfolio_tool(
+            command_name="shadow-feedback-validate",
+            command=command,
+            output_json=summary_json_path,
+            output_md=summary_md_path,
+        )
+        _render_payload(console, payload, json_output=effective_json)
+
     app.add_typer(portfolio_app, name="portfolio")
 
     scoreboard_app = typer.Typer(help="Scoreboard utilities")

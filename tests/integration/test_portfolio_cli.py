@@ -224,3 +224,49 @@ def test_portfolio_next_stage_cli_wraps_tool(monkeypatch, tmp_path: Path) -> Non
     assert payload["command"] == "next-stage"
     assert payload["summary_json"].endswith("shadow_next_stage.json")
     assert payload["result"]["packet"]["phase"] == "candidate_onboarding"
+
+
+def test_portfolio_shadow_feedback_validate_cli_wraps_tool(monkeypatch, tmp_path: Path) -> None:
+    def _fake_run(cmd: list[str], **kwargs) -> subprocess.CompletedProcess[str]:
+        output_json = Path(cmd[cmd.index("--output-json") + 1])
+        output_md = Path(cmd[cmd.index("--output-md") + 1])
+        payload = {
+            "generated_at_utc": "2026-03-20T12:30:00+00:00",
+            "validation_decision": {"decision": "hold", "reasons": ["mixed_validation_result"]},
+            "runtime_guardrail_state": {"status": "hold"},
+            "windows": [{"window_name": "2016_2021"}],
+        }
+        output_json.parent.mkdir(parents=True, exist_ok=True)
+        output_md.parent.mkdir(parents=True, exist_ok=True)
+        output_json.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        output_md.write_text("# shadow-feedback\n", encoding="utf-8")
+        return subprocess.CompletedProcess(cmd, 0, stdout=json.dumps(payload), stderr="")
+
+    monkeypatch.setattr(subprocess, "run", _fake_run)
+    app = create_cli_app()
+    runner = CliRunner()
+    data_path = tmp_path / "data.parquet"
+    packet_path = tmp_path / "packet.json"
+    data_path.write_text("stub", encoding="utf-8")
+    packet_path.write_text("{}", encoding="utf-8")
+
+    result = runner.invoke(
+        app,
+        [
+            "portfolio",
+            "shadow-feedback-validate",
+            "--override-packet-json",
+            str(packet_path),
+            "--data-path",
+            str(data_path),
+            "--output-dir",
+            str(tmp_path / "out"),
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["status"] == "ok"
+    assert payload["command"] == "shadow-feedback-validate"
+    assert payload["result"]["validation_decision"]["decision"] == "hold"

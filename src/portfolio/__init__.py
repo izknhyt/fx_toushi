@@ -21,6 +21,7 @@ from .shadow_feedback_validation import (
     materialize_shadow_feedback_override_config,
     resolve_shadow_feedback_focused_windows,
 )
+from .shadow_feedback_template import build_shadow_feedback_validation_template
 from .reallocation import PortfolioReallocator, ReallocationSuggestion
 
 __all__ = [
@@ -33,6 +34,7 @@ __all__ = [
     "build_shadow_feedback_runtime_guardrail_state",
     "build_shadow_feedback_validation_decision",
     "build_shadow_feedback_validation_summary",
+    "build_shadow_feedback_validation_template",
     "build_shadow_feedback_validation_case",
     "build_shadow_feedback_summary",
     "load_shadow_feedback_override_packet",

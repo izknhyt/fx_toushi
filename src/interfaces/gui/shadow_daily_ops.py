@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from src.portfolio.shadow_feedback import materialize_shadow_feedback_override_packet
+from src.portfolio.shadow_feedback_template import build_shadow_feedback_validation_template
 
 
 def build_daily_shadow_ops_summary(summary: Mapping[str, Any]) -> dict[str, Any]:
@@ -28,6 +29,9 @@ def build_daily_shadow_ops_summary(summary: Mapping[str, Any]) -> dict[str, Any]
         else {}
     )
     shadow_feedback_override_packet = materialize_shadow_feedback_override_packet(shadow_feedback)
+    focused_validation_template = build_shadow_feedback_validation_template(
+        shadow_feedback_override_packet
+    )
     active_rows = discrepancy.get("active_discrepancies") if isinstance(discrepancy.get("active_discrepancies"), list) else []
     readiness_status = str(readiness.get("readiness_status") or "unknown")
     stage_gate_status = str(stage_gate.get("status") or stage_gate.get("stage_gate_status") or "unknown")
@@ -96,6 +100,14 @@ def build_daily_shadow_ops_summary(summary: Mapping[str, Any]) -> dict[str, Any]
         "allocator_feedback_candidates": list(shadow_feedback.get("allocator_feedback_candidates") or []),
         "runtime_guardrail_summary": dict(shadow_feedback_override_packet.get("runtime_guardrail") or {}),
         "focused_validation_summary": dict(shadow_feedback_override_packet.get("focused_validation") or {}),
+        "focused_validation_template": focused_validation_template,
+        "focused_validation_template_status": str(focused_validation_template.get("status") or "unknown"),
+        "focused_validation_template_action": str(focused_validation_template.get("next_action") or "skip_focused_validation"),
+        "focused_validation_template_runbook_ref": str(focused_validation_template.get("runbook_ref") or ""),
+        "focused_validation_template_runner_command": str(focused_validation_template.get("runner_command") or ""),
+        "focused_validation_template_required_inputs": [
+            str(item) for item in (focused_validation_template.get("required_inputs") or [])
+        ],
         "active_discrepancy_count": int(discrepancy.get("active_discrepancy_count") or 0),
         "max_consecutive_open_days": int(discrepancy.get("max_consecutive_open_days") or 0),
         "reasons": [str(item) for item in (alert.get("reasons") or [])],
@@ -144,6 +156,7 @@ def render_daily_shadow_ops_report(ops_summary: Mapping[str, Any]) -> str:
         f"- shadow_feedback_candidate_count: `{ops_summary.get('shadow_feedback_candidate_count')}`",
         f"- runtime_guardrail_status: `{((ops_summary.get('runtime_guardrail_summary') or {}).get('status'))}`",
         f"- focused_validation_status: `{((ops_summary.get('focused_validation_summary') or {}).get('status'))}`",
+        f"- focused_validation_template_status: `{ops_summary.get('focused_validation_template_status')}`",
         f"- drift_event_count: `{ops_summary.get('drift_event_count')}`",
         f"- missed_fill_count: `{ops_summary.get('missed_fill_count')}`",
         f"- active_discrepancy_count: `{ops_summary.get('active_discrepancy_count')}`",
@@ -222,6 +235,16 @@ def render_daily_shadow_ops_report(ops_summary: Mapping[str, Any]) -> str:
         lines.append(
             f"- command_template: `{((ops_summary.get('focused_validation_summary') or {}).get('command_template'))}`"
         )
+        if ops_summary.get("focused_validation_template"):
+            lines.append(
+                f"- template_status: `{ops_summary.get('focused_validation_template_status')}`"
+            )
+            lines.append(
+                f"- runbook_ref: `{ops_summary.get('focused_validation_template_runbook_ref')}`"
+            )
+            lines.append(
+                f"- runner_command: `{ops_summary.get('focused_validation_template_runner_command')}`"
+            )
     else:
         lines.append("- none")
     lines.extend(["", "## Allocator Feedback Candidates", ""])
@@ -287,6 +310,10 @@ def append_shadow_notification(ops_summary: Mapping[str, Any], notification_log:
         "next_stage_template_action": ops_summary.get("next_stage_template_action"),
         "next_stage_template_runbook_ref": ops_summary.get("next_stage_template_runbook_ref"),
         "next_stage_template_runner_command": ops_summary.get("next_stage_template_runner_command"),
+        "focused_validation_template_status": ops_summary.get("focused_validation_template_status"),
+        "focused_validation_template_action": ops_summary.get("focused_validation_template_action"),
+        "focused_validation_template_runbook_ref": ops_summary.get("focused_validation_template_runbook_ref"),
+        "focused_validation_template_runner_command": ops_summary.get("focused_validation_template_runner_command"),
         "worsening_signals": list(ops_summary.get("worsening_signals") or []),
         "resolution_state": ops_summary.get("resolution_state"),
         "open_discrepancy_count": ops_summary.get("open_discrepancy_count"),

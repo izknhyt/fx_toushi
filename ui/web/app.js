@@ -698,6 +698,16 @@ function renderOps(payload) {
           `feedback_override: status=${shadowFeedbackOverride.status || "-"} runtime=${((shadowFeedbackOverride.runtime_guardrail || {}).status) || "-"} validation=${((shadowFeedbackOverride.focused_validation || {}).status) || "-"}`
         ]
       : [];
+  const focusedValidationTemplate =
+    payload && typeof payload.daily_shadow_ops_summary === "object"
+      ? payload.daily_shadow_ops_summary.focused_validation_template || null
+      : null;
+  const focusedValidationTemplateLine =
+    focusedValidationTemplate && Object.keys(focusedValidationTemplate).length > 0
+      ? [
+          `focused_validation_template: status=${focusedValidationTemplate.status || "-"} action=${focusedValidationTemplate.next_action || "-"} runbook=${focusedValidationTemplate.runbook_ref || "-"}`
+        ]
+      : [];
   const allocationRecentLines = allocationDecisions.map((entry) => {
     const decision = entry.allocation_decision || {};
     const reason = decision.reason_code || entry.reason || "-";
@@ -745,6 +755,7 @@ function renderOps(payload) {
     ...shadowFeedbackLine,
     ...allocatorFeedbackLines,
     ...shadowFeedbackPacketLine,
+    ...focusedValidationTemplateLine,
     ...allocationRecentLines,
     ...candidateRecentLines,
     ...warningLine,
