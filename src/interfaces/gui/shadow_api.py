@@ -284,6 +284,7 @@ class ShadowGuiApi:
             "shadow_feedback_override_packet": daily_shadow_ops_summary.get("shadow_feedback_override_packet") or {},
             "shadow_feedback_validation_result": shadow_feedback_validation_result,
             "shadow_feedback_rollout_alignment": shadow_feedback_rollout_alignment,
+            "shadow_feedback_recovery_packet": daily_shadow_ops_summary.get("shadow_feedback_recovery_packet") or {},
             "shadow_feedback_rollout_history": load_shadow_feedback_rollout_history(
                 self.shadow_feedback_rollout_history_path
             ),

@@ -114,6 +114,10 @@ def test_build_daily_shadow_ops_summary_sets_notification_fields() -> None:
     assert ops_summary["focused_validation_template_status"] == "pending_inputs"
     assert ops_summary["focused_validation_template_runbook_ref"].endswith("PORTFOLIO-SHADOW-FEEDBACK-01.md")
     assert "tradectl portfolio shadow-feedback-validate" in ops_summary["focused_validation_template_runner_command"]
+    assert ops_summary["shadow_feedback_recovery_status"] == "not_required"
+    assert ops_summary["shadow_feedback_recovery_action"] == "continue_shadow"
+    assert ops_summary["shadow_feedback_recovery_runbook_ref"].endswith("PORTFOLIO-SHADOW-ROLLBACK-01.md")
+    assert ops_summary["shadow_feedback_recovery_runner_command"] == ""
 
 
 def test_build_daily_shadow_ops_summary_notifies_on_blocked_readiness_without_alert() -> None:
@@ -255,6 +259,7 @@ def test_build_daily_shadow_ops_summary_escalates_rollout_mismatch_streak(tmp_pa
     assert ops_summary["rollout_mismatch_streak_days"] == 3
     assert ops_summary["rollout_rollback_recommended"] is True
     assert ops_summary["rollout_stronger_freeze"] is True
+    assert ops_summary["shadow_feedback_recovery_action"] == "rollback_baseline"
 
 
 def test_build_daily_shadow_ops_summary_promotes_stage_gate_ready_phase() -> None:
@@ -352,3 +357,4 @@ def test_render_daily_shadow_ops_report_contains_sections() -> None:
     assert "next_stage_template_runbook_ref" in text
     assert "Allocator Feedback Candidates" in text
     assert "PORTFOLIO-SHADOW-FEEDBACK-01.md" in text
+    assert "PORTFOLIO-SHADOW-ROLLBACK-01.md" in text

@@ -444,6 +444,11 @@ def test_agenda_elevates_validation_execution_mismatch(tmp_path: Path) -> None:
                 "runtime_guardrail_manual_clear_required": True,
                 "shadow_feedback_rollout_alignment_status": "mismatch",
                 "shadow_feedback_rollout_recommended_action": "review_or_stop_rollout",
+                "shadow_feedback_recovery_status": "ready",
+                "shadow_feedback_recovery_action": "clear_runtime_guardrail",
+                "shadow_feedback_recovery_runbook_ref": "docs/runbooks/PORTFOLIO-SHADOW-ROLLBACK-01.md",
+                "shadow_feedback_recovery_runner_command": "tradectl portfolio shadow-feedback-recover",
+                "shadow_feedback_recovery_execute_command": "tradectl portfolio shadow-feedback-recover --run",
                 "next_stage_template_phase": "candidate_onboarding",
                 "next_stage_template_runbook_ref": "docs/runbooks/PORTFOLIO-CANDIDATE-01.md",
                 "next_stage_template_runner_command": "tradectl portfolio next-stage --phase candidate_onboarding",
@@ -468,11 +473,13 @@ def test_agenda_elevates_validation_execution_mismatch(tmp_path: Path) -> None:
     finally:
         agenda_module.SHADOW_DAILY_NOTIFICATION_LOG_PATH = original_path
 
-    matching = [task for task in ctx.operational_tasks if task["task"] == "Manual clear runtime guardrail for rollout drift"]
+    matching = [task for task in ctx.operational_tasks if task["task"] == "Execute rollout drift recovery checklist"]
     assert len(matching) == 1
     assert "rollout_alignment=mismatch:review_or_stop_rollout" in str(matching[0]["notes"])
     assert "runtime_guardrail=blocked" in str(matching[0]["notes"])
     assert "manual_clear_required=true" in str(matching[0]["notes"])
+    assert "recovery_runbook=docs/runbooks/PORTFOLIO-SHADOW-ROLLBACK-01.md" in str(matching[0]["notes"])
+    assert "recovery_execute=tradectl portfolio shadow-feedback-recover --run" in str(matching[0]["notes"])
 
 
 def test_agenda_elevates_rollout_rollback_recommendation(tmp_path: Path) -> None:
@@ -497,6 +504,11 @@ def test_agenda_elevates_rollout_rollback_recommendation(tmp_path: Path) -> None
                 "rollout_rollback_recommended": True,
                 "shadow_feedback_rollout_alignment_status": "mismatch",
                 "shadow_feedback_rollout_recommended_action": "review_or_stop_rollout",
+                "shadow_feedback_recovery_status": "ready",
+                "shadow_feedback_recovery_action": "rollback_baseline",
+                "shadow_feedback_recovery_runbook_ref": "docs/runbooks/PORTFOLIO-SHADOW-ROLLBACK-01.md",
+                "shadow_feedback_recovery_runner_command": "tradectl portfolio shadow-feedback-recover",
+                "shadow_feedback_recovery_execute_command": "tradectl portfolio shadow-feedback-recover --run",
             }
         )
         + "\n",
@@ -518,6 +530,7 @@ def test_agenda_elevates_rollout_rollback_recommendation(tmp_path: Path) -> None
     finally:
         agenda_module.SHADOW_DAILY_NOTIFICATION_LOG_PATH = original_path
 
-    matching = [task for task in ctx.operational_tasks if task["task"] == "Review baseline rollback after rollout drift streak"]
+    matching = [task for task in ctx.operational_tasks if task["task"] == "Execute baseline rollback recovery checklist"]
     assert len(matching) == 1
     assert "manual_clear_required=true" in str(matching[0]["notes"])
+    assert "recovery=ready:rollback_baseline" in str(matching[0]["notes"])

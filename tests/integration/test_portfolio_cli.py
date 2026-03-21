@@ -270,3 +270,42 @@ def test_portfolio_shadow_feedback_validate_cli_wraps_tool(monkeypatch, tmp_path
     assert payload["status"] == "ok"
     assert payload["command"] == "shadow-feedback-validate"
     assert payload["result"]["validation_decision"]["decision"] == "hold"
+
+
+def test_portfolio_shadow_feedback_recover_cli_wraps_tool(monkeypatch, tmp_path: Path) -> None:
+    def _fake_run(cmd: list[str], **kwargs) -> subprocess.CompletedProcess[str]:
+        output_json = Path(cmd[cmd.index("--output-dir") + 1]) / "shadow_feedback_recovery.json"
+        output_md = Path(cmd[cmd.index("--output-dir") + 1]) / "shadow_feedback_recovery.md"
+        payload = {
+            "status": "ok",
+            "packet": {
+                "status": "ready",
+                "recovery_action": "rollback_baseline",
+                "runbook_ref": "docs/runbooks/PORTFOLIO-SHADOW-ROLLBACK-01.md",
+            },
+        }
+        output_json.parent.mkdir(parents=True, exist_ok=True)
+        output_json.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        output_md.write_text("# shadow-feedback-recover\n", encoding="utf-8")
+        return subprocess.CompletedProcess(cmd, 0, stdout=json.dumps(payload), stderr="")
+
+    monkeypatch.setattr(subprocess, "run", _fake_run)
+    app = create_cli_app()
+    runner = CliRunner()
+
+    result = runner.invoke(
+        app,
+        [
+            "portfolio",
+            "shadow-feedback-recover",
+            "--output-dir",
+            str(tmp_path / "out"),
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["status"] == "ok"
+    assert payload["command"] == "shadow-feedback-recover"
+    assert payload["result"]["packet"]["recovery_action"] == "rollback_baseline"

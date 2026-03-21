@@ -671,6 +671,12 @@ function renderOps(payload) {
       : payload && typeof payload.daily_shadow_ops_summary === "object"
         ? payload.daily_shadow_ops_summary.shadow_feedback_rollout_alignment || null
         : null;
+  const shadowFeedbackRecovery =
+    payload && typeof payload.shadow_feedback_recovery_packet === "object"
+      ? payload.shadow_feedback_recovery_packet
+      : payload && typeof payload.daily_shadow_ops_summary === "object"
+        ? payload.daily_shadow_ops_summary.shadow_feedback_recovery_packet || null
+        : null;
   const executionLatest =
     executionState && typeof executionState.latest === "object" ? executionState.latest : null;
   const executionSummary =
@@ -738,6 +744,18 @@ function renderOps(payload) {
           `focused_validation_rollout: alignment=${shadowFeedbackRolloutAlignment.alignment_status || "-"} validation=${shadowFeedbackRolloutAlignment.validation_decision || "-"} execution=${shadowFeedbackRolloutAlignment.execution_status || "-"} phase=${shadowFeedbackRolloutAlignment.execution_phase || "-"} action=${shadowFeedbackRolloutAlignment.recommended_action || "-"}`
         ]
       : [];
+  const shadowFeedbackRecoveryLine =
+    shadowFeedbackRecovery && Object.keys(shadowFeedbackRecovery).length > 0
+      ? [
+          `rollback_recovery: status=${shadowFeedbackRecovery.status || "-"} action=${shadowFeedbackRecovery.recovery_action || "-"} runbook=${shadowFeedbackRecovery.runbook_ref || "-"} execute=${shadowFeedbackRecovery.execute_command || "-"}`
+        ]
+      : [];
+  const shadowFeedbackRecoveryChecklistLines =
+    shadowFeedbackRecovery && Array.isArray(shadowFeedbackRecovery.recovery_checklist)
+      ? shadowFeedbackRecovery.recovery_checklist.slice(0, 4).map((entry) =>
+          `rollback_checklist: ${entry}`
+        )
+      : [];
   const allocationRecentLines = allocationDecisions.map((entry) => {
     const decision = entry.allocation_decision || {};
     const reason = decision.reason_code || entry.reason || "-";
@@ -789,6 +807,8 @@ function renderOps(payload) {
     ...focusedValidationResultLine,
     ...focusedValidationWindowLines,
     ...focusedValidationRolloutLine,
+    ...shadowFeedbackRecoveryLine,
+    ...shadowFeedbackRecoveryChecklistLines,
     ...allocationRecentLines,
     ...candidateRecentLines,
     ...warningLine,

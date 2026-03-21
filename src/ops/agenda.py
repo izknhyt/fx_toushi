@@ -965,6 +965,11 @@ def _collect_shadow_daily_review_tasks(
     rollout_guardrail_status = str(latest.get("rollout_guardrail_status") or "monitor")
     rollout_mismatch_streak_days = int(latest.get("rollout_mismatch_streak_days") or 0)
     rollout_rollback_recommended = bool(latest.get("rollout_rollback_recommended"))
+    recovery_status = str(latest.get("shadow_feedback_recovery_status") or "unknown")
+    recovery_action = str(latest.get("shadow_feedback_recovery_action") or "continue_shadow")
+    recovery_runbook_ref = str(latest.get("shadow_feedback_recovery_runbook_ref") or "")
+    recovery_runner_command = str(latest.get("shadow_feedback_recovery_runner_command") or "")
+    recovery_execute_command = str(latest.get("shadow_feedback_recovery_execute_command") or "")
     execution = _latest_shadow_next_stage_execution(
         execution_log,
         review_date_utc=str(latest.get("review_date_utc") or ""),
@@ -976,10 +981,10 @@ def _collect_shadow_daily_review_tasks(
     estimate = 30 if alert_level == "warn" else 60 if alert_level == "critical" or readiness_status == "blocked" else 15
     task = "Review shadow daily summary"
     if rollout_rollback_recommended or rollout_guardrail_status == "rollback_recommendation":
-        task = "Review baseline rollback after rollout drift streak"
+        task = "Execute baseline rollback recovery checklist"
         estimate = max(estimate, 60)
     elif runtime_guardrail_manual_clear_required:
-        task = "Manual clear runtime guardrail for rollout drift"
+        task = "Execute rollout drift recovery checklist"
         estimate = max(estimate, 60)
     elif rollout_alignment_status == "mismatch":
         task = "Immediate validation-execution drift review"
@@ -1038,6 +1043,26 @@ def _collect_shadow_daily_review_tasks(
             + (
                 f" / focused_runner={focused_validation_template_runner_command}"
                 if focused_validation_template_runner_command
+                else ""
+            )
+            + (
+                f" / recovery={recovery_status}:{recovery_action}"
+                if recovery_status not in {"", "unknown", "not_required"}
+                else ""
+            )
+            + (
+                f" / recovery_runbook={recovery_runbook_ref}"
+                if recovery_runbook_ref
+                else ""
+            )
+            + (
+                f" / recovery_runner={recovery_runner_command}"
+                if recovery_runner_command
+                else ""
+            )
+            + (
+                f" / recovery_execute={recovery_execute_command}"
+                if recovery_execute_command
                 else ""
             )
             + (

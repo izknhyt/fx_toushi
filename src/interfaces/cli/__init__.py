@@ -6271,6 +6271,61 @@ def create_cli_app() -> typer.Typer:
         )
         _render_payload(console, payload, json_output=effective_json)
 
+    @portfolio_app.command("shadow-feedback-recover")
+    def portfolio_shadow_feedback_recover_command(
+        ctx: typer.Context,
+        shadow_ops_json: Path | None = typer.Option(None, "--shadow-ops-json", help="Daily shadow ops summary JSON path"),
+        search_dir: Path = typer.Option(
+            Path("reports") / "analysis" / "shadow",
+            "--search-dir",
+            help="Directory to scan for latest daily shadow ops summary.",
+        ),
+        output_prefix: str = typer.Option(
+            "shadow_feedback_recovery",
+            "--output-prefix",
+            help="Output prefix used for generated artifacts",
+        ),
+        output_dir: Path = typer.Option(
+            portfolio_output_dir,
+            "--output-dir",
+            help="Directory for deterministic CLI summary artifacts",
+        ),
+        ledger_path: Path = typer.Option(
+            Path("logs") / "ops" / "shadow_feedback_recovery.jsonl",
+            "--ledger-path",
+            help="Recovery execution ledger path.",
+        ),
+        run: bool = typer.Option(False, "--run", help="Append a recovery execution ledger entry."),
+        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
+    ) -> None:
+        effective_json = _effective_json_output(ctx, json_output)
+        output_dir.mkdir(parents=True, exist_ok=True)
+        summary_json_path = output_dir / f"{output_prefix}.json"
+        summary_md_path = output_dir / f"{output_prefix}.md"
+        command = [
+            sys.executable,
+            "tools/run_shadow_feedback_recovery.py",
+            "--search-dir",
+            str(search_dir),
+            "--output-dir",
+            str(output_dir),
+            "--output-prefix",
+            output_prefix,
+            "--ledger-path",
+            str(ledger_path),
+        ]
+        if shadow_ops_json is not None:
+            command.extend(["--shadow-ops-json", str(shadow_ops_json)])
+        if run:
+            command.append("--run")
+        payload = _run_portfolio_tool(
+            command_name="shadow-feedback-recover",
+            command=command,
+            output_json=summary_json_path,
+            output_md=summary_md_path,
+        )
+        _render_payload(console, payload, json_output=effective_json)
+
     app.add_typer(portfolio_app, name="portfolio")
 
     scoreboard_app = typer.Typer(help="Scoreboard utilities")

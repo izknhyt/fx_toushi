@@ -18,6 +18,7 @@ from src.interfaces.gui.shadow_feedback_rollout_history import (
     build_shadow_feedback_rollout_guardrail_summary,
     load_shadow_feedback_rollout_history,
 )
+from src.portfolio.shadow_feedback_recovery import build_shadow_feedback_recovery_packet
 from src.portfolio.shadow_feedback import (
     materialize_effective_shadow_feedback_override_packet,
     materialize_shadow_feedback_override_packet,
@@ -214,6 +215,27 @@ def build_daily_shadow_ops_summary(
     ops_summary["rollout_mismatch_streak_days"] = int(rollout_guardrail_summary.get("mismatch_streak_days") or 0)
     ops_summary["rollout_rollback_recommended"] = bool(rollout_guardrail_summary.get("rollback_recommendation"))
     ops_summary["rollout_stronger_freeze"] = bool(rollout_guardrail_summary.get("stronger_freeze"))
+    shadow_feedback_recovery_packet = build_shadow_feedback_recovery_packet(ops_summary)
+    ops_summary["shadow_feedback_recovery_packet"] = shadow_feedback_recovery_packet
+    ops_summary["shadow_feedback_recovery_status"] = str(shadow_feedback_recovery_packet.get("status") or "unknown")
+    ops_summary["shadow_feedback_recovery_action"] = str(
+        shadow_feedback_recovery_packet.get("recovery_action") or "continue_shadow"
+    )
+    ops_summary["shadow_feedback_recovery_runbook_ref"] = str(
+        shadow_feedback_recovery_packet.get("runbook_ref") or ""
+    )
+    ops_summary["shadow_feedback_recovery_runner_command"] = str(
+        shadow_feedback_recovery_packet.get("runner_command") or ""
+    )
+    ops_summary["shadow_feedback_recovery_execute_command"] = str(
+        shadow_feedback_recovery_packet.get("execute_command") or ""
+    )
+    ops_summary["shadow_feedback_recovery_checklist"] = [
+        str(item) for item in (shadow_feedback_recovery_packet.get("recovery_checklist") or [])
+    ]
+    ops_summary["shadow_feedback_recovery_clear_conditions"] = [
+        str(item) for item in (shadow_feedback_recovery_packet.get("clear_conditions") or [])
+    ]
     if ops_summary["rollout_rollback_recommended"]:
         ops_summary["headline"] = "critical: review_baseline_rollback"
         ops_summary["should_notify"] = True
@@ -255,6 +277,8 @@ def render_daily_shadow_ops_report(ops_summary: Mapping[str, Any]) -> str:
         f"- rollout_guardrail_status: `{ops_summary.get('rollout_guardrail_status')}`",
         f"- rollout_mismatch_streak_days: `{ops_summary.get('rollout_mismatch_streak_days')}`",
         f"- rollout_rollback_recommended: `{ops_summary.get('rollout_rollback_recommended')}`",
+        f"- shadow_feedback_recovery_status: `{ops_summary.get('shadow_feedback_recovery_status')}`",
+        f"- shadow_feedback_recovery_action: `{ops_summary.get('shadow_feedback_recovery_action')}`",
         f"- focused_validation_status: `{((ops_summary.get('focused_validation_summary') or {}).get('status'))}`",
         f"- focused_validation_template_status: `{ops_summary.get('focused_validation_template_status')}`",
         f"- drift_event_count: `{ops_summary.get('drift_event_count')}`",
@@ -311,6 +335,25 @@ def render_daily_shadow_ops_report(ops_summary: Mapping[str, Any]) -> str:
         )
         for item in ops_summary.get("next_stage_template_checklist", []):
             lines.append(f"- checklist: {item}")
+    else:
+        lines.append("- none")
+    lines.extend(["", "## Rollback Recovery", ""])
+    if ops_summary.get("shadow_feedback_recovery_packet"):
+        lines.append(f"- status: `{ops_summary.get('shadow_feedback_recovery_status')}`")
+        lines.append(f"- action: `{ops_summary.get('shadow_feedback_recovery_action')}`")
+        lines.append(
+            f"- runbook_ref: `{ops_summary.get('shadow_feedback_recovery_runbook_ref')}`"
+        )
+        lines.append(
+            f"- runner_command: `{ops_summary.get('shadow_feedback_recovery_runner_command')}`"
+        )
+        lines.append(
+            f"- execute_command: `{ops_summary.get('shadow_feedback_recovery_execute_command')}`"
+        )
+        for item in ops_summary.get("shadow_feedback_recovery_checklist", []):
+            lines.append(f"- checklist: {item}")
+        for item in ops_summary.get("shadow_feedback_recovery_clear_conditions", []):
+            lines.append(f"- clear_condition: {item}")
     else:
         lines.append("- none")
     lines.extend(["", "## Shadow Feedback", ""])
@@ -442,6 +485,15 @@ def append_shadow_notification(ops_summary: Mapping[str, Any], notification_log:
         "rollout_mismatch_streak_days": ops_summary.get("rollout_mismatch_streak_days"),
         "rollout_rollback_recommended": ops_summary.get("rollout_rollback_recommended"),
         "rollout_stronger_freeze": ops_summary.get("rollout_stronger_freeze"),
+        "shadow_feedback_recovery_status": ops_summary.get("shadow_feedback_recovery_status"),
+        "shadow_feedback_recovery_action": ops_summary.get("shadow_feedback_recovery_action"),
+        "shadow_feedback_recovery_runbook_ref": ops_summary.get("shadow_feedback_recovery_runbook_ref"),
+        "shadow_feedback_recovery_runner_command": ops_summary.get("shadow_feedback_recovery_runner_command"),
+        "shadow_feedback_recovery_execute_command": ops_summary.get("shadow_feedback_recovery_execute_command"),
+        "shadow_feedback_recovery_checklist": list(ops_summary.get("shadow_feedback_recovery_checklist") or []),
+        "shadow_feedback_recovery_clear_conditions": list(
+            ops_summary.get("shadow_feedback_recovery_clear_conditions") or []
+        ),
         "shadow_feedback_rollout_alignment_status": ops_summary.get("shadow_feedback_rollout_alignment_status"),
         "shadow_feedback_rollout_recommended_action": (
             (ops_summary.get("shadow_feedback_rollout_alignment") or {}).get("recommended_action")

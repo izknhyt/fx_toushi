@@ -298,6 +298,7 @@ def test_gui_ops_result_to_dict_includes_candidate_snapshot() -> None:
         shadow_feedback_override_packet={"status": "no_changes", "runtime_guardrail": {"status": "monitor"}},
         shadow_feedback_validation_result={"status": "ok", "decision": "hold", "reasons": ["mixed_validation_result"]},
         shadow_feedback_rollout_alignment={"status": "ok", "alignment_status": "aligned", "validation_decision": "hold"},
+        shadow_feedback_recovery_packet={"status": "not_required", "recovery_action": "continue_shadow"},
         daily_shadow_ops_summary={"status": "ok", "alert_level": "none", "should_notify": False},
     )
 
@@ -308,6 +309,7 @@ def test_gui_ops_result_to_dict_includes_candidate_snapshot() -> None:
     assert payload["candidate_snapshot"]["decision_summary"] == [{"decision_status": "pending", "count": 1}]
     assert payload["shadow_baseline_summary"]["posture"] == "shadow_monitor"
     assert payload["daily_shadow_review_summary"]["posture"] == "shadow_monitor"
+    assert payload["shadow_feedback_recovery_packet"]["status"] == "not_required"
     assert payload["daily_shadow_review_summary"]["trend_summary"]["history_days"] == 1
     assert payload["shadow_discrepancy_summary"]["active_discrepancy_count"] == 0
     assert payload["shadow_readiness_summary"]["readiness_status"] == "ready"
