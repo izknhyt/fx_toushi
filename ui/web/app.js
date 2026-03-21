@@ -750,6 +750,21 @@ function renderOps(payload) {
           `multi_pair_pilot_blockers: ${payload.daily_shadow_ops_summary.multi_pair_pilot_blockers.join(", ")}`
         ]
       : [];
+  const multiPairExpansionLine =
+    payload && typeof payload.daily_shadow_ops_summary === "object"
+      ? [
+          `multi_pair_expansion: gate=${payload.daily_shadow_ops_summary.multi_pair_expansion_gate_status || "-"} current=${payload.daily_shadow_ops_summary.multi_pair_expansion_current_symbol || "-"} next=${payload.daily_shadow_ops_summary.multi_pair_expansion_next_symbol || "-"} action=${payload.daily_shadow_ops_summary.multi_pair_expansion_recommended_action || "-"}`
+        ]
+      : [];
+  const multiPairExpansionBlockerLine =
+    payload &&
+    typeof payload.daily_shadow_ops_summary === "object" &&
+    Array.isArray(payload.daily_shadow_ops_summary.multi_pair_expansion_blockers) &&
+    payload.daily_shadow_ops_summary.multi_pair_expansion_blockers.length > 0
+      ? [
+          `multi_pair_expansion_blockers: ${payload.daily_shadow_ops_summary.multi_pair_expansion_blockers.join(", ")}`
+        ]
+      : [];
   const executionState =
     payload && typeof payload.shadow_next_stage_execution_state === "object"
       ? payload.shadow_next_stage_execution_state
@@ -977,6 +992,8 @@ function renderOps(payload) {
     ...multiPairPilotLine,
     ...multiPairPilotStreakLine,
     ...multiPairPilotBlockerLine,
+    ...multiPairExpansionLine,
+    ...multiPairExpansionBlockerLine,
     ...executionSummaryLine,
     ...executionLine,
     ...shadowFeedbackLine,

@@ -639,3 +639,57 @@ def test_agenda_creates_multi_pair_pilot_task_when_gate_ready(tmp_path: Path) ->
     assert "multi_pair_pilot=ready_for_rollout:start_multi_pair_pilot_rollout" in str(matching[0]["notes"])
     assert "multi_pair_symbol=EURUSD" in str(matching[0]["notes"])
     assert "multi_pair_clear_conditions=execute_multi_pair_pilot_rollout" in str(matching[0]["notes"])
+
+
+def test_agenda_creates_pair_expansion_task_when_gate_ready(tmp_path: Path) -> None:
+    health_state_path = tmp_path / "snapshots" / "latest" / "health_state.json"
+    _write_health_state(health_state_path, [], status="ok")
+
+    notification_log = tmp_path / "logs" / "ops" / "shadow_daily_notifications.jsonl"
+    notification_log.parent.mkdir(parents=True, exist_ok=True)
+    notification_log.write_text(
+        json.dumps(
+            {
+                "event": "shadow.daily_alert",
+                "ts": "2026-01-12T04:00:00Z",
+                "review_date_utc": "2026-01-12",
+                "headline": "ready: review_pair_expansion_candidate",
+                "alert_level": "none",
+                "recommended_action": "review_pair_expansion_candidate",
+                "multi_pair_pilot_completion_gate_status": "qualified_for_pair_expansion",
+                "multi_pair_pilot_execution_status": "started",
+                "multi_pair_pilot_next_symbol": "EURUSD",
+                "multi_pair_pilot_stable_streak_days": 5,
+                "multi_pair_pilot_required_stable_days": 5,
+                "multi_pair_expansion_gate_status": "ready_for_pair_expansion",
+                "multi_pair_expansion_current_symbol": "EURUSD",
+                "multi_pair_expansion_next_symbol": "GBPUSD",
+                "multi_pair_expansion_recommended_action": "review_pair_expansion_candidate",
+                "multi_pair_expansion_blockers": [],
+                "multi_pair_expansion_clear_conditions": [],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    service = OpsAgendaService(
+        template_path=tmp_path / "docs" / "templates" / "daily_agenda.md",
+        output_dir=tmp_path / "docs" / "runbooks" / "daily_agenda",
+        health_state_path=health_state_path,
+    )
+
+    from src.ops import agenda as agenda_module
+
+    original_path = agenda_module.SHADOW_DAILY_NOTIFICATION_LOG_PATH
+    agenda_module.SHADOW_DAILY_NOTIFICATION_LOG_PATH = notification_log
+    try:
+        ctx = service.build_context(target_date=date(2026, 1, 12))
+    finally:
+        agenda_module.SHADOW_DAILY_NOTIFICATION_LOG_PATH = original_path
+
+    matching = [task for task in ctx.operational_tasks if task["task"] == "Review pair expansion candidate"]
+    assert len(matching) == 1
+    assert "pair_expansion=ready_for_pair_expansion:review_pair_expansion_candidate" in str(matching[0]["notes"])
+    assert "pair_expansion_current=EURUSD" in str(matching[0]["notes"])
+    assert "pair_expansion_next=GBPUSD" in str(matching[0]["notes"])

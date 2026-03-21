@@ -404,3 +404,46 @@ def test_portfolio_multi_pair_pilot_cli_wraps_tool(monkeypatch, tmp_path: Path) 
     assert payload["command"] == "multi-pair-pilot"
     assert payload["summary_json"].endswith("multi_pair_pilot_rollout.json")
     assert payload["result"]["packet"]["next_symbol"] == "EURUSD"
+
+
+def test_portfolio_pair_expansion_cli_wraps_tool(monkeypatch, tmp_path: Path) -> None:
+    def _fake_run(cmd: list[str], **kwargs) -> subprocess.CompletedProcess[str]:
+        output_dir = Path(cmd[cmd.index("--output-dir") + 1])
+        output_prefix = cmd[cmd.index("--output-prefix") + 1]
+        output_json = output_dir / f"{output_prefix}.json"
+        output_md = output_dir / f"{output_prefix}.md"
+        payload = {
+            "status": "ok",
+            "summary": {
+                "gate_status": "ready_for_pair_expansion",
+                "current_symbol": "EURUSD",
+                "next_symbol": "GBPUSD",
+                "runbook_ref": "docs/runbooks/PORTFOLIO-MULTIPAIR-03.md",
+            },
+        }
+        output_dir.mkdir(parents=True, exist_ok=True)
+        output_json.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        output_md.write_text("# pair-expansion\n", encoding="utf-8")
+        return subprocess.CompletedProcess(cmd, 0, stdout=json.dumps(payload), stderr="")
+
+    monkeypatch.setattr(subprocess, "run", _fake_run)
+    app = create_cli_app()
+    runner = CliRunner()
+
+    result = runner.invoke(
+        app,
+        [
+            "portfolio",
+            "pair-expansion",
+            "--output-dir",
+            str(tmp_path / "out"),
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["status"] == "ok"
+    assert payload["command"] == "pair-expansion"
+    assert payload["summary_json"].endswith("multi_pair_expansion_gate.json")
+    assert payload["result"]["summary"]["next_symbol"] == "GBPUSD"

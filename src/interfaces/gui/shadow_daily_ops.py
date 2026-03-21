@@ -45,6 +45,7 @@ from src.portfolio.multi_pair_pilot import (
     load_multi_pair_pilot_history,
     summarize_multi_pair_pilot_rollout_execution,
 )
+from src.portfolio.multi_pair_expansion import build_multi_pair_expansion_gate_summary
 from src.portfolio.shadow_rollout_suppression import (
     build_shadow_rollout_suppression_summary,
 )
@@ -534,6 +535,32 @@ def build_daily_shadow_ops_summary(
     ops_summary["multi_pair_pilot_clear_conditions"] = [
         str(item) for item in (multi_pair_pilot_completion_gate.get("clear_conditions") or [])
     ]
+    multi_pair_expansion_gate = build_multi_pair_expansion_gate_summary(ops_summary)
+    ops_summary["multi_pair_expansion_gate_summary"] = multi_pair_expansion_gate
+    ops_summary["multi_pair_expansion_gate_status"] = str(
+        multi_pair_expansion_gate.get("gate_status") or "unknown"
+    )
+    ops_summary["multi_pair_expansion_current_symbol"] = str(
+        multi_pair_expansion_gate.get("current_symbol") or ""
+    )
+    ops_summary["multi_pair_expansion_next_symbol"] = str(
+        multi_pair_expansion_gate.get("next_symbol") or ""
+    )
+    ops_summary["multi_pair_expansion_recommended_action"] = str(
+        multi_pair_expansion_gate.get("recommended_action") or "review_pair_expansion_gate"
+    )
+    ops_summary["multi_pair_expansion_blockers"] = [
+        str(item) for item in (multi_pair_expansion_gate.get("blockers") or [])
+    ]
+    ops_summary["multi_pair_expansion_clear_conditions"] = [
+        str(item) for item in (multi_pair_expansion_gate.get("clear_conditions") or [])
+    ]
+    ops_summary["multi_pair_expansion_runner_command"] = str(
+        multi_pair_expansion_gate.get("runner_command") or ""
+    )
+    ops_summary["multi_pair_expansion_execute_command"] = str(
+        multi_pair_expansion_gate.get("execute_command") or ""
+    )
     if ops_summary["rollout_rollback_recommended"]:
         ops_summary["headline"] = "critical: review_baseline_rollback"
         ops_summary["should_notify"] = True
@@ -594,6 +621,17 @@ def build_daily_shadow_ops_summary(
     ):
         ops_summary["headline"] = "blocked: multi_pair_pilot_completion_gate"
         ops_summary["next_action"] = ops_summary["multi_pair_pilot_recommended_action"]
+        ops_summary["should_notify"] = True
+    if ops_summary["multi_pair_expansion_gate_status"] == "ready_for_pair_expansion":
+        ops_summary["headline"] = "ready: review_pair_expansion_candidate"
+        ops_summary["next_action"] = ops_summary["multi_pair_expansion_recommended_action"]
+        ops_summary["should_notify"] = True
+    elif (
+        ops_summary["multi_pair_expansion_gate_status"] == "blocked"
+        and ops_summary["multi_pair_pilot_completion_gate_status"] == "qualified_for_pair_expansion"
+    ):
+        ops_summary["headline"] = "blocked: multi_pair_expansion_gate"
+        ops_summary["next_action"] = ops_summary["multi_pair_expansion_recommended_action"]
         ops_summary["should_notify"] = True
     return ops_summary
 
@@ -879,6 +917,16 @@ def render_daily_shadow_ops_report(ops_summary: Mapping[str, Any]) -> str:
         lines.append(f"- blocker: `{item}`")
     for item in ops_summary.get("multi_pair_pilot_clear_conditions", []):
         lines.append(f"- clear_condition: `{item}`")
+    lines.extend(["", "## Multi-Pair Pair Expansion Gate", ""])
+    lines.append(f"- gate_status: `{ops_summary.get('multi_pair_expansion_gate_status')}`")
+    lines.append(f"- current_symbol: `{ops_summary.get('multi_pair_expansion_current_symbol')}`")
+    lines.append(f"- next_symbol: `{ops_summary.get('multi_pair_expansion_next_symbol')}`")
+    lines.append(f"- recommended_action: `{ops_summary.get('multi_pair_expansion_recommended_action')}`")
+    lines.append(f"- runner_command: `{ops_summary.get('multi_pair_expansion_runner_command')}`")
+    for item in ops_summary.get("multi_pair_expansion_blockers", []):
+        lines.append(f"- blocker: `{item}`")
+    for item in ops_summary.get("multi_pair_expansion_clear_conditions", []):
+        lines.append(f"- clear_condition: `{item}`")
     lines.extend(["", "## Shadow Feedback", ""])
     for item in ops_summary.get("shadow_feedback_reasons", []):
         lines.append(f"- {item}")
@@ -1085,6 +1133,16 @@ def append_shadow_notification(ops_summary: Mapping[str, Any], notification_log:
             if isinstance(ops_summary.get("multi_pair_pilot_execution_state"), Mapping)
             else {}
         ),
+        "multi_pair_expansion_gate_status": ops_summary.get("multi_pair_expansion_gate_status"),
+        "multi_pair_expansion_current_symbol": ops_summary.get("multi_pair_expansion_current_symbol"),
+        "multi_pair_expansion_next_symbol": ops_summary.get("multi_pair_expansion_next_symbol"),
+        "multi_pair_expansion_recommended_action": ops_summary.get("multi_pair_expansion_recommended_action"),
+        "multi_pair_expansion_blockers": list(ops_summary.get("multi_pair_expansion_blockers") or []),
+        "multi_pair_expansion_clear_conditions": list(
+            ops_summary.get("multi_pair_expansion_clear_conditions") or []
+        ),
+        "multi_pair_expansion_runner_command": ops_summary.get("multi_pair_expansion_runner_command"),
+        "multi_pair_expansion_execute_command": ops_summary.get("multi_pair_expansion_execute_command"),
         "shadow_feedback_recovery_latest_execution": (
             (ops_summary.get("shadow_feedback_recovery_execution_state") or {}).get("latest")
             if isinstance(ops_summary.get("shadow_feedback_recovery_execution_state"), Mapping)
