@@ -118,6 +118,8 @@ def test_build_daily_shadow_ops_summary_sets_notification_fields() -> None:
     assert ops_summary["shadow_feedback_recovery_action"] == "continue_shadow"
     assert ops_summary["shadow_feedback_recovery_runbook_ref"].endswith("PORTFOLIO-SHADOW-ROLLBACK-01.md")
     assert ops_summary["shadow_feedback_recovery_runner_command"] == ""
+    assert ops_summary["shadow_feedback_recovery_resolution_status"] == "not_required"
+    assert ops_summary["shadow_feedback_recovery_recommended_action"] == "continue_shadow"
 
 
 def test_build_daily_shadow_ops_summary_notifies_on_blocked_readiness_without_alert() -> None:
@@ -260,6 +262,29 @@ def test_build_daily_shadow_ops_summary_escalates_rollout_mismatch_streak(tmp_pa
     assert ops_summary["rollout_rollback_recommended"] is True
     assert ops_summary["rollout_stronger_freeze"] is True
     assert ops_summary["shadow_feedback_recovery_action"] == "rollback_baseline"
+    assert ops_summary["shadow_feedback_recovery_resolution_status"] == "pending_execution"
+
+
+def test_build_daily_shadow_ops_summary_marks_recovery_resolved_from_ledger(tmp_path: Path) -> None:
+    summary = _summary()
+    ledger_path = tmp_path / "shadow_feedback_recovery.jsonl"
+    ledger_path.write_text(
+        json.dumps(
+            {
+                "event": "shadow.feedback.recovery",
+                "ts": "2026-03-20T15:00:00Z",
+                "status": "ready",
+                "recovery_action": "rollback_baseline",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    ops_summary = build_daily_shadow_ops_summary(summary, recovery_ledger_path=ledger_path)
+
+    assert ops_summary["shadow_feedback_recovery_resolution_status"] == "resolved"
+    assert ops_summary["shadow_feedback_recovery_execution_state"]["latest"]["recovery_action"] == "rollback_baseline"
 
 
 def test_build_daily_shadow_ops_summary_promotes_stage_gate_ready_phase() -> None:

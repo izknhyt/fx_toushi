@@ -65,6 +65,7 @@ class GuiOpsResult:
     shadow_feedback_validation_result: dict[str, Any]
     shadow_feedback_rollout_alignment: dict[str, Any]
     shadow_feedback_recovery_packet: dict[str, Any]
+    shadow_feedback_recovery_execution_state: dict[str, Any]
     daily_shadow_ops_summary: dict[str, Any]
 
     def to_dict(self) -> dict[str, Any]:
@@ -88,6 +89,7 @@ class GuiOpsResult:
             "shadow_feedback_validation_result": self.shadow_feedback_validation_result,
             "shadow_feedback_rollout_alignment": self.shadow_feedback_rollout_alignment,
             "shadow_feedback_recovery_packet": self.shadow_feedback_recovery_packet,
+            "shadow_feedback_recovery_execution_state": self.shadow_feedback_recovery_execution_state,
             "daily_shadow_ops_summary": self.daily_shadow_ops_summary,
         }
 
@@ -228,6 +230,7 @@ def run_gui_ops_once(
         daily_shadow_review_summary,
         focused_validation_output_dir=Path("reports/analysis/shadow/feedback_validation"),
         rollout_history_path=Path("reports/analysis/shadow/shadow_feedback_rollout_history.jsonl"),
+        recovery_ledger_path=Path("logs/ops/shadow_feedback_recovery.jsonl"),
     )
     shadow_feedback_validation_result = (
         dict(daily_shadow_ops_summary.get("shadow_feedback_validation_result") or {})
@@ -255,6 +258,9 @@ def run_gui_ops_once(
         shadow_feedback_validation_result=shadow_feedback_validation_result,
         shadow_feedback_rollout_alignment=dict(daily_shadow_ops_summary.get("shadow_feedback_rollout_alignment") or {}),
         shadow_feedback_recovery_packet=dict(daily_shadow_ops_summary.get("shadow_feedback_recovery_packet") or {}),
+        shadow_feedback_recovery_execution_state=dict(
+            daily_shadow_ops_summary.get("shadow_feedback_recovery_execution_state") or {}
+        ),
         daily_shadow_ops_summary=daily_shadow_ops_summary,
     )
 

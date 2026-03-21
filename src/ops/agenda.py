@@ -967,6 +967,8 @@ def _collect_shadow_daily_review_tasks(
     rollout_rollback_recommended = bool(latest.get("rollout_rollback_recommended"))
     recovery_status = str(latest.get("shadow_feedback_recovery_status") or "unknown")
     recovery_action = str(latest.get("shadow_feedback_recovery_action") or "continue_shadow")
+    recovery_resolution_status = str(latest.get("shadow_feedback_recovery_resolution_status") or "unknown")
+    recovery_recommended_action = str(latest.get("shadow_feedback_recovery_recommended_action") or "")
     recovery_runbook_ref = str(latest.get("shadow_feedback_recovery_runbook_ref") or "")
     recovery_runner_command = str(latest.get("shadow_feedback_recovery_runner_command") or "")
     recovery_execute_command = str(latest.get("shadow_feedback_recovery_execute_command") or "")
@@ -986,20 +988,29 @@ def _collect_shadow_daily_review_tasks(
     elif runtime_guardrail_manual_clear_required:
         task = "Execute rollout drift recovery checklist"
         estimate = max(estimate, 60)
-    elif rollout_alignment_status == "mismatch":
-        task = "Immediate validation-execution drift review"
-        estimate = max(estimate, 60)
-    elif readiness_status == "blocked" or alert_level == "critical":
-        task = "Immediate shadow discrepancy review"
-    elif soak_ready and qualified_next_phase == "multi_pair_preparation":
-        task = "Start multi-pair preparation"
-    elif soak_ready and qualified_next_phase == "candidate_onboarding":
-        task = "Start candidate onboarding review"
-        estimate = 30
-    elif focused_validation_template_status in {"ready", "pending_inputs"}:
-        task = "Run shadow feedback validation"
-        estimate = max(estimate, 20)
-    if execution_status == "completed":
+    if recovery_resolution_status == "executed_pending_clear":
+        task = "Monitor rollback recovery checklist"
+        estimate = max(estimate, 30)
+    elif task == "Review shadow daily summary":
+        if rollout_alignment_status == "mismatch":
+            task = "Immediate validation-execution drift review"
+            estimate = max(estimate, 60)
+        elif readiness_status == "blocked" or alert_level == "critical":
+            task = "Immediate shadow discrepancy review"
+        elif soak_ready and qualified_next_phase == "multi_pair_preparation":
+            task = "Start multi-pair preparation"
+        elif soak_ready and qualified_next_phase == "candidate_onboarding":
+            task = "Start candidate onboarding review"
+            estimate = 30
+        elif focused_validation_template_status in {"ready", "pending_inputs"}:
+            task = "Run shadow feedback validation"
+            estimate = max(estimate, 20)
+    if execution_status == "completed" and task not in {
+        "Execute baseline rollback recovery checklist",
+        "Execute rollout drift recovery checklist",
+        "Immediate validation-execution drift review",
+        "Monitor rollback recovery checklist",
+    }:
         task = "Monitor shadow next-stage rollout"
         estimate = max(estimate, 20)
     return [
@@ -1048,6 +1059,11 @@ def _collect_shadow_daily_review_tasks(
             + (
                 f" / recovery={recovery_status}:{recovery_action}"
                 if recovery_status not in {"", "unknown", "not_required"}
+                else ""
+            )
+            + (
+                f" / recovery_resolution={recovery_resolution_status}:{recovery_recommended_action}"
+                if recovery_resolution_status not in {"", "unknown", "not_required"}
                 else ""
             )
             + (

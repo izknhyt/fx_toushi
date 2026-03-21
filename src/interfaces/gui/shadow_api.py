@@ -31,6 +31,10 @@ from src.interfaces.gui.shadow_feedback_validation_surface import (
 from src.interfaces.gui.shadow_feedback_rollout_history import (
     load_shadow_feedback_rollout_history,
 )
+from src.interfaces.gui.shadow_feedback_recovery_surface import (
+    DEFAULT_SHADOW_FEEDBACK_RECOVERY_LEDGER,
+    summarize_shadow_feedback_recovery_execution,
+)
 from src.interfaces.gui.shadow_next_stage_surface import (
     DEFAULT_SHADOW_NEXT_STAGE_EXECUTION_LEDGER,
     summarize_shadow_next_stage_execution,
@@ -76,6 +80,7 @@ class ShadowGuiApi:
     daily_shadow_discrepancy_ledger_path: Path = DEFAULT_DAILY_SHADOW_DISCREPANCY_LEDGER
     daily_shadow_notification_log: Path = DEFAULT_DAILY_SHADOW_NOTIFICATION_LOG
     shadow_feedback_rollout_history_path: Path = DEFAULT_SHADOW_FEEDBACK_ROLLOUT_HISTORY
+    shadow_feedback_recovery_ledger_path: Path = DEFAULT_SHADOW_FEEDBACK_RECOVERY_LEDGER
     broker_shadow_event_log: Path = DEFAULT_BROKER_SHADOW_EVENT_LOG
     broker_shadow_session_log: Path = DEFAULT_BROKER_SHADOW_SESSION_LOG
     shadow_next_stage_execution_ledger_path: Path = DEFAULT_SHADOW_NEXT_STAGE_EXECUTION_LEDGER
@@ -248,6 +253,7 @@ class ShadowGuiApi:
             daily_shadow_review_summary,
             focused_validation_output_dir=self.report_dir / "feedback_validation",
             rollout_history_path=self.shadow_feedback_rollout_history_path,
+            recovery_ledger_path=self.shadow_feedback_recovery_ledger_path,
         )
         shadow_feedback_validation_result = (
             dict(daily_shadow_ops_summary.get("shadow_feedback_validation_result") or {})
@@ -260,6 +266,11 @@ class ShadowGuiApi:
             dict(daily_shadow_ops_summary.get("shadow_feedback_rollout_alignment") or {})
             if isinstance(daily_shadow_ops_summary.get("shadow_feedback_rollout_alignment"), Mapping)
             else {}
+        )
+        shadow_feedback_recovery_packet = daily_shadow_ops_summary.get("shadow_feedback_recovery_packet") or {}
+        shadow_feedback_recovery_execution_state = summarize_shadow_feedback_recovery_execution(
+            shadow_feedback_recovery_packet,
+            self.shadow_feedback_recovery_ledger_path,
         )
         return {
             "status": "ok",
@@ -284,7 +295,8 @@ class ShadowGuiApi:
             "shadow_feedback_override_packet": daily_shadow_ops_summary.get("shadow_feedback_override_packet") or {},
             "shadow_feedback_validation_result": shadow_feedback_validation_result,
             "shadow_feedback_rollout_alignment": shadow_feedback_rollout_alignment,
-            "shadow_feedback_recovery_packet": daily_shadow_ops_summary.get("shadow_feedback_recovery_packet") or {},
+            "shadow_feedback_recovery_packet": shadow_feedback_recovery_packet,
+            "shadow_feedback_recovery_execution_state": shadow_feedback_recovery_execution_state,
             "shadow_feedback_rollout_history": load_shadow_feedback_rollout_history(
                 self.shadow_feedback_rollout_history_path
             ),

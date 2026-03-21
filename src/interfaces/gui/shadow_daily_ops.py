@@ -13,6 +13,9 @@ from src.interfaces.gui.shadow_feedback_validation_surface import (
 from src.interfaces.gui.shadow_feedback_rollout_surface import (
     summarize_shadow_feedback_rollout_alignment,
 )
+from src.interfaces.gui.shadow_feedback_recovery_surface import (
+    summarize_shadow_feedback_recovery_execution,
+)
 from src.interfaces.gui.shadow_feedback_rollout_history import (
     append_shadow_feedback_rollout_history,
     build_shadow_feedback_rollout_guardrail_summary,
@@ -31,6 +34,7 @@ def build_daily_shadow_ops_summary(
     *,
     focused_validation_output_dir: Path | None = None,
     rollout_history_path: Path | None = None,
+    recovery_ledger_path: Path | None = None,
 ) -> dict[str, Any]:
     alert = summary.get("alert_summary") or {}
     trend = summary.get("trend_summary") or {}
@@ -216,7 +220,14 @@ def build_daily_shadow_ops_summary(
     ops_summary["rollout_rollback_recommended"] = bool(rollout_guardrail_summary.get("rollback_recommendation"))
     ops_summary["rollout_stronger_freeze"] = bool(rollout_guardrail_summary.get("stronger_freeze"))
     shadow_feedback_recovery_packet = build_shadow_feedback_recovery_packet(ops_summary)
+    shadow_feedback_recovery_execution_state = summarize_shadow_feedback_recovery_execution(
+        shadow_feedback_recovery_packet,
+        ledger_path=recovery_ledger_path
+        if recovery_ledger_path is not None
+        else Path("logs/ops/shadow_feedback_recovery.jsonl"),
+    )
     ops_summary["shadow_feedback_recovery_packet"] = shadow_feedback_recovery_packet
+    ops_summary["shadow_feedback_recovery_execution_state"] = shadow_feedback_recovery_execution_state
     ops_summary["shadow_feedback_recovery_status"] = str(shadow_feedback_recovery_packet.get("status") or "unknown")
     ops_summary["shadow_feedback_recovery_action"] = str(
         shadow_feedback_recovery_packet.get("recovery_action") or "continue_shadow"
@@ -236,6 +247,12 @@ def build_daily_shadow_ops_summary(
     ops_summary["shadow_feedback_recovery_clear_conditions"] = [
         str(item) for item in (shadow_feedback_recovery_packet.get("clear_conditions") or [])
     ]
+    ops_summary["shadow_feedback_recovery_resolution_status"] = str(
+        shadow_feedback_recovery_execution_state.get("resolution_status") or "unknown"
+    )
+    ops_summary["shadow_feedback_recovery_recommended_action"] = str(
+        shadow_feedback_recovery_execution_state.get("recommended_action") or "review_recovery_state"
+    )
     if ops_summary["rollout_rollback_recommended"]:
         ops_summary["headline"] = "critical: review_baseline_rollback"
         ops_summary["should_notify"] = True
@@ -279,6 +296,7 @@ def render_daily_shadow_ops_report(ops_summary: Mapping[str, Any]) -> str:
         f"- rollout_rollback_recommended: `{ops_summary.get('rollout_rollback_recommended')}`",
         f"- shadow_feedback_recovery_status: `{ops_summary.get('shadow_feedback_recovery_status')}`",
         f"- shadow_feedback_recovery_action: `{ops_summary.get('shadow_feedback_recovery_action')}`",
+        f"- shadow_feedback_recovery_resolution_status: `{ops_summary.get('shadow_feedback_recovery_resolution_status')}`",
         f"- focused_validation_status: `{((ops_summary.get('focused_validation_summary') or {}).get('status'))}`",
         f"- focused_validation_template_status: `{ops_summary.get('focused_validation_template_status')}`",
         f"- drift_event_count: `{ops_summary.get('drift_event_count')}`",
@@ -342,6 +360,9 @@ def render_daily_shadow_ops_report(ops_summary: Mapping[str, Any]) -> str:
         lines.append(f"- status: `{ops_summary.get('shadow_feedback_recovery_status')}`")
         lines.append(f"- action: `{ops_summary.get('shadow_feedback_recovery_action')}`")
         lines.append(
+            f"- resolution_status: `{ops_summary.get('shadow_feedback_recovery_resolution_status')}`"
+        )
+        lines.append(
             f"- runbook_ref: `{ops_summary.get('shadow_feedback_recovery_runbook_ref')}`"
         )
         lines.append(
@@ -354,6 +375,24 @@ def render_daily_shadow_ops_report(ops_summary: Mapping[str, Any]) -> str:
             lines.append(f"- checklist: {item}")
         for item in ops_summary.get("shadow_feedback_recovery_clear_conditions", []):
             lines.append(f"- clear_condition: {item}")
+        recovery_execution_state = (
+            ops_summary.get("shadow_feedback_recovery_execution_state")
+            if isinstance(ops_summary.get("shadow_feedback_recovery_execution_state"), Mapping)
+            else {}
+        )
+        if recovery_execution_state:
+            lines.append(
+                f"- execution_recommended_action: `{recovery_execution_state.get('recommended_action')}`"
+            )
+            latest = (
+                recovery_execution_state.get("latest")
+                if isinstance(recovery_execution_state.get("latest"), Mapping)
+                else {}
+            )
+            if latest:
+                lines.append(
+                    f"- latest_execution: action=`{latest.get('recovery_action')}` ts=`{latest.get('ts')}` status=`{latest.get('status')}`"
+                )
     else:
         lines.append("- none")
     lines.extend(["", "## Shadow Feedback", ""])
@@ -490,6 +529,13 @@ def append_shadow_notification(ops_summary: Mapping[str, Any], notification_log:
         "shadow_feedback_recovery_runbook_ref": ops_summary.get("shadow_feedback_recovery_runbook_ref"),
         "shadow_feedback_recovery_runner_command": ops_summary.get("shadow_feedback_recovery_runner_command"),
         "shadow_feedback_recovery_execute_command": ops_summary.get("shadow_feedback_recovery_execute_command"),
+        "shadow_feedback_recovery_resolution_status": ops_summary.get("shadow_feedback_recovery_resolution_status"),
+        "shadow_feedback_recovery_recommended_action": ops_summary.get("shadow_feedback_recovery_recommended_action"),
+        "shadow_feedback_recovery_latest_execution": (
+            (ops_summary.get("shadow_feedback_recovery_execution_state") or {}).get("latest")
+            if isinstance(ops_summary.get("shadow_feedback_recovery_execution_state"), Mapping)
+            else {}
+        ),
         "shadow_feedback_recovery_checklist": list(ops_summary.get("shadow_feedback_recovery_checklist") or []),
         "shadow_feedback_recovery_clear_conditions": list(
             ops_summary.get("shadow_feedback_recovery_clear_conditions") or []
@@ -529,6 +575,7 @@ def write_daily_shadow_ops_report(
         summary,
         focused_validation_output_dir=output_dir / "feedback_validation",
         rollout_history_path=rollout_history_path,
+        recovery_ledger_path=Path("logs/ops/shadow_feedback_recovery.jsonl"),
     )
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     output_dir.mkdir(parents=True, exist_ok=True)

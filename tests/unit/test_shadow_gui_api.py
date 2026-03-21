@@ -159,6 +159,7 @@ def test_shadow_gui_status_and_allocation_summary_include_admission_counts(tmp_p
         report_dir=tmp_path / "reports" / "analysis" / "shadow",
         daily_shadow_history_path=tmp_path / "history" / "daily_shadow_review_history.jsonl",
         daily_shadow_discrepancy_ledger_path=tmp_path / "history" / "daily_shadow_discrepancy_ledger.jsonl",
+        shadow_feedback_recovery_ledger_path=tmp_path / "logs" / "ops" / "shadow_feedback_recovery.jsonl",
         shadow_next_stage_execution_ledger_path=tmp_path / "logs" / "ops" / "shadow_next_stage_execution.jsonl",
     )
     api.shadow_next_stage_execution_ledger_path.parent.mkdir(parents=True, exist_ok=True)
@@ -258,6 +259,8 @@ def test_shadow_gui_status_and_allocation_summary_include_admission_counts(tmp_p
     assert status["shadow_feedback_validation_result"]["status"] == "ok"
     assert status["shadow_feedback_validation_result"]["decision"] == "hold"
     assert status["shadow_feedback_rollout_alignment"]["status"] == "ok"
+    assert status["shadow_feedback_recovery_packet"]["status"] in {"ready", "not_required"}
+    assert status["shadow_feedback_recovery_execution_state"]["status"] == "ok"
     assert "alignment_status" in status["shadow_feedback_rollout_alignment"]
     assert status["daily_shadow_ops_summary"]["status"] == "ok"
     assert "alert_level" in status["daily_shadow_ops_summary"]

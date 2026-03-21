@@ -677,6 +677,12 @@ function renderOps(payload) {
       : payload && typeof payload.daily_shadow_ops_summary === "object"
         ? payload.daily_shadow_ops_summary.shadow_feedback_recovery_packet || null
         : null;
+  const shadowFeedbackRecoveryExecution =
+    payload && typeof payload.shadow_feedback_recovery_execution_state === "object"
+      ? payload.shadow_feedback_recovery_execution_state
+      : payload && typeof payload.daily_shadow_ops_summary === "object"
+        ? payload.daily_shadow_ops_summary.shadow_feedback_recovery_execution_state || null
+        : null;
   const executionLatest =
     executionState && typeof executionState.latest === "object" ? executionState.latest : null;
   const executionSummary =
@@ -756,6 +762,12 @@ function renderOps(payload) {
           `rollback_checklist: ${entry}`
         )
       : [];
+  const shadowFeedbackRecoveryExecutionLine =
+    shadowFeedbackRecoveryExecution && Object.keys(shadowFeedbackRecoveryExecution).length > 0
+      ? [
+          `rollback_execution: resolution=${shadowFeedbackRecoveryExecution.resolution_status || "-"} action=${shadowFeedbackRecoveryExecution.recommended_action || "-"} latest=${shadowFeedbackRecoveryExecution.latest_action || "-"} count=${shadowFeedbackRecoveryExecution.count || 0}`
+        ]
+      : [];
   const allocationRecentLines = allocationDecisions.map((entry) => {
     const decision = entry.allocation_decision || {};
     const reason = decision.reason_code || entry.reason || "-";
@@ -808,6 +820,7 @@ function renderOps(payload) {
     ...focusedValidationWindowLines,
     ...focusedValidationRolloutLine,
     ...shadowFeedbackRecoveryLine,
+    ...shadowFeedbackRecoveryExecutionLine,
     ...shadowFeedbackRecoveryChecklistLines,
     ...allocationRecentLines,
     ...candidateRecentLines,
