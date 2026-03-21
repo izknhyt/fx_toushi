@@ -8,6 +8,7 @@ from typing import Any, Mapping
 from src.portfolio.multi_pair import (
     load_portfolio_pairs_config,
     normalize_symbol,
+    resolve_next_ranked_pair,
     resolve_pair_metadata,
 )
 
@@ -25,7 +26,7 @@ def build_multi_pair_expansion_gate_summary(
         ops_summary.get("multi_pair_pilot_next_symbol") or ops_summary.get("multi_pair_preparation_next_symbol")
     )
     active_symbols = [symbol for symbol in _dedupe([baseline_symbol, current_symbol]) if symbol]
-    next_symbol = _resolve_next_symbol(active_symbols=active_symbols, config_path=config_path)
+    next_symbol = resolve_next_ranked_pair(active_symbols=active_symbols, config_path=config_path)
 
     pilot_gate_status = str(ops_summary.get("multi_pair_pilot_completion_gate_status") or "unknown")
     pilot_execution_status = str(ops_summary.get("multi_pair_pilot_execution_status") or "unknown")
@@ -146,23 +147,6 @@ def render_multi_pair_expansion_gate_report(summary: Mapping[str, Any]) -> str:
     else:
         lines.append("- none")
     return "\n".join(lines) + "\n"
-
-
-def _resolve_next_symbol(*, active_symbols: list[str], config_path: Path | None) -> str:
-    payload = load_portfolio_pairs_config(config_path)
-    pairs = payload.get("pairs") or {}
-    excluded = {normalize_symbol(item) for item in active_symbols if normalize_symbol(item)}
-    ranked: list[tuple[int, str]] = []
-    for symbol in pairs:
-        normalized = normalize_symbol(symbol)
-        if not normalized or normalized in excluded:
-            continue
-        metadata = resolve_pair_metadata(normalized, config_path=config_path)
-        ranked.append((int(metadata.get("pilot_rank") or 999), normalized))
-    if not ranked:
-        return ""
-    ranked.sort(key=lambda item: (item[0], item[1]))
-    return ranked[0][1]
 
 
 def _safe_pair_metadata(symbol: str, *, config_path: Path | None) -> dict[str, Any]:

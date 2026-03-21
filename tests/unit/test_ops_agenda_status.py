@@ -797,3 +797,53 @@ def test_agenda_creates_pair_expansion_re_review_task_when_guardrail_requires_it
     assert matching
     assert "pair_expansion_rollout_guardrail=re_review_required:re_review_pair_expansion_rollout" in str(matching[0]["notes"])
     assert "pair_expansion_rollout_blockers=runtime_guardrail_status=blocked" in str(matching[0]["notes"])
+
+
+def test_agenda_creates_next_pair_review_task_after_steady_state_qualification(tmp_path: Path) -> None:
+    notification_log = tmp_path / "logs" / "ops" / "shadow_daily_notifications.jsonl"
+    notification_log.parent.mkdir(parents=True, exist_ok=True)
+    notification_log.write_text(
+        json.dumps(
+            {
+                "event": "shadow.daily_alert",
+                "ts": "2026-03-21T09:00:00Z",
+                "review_date_utc": "2026-03-21",
+                "headline": "ready: review_next_pair_candidate",
+                "alert_level": "none",
+                "readiness_status": "ok",
+                "runtime_guardrail_status": "ready",
+                "rollout_suppression_status": "inactive",
+                "multi_pair_expansion_current_symbol": "EURUSD",
+                "multi_pair_expansion_next_symbol": "GBPUSD",
+                "multi_pair_expansion_rollout_execution_status": "completed",
+                "multi_pair_expansion_rollout_decision_status": "promote_shadow_pilot",
+                "multi_pair_expansion_rollout_guardrail_status": "qualified_for_steady_state",
+                "multi_pair_steady_state_status": "ready_for_next_pair_review",
+                "multi_pair_steady_state_recommended_action": "review_next_pair_candidate",
+                "multi_pair_steady_state_next_symbol": "EURJPY",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    service = OpsAgendaService(
+        template_path=tmp_path / "docs" / "templates" / "daily_agenda.md",
+        output_dir=tmp_path / "docs" / "runbooks" / "daily_agenda",
+        health_state_path=tmp_path / "snapshots" / "latest" / "health_state.json",
+    )
+    _write_health_state(service._health_state_path, [], status="ok")
+
+    from src.ops import agenda as agenda_module
+
+    original_path = agenda_module.SHADOW_DAILY_NOTIFICATION_LOG_PATH
+    agenda_module.SHADOW_DAILY_NOTIFICATION_LOG_PATH = notification_log
+    try:
+        ctx = service.build_context(target_date=date(2026, 3, 21))
+    finally:
+        agenda_module.SHADOW_DAILY_NOTIFICATION_LOG_PATH = original_path
+
+    matching = [task for task in ctx.operational_tasks if task["task"] == "Review next pair candidate"]
+    assert matching
+    assert "pair_steady_state=ready_for_next_pair_review:review_next_pair_candidate" in str(matching[0]["notes"])
+    assert "pair_steady_state_next=EURJPY" in str(matching[0]["notes"])

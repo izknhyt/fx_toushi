@@ -1042,6 +1042,17 @@ def _collect_shadow_daily_review_tasks(
     multi_pair_expansion_rollout_clear_conditions = [
         str(item) for item in (latest.get("multi_pair_expansion_rollout_clear_conditions") or [])
     ]
+    multi_pair_steady_state_status = str(latest.get("multi_pair_steady_state_status") or "unknown")
+    multi_pair_steady_state_recommended_action = str(
+        latest.get("multi_pair_steady_state_recommended_action") or ""
+    )
+    multi_pair_steady_state_next_symbol = str(latest.get("multi_pair_steady_state_next_symbol") or "")
+    multi_pair_steady_state_blockers = [
+        str(item) for item in (latest.get("multi_pair_steady_state_blockers") or [])
+    ]
+    multi_pair_steady_state_clear_conditions = [
+        str(item) for item in (latest.get("multi_pair_steady_state_clear_conditions") or [])
+    ]
     recovery_runbook_ref = str(latest.get("shadow_feedback_recovery_runbook_ref") or "")
     recovery_runner_command = str(latest.get("shadow_feedback_recovery_runner_command") or "")
     recovery_execute_command = str(latest.get("shadow_feedback_recovery_execute_command") or "")
@@ -1103,21 +1114,34 @@ def _collect_shadow_daily_review_tasks(
         elif multi_pair_pilot_completion_gate_status == "qualified_for_pair_expansion":
             task = "Review pair expansion candidate"
             estimate = max(estimate, 30)
-        if multi_pair_expansion_gate_status == "ready_for_pair_expansion":
+        if (
+            multi_pair_expansion_rollout_execution_status not in {"", "unknown", "planned", "missing"}
+            and multi_pair_expansion_rollout_guardrail_status == "re_review_required"
+        ):
+            task = "Re-review pair expansion rollout"
+            estimate = max(estimate, 35)
+        elif (
+            multi_pair_expansion_rollout_execution_status not in {"", "unknown", "planned", "missing"}
+            and multi_pair_expansion_rollout_guardrail_status == "resume_ready"
+        ):
+            task = "Resume pair expansion rollout monitoring"
+            estimate = max(estimate, 25)
+        elif (
+            multi_pair_expansion_rollout_execution_status not in {"", "unknown", "planned", "missing"}
+            and multi_pair_expansion_rollout_guardrail_status == "qualified_for_steady_state"
+        ):
+            if multi_pair_steady_state_status == "ready_for_next_pair_review":
+                task = "Review next pair candidate"
+                estimate = max(estimate, 30)
+            else:
+                task = "Confirm pair expansion steady state"
+                estimate = max(estimate, 25)
+        elif multi_pair_expansion_gate_status == "ready_for_pair_expansion":
             task = "Review pair expansion candidate"
             estimate = max(estimate, 35)
             if multi_pair_expansion_rollout_execution_status in {"unknown", "planned", "missing"}:
                 task = "Start pair expansion rollout"
                 estimate = max(estimate, 35)
-            elif multi_pair_expansion_rollout_guardrail_status == "re_review_required":
-                task = "Re-review pair expansion rollout"
-                estimate = max(estimate, 35)
-            elif multi_pair_expansion_rollout_guardrail_status == "resume_ready":
-                task = "Resume pair expansion rollout monitoring"
-                estimate = max(estimate, 25)
-            elif multi_pair_expansion_rollout_guardrail_status == "qualified_for_steady_state":
-                task = "Confirm pair expansion steady state"
-                estimate = max(estimate, 25)
             elif multi_pair_expansion_rollout_execution_status == "completed":
                 task = "Review pair expansion rollout evidence"
                 estimate = max(estimate, 30)
@@ -1304,6 +1328,26 @@ def _collect_shadow_daily_review_tasks(
             + (
                 f" / pair_expansion_rollout_clear_conditions={','.join(multi_pair_expansion_rollout_clear_conditions)}"
                 if multi_pair_expansion_rollout_clear_conditions
+                else ""
+            )
+            + (
+                f" / pair_steady_state={multi_pair_steady_state_status}:{multi_pair_steady_state_recommended_action}"
+                if multi_pair_steady_state_status not in {"", "unknown"}
+                else ""
+            )
+            + (
+                f" / pair_steady_state_next={multi_pair_steady_state_next_symbol}"
+                if multi_pair_steady_state_next_symbol
+                else ""
+            )
+            + (
+                f" / pair_steady_state_blockers={','.join(multi_pair_steady_state_blockers)}"
+                if multi_pair_steady_state_blockers
+                else ""
+            )
+            + (
+                f" / pair_steady_state_clear_conditions={','.join(multi_pair_steady_state_clear_conditions)}"
+                if multi_pair_steady_state_clear_conditions
                 else ""
             )
             + (

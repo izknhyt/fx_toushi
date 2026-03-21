@@ -747,6 +747,7 @@ def test_build_daily_shadow_ops_summary_surfaces_pair_expansion_rollout_evidence
     output_dir.mkdir(parents=True, exist_ok=True)
     history = tmp_path / "multi_pair_pilot_history.jsonl"
     ledger = tmp_path / "multi_pair_pilot_rollout.jsonl"
+    expansion_history = tmp_path / "multi_pair_expansion_rollout_history.jsonl"
     ledger.write_text(
         json.dumps({"event": "multi_pair_pilot_rollout", "ts": "2026-03-21T00:00:00Z", "status": "started", "phase": "multi_pair_pilot_rollout", "next_symbol": "EURUSD"}) + "\n",
         encoding="utf-8",
@@ -767,6 +768,28 @@ def test_build_daily_shadow_ops_summary_surfaces_pair_expansion_rollout_evidence
             "stable_for_pilot_completion": True,
         }
         with history.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(snapshot, ensure_ascii=False))
+            handle.write("\n")
+    for review_date in ("2026-03-17", "2026-03-18", "2026-03-19", "2026-03-20"):
+        snapshot = {
+            "generated_at_utc": f"{review_date}T09:00:00Z",
+            "review_date_utc": review_date,
+            "current_symbol": "EURUSD",
+            "next_symbol": "GBPUSD",
+            "gate_status": "ready_for_pair_expansion",
+            "execution_status": "completed",
+            "decision_status": "promote_shadow_pilot",
+            "runtime_guardrail_status": "ready",
+            "rollout_suppression_status": "inactive",
+            "recovery_resolution_status": "resolved",
+            "alert_level": "none",
+            "active_discrepancy_count": 0,
+            "rollout_rollback_recommended": False,
+            "rollout_stronger_freeze": False,
+            "stable_for_rollout_guardrail": True,
+            "re_review_required": False,
+        }
+        with expansion_history.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(snapshot, ensure_ascii=False))
             handle.write("\n")
     baseline_validation = output_dir / "shadow_multi_pair_expand_gbpusd_baseline_validation.json"
@@ -808,12 +831,15 @@ def test_build_daily_shadow_ops_summary_surfaces_pair_expansion_rollout_evidence
         multi_pair_preparation_output_dir=output_dir,
         multi_pair_pilot_history_path=history,
         multi_pair_pilot_ledger_path=ledger,
+        multi_pair_expansion_rollout_history_path=expansion_history,
     )
 
     assert ops_summary["multi_pair_expansion_rollout_execution_status"] == "completed"
     assert ops_summary["multi_pair_expansion_rollout_decision_status"] == "promote_shadow_pilot"
-    assert ops_summary["multi_pair_expansion_rollout_guardrail_status"] == "monitoring"
-    assert ops_summary["headline"] == "monitor: pair_expansion_rollout"
+    assert ops_summary["multi_pair_expansion_rollout_guardrail_status"] == "qualified_for_steady_state"
+    assert ops_summary["multi_pair_steady_state_status"] == "ready_for_next_pair_review"
+    assert ops_summary["multi_pair_steady_state_next_symbol"] == "EURJPY"
+    assert ops_summary["headline"] == "ready: review_next_pair_candidate"
     assert "Multi-Pair Pair Expansion Rollout" in render_daily_shadow_ops_report(ops_summary)
 
 

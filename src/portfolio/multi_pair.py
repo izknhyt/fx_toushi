@@ -98,6 +98,27 @@ def choose_default_multi_pair_symbol(
     return resolve_default_first_added_pair(config_path=config_path, exclude_symbols=excluded)
 
 
+def resolve_next_ranked_pair(
+    *,
+    active_symbols: list[str] | tuple[str, ...] | set[str],
+    config_path: Path | None = None,
+) -> str:
+    payload = load_portfolio_pairs_config(config_path)
+    pairs = payload.get("pairs") or {}
+    excluded = {normalize_symbol(item) for item in active_symbols if normalize_symbol(item)}
+    ranked: list[tuple[int, str]] = []
+    for symbol in pairs:
+        normalized = normalize_symbol(symbol)
+        if not normalized or normalized in excluded:
+            continue
+        metadata = resolve_pair_metadata(normalized, config_path=config_path)
+        ranked.append((int(metadata.get("pilot_rank") or 999), normalized))
+    if not ranked:
+        return ""
+    ranked.sort(key=lambda item: (item[0], item[1]))
+    return ranked[0][1]
+
+
 def resolve_curated_merged_path(
     *,
     symbol: str,
@@ -169,5 +190,6 @@ __all__ = [
     "render_symbol_scoped_value",
     "resolve_curated_merged_path",
     "resolve_default_first_added_pair",
+    "resolve_next_ranked_pair",
     "resolve_pair_metadata",
 ]
