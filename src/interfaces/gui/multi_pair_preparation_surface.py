@@ -12,12 +12,29 @@ def summarize_multi_pair_preparation_result(
     *,
     output_dir: Path,
 ) -> dict[str, Any]:
-    latest = _latest_summary(output_dir)
+    return _summarize_multi_pair_execution_result(output_dir=output_dir, phase="multi_pair_preparation")
+
+
+def summarize_multi_pair_expansion_rollout_result(
+    *,
+    output_dir: Path,
+) -> dict[str, Any]:
+    return _summarize_multi_pair_execution_result(output_dir=output_dir, phase="multi_pair_expansion")
+
+
+def _summarize_multi_pair_execution_result(
+    *,
+    output_dir: Path,
+    phase: str,
+) -> dict[str, Any]:
+    latest = _latest_summary(output_dir, phase=phase)
     if latest is None:
         return {
             "status": "missing",
             "step_counts": {"completed": 0, "pending": 0, "blocked": 0},
-            "recommended_action": "run_multi_pair_preparation",
+            "recommended_action": (
+                "run_multi_pair_expansion_rollout" if phase == "multi_pair_expansion" else "run_multi_pair_preparation"
+            ),
             "latest": {},
             "recent": [],
         }
@@ -46,6 +63,7 @@ def summarize_multi_pair_preparation_result(
             packet_status=packet_status,
             execution_status=execution_status,
             decision_status=str(decision_summary.get("decision_status") or "pending"),
+            phase=phase,
         ),
         "latest": {
             "artifact_generated_at_utc": _path_mtime_iso(latest),
@@ -64,19 +82,20 @@ def summarize_multi_pair_preparation_result(
             "validation_summary": validation_summary,
             "decision_summary": decision_summary,
             "steps": steps,
+            "phase": phase,
         },
         "recent": steps[:10],
     }
 
 
-def _latest_summary(output_dir: Path) -> Path | None:
+def _latest_summary(output_dir: Path, *, phase: str) -> Path | None:
     if not output_dir.exists():
         return None
     candidates = sorted(output_dir.glob("*.json"), key=lambda path: path.stat().st_mtime, reverse=True)
     for candidate in candidates:
         payload = _load_mapping(candidate)
         packet = _extract_packet(payload)
-        if str(packet.get("phase") or "") == "multi_pair_preparation":
+        if str(packet.get("phase") or "") == phase:
             return candidate
     return None
 
@@ -154,20 +173,20 @@ def _step_counts(steps: list[dict[str, Any]], *, execution_status: str) -> dict[
     return counts
 
 
-def _recommended_action(*, packet_status: str, execution_status: str, decision_status: str) -> str:
+def _recommended_action(*, packet_status: str, execution_status: str, decision_status: str, phase: str) -> str:
     if packet_status == "pending_inputs" or execution_status == "blocked_missing_inputs":
-        return "supply_multi_pair_preparation_inputs"
+        return "supply_multi_pair_expansion_inputs" if phase == "multi_pair_expansion" else "supply_multi_pair_preparation_inputs"
     if decision_status == "promote_shadow_pilot":
-        return "review_multi_pair_shadow_pilot_promotion"
+        return "review_pair_expansion_rollout_evidence" if phase == "multi_pair_expansion" else "review_multi_pair_shadow_pilot_promotion"
     if decision_status == "reject":
-        return "reject_multi_pair_candidate"
+        return "reject_pair_expansion_candidate" if phase == "multi_pair_expansion" else "reject_multi_pair_candidate"
     if decision_status == "research_only":
-        return "keep_multi_pair_in_research"
+        return "keep_pair_expansion_in_research" if phase == "multi_pair_expansion" else "keep_multi_pair_in_research"
     if execution_status == "completed":
-        return "review_multi_pair_preparation_result"
+        return "review_pair_expansion_rollout_result" if phase == "multi_pair_expansion" else "review_multi_pair_preparation_result"
     if packet_status == "ready":
-        return "run_multi_pair_preparation"
-    return "review_multi_pair_preparation_result"
+        return "run_multi_pair_expansion_rollout" if phase == "multi_pair_expansion" else "run_multi_pair_preparation"
+    return "review_pair_expansion_rollout_result" if phase == "multi_pair_expansion" else "review_multi_pair_preparation_result"
 
 
 def _validation_summary(artifacts: Mapping[str, Any]) -> dict[str, Any]:
@@ -332,4 +351,4 @@ def _path_mtime_iso(path: Path) -> str:
     )
 
 
-__all__ = ["summarize_multi_pair_preparation_result"]
+__all__ = ["summarize_multi_pair_expansion_rollout_result", "summarize_multi_pair_preparation_result"]

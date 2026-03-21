@@ -25,6 +25,7 @@ from src.interfaces.gui.candidate_onboarding_surface import (
     summarize_candidate_onboarding_result,
 )
 from src.interfaces.gui.multi_pair_preparation_surface import (
+    summarize_multi_pair_expansion_rollout_result,
     summarize_multi_pair_preparation_result,
 )
 from src.portfolio.candidate_onboarding import (
@@ -561,6 +562,39 @@ def build_daily_shadow_ops_summary(
     ops_summary["multi_pair_expansion_execute_command"] = str(
         multi_pair_expansion_gate.get("execute_command") or ""
     )
+    multi_pair_output_dir = multi_pair_preparation_output_dir or Path("reports/analysis/shadow")
+    multi_pair_expansion_rollout_summary = summarize_multi_pair_expansion_rollout_result(
+        output_dir=multi_pair_output_dir
+    )
+    ops_summary["multi_pair_expansion_rollout_summary"] = multi_pair_expansion_rollout_summary
+    latest_expansion_rollout = (
+        dict(multi_pair_expansion_rollout_summary.get("latest") or {})
+        if isinstance(multi_pair_expansion_rollout_summary.get("latest"), Mapping)
+        else {}
+    )
+    latest_expansion_decision = (
+        dict(latest_expansion_rollout.get("decision_summary") or {})
+        if isinstance(latest_expansion_rollout.get("decision_summary"), Mapping)
+        else {}
+    )
+    ops_summary["multi_pair_expansion_rollout_status"] = str(
+        multi_pair_expansion_rollout_summary.get("status") or "unknown"
+    )
+    ops_summary["multi_pair_expansion_rollout_packet_status"] = str(
+        latest_expansion_rollout.get("packet_status") or "unknown"
+    )
+    ops_summary["multi_pair_expansion_rollout_execution_status"] = str(
+        latest_expansion_rollout.get("execution_status") or "unknown"
+    )
+    ops_summary["multi_pair_expansion_rollout_decision_status"] = str(
+        latest_expansion_decision.get("decision_status") or "pending"
+    )
+    ops_summary["multi_pair_expansion_rollout_recommended_action"] = str(
+        multi_pair_expansion_rollout_summary.get("recommended_action") or "run_multi_pair_expansion_rollout"
+    )
+    ops_summary["multi_pair_expansion_rollout_runner_command"] = str(
+        latest_expansion_rollout.get("runner_command") or ""
+    )
     if ops_summary["rollout_rollback_recommended"]:
         ops_summary["headline"] = "critical: review_baseline_rollback"
         ops_summary["should_notify"] = True
@@ -632,6 +666,17 @@ def build_daily_shadow_ops_summary(
     ):
         ops_summary["headline"] = "blocked: multi_pair_expansion_gate"
         ops_summary["next_action"] = ops_summary["multi_pair_expansion_recommended_action"]
+        ops_summary["should_notify"] = True
+    if (
+        ops_summary["multi_pair_expansion_gate_status"] == "ready_for_pair_expansion"
+        and ops_summary["multi_pair_expansion_rollout_execution_status"] in {"unknown", "planned", "missing"}
+    ):
+        ops_summary["headline"] = "ready: start_pair_expansion_rollout"
+        ops_summary["next_action"] = ops_summary["multi_pair_expansion_rollout_recommended_action"]
+        ops_summary["should_notify"] = True
+    elif ops_summary["multi_pair_expansion_rollout_execution_status"] == "completed":
+        ops_summary["headline"] = "ready: review_pair_expansion_rollout_evidence"
+        ops_summary["next_action"] = ops_summary["multi_pair_expansion_rollout_recommended_action"]
         ops_summary["should_notify"] = True
     return ops_summary
 
@@ -927,6 +972,13 @@ def render_daily_shadow_ops_report(ops_summary: Mapping[str, Any]) -> str:
         lines.append(f"- blocker: `{item}`")
     for item in ops_summary.get("multi_pair_expansion_clear_conditions", []):
         lines.append(f"- clear_condition: `{item}`")
+    lines.extend(["", "## Multi-Pair Pair Expansion Rollout", ""])
+    lines.append(f"- rollout_status: `{ops_summary.get('multi_pair_expansion_rollout_status')}`")
+    lines.append(f"- packet_status: `{ops_summary.get('multi_pair_expansion_rollout_packet_status')}`")
+    lines.append(f"- execution_status: `{ops_summary.get('multi_pair_expansion_rollout_execution_status')}`")
+    lines.append(f"- decision_status: `{ops_summary.get('multi_pair_expansion_rollout_decision_status')}`")
+    lines.append(f"- recommended_action: `{ops_summary.get('multi_pair_expansion_rollout_recommended_action')}`")
+    lines.append(f"- runner_command: `{ops_summary.get('multi_pair_expansion_rollout_runner_command')}`")
     lines.extend(["", "## Shadow Feedback", ""])
     for item in ops_summary.get("shadow_feedback_reasons", []):
         lines.append(f"- {item}")
@@ -1143,6 +1195,12 @@ def append_shadow_notification(ops_summary: Mapping[str, Any], notification_log:
         ),
         "multi_pair_expansion_runner_command": ops_summary.get("multi_pair_expansion_runner_command"),
         "multi_pair_expansion_execute_command": ops_summary.get("multi_pair_expansion_execute_command"),
+        "multi_pair_expansion_rollout_status": ops_summary.get("multi_pair_expansion_rollout_status"),
+        "multi_pair_expansion_rollout_packet_status": ops_summary.get("multi_pair_expansion_rollout_packet_status"),
+        "multi_pair_expansion_rollout_execution_status": ops_summary.get("multi_pair_expansion_rollout_execution_status"),
+        "multi_pair_expansion_rollout_decision_status": ops_summary.get("multi_pair_expansion_rollout_decision_status"),
+        "multi_pair_expansion_rollout_recommended_action": ops_summary.get("multi_pair_expansion_rollout_recommended_action"),
+        "multi_pair_expansion_rollout_runner_command": ops_summary.get("multi_pair_expansion_rollout_runner_command"),
         "shadow_feedback_recovery_latest_execution": (
             (ops_summary.get("shadow_feedback_recovery_execution_state") or {}).get("latest")
             if isinstance(ops_summary.get("shadow_feedback_recovery_execution_state"), Mapping)

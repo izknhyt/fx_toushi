@@ -6509,6 +6509,80 @@ def create_cli_app() -> typer.Typer:
         )
         _render_payload(console, payload, json_output=effective_json)
 
+    @portfolio_app.command("pair-expansion-rollout")
+    def portfolio_pair_expansion_rollout_command(
+        ctx: typer.Context,
+        current_symbol: str = typer.Option(..., "--current-symbol", help="Currently active pilot symbol."),
+        next_symbol: str = typer.Option(..., "--next-symbol", help="Next symbol to evaluate for expansion."),
+        output_prefix: str = typer.Option(
+            "shadow_multi_pair_expansion_rollout",
+            "--output-prefix",
+            help="Output prefix used for generated artifacts",
+        ),
+        output_dir: Path = typer.Option(
+            portfolio_output_dir,
+            "--output-dir",
+            help="Directory for deterministic CLI summary artifacts",
+        ),
+        manifest_path: Path = typer.Option(
+            Path("config/strategy_manifest.parallel_portfolio_v2.yaml"),
+            "--manifest-path",
+        ),
+        allocation_config_path: Path = typer.Option(
+            Path("config/strategy_allocation.yaml"),
+            "--allocation-config-path",
+        ),
+        allocation_profile: str = typer.Option("portfolio_admission_v2", "--allocation-profile"),
+        profile_path: Path = typer.Option(Path("config/profiles/paper.yaml"), "--profile"),
+        data_dir: Path = typer.Option(Path("data/research/curated"), "--data-dir"),
+        feature_config: Path = typer.Option(Path("config/feature_pipeline.yaml"), "--feature-config"),
+        data_manifest: Path = typer.Option(Path("reports/data_manifest.json"), "--data-manifest"),
+        windows: str = typer.Option("2016_2025,2022_2025", "--windows"),
+        run: bool = typer.Option(False, "--run", help="Execute the expansion rollout packet."),
+        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
+    ) -> None:
+        effective_json = _effective_json_output(ctx, json_output)
+        output_dir.mkdir(parents=True, exist_ok=True)
+        summary_json_path = output_dir / f"{output_prefix}.json"
+        summary_md_path = output_dir / f"{output_prefix}.md"
+        command = [
+            sys.executable,
+            "tools/run_multi_pair_expansion_rollout.py",
+            "--manifest-path",
+            str(manifest_path),
+            "--allocation-config-path",
+            str(allocation_config_path),
+            "--allocation-profile",
+            allocation_profile,
+            "--current-symbol",
+            current_symbol,
+            "--next-symbol",
+            next_symbol,
+            "--profile",
+            str(profile_path),
+            "--data-dir",
+            str(data_dir),
+            "--feature-config",
+            str(feature_config),
+            "--data-manifest",
+            str(data_manifest),
+            "--windows",
+            windows,
+            "--output-dir",
+            str(output_dir),
+            "--output-prefix",
+            output_prefix,
+        ]
+        if run:
+            command.append("--run")
+        payload = _run_portfolio_tool(
+            command_name="pair-expansion-rollout",
+            command=command,
+            output_json=summary_json_path,
+            output_md=summary_md_path,
+        )
+        _render_payload(console, payload, json_output=effective_json)
+
     app.add_typer(portfolio_app, name="portfolio")
 
     scoreboard_app = typer.Typer(help="Scoreboard utilities")

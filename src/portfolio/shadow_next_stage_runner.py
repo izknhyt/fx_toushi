@@ -23,6 +23,7 @@ DEFAULT_NEXT_STAGE_WINDOWS = DEFAULT_CANDIDATE_ONBOARDING_WINDOWS
 DEFAULT_MULTI_PAIR_WINDOWS = ("2016_2025", "2022_2025")
 DEFAULT_CANDIDATE_RUNBOOK = DEFAULT_CANDIDATE_ONBOARDING_RUNBOOK
 DEFAULT_MULTI_PAIR_RUNBOOK = "docs/runbooks/PORTFOLIO-MULTIPAIR-01.md"
+DEFAULT_MULTI_PAIR_EXPANSION_RUNBOOK = "docs/runbooks/PORTFOLIO-MULTIPAIR-04.md"
 
 
 def build_candidate_onboarding_execution_packet(
@@ -309,6 +310,218 @@ def build_multi_pair_preparation_execution_packet(
     }
 
 
+def build_multi_pair_expansion_execution_packet(
+    *,
+    manifest_path: Path,
+    allocation_config_path: Path,
+    allocation_profile: str,
+    current_symbol: str,
+    next_symbol: str,
+    profile_path: Path,
+    data_dir: Path,
+    feature_config: Path,
+    data_manifest: Path,
+    windows: tuple[str, ...] = DEFAULT_MULTI_PAIR_WINDOWS,
+    output_dir: Path | None = None,
+) -> dict[str, Any]:
+    baseline_symbols = ["USDJPY", choose_default_multi_pair_symbol(requested_symbol=current_symbol)]
+    symbol = choose_default_multi_pair_symbol(
+        baseline_symbols=baseline_symbols,
+        requested_symbol=next_symbol,
+    )
+    current_pair_metadata = resolve_pair_metadata(baseline_symbols[-1])
+    next_pair_metadata = resolve_pair_metadata(symbol)
+    required_inputs: list[str] = []
+
+    output_dir = output_dir or (Path("reports") / "analysis" / "shadow" / "next_stage")
+    output_prefix = f"shadow_multi_pair_expand_{symbol.lower() or 'candidate'}"
+    baseline_validation_json = output_dir / f"{output_prefix}_baseline_validation.json"
+    baseline_validation_md = output_dir / f"{output_prefix}_baseline_validation.md"
+    validation_json = output_dir / f"{output_prefix}_validation.json"
+    validation_md = output_dir / f"{output_prefix}_validation.md"
+    candidates_json = output_dir / f"{output_prefix}_candidates_snapshot.json"
+    admit_json = output_dir / f"{output_prefix}_admit_snapshot.json"
+    effective_data_manifest = output_dir / f"{output_prefix}_data_manifest.json"
+    materialized_data_manifest: dict[str, Any] | None = None
+    if data_manifest.exists():
+        materialized_data_manifest = materialize_multi_pair_data_manifest(
+            source_path=data_manifest,
+            symbols=baseline_symbols + [symbol],
+            output_path=effective_data_manifest,
+            data_dir=data_dir,
+        )
+    windows_csv = ",".join(windows)
+    symbol_scope_csv = ",".join(baseline_symbols + [symbol])
+    baseline_symbol_scope_csv = ",".join(baseline_symbols)
+
+    commands = [
+        {
+            "step": "baseline_kernel_validation",
+            "command": " ".join(
+                [
+                    "python3",
+                    "tools/run_long_horizon_portfolio_validation.py",
+                    "--manifest-path",
+                    str(manifest_path),
+                    "--allocation-config-path",
+                    str(allocation_config_path),
+                    "--allocation-profile",
+                    allocation_profile,
+                    "--data-manifest-path",
+                    str(data_manifest),
+                    "--symbols",
+                    baseline_symbol_scope_csv,
+                    "--windows",
+                    windows_csv,
+                    "--plan-json",
+                    str(baseline_validation_json),
+                    "--summary-md",
+                    str(baseline_validation_md),
+                    "--run",
+                ]
+            ),
+            "artifacts": [str(baseline_validation_json), str(baseline_validation_md)],
+        },
+        {
+            "step": "expanded_kernel_validation",
+            "command": " ".join(
+                [
+                    "python3",
+                    "tools/run_long_horizon_portfolio_validation.py",
+                    "--manifest-path",
+                    str(manifest_path),
+                    "--allocation-config-path",
+                    str(allocation_config_path),
+                    "--allocation-profile",
+                    allocation_profile,
+                    "--data-manifest-path",
+                    str(effective_data_manifest if materialized_data_manifest else data_manifest),
+                    "--symbols",
+                    symbol_scope_csv,
+                    "--windows",
+                    windows_csv,
+                    "--plan-json",
+                    str(validation_json),
+                    "--summary-md",
+                    str(validation_md),
+                    "--run",
+                ]
+            ),
+            "artifacts": [str(validation_json), str(validation_md)],
+        },
+        {
+            "step": "candidate_snapshot",
+            "command": " ".join(
+                [
+                    "tradectl",
+                    "portfolio",
+                    "candidates",
+                    "--symbols",
+                    symbol_scope_csv,
+                    "--profile",
+                    str(profile_path),
+                    "--data-dir",
+                    str(data_dir),
+                    "--feature-config",
+                    str(feature_config),
+                    "--strategy-manifest",
+                    str(manifest_path),
+                    "--allocation-config",
+                    str(allocation_config_path),
+                    "--allocation-profile",
+                    allocation_profile,
+                    "--data-manifest",
+                    str(effective_data_manifest if materialized_data_manifest else data_manifest),
+                    "--output-dir",
+                    str(output_dir),
+                ]
+            ),
+            "artifacts": [str(candidates_json)],
+        },
+        {
+            "step": "admission_snapshot",
+            "command": " ".join(
+                [
+                    "tradectl",
+                    "portfolio",
+                    "admit",
+                    "--symbols",
+                    symbol_scope_csv,
+                    "--profile",
+                    str(profile_path),
+                    "--data-dir",
+                    str(data_dir),
+                    "--feature-config",
+                    str(feature_config),
+                    "--strategy-manifest",
+                    str(manifest_path),
+                    "--allocation-config",
+                    str(allocation_config_path),
+                    "--allocation-profile",
+                    allocation_profile,
+                    "--data-manifest",
+                    str(effective_data_manifest if materialized_data_manifest else data_manifest),
+                    "--output-dir",
+                    str(output_dir),
+                ]
+            ),
+            "artifacts": [str(admit_json)],
+        },
+    ]
+    runner_command = " ".join(
+        [
+            "tradectl",
+            "portfolio",
+            "pair-expansion-rollout",
+            "--manifest-path",
+            str(manifest_path),
+            "--allocation-config-path",
+            str(allocation_config_path),
+            "--allocation-profile",
+            allocation_profile,
+            "--profile",
+            str(profile_path),
+            "--data-dir",
+            str(data_dir),
+            "--feature-config",
+            str(feature_config),
+            "--data-manifest",
+            str(data_manifest),
+            "--output-dir",
+            str(output_dir),
+            "--current-symbol",
+            baseline_symbols[-1],
+            "--next-symbol",
+            symbol,
+        ]
+    )
+    return {
+        "status": "ready" if not required_inputs else "pending_inputs",
+        "phase": "multi_pair_expansion",
+        "runbook_ref": DEFAULT_MULTI_PAIR_EXPANSION_RUNBOOK,
+        "runner_command": runner_command,
+        "required_inputs": required_inputs,
+        "baseline_symbols": baseline_symbols,
+        "symbol_scope": baseline_symbols + [symbol],
+        "current_symbol": baseline_symbols[-1],
+        "next_symbol": symbol,
+        "current_pair_metadata": current_pair_metadata,
+        "next_pair_metadata": next_pair_metadata,
+        "windows": list(windows),
+        "effective_data_manifest": str(effective_data_manifest if materialized_data_manifest else data_manifest),
+        "materialized_data_manifest": materialized_data_manifest or {"status": "skipped"},
+        "commands": commands,
+        "artifacts": {
+            "baseline_validation_summary_json": str(baseline_validation_json),
+            "baseline_validation_summary_md": str(baseline_validation_md),
+            "validation_summary_json": str(validation_json),
+            "validation_summary_md": str(validation_md),
+            "candidates_snapshot_json": str(candidates_json),
+            "admit_snapshot_json": str(admit_json),
+        },
+    }
+
+
 def render_shadow_next_stage_execution_packet_md(packet: Mapping[str, Any]) -> str:
     lines = [
         "# Shadow Next Stage Execution Packet",
@@ -359,6 +572,7 @@ __all__ = [
     "DEFAULT_MULTI_PAIR_WINDOWS",
     "DEFAULT_NEXT_STAGE_WINDOWS",
     "build_candidate_onboarding_execution_packet",
+    "build_multi_pair_expansion_execution_packet",
     "build_multi_pair_preparation_execution_packet",
     "render_shadow_next_stage_execution_packet_md",
 ]

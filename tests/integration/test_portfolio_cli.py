@@ -447,3 +447,51 @@ def test_portfolio_pair_expansion_cli_wraps_tool(monkeypatch, tmp_path: Path) ->
     assert payload["command"] == "pair-expansion"
     assert payload["summary_json"].endswith("multi_pair_expansion_gate.json")
     assert payload["result"]["summary"]["next_symbol"] == "GBPUSD"
+
+
+def test_portfolio_pair_expansion_rollout_cli_wraps_tool(monkeypatch, tmp_path: Path) -> None:
+    def _fake_run(cmd: list[str], **kwargs) -> subprocess.CompletedProcess[str]:
+        output_dir = Path(cmd[cmd.index("--output-dir") + 1])
+        output_prefix = cmd[cmd.index("--output-prefix") + 1]
+        output_json = output_dir / f"{output_prefix}.json"
+        output_md = output_dir / f"{output_prefix}.md"
+        payload = {
+            "status": "ok",
+            "packet": {
+                "phase": "multi_pair_expansion",
+                "status": "ready",
+                "current_symbol": "EURUSD",
+                "next_symbol": "GBPUSD",
+                "runbook_ref": "docs/runbooks/PORTFOLIO-MULTIPAIR-04.md",
+            },
+        }
+        output_dir.mkdir(parents=True, exist_ok=True)
+        output_json.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        output_md.write_text("# pair-expansion-rollout\n", encoding="utf-8")
+        return subprocess.CompletedProcess(cmd, 0, stdout=json.dumps(payload), stderr="")
+
+    monkeypatch.setattr(subprocess, "run", _fake_run)
+    app = create_cli_app()
+    runner = CliRunner()
+
+    result = runner.invoke(
+        app,
+        [
+            "portfolio",
+            "pair-expansion-rollout",
+            "--current-symbol",
+            "EURUSD",
+            "--next-symbol",
+            "GBPUSD",
+            "--output-dir",
+            str(tmp_path / "out"),
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["status"] == "ok"
+    assert payload["command"] == "pair-expansion-rollout"
+    assert payload["summary_json"].endswith("shadow_multi_pair_expansion_rollout.json")
+    assert payload["result"]["packet"]["next_symbol"] == "GBPUSD"

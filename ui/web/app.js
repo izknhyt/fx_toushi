@@ -756,6 +756,12 @@ function renderOps(payload) {
           `multi_pair_expansion: gate=${payload.daily_shadow_ops_summary.multi_pair_expansion_gate_status || "-"} current=${payload.daily_shadow_ops_summary.multi_pair_expansion_current_symbol || "-"} next=${payload.daily_shadow_ops_summary.multi_pair_expansion_next_symbol || "-"} action=${payload.daily_shadow_ops_summary.multi_pair_expansion_recommended_action || "-"}`
         ]
       : [];
+  const multiPairExpansionRolloutLine =
+    payload && typeof payload.daily_shadow_ops_summary === "object"
+      ? [
+          `multi_pair_expansion_rollout: status=${payload.daily_shadow_ops_summary.multi_pair_expansion_rollout_status || "-"} execution=${payload.daily_shadow_ops_summary.multi_pair_expansion_rollout_execution_status || "-"} decision=${payload.daily_shadow_ops_summary.multi_pair_expansion_rollout_decision_status || "-"} action=${payload.daily_shadow_ops_summary.multi_pair_expansion_rollout_recommended_action || "-"}`
+        ]
+      : [];
   const multiPairExpansionBlockerLine =
     payload &&
     typeof payload.daily_shadow_ops_summary === "object" &&
@@ -990,10 +996,11 @@ function renderOps(payload) {
     ...multiPairPreparationInputLine,
     ...multiPairPreparationArtifactLine,
     ...multiPairPilotLine,
-    ...multiPairPilotStreakLine,
-    ...multiPairPilotBlockerLine,
-    ...multiPairExpansionLine,
-    ...multiPairExpansionBlockerLine,
+      ...multiPairPilotStreakLine,
+      ...multiPairPilotBlockerLine,
+      ...multiPairExpansionLine,
+      ...multiPairExpansionRolloutLine,
+      ...multiPairExpansionBlockerLine,
     ...executionSummaryLine,
     ...executionLine,
     ...shadowFeedbackLine,

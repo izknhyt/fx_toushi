@@ -688,8 +688,58 @@ def test_agenda_creates_pair_expansion_task_when_gate_ready(tmp_path: Path) -> N
     finally:
         agenda_module.SHADOW_DAILY_NOTIFICATION_LOG_PATH = original_path
 
-    matching = [task for task in ctx.operational_tasks if task["task"] == "Review pair expansion candidate"]
+    matching = [task for task in ctx.operational_tasks if task["task"] == "Start pair expansion rollout"]
     assert len(matching) == 1
     assert "pair_expansion=ready_for_pair_expansion:review_pair_expansion_candidate" in str(matching[0]["notes"])
     assert "pair_expansion_current=EURUSD" in str(matching[0]["notes"])
     assert "pair_expansion_next=GBPUSD" in str(matching[0]["notes"])
+    assert "automation=tradectl ops shadow-next-stage --run" in str(matching[0]["notes"])
+
+
+def test_agenda_creates_pair_expansion_rollout_task_when_gate_ready_and_not_started(tmp_path: Path) -> None:
+    notification_log = tmp_path / "logs" / "ops" / "shadow_daily_notifications.jsonl"
+    notification_log.parent.mkdir(parents=True, exist_ok=True)
+    notification_log.write_text(
+        json.dumps(
+            {
+                "event": "shadow.daily_alert",
+                "ts": "2026-03-21T09:00:00Z",
+                "review_date_utc": "2026-03-21",
+                "headline": "ready: start_pair_expansion_rollout",
+                "alert_level": "none",
+                "readiness_status": "ok",
+                "runtime_guardrail_status": "ready",
+                "rollout_suppression_status": "inactive",
+                "multi_pair_pilot_completion_gate_status": "qualified_for_pair_expansion",
+                "multi_pair_expansion_gate_status": "ready_for_pair_expansion",
+                "multi_pair_expansion_current_symbol": "EURUSD",
+                "multi_pair_expansion_next_symbol": "GBPUSD",
+                "multi_pair_expansion_recommended_action": "review_pair_expansion_candidate",
+                "multi_pair_expansion_rollout_execution_status": "missing",
+                "multi_pair_expansion_rollout_recommended_action": "run_multi_pair_expansion_rollout",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    service = OpsAgendaService(
+        template_path=tmp_path / "docs" / "templates" / "daily_agenda.md",
+        output_dir=tmp_path / "docs" / "runbooks" / "daily_agenda",
+        health_state_path=tmp_path / "snapshots" / "latest" / "health_state.json",
+    )
+    _write_health_state(service._health_state_path, [], status="ok")
+
+    from src.ops import agenda as agenda_module
+
+    original_path = agenda_module.SHADOW_DAILY_NOTIFICATION_LOG_PATH
+    agenda_module.SHADOW_DAILY_NOTIFICATION_LOG_PATH = notification_log
+    try:
+        ctx = service.build_context(target_date=date(2026, 3, 21))
+    finally:
+        agenda_module.SHADOW_DAILY_NOTIFICATION_LOG_PATH = original_path
+
+    matching = [task for task in ctx.operational_tasks if task["task"] == "Start pair expansion rollout"]
+    assert matching
+    assert "pair_expansion=ready_for_pair_expansion:review_pair_expansion_candidate" in str(matching[0]["notes"])
+    assert "pair_expansion_rollout=missing:run_multi_pair_expansion_rollout" in str(matching[0]["notes"])
