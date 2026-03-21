@@ -47,6 +47,12 @@ from src.portfolio.multi_pair_pilot import (
     summarize_multi_pair_pilot_rollout_execution,
 )
 from src.portfolio.multi_pair_expansion import build_multi_pair_expansion_gate_summary
+from src.portfolio.multi_pair_expansion_rollout import (
+    DEFAULT_MULTI_PAIR_EXPANSION_ROLLOUT_HISTORY,
+    append_multi_pair_expansion_rollout_history,
+    build_multi_pair_expansion_rollout_guardrail_summary,
+    load_multi_pair_expansion_rollout_history,
+)
 from src.portfolio.shadow_rollout_suppression import (
     build_shadow_rollout_suppression_summary,
 )
@@ -63,6 +69,7 @@ def build_daily_shadow_ops_summary(
     multi_pair_preparation_output_dir: Path | None = None,
     multi_pair_pilot_ledger_path: Path | None = None,
     multi_pair_pilot_history_path: Path | None = None,
+    multi_pair_expansion_rollout_history_path: Path | None = None,
 ) -> dict[str, Any]:
     alert = summary.get("alert_summary") or {}
     trend = summary.get("trend_summary") or {}
@@ -595,6 +602,44 @@ def build_daily_shadow_ops_summary(
     ops_summary["multi_pair_expansion_rollout_runner_command"] = str(
         latest_expansion_rollout.get("runner_command") or ""
     )
+    if not ops_summary["multi_pair_expansion_current_symbol"]:
+        ops_summary["multi_pair_expansion_current_symbol"] = str(
+            latest_expansion_rollout.get("current_symbol") or ""
+        )
+    if not ops_summary["multi_pair_expansion_next_symbol"]:
+        ops_summary["multi_pair_expansion_next_symbol"] = str(
+            latest_expansion_rollout.get("next_symbol") or ""
+        )
+    multi_pair_expansion_rollout_history_entries = load_multi_pair_expansion_rollout_history(
+        multi_pair_expansion_rollout_history_path or DEFAULT_MULTI_PAIR_EXPANSION_ROLLOUT_HISTORY
+    )
+    multi_pair_expansion_rollout_guardrail = build_multi_pair_expansion_rollout_guardrail_summary(
+        ops_summary,
+        multi_pair_expansion_rollout_history_entries,
+    )
+    ops_summary["multi_pair_expansion_rollout_guardrail_summary"] = multi_pair_expansion_rollout_guardrail
+    ops_summary["multi_pair_expansion_rollout_guardrail_status"] = str(
+        multi_pair_expansion_rollout_guardrail.get("guardrail_status") or "unknown"
+    )
+    ops_summary["multi_pair_expansion_rollout_guardrail_recommended_action"] = str(
+        multi_pair_expansion_rollout_guardrail.get("recommended_action")
+        or "review_pair_expansion_rollout_evidence"
+    )
+    ops_summary["multi_pair_expansion_rollout_stable_streak_days"] = int(
+        multi_pair_expansion_rollout_guardrail.get("stable_streak_days") or 0
+    )
+    ops_summary["multi_pair_expansion_rollout_required_stable_days"] = int(
+        multi_pair_expansion_rollout_guardrail.get("required_stable_days") or 0
+    )
+    ops_summary["multi_pair_expansion_rollout_re_review_streak_days"] = int(
+        multi_pair_expansion_rollout_guardrail.get("re_review_streak_days") or 0
+    )
+    ops_summary["multi_pair_expansion_rollout_blockers"] = [
+        str(item) for item in (multi_pair_expansion_rollout_guardrail.get("blockers") or [])
+    ]
+    ops_summary["multi_pair_expansion_rollout_clear_conditions"] = [
+        str(item) for item in (multi_pair_expansion_rollout_guardrail.get("clear_conditions") or [])
+    ]
     if ops_summary["rollout_rollback_recommended"]:
         ops_summary["headline"] = "critical: review_baseline_rollback"
         ops_summary["should_notify"] = True
@@ -673,6 +718,21 @@ def build_daily_shadow_ops_summary(
     ):
         ops_summary["headline"] = "ready: start_pair_expansion_rollout"
         ops_summary["next_action"] = ops_summary["multi_pair_expansion_rollout_recommended_action"]
+        ops_summary["should_notify"] = True
+    elif ops_summary["multi_pair_expansion_rollout_guardrail_status"] == "re_review_required":
+        ops_summary["headline"] = "blocked: re_review_pair_expansion_rollout"
+        ops_summary["next_action"] = ops_summary["multi_pair_expansion_rollout_guardrail_recommended_action"]
+        ops_summary["should_notify"] = True
+    elif ops_summary["multi_pair_expansion_rollout_guardrail_status"] == "resume_ready":
+        ops_summary["headline"] = "ready: resume_pair_expansion_rollout"
+        ops_summary["next_action"] = ops_summary["multi_pair_expansion_rollout_guardrail_recommended_action"]
+        ops_summary["should_notify"] = True
+    elif ops_summary["multi_pair_expansion_rollout_guardrail_status"] == "monitoring":
+        ops_summary["headline"] = "monitor: pair_expansion_rollout"
+        ops_summary["next_action"] = ops_summary["multi_pair_expansion_rollout_guardrail_recommended_action"]
+    elif ops_summary["multi_pair_expansion_rollout_guardrail_status"] == "qualified_for_steady_state":
+        ops_summary["headline"] = "ready: maintain_pair_expansion_rollout"
+        ops_summary["next_action"] = ops_summary["multi_pair_expansion_rollout_guardrail_recommended_action"]
         ops_summary["should_notify"] = True
     elif ops_summary["multi_pair_expansion_rollout_execution_status"] == "completed":
         ops_summary["headline"] = "ready: review_pair_expansion_rollout_evidence"
@@ -979,6 +1039,21 @@ def render_daily_shadow_ops_report(ops_summary: Mapping[str, Any]) -> str:
     lines.append(f"- decision_status: `{ops_summary.get('multi_pair_expansion_rollout_decision_status')}`")
     lines.append(f"- recommended_action: `{ops_summary.get('multi_pair_expansion_rollout_recommended_action')}`")
     lines.append(f"- runner_command: `{ops_summary.get('multi_pair_expansion_rollout_runner_command')}`")
+    lines.append(f"- guardrail_status: `{ops_summary.get('multi_pair_expansion_rollout_guardrail_status')}`")
+    lines.append(f"- guardrail_action: `{ops_summary.get('multi_pair_expansion_rollout_guardrail_recommended_action')}`")
+    lines.append(
+        f"- stable_streak_days: `{ops_summary.get('multi_pair_expansion_rollout_stable_streak_days')}`"
+    )
+    lines.append(
+        f"- required_stable_days: `{ops_summary.get('multi_pair_expansion_rollout_required_stable_days')}`"
+    )
+    lines.append(
+        f"- re_review_streak_days: `{ops_summary.get('multi_pair_expansion_rollout_re_review_streak_days')}`"
+    )
+    for item in ops_summary.get("multi_pair_expansion_rollout_blockers", []):
+        lines.append(f"- blocker: `{item}`")
+    for item in ops_summary.get("multi_pair_expansion_rollout_clear_conditions", []):
+        lines.append(f"- clear_condition: `{item}`")
     lines.extend(["", "## Shadow Feedback", ""])
     for item in ops_summary.get("shadow_feedback_reasons", []):
         lines.append(f"- {item}")
@@ -1201,6 +1276,13 @@ def append_shadow_notification(ops_summary: Mapping[str, Any], notification_log:
         "multi_pair_expansion_rollout_decision_status": ops_summary.get("multi_pair_expansion_rollout_decision_status"),
         "multi_pair_expansion_rollout_recommended_action": ops_summary.get("multi_pair_expansion_rollout_recommended_action"),
         "multi_pair_expansion_rollout_runner_command": ops_summary.get("multi_pair_expansion_rollout_runner_command"),
+        "multi_pair_expansion_rollout_guardrail_status": ops_summary.get("multi_pair_expansion_rollout_guardrail_status"),
+        "multi_pair_expansion_rollout_guardrail_recommended_action": ops_summary.get("multi_pair_expansion_rollout_guardrail_recommended_action"),
+        "multi_pair_expansion_rollout_stable_streak_days": ops_summary.get("multi_pair_expansion_rollout_stable_streak_days"),
+        "multi_pair_expansion_rollout_required_stable_days": ops_summary.get("multi_pair_expansion_rollout_required_stable_days"),
+        "multi_pair_expansion_rollout_re_review_streak_days": ops_summary.get("multi_pair_expansion_rollout_re_review_streak_days"),
+        "multi_pair_expansion_rollout_blockers": list(ops_summary.get("multi_pair_expansion_rollout_blockers") or []),
+        "multi_pair_expansion_rollout_clear_conditions": list(ops_summary.get("multi_pair_expansion_rollout_clear_conditions") or []),
         "shadow_feedback_recovery_latest_execution": (
             (ops_summary.get("shadow_feedback_recovery_execution_state") or {}).get("latest")
             if isinstance(ops_summary.get("shadow_feedback_recovery_execution_state"), Mapping)
@@ -1241,6 +1323,7 @@ def write_daily_shadow_ops_report(
     rollout_history_path: Path | None = None,
     multi_pair_pilot_history_path: Path | None = None,
     multi_pair_pilot_ledger_path: Path | None = None,
+    multi_pair_expansion_rollout_history_path: Path | None = None,
     output_prefix: str = "daily_shadow_ops_summary",
 ) -> dict[str, Any]:
     ops_summary = build_daily_shadow_ops_summary(
@@ -1251,6 +1334,7 @@ def write_daily_shadow_ops_report(
         multi_pair_preparation_output_dir=output_dir,
         multi_pair_pilot_history_path=multi_pair_pilot_history_path,
         multi_pair_pilot_ledger_path=multi_pair_pilot_ledger_path,
+        multi_pair_expansion_rollout_history_path=multi_pair_expansion_rollout_history_path,
     )
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -1268,6 +1352,13 @@ def write_daily_shadow_ops_report(
         dict(ops_summary.get("multi_pair_pilot_execution_state") or {}),
         history_path=multi_pair_pilot_history_path or DEFAULT_MULTI_PAIR_PILOT_HISTORY,
     )
+    multi_pair_expansion_rollout_snapshot = append_multi_pair_expansion_rollout_history(
+        ops_summary,
+        history_path=(
+            multi_pair_expansion_rollout_history_path
+            or DEFAULT_MULTI_PAIR_EXPANSION_ROLLOUT_HISTORY
+        ),
+    )
     notification = append_shadow_notification(ops_summary, notification_log) if notification_log is not None else None
     return {
         "ops_summary": ops_summary,
@@ -1278,6 +1369,10 @@ def write_daily_shadow_ops_report(
         "rollout_snapshot": rollout_snapshot,
         "multi_pair_pilot_history_path": str(multi_pair_pilot_history_path or DEFAULT_MULTI_PAIR_PILOT_HISTORY),
         "multi_pair_pilot_snapshot": multi_pair_pilot_snapshot,
+        "multi_pair_expansion_rollout_history_path": str(
+            multi_pair_expansion_rollout_history_path or DEFAULT_MULTI_PAIR_EXPANSION_ROLLOUT_HISTORY
+        ),
+        "multi_pair_expansion_rollout_snapshot": multi_pair_expansion_rollout_snapshot,
         "notification": notification,
     }
 

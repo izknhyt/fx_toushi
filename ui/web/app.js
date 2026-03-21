@@ -759,7 +759,16 @@ function renderOps(payload) {
   const multiPairExpansionRolloutLine =
     payload && typeof payload.daily_shadow_ops_summary === "object"
       ? [
-          `multi_pair_expansion_rollout: status=${payload.daily_shadow_ops_summary.multi_pair_expansion_rollout_status || "-"} execution=${payload.daily_shadow_ops_summary.multi_pair_expansion_rollout_execution_status || "-"} decision=${payload.daily_shadow_ops_summary.multi_pair_expansion_rollout_decision_status || "-"} action=${payload.daily_shadow_ops_summary.multi_pair_expansion_rollout_recommended_action || "-"}`
+          `multi_pair_expansion_rollout: status=${payload.daily_shadow_ops_summary.multi_pair_expansion_rollout_status || "-"} execution=${payload.daily_shadow_ops_summary.multi_pair_expansion_rollout_execution_status || "-"} decision=${payload.daily_shadow_ops_summary.multi_pair_expansion_rollout_decision_status || "-"} guardrail=${payload.daily_shadow_ops_summary.multi_pair_expansion_rollout_guardrail_status || "-"} action=${payload.daily_shadow_ops_summary.multi_pair_expansion_rollout_guardrail_recommended_action || payload.daily_shadow_ops_summary.multi_pair_expansion_rollout_recommended_action || "-"}`
+        ]
+      : [];
+  const multiPairExpansionRolloutGuardrailLine =
+    payload &&
+    typeof payload.daily_shadow_ops_summary === "object" &&
+    Array.isArray(payload.daily_shadow_ops_summary.multi_pair_expansion_rollout_blockers) &&
+    payload.daily_shadow_ops_summary.multi_pair_expansion_rollout_blockers.length > 0
+      ? [
+          `multi_pair_expansion_rollout_blockers: ${payload.daily_shadow_ops_summary.multi_pair_expansion_rollout_blockers.join(", ")}`
         ]
       : [];
   const multiPairExpansionBlockerLine =
@@ -998,9 +1007,10 @@ function renderOps(payload) {
     ...multiPairPilotLine,
       ...multiPairPilotStreakLine,
       ...multiPairPilotBlockerLine,
-      ...multiPairExpansionLine,
-      ...multiPairExpansionRolloutLine,
-      ...multiPairExpansionBlockerLine,
+    ...multiPairExpansionLine,
+    ...multiPairExpansionRolloutLine,
+    ...multiPairExpansionRolloutGuardrailLine,
+    ...multiPairExpansionBlockerLine,
     ...executionSummaryLine,
     ...executionLine,
     ...shadowFeedbackLine,

@@ -1021,6 +1021,27 @@ def _collect_shadow_daily_review_tasks(
     multi_pair_expansion_rollout_decision_status = str(
         latest.get("multi_pair_expansion_rollout_decision_status") or "pending"
     )
+    multi_pair_expansion_rollout_guardrail_status = str(
+        latest.get("multi_pair_expansion_rollout_guardrail_status") or "unknown"
+    )
+    multi_pair_expansion_rollout_guardrail_recommended_action = str(
+        latest.get("multi_pair_expansion_rollout_guardrail_recommended_action") or ""
+    )
+    multi_pair_expansion_rollout_stable_streak_days = int(
+        latest.get("multi_pair_expansion_rollout_stable_streak_days") or 0
+    )
+    multi_pair_expansion_rollout_required_stable_days = int(
+        latest.get("multi_pair_expansion_rollout_required_stable_days") or 0
+    )
+    multi_pair_expansion_rollout_re_review_streak_days = int(
+        latest.get("multi_pair_expansion_rollout_re_review_streak_days") or 0
+    )
+    multi_pair_expansion_rollout_blockers = [
+        str(item) for item in (latest.get("multi_pair_expansion_rollout_blockers") or [])
+    ]
+    multi_pair_expansion_rollout_clear_conditions = [
+        str(item) for item in (latest.get("multi_pair_expansion_rollout_clear_conditions") or [])
+    ]
     recovery_runbook_ref = str(latest.get("shadow_feedback_recovery_runbook_ref") or "")
     recovery_runner_command = str(latest.get("shadow_feedback_recovery_runner_command") or "")
     recovery_execute_command = str(latest.get("shadow_feedback_recovery_execute_command") or "")
@@ -1088,6 +1109,15 @@ def _collect_shadow_daily_review_tasks(
             if multi_pair_expansion_rollout_execution_status in {"unknown", "planned", "missing"}:
                 task = "Start pair expansion rollout"
                 estimate = max(estimate, 35)
+            elif multi_pair_expansion_rollout_guardrail_status == "re_review_required":
+                task = "Re-review pair expansion rollout"
+                estimate = max(estimate, 35)
+            elif multi_pair_expansion_rollout_guardrail_status == "resume_ready":
+                task = "Resume pair expansion rollout monitoring"
+                estimate = max(estimate, 25)
+            elif multi_pair_expansion_rollout_guardrail_status == "qualified_for_steady_state":
+                task = "Confirm pair expansion steady state"
+                estimate = max(estimate, 25)
             elif multi_pair_expansion_rollout_execution_status == "completed":
                 task = "Review pair expansion rollout evidence"
                 estimate = max(estimate, 30)
@@ -1247,8 +1277,33 @@ def _collect_shadow_daily_review_tasks(
                 else ""
             )
             + (
+                f" / pair_expansion_rollout_guardrail={multi_pair_expansion_rollout_guardrail_status}:{multi_pair_expansion_rollout_guardrail_recommended_action}"
+                if multi_pair_expansion_rollout_guardrail_status not in {"", "unknown"}
+                else ""
+            )
+            + (
                 f" / pair_expansion_rollout_decision={multi_pair_expansion_rollout_decision_status}"
                 if multi_pair_expansion_rollout_decision_status not in {"", "pending", "unknown"}
+                else ""
+            )
+            + (
+                f" / pair_expansion_rollout_streak={multi_pair_expansion_rollout_stable_streak_days}/{multi_pair_expansion_rollout_required_stable_days}"
+                if multi_pair_expansion_rollout_required_stable_days
+                else ""
+            )
+            + (
+                f" / pair_expansion_re_review_streak={multi_pair_expansion_rollout_re_review_streak_days}"
+                if multi_pair_expansion_rollout_re_review_streak_days
+                else ""
+            )
+            + (
+                f" / pair_expansion_rollout_blockers={','.join(multi_pair_expansion_rollout_blockers)}"
+                if multi_pair_expansion_rollout_blockers
+                else ""
+            )
+            + (
+                f" / pair_expansion_rollout_clear_conditions={','.join(multi_pair_expansion_rollout_clear_conditions)}"
+                if multi_pair_expansion_rollout_clear_conditions
                 else ""
             )
             + (

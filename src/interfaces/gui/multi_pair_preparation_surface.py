@@ -71,6 +71,7 @@ def _summarize_multi_pair_execution_result(
             "markdown_path": str(payload.get("markdown_path") or ""),
             "packet_status": packet_status,
             "execution_status": execution_status,
+            "current_symbol": str(packet.get("current_symbol") or ""),
             "next_symbol": str(packet.get("next_symbol") or ""),
             "windows": [str(item) for item in (packet.get("windows") or [])],
             "required_inputs": [str(item) for item in (packet.get("required_inputs") or [])],

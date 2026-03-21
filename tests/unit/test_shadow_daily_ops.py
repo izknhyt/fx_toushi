@@ -730,6 +730,17 @@ def test_build_daily_shadow_ops_summary_surfaces_pair_expansion_rollout_evidence
         "reasons": [],
         "allocator_feedback_candidates": [],
     }
+    summary["discrepancy_summary"] = {
+        "active_discrepancy_count": 0,
+        "max_consecutive_open_days": 0,
+        "active_discrepancies": [],
+    }
+    summary["shadow_readiness_summary"] = {
+        "readiness_status": "ok",
+        "ready_for_next_stage": True,
+        "next_action": "continue_shadow",
+        "reasons": [],
+    }
     summary["alert_summary"] = {"alert_level": "none", "should_alert": False, "headline": "stable: continue_shadow", "reasons": [], "worsening_signals": []}
     summary["daily_summary"] = ["alert_level=none", "drift_event_count=0"]
     output_dir = tmp_path / "shadow"
@@ -801,8 +812,108 @@ def test_build_daily_shadow_ops_summary_surfaces_pair_expansion_rollout_evidence
 
     assert ops_summary["multi_pair_expansion_rollout_execution_status"] == "completed"
     assert ops_summary["multi_pair_expansion_rollout_decision_status"] == "promote_shadow_pilot"
-    assert ops_summary["headline"] == "ready: review_pair_expansion_rollout_evidence"
+    assert ops_summary["multi_pair_expansion_rollout_guardrail_status"] == "monitoring"
+    assert ops_summary["headline"] == "monitor: pair_expansion_rollout"
     assert "Multi-Pair Pair Expansion Rollout" in render_daily_shadow_ops_report(ops_summary)
+
+
+def test_build_daily_shadow_ops_summary_re_reviews_pair_expansion_rollout_on_runtime_block(tmp_path: Path) -> None:
+    summary = _summary()
+    summary["generated_at_utc"] = "2026-03-21T09:00:00Z"
+    summary["review_date_utc"] = "2026-03-21"
+    summary["runtime_guardrail_status"] = "blocked"
+    summary["discrepancy_summary"] = {
+        "active_discrepancy_count": 0,
+        "max_consecutive_open_days": 0,
+        "active_discrepancies": [],
+    }
+    summary["shadow_readiness_summary"] = {
+        "readiness_status": "ok",
+        "ready_for_next_stage": True,
+        "next_action": "continue_shadow",
+        "reasons": [],
+    }
+    summary["alert_summary"] = {"alert_level": "none", "should_alert": False, "headline": "stable: continue_shadow", "reasons": [], "worsening_signals": []}
+    summary["daily_summary"] = ["alert_level=none", "drift_event_count=0"]
+    summary["shadow_feedback_summary"] = {
+        "status": "ok",
+        "feedback_loop_state": "stable_baseline",
+        "next_action": "continue_shadow",
+        "candidate_count": 0,
+        "reasons": [],
+        "allocator_feedback_candidates": [],
+    }
+    output_dir = tmp_path / "shadow"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    history = tmp_path / "multi_pair_pilot_history.jsonl"
+    ledger = tmp_path / "multi_pair_pilot_rollout.jsonl"
+    ledger.write_text(
+        json.dumps({"event": "multi_pair_pilot_rollout", "ts": "2026-03-21T00:00:00Z", "status": "started", "phase": "multi_pair_pilot_rollout", "next_symbol": "EURUSD"}) + "\n",
+        encoding="utf-8",
+    )
+    for review_date in ("2026-03-17", "2026-03-18", "2026-03-19", "2026-03-20"):
+        snapshot = {
+            "generated_at_utc": f"{review_date}T09:00:00Z",
+            "review_date_utc": review_date,
+            "next_symbol": "EURUSD",
+            "decision_status": "promote_shadow_pilot",
+            "promotion_gate_status": "eligible",
+            "execution_status": "started",
+            "runtime_guardrail_status": "ready",
+            "rollout_suppression_status": "inactive",
+            "recovery_resolution_status": "resolved",
+            "alert_level": "none",
+            "active_discrepancy_count": 0,
+            "stable_for_pilot_completion": True,
+        }
+        with history.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(snapshot, ensure_ascii=False))
+            handle.write("\n")
+    baseline_validation = output_dir / "shadow_multi_pair_expand_gbpusd_baseline_validation.json"
+    validation = output_dir / "shadow_multi_pair_expand_gbpusd_validation.json"
+    baseline_validation.write_text(
+        json.dumps({"results": [{"window_name": "2016_2025", "summary": {"pf": 1.2, "avg_r": 0.03, "max_drawdown": 0.1}, "acceptance": {"status": "pass"}}]}) + "\n",
+        encoding="utf-8",
+    )
+    validation.write_text(
+        json.dumps({"results": [{"window_name": "2016_2025", "summary": {"pf": 1.23, "avg_r": 0.032, "max_drawdown": 0.11}, "acceptance": {"status": "pass"}}]}) + "\n",
+        encoding="utf-8",
+    )
+    (output_dir / "shadow_multi_pair_expansion_rollout_20260321T000000Z.json").write_text(
+        json.dumps(
+            {
+                "status": "ok",
+                "packet": {
+                    "phase": "multi_pair_expansion",
+                    "status": "ready",
+                    "execution_status": "completed",
+                    "current_symbol": "EURUSD",
+                    "next_symbol": "GBPUSD",
+                    "required_inputs": [],
+                    "runbook_ref": "docs/runbooks/PORTFOLIO-MULTIPAIR-04.md",
+                    "artifacts": {
+                        "baseline_validation_summary_json": str(baseline_validation),
+                        "validation_summary_json": str(validation),
+                    },
+                },
+                "json_path": str(output_dir / "shadow_multi_pair_expansion_rollout_20260321T000000Z.json"),
+                "markdown_path": str(output_dir / "shadow_multi_pair_expansion_rollout_20260321T000000Z.md"),
+            }
+        ) + "\n",
+        encoding="utf-8",
+    )
+
+    ops_summary = build_daily_shadow_ops_summary(
+        summary,
+        multi_pair_preparation_output_dir=output_dir,
+        multi_pair_pilot_history_path=history,
+        multi_pair_pilot_ledger_path=ledger,
+        multi_pair_expansion_rollout_history_path=tmp_path / "multi_pair_expansion_rollout_history.jsonl",
+    )
+
+    assert ops_summary["multi_pair_expansion_rollout_guardrail_status"] == "re_review_required"
+    assert "decision_status=research_only" in ops_summary["multi_pair_expansion_rollout_blockers"]
+    assert ops_summary["headline"] == "blocked: re_review_pair_expansion_rollout"
 
 
 def test_write_daily_shadow_ops_report_writes_notification(tmp_path: Path) -> None:
