@@ -2,6 +2,7 @@
 
 ## Current Reference
 - Start here: [FX Portfolio Operating System](architecture/fx_portfolio_operating_system.md) — 現行の設計方針。`USDJPY-first / multi-pair-ready / portfolio-first / personal-use` を定義する。
+- Then align development to completion: [FX Portfolio Completion Blueprint](architecture/fx_portfolio_completion_blueprint.md) — milestone 消化ではなく、完成条件に最短で届く completion-first 開発原則を定義する。
 - Then fix v2 shape: [FX Portfolio Tool v2 Specification](architecture/fx_portfolio_tool_v2_spec.md) — 改良版ツールの candidate schema, admission contract, evaluation contract, GUI/CLI surface を定義する。
 - Then execute with the default team: [FX Portfolio Development Team](architecture/fx_portfolio_development_team.md) — 現フェーズでの agent 役割分担、ownership 境界、並列開発ルール、bugcheck 完了条件を定義する。
 - Then check current gaps: [FX Portfolio Tool v2 Gap Audit](architecture/fx_portfolio_tool_v2_gap_audit.md) — v2 spec と現行実装の差分、M2 の到達点、次に formalize すべき contract を整理する。

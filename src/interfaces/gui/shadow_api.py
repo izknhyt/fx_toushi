@@ -256,6 +256,8 @@ class ShadowGuiApi:
             recovery_ledger_path=self.shadow_feedback_recovery_ledger_path,
             candidate_onboarding_output_dir=self.report_dir / "candidate_onboarding",
             multi_pair_preparation_output_dir=self.report_dir,
+            multi_pair_pilot_history_path=self.report_dir / "multi_pair_pilot_history.jsonl",
+            multi_pair_pilot_ledger_path=Path("logs/ops/multi_pair_pilot_rollout.jsonl"),
         )
         shadow_feedback_validation_result = (
             dict(daily_shadow_ops_summary.get("shadow_feedback_validation_result") or {})
@@ -384,6 +386,8 @@ class ShadowGuiApi:
             output_dir=self.report_dir,
             notification_log=self.daily_shadow_notification_log,
             rollout_history_path=self.shadow_feedback_rollout_history_path,
+            multi_pair_pilot_history_path=self.report_dir / "multi_pair_pilot_history.jsonl",
+            multi_pair_pilot_ledger_path=Path("logs/ops/multi_pair_pilot_rollout.jsonl"),
         )
 
     def _require_token(self, token: str | None) -> None:

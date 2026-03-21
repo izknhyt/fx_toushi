@@ -35,6 +35,16 @@ def main() -> int:
         type=Path,
         default=Path("reports/analysis/shadow/shadow_feedback_rollout_history.jsonl"),
     )
+    parser.add_argument(
+        "--multi-pair-pilot-history-path",
+        type=Path,
+        default=Path("reports/analysis/shadow/multi_pair_pilot_history.jsonl"),
+    )
+    parser.add_argument(
+        "--multi-pair-pilot-ledger-path",
+        type=Path,
+        default=Path("logs/ops/multi_pair_pilot_rollout.jsonl"),
+    )
     parser.add_argument("--limit", type=int, default=200)
     parser.add_argument("--window-hours", type=int, default=24)
     parser.add_argument("--output-dir", type=Path, default=Path("reports/analysis/shadow"))
@@ -59,6 +69,8 @@ def main() -> int:
         output_dir=args.output_dir,
         notification_log=args.notification_log,
         rollout_history_path=args.rollout_history_path,
+        multi_pair_pilot_history_path=args.multi_pair_pilot_history_path,
+        multi_pair_pilot_ledger_path=args.multi_pair_pilot_ledger_path,
     )
     print(payload["markdown_path"])
     return 0

@@ -992,6 +992,18 @@ def _collect_shadow_daily_review_tasks(
     candidate_onboarding_gate_clear_conditions = [
         str(item) for item in (latest.get("candidate_onboarding_gate_clear_conditions") or [])
     ]
+    multi_pair_pilot_completion_gate_status = str(
+        latest.get("multi_pair_pilot_completion_gate_status") or "unknown"
+    )
+    multi_pair_pilot_execution_status = str(latest.get("multi_pair_pilot_execution_status") or "unknown")
+    multi_pair_pilot_recommended_action = str(latest.get("multi_pair_pilot_recommended_action") or "")
+    multi_pair_pilot_next_symbol = str(latest.get("multi_pair_pilot_next_symbol") or "")
+    multi_pair_pilot_stable_streak_days = int(latest.get("multi_pair_pilot_stable_streak_days") or 0)
+    multi_pair_pilot_required_stable_days = int(latest.get("multi_pair_pilot_required_stable_days") or 0)
+    multi_pair_pilot_blockers = [str(item) for item in (latest.get("multi_pair_pilot_blockers") or [])]
+    multi_pair_pilot_clear_conditions = [
+        str(item) for item in (latest.get("multi_pair_pilot_clear_conditions") or [])
+    ]
     recovery_runbook_ref = str(latest.get("shadow_feedback_recovery_runbook_ref") or "")
     recovery_runner_command = str(latest.get("shadow_feedback_recovery_runner_command") or "")
     recovery_execute_command = str(latest.get("shadow_feedback_recovery_execute_command") or "")
@@ -1044,6 +1056,18 @@ def _collect_shadow_daily_review_tasks(
             elif candidate_onboarding_decision_status == "reject":
                 task = "Archive candidate onboarding result"
                 estimate = max(estimate, 15)
+        elif multi_pair_pilot_completion_gate_status == "ready_for_rollout":
+            task = "Start multi-pair shadow pilot"
+            estimate = max(estimate, 30)
+        elif multi_pair_pilot_completion_gate_status == "monitoring":
+            task = "Monitor multi-pair pilot rollout"
+            estimate = max(estimate, 20)
+        elif multi_pair_pilot_completion_gate_status == "qualified_for_pair_expansion":
+            task = "Review pair expansion candidate"
+            estimate = max(estimate, 30)
+        elif multi_pair_pilot_execution_status not in {"", "unknown", "not_started"}:
+            task = "Review multi-pair pilot stability"
+            estimate = max(estimate, 20)
     if execution_status == "completed" and task not in {
         "Execute baseline rollback recovery checklist",
         "Execute rollout drift recovery checklist",
@@ -1133,6 +1157,31 @@ def _collect_shadow_daily_review_tasks(
             + (
                 f" / candidate_gate_clear_conditions={','.join(candidate_onboarding_gate_clear_conditions)}"
                 if candidate_onboarding_gate_clear_conditions
+                else ""
+            )
+            + (
+                f" / multi_pair_pilot={multi_pair_pilot_completion_gate_status}:{multi_pair_pilot_recommended_action}"
+                if multi_pair_pilot_completion_gate_status not in {"", "unknown"}
+                else ""
+            )
+            + (
+                f" / multi_pair_symbol={multi_pair_pilot_next_symbol}"
+                if multi_pair_pilot_next_symbol
+                else ""
+            )
+            + (
+                f" / multi_pair_streak={multi_pair_pilot_stable_streak_days}/{multi_pair_pilot_required_stable_days}"
+                if multi_pair_pilot_required_stable_days
+                else ""
+            )
+            + (
+                f" / multi_pair_blockers={','.join(multi_pair_pilot_blockers)}"
+                if multi_pair_pilot_blockers
+                else ""
+            )
+            + (
+                f" / multi_pair_clear_conditions={','.join(multi_pair_pilot_clear_conditions)}"
+                if multi_pair_pilot_clear_conditions
                 else ""
             )
             + (

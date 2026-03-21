@@ -360,6 +360,52 @@ def test_build_daily_shadow_ops_summary_promotes_stage_gate_ready_phase() -> Non
 
 def test_build_daily_shadow_ops_summary_surfaces_multi_pair_preparation_result(tmp_path: Path) -> None:
     summary = _summary()
+    summary["posture"] = "stable_shadow"
+    summary["recommended_action"] = "continue_shadow"
+    summary["drift_event_count"] = 0
+    summary["trend_summary"] = {"consecutive_action_required_days": 0}
+    summary["discrepancy_summary"] = {
+        "active_discrepancy_count": 0,
+        "max_consecutive_open_days": 0,
+        "active_discrepancies": [],
+    }
+    summary["shadow_readiness_summary"] = {
+        "readiness_status": "ready",
+        "ready_for_next_stage": True,
+        "next_action": "baseline_shadow_ready",
+        "reasons": [],
+    }
+    summary["stage_gate_summary"] = {
+        "status": "ready",
+        "ready_for_next_stage": True,
+        "next_action": "candidate_onboarding_or_multi_pair_preparation_ready",
+        "reasons": [],
+    }
+    summary["soak_summary"] = {
+        "status": "qualified",
+        "ready_for_transition": True,
+        "qualified_next_phase": "multi_pair_preparation",
+        "recommendation_streak_days": 3,
+        "required_recommendation_days": 3,
+        "next_action": "advance_to_multi_pair_preparation",
+        "reasons": [],
+    }
+    summary["shadow_feedback_summary"] = {
+        "status": "ok",
+        "feedback_loop_state": "stable_baseline",
+        "next_action": "continue_shadow",
+        "candidate_count": 0,
+        "reasons": [],
+        "allocator_feedback_candidates": [],
+    }
+    summary["alert_summary"] = {
+        "alert_level": "none",
+        "should_alert": False,
+        "headline": "stable: continue_shadow",
+        "reasons": [],
+        "worsening_signals": [],
+    }
+    summary["daily_summary"] = ["alert_level=none", "drift_event_count=0"]
     output_dir = tmp_path / "shadow"
     output_dir.mkdir(parents=True, exist_ok=True)
     baseline_validation = output_dir / "shadow_multi_pair_eurusd_baseline_validation.json"
@@ -472,6 +518,8 @@ def test_build_daily_shadow_ops_summary_surfaces_multi_pair_preparation_result(t
     ops_summary = build_daily_shadow_ops_summary(
         summary,
         multi_pair_preparation_output_dir=output_dir,
+        multi_pair_pilot_history_path=tmp_path / "multi_pair_pilot_history.jsonl",
+        multi_pair_pilot_ledger_path=tmp_path / "multi_pair_pilot_rollout.jsonl",
     )
 
     assert ops_summary["multi_pair_preparation_status"] == "ok"
@@ -486,7 +534,10 @@ def test_build_daily_shadow_ops_summary_surfaces_multi_pair_preparation_result(t
     assert ops_summary["multi_pair_preparation_pending_step_count"] == 1
     assert ops_summary["multi_pair_preparation_decision_status"] == "promote_shadow_pilot"
     assert ops_summary["multi_pair_preparation_promotion_gate_status"] == "eligible"
+    assert ops_summary["multi_pair_pilot_completion_gate_status"] == "ready_for_rollout"
+    assert ops_summary["multi_pair_pilot_recommended_action"] == "start_multi_pair_pilot_rollout"
     assert "review_multi_pair_shadow_pilot_promotion" in render_daily_shadow_ops_report(ops_summary)
+    assert "Multi-Pair Pilot Rollout" in render_daily_shadow_ops_report(ops_summary)
 
 
 def test_write_daily_shadow_ops_report_writes_notification(tmp_path: Path) -> None:

@@ -729,6 +729,27 @@ function renderOps(payload) {
           `multi_pair_preparation_artifacts: json=${multiPairPreparationLatest.json_path || "-"} md=${multiPairPreparationLatest.markdown_path || "-"}`
         ]
       : [];
+  const multiPairPilotLine =
+    payload && typeof payload.daily_shadow_ops_summary === "object"
+      ? [
+          `multi_pair_pilot: gate=${payload.daily_shadow_ops_summary.multi_pair_pilot_completion_gate_status || "-"} rollout=${payload.daily_shadow_ops_summary.multi_pair_pilot_rollout_status || "-"} execution=${payload.daily_shadow_ops_summary.multi_pair_pilot_execution_status || "-"} symbol=${payload.daily_shadow_ops_summary.multi_pair_pilot_next_symbol || "-"} next=${payload.daily_shadow_ops_summary.multi_pair_pilot_recommended_action || "-"}`
+        ]
+      : [];
+  const multiPairPilotStreakLine =
+    payload && typeof payload.daily_shadow_ops_summary === "object"
+      ? [
+          `multi_pair_pilot_streak: ${payload.daily_shadow_ops_summary.multi_pair_pilot_stable_streak_days || 0}/${payload.daily_shadow_ops_summary.multi_pair_pilot_required_stable_days || 0}`
+        ]
+      : [];
+  const multiPairPilotBlockerLine =
+    payload &&
+    typeof payload.daily_shadow_ops_summary === "object" &&
+    Array.isArray(payload.daily_shadow_ops_summary.multi_pair_pilot_blockers) &&
+    payload.daily_shadow_ops_summary.multi_pair_pilot_blockers.length > 0
+      ? [
+          `multi_pair_pilot_blockers: ${payload.daily_shadow_ops_summary.multi_pair_pilot_blockers.join(", ")}`
+        ]
+      : [];
   const executionState =
     payload && typeof payload.shadow_next_stage_execution_state === "object"
       ? payload.shadow_next_stage_execution_state
@@ -953,6 +974,9 @@ function renderOps(payload) {
     ...multiPairPreparationStepLine,
     ...multiPairPreparationInputLine,
     ...multiPairPreparationArtifactLine,
+    ...multiPairPilotLine,
+    ...multiPairPilotStreakLine,
+    ...multiPairPilotBlockerLine,
     ...executionSummaryLine,
     ...executionLine,
     ...shadowFeedbackLine,

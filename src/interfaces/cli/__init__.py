@@ -6423,6 +6423,54 @@ def create_cli_app() -> typer.Typer:
         )
         _render_payload(console, payload, json_output=effective_json)
 
+    @portfolio_app.command("multi-pair-pilot")
+    def portfolio_multi_pair_pilot_command(
+        ctx: typer.Context,
+        shadow_ops_json: Path | None = typer.Option(None, "--shadow-ops-json", help="Daily shadow ops summary JSON path."),
+        output_prefix: str = typer.Option(
+            "multi_pair_pilot_rollout",
+            "--output-prefix",
+            help="Output prefix used for generated artifacts",
+        ),
+        output_dir: Path = typer.Option(
+            portfolio_output_dir,
+            "--output-dir",
+            help="Directory for deterministic CLI summary artifacts",
+        ),
+        ledger_path: Path = typer.Option(
+            Path("logs") / "ops" / "multi_pair_pilot_rollout.jsonl",
+            "--ledger-path",
+            help="Multi-pair pilot rollout execution ledger path.",
+        ),
+        run: bool = typer.Option(False, "--run", help="Append a pilot rollout execution ledger entry."),
+        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
+    ) -> None:
+        effective_json = _effective_json_output(ctx, json_output)
+        output_dir.mkdir(parents=True, exist_ok=True)
+        summary_json_path = output_dir / f"{output_prefix}.json"
+        summary_md_path = output_dir / f"{output_prefix}.md"
+        command = [
+            sys.executable,
+            "tools/run_multi_pair_pilot_rollout.py",
+            "--output-dir",
+            str(output_dir),
+            "--output-prefix",
+            output_prefix,
+            "--ledger-path",
+            str(ledger_path),
+        ]
+        if shadow_ops_json is not None:
+            command.extend(["--shadow-ops-json", str(shadow_ops_json)])
+        if run:
+            command.append("--run")
+        payload = _run_portfolio_tool(
+            command_name="multi-pair-pilot",
+            command=command,
+            output_json=summary_json_path,
+            output_md=summary_md_path,
+        )
+        _render_payload(console, payload, json_output=effective_json)
+
     app.add_typer(portfolio_app, name="portfolio")
 
     scoreboard_app = typer.Typer(help="Scoreboard utilities")

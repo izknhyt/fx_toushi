@@ -361,3 +361,46 @@ def test_portfolio_shadow_feedback_recover_cli_wraps_tool(monkeypatch, tmp_path:
     assert payload["status"] == "ok"
     assert payload["command"] == "shadow-feedback-recover"
     assert payload["result"]["packet"]["recovery_action"] == "rollback_baseline"
+
+
+def test_portfolio_multi_pair_pilot_cli_wraps_tool(monkeypatch, tmp_path: Path) -> None:
+    def _fake_run(cmd: list[str], **kwargs) -> subprocess.CompletedProcess[str]:
+        output_dir = Path(cmd[cmd.index("--output-dir") + 1])
+        output_prefix = cmd[cmd.index("--output-prefix") + 1]
+        output_json = output_dir / f"{output_prefix}.json"
+        output_md = output_dir / f"{output_prefix}.md"
+        payload = {
+            "status": "ok",
+            "packet": {
+                "phase": "multi_pair_pilot_rollout",
+                "status": "ready",
+                "next_symbol": "EURUSD",
+                "runbook_ref": "docs/runbooks/PORTFOLIO-MULTIPAIR-02.md",
+            },
+        }
+        output_dir.mkdir(parents=True, exist_ok=True)
+        output_json.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        output_md.write_text("# multi-pair-pilot\n", encoding="utf-8")
+        return subprocess.CompletedProcess(cmd, 0, stdout=json.dumps(payload), stderr="")
+
+    monkeypatch.setattr(subprocess, "run", _fake_run)
+    app = create_cli_app()
+    runner = CliRunner()
+
+    result = runner.invoke(
+        app,
+        [
+            "portfolio",
+            "multi-pair-pilot",
+            "--output-dir",
+            str(tmp_path / "out"),
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["status"] == "ok"
+    assert payload["command"] == "multi-pair-pilot"
+    assert payload["summary_json"].endswith("multi_pair_pilot_rollout.json")
+    assert payload["result"]["packet"]["next_symbol"] == "EURUSD"

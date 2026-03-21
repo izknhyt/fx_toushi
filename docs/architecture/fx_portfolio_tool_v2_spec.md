@@ -27,10 +27,15 @@ v2 が対象とする範囲:
 
 v2 で後回しにする範囲:
 
-- multi-pair 本格運用
+- multi-pair の broad production scaling
 - ML ベースの selector
 - broker/live execution 高度化
 - enterprise 向け approval / audit workflow
+
+補足:
+
+- `first additional pair` の preparation と pilot-evaluation は v2 delivery path に含める
+- 複数 pair を継続的に追加する本格運用は post-v2 とする
 
 ## 3. Product Principles
 
@@ -311,7 +316,7 @@ v2 初期基準 portfolio は、現時点では次を baseline として扱う�
 ### Phase 3
 
 - new strategy onboarding を `standalone + marginal contribution` 必須へ切り替える
-- USDJPY 以外の pair へ水平展開する
+- first additional pair の preparation / pilot-evaluation へ進む
 
 ### Resolved Rollout Order
 
@@ -323,7 +328,7 @@ v2 初期基準 portfolio は、現時点では次を baseline として扱う�
 4. その baseline に対して `candidate onboarding` を行う
 5. baseline が壊れないことを確認してから `multi-pair preparation` へ進む
 
-この順序より先に multi-pair や strategy count を広げることは、v2 では推奨しない。
+この順序より先に multi-pair broad rollout や strategy count を広げることは、v2 では推奨しない。
 
 ## 14. Acceptance For v2 Roll-In
 
@@ -334,6 +339,7 @@ v2 を実運用の既定に切り替える条件:
 - baseline portfolio が long-horizon で安定
 - candidate evaluation runner が新戦略採用の標準手順になる
 - GUI / CLI で accepted / rejected reasons が追える
+- first additional pair の preparation / pilot-evaluation が既存 contract 上で評価できる
 
 ## 15. Open Decisions
 

@@ -233,6 +233,8 @@ def run_gui_ops_once(
         recovery_ledger_path=Path("logs/ops/shadow_feedback_recovery.jsonl"),
         candidate_onboarding_output_dir=Path("reports/analysis/shadow/candidate_onboarding"),
         multi_pair_preparation_output_dir=Path("reports/analysis/shadow"),
+        multi_pair_pilot_history_path=Path("reports/analysis/shadow/multi_pair_pilot_history.jsonl"),
+        multi_pair_pilot_ledger_path=Path("logs/ops/multi_pair_pilot_rollout.jsonl"),
     )
     shadow_feedback_validation_result = (
         dict(daily_shadow_ops_summary.get("shadow_feedback_validation_result") or {})

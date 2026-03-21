@@ -588,3 +588,54 @@ def test_agenda_maintains_rollout_suppression_until_recovery_resolves(tmp_path: 
     assert len(matching) == 1
     assert "suppression=active:execute_recovery_packet" in str(matching[0]["notes"])
     assert "safe_promotion=blocked:maintain_rollout_suppression" in str(matching[0]["notes"])
+
+
+def test_agenda_creates_multi_pair_pilot_task_when_gate_ready(tmp_path: Path) -> None:
+    health_state_path = tmp_path / "snapshots" / "latest" / "health_state.json"
+    _write_health_state(health_state_path, [], status="ok")
+
+    notification_log = tmp_path / "logs" / "ops" / "shadow_daily_notifications.jsonl"
+    notification_log.parent.mkdir(parents=True, exist_ok=True)
+    notification_log.write_text(
+        json.dumps(
+            {
+                "event": "shadow.daily_alert",
+                "ts": "2026-01-12T04:00:00Z",
+                "review_date_utc": "2026-01-12",
+                "headline": "ready: start_multi_pair_pilot_rollout",
+                "alert_level": "none",
+                "recommended_action": "continue_shadow",
+                "multi_pair_pilot_completion_gate_status": "ready_for_rollout",
+                "multi_pair_pilot_execution_status": "not_started",
+                "multi_pair_pilot_next_symbol": "EURUSD",
+                "multi_pair_pilot_recommended_action": "start_multi_pair_pilot_rollout",
+                "multi_pair_pilot_stable_streak_days": 0,
+                "multi_pair_pilot_required_stable_days": 5,
+                "multi_pair_pilot_blockers": [],
+                "multi_pair_pilot_clear_conditions": ["execute_multi_pair_pilot_rollout"],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    service = OpsAgendaService(
+        template_path=tmp_path / "docs" / "templates" / "daily_agenda.md",
+        output_dir=tmp_path / "docs" / "runbooks" / "daily_agenda",
+        health_state_path=health_state_path,
+    )
+
+    from src.ops import agenda as agenda_module
+
+    original_path = agenda_module.SHADOW_DAILY_NOTIFICATION_LOG_PATH
+    agenda_module.SHADOW_DAILY_NOTIFICATION_LOG_PATH = notification_log
+    try:
+        ctx = service.build_context(target_date=date(2026, 1, 12))
+    finally:
+        agenda_module.SHADOW_DAILY_NOTIFICATION_LOG_PATH = original_path
+
+    matching = [task for task in ctx.operational_tasks if task["task"] == "Start multi-pair shadow pilot"]
+    assert len(matching) == 1
+    assert "multi_pair_pilot=ready_for_rollout:start_multi_pair_pilot_rollout" in str(matching[0]["notes"])
+    assert "multi_pair_symbol=EURUSD" in str(matching[0]["notes"])
+    assert "multi_pair_clear_conditions=execute_multi_pair_pilot_rollout" in str(matching[0]["notes"])

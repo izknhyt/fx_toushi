@@ -36,6 +36,15 @@ from src.portfolio.shadow_feedback import (
     materialize_effective_shadow_feedback_override_packet,
     materialize_shadow_feedback_override_packet,
 )
+from src.portfolio.multi_pair_pilot import (
+    DEFAULT_MULTI_PAIR_PILOT_HISTORY,
+    DEFAULT_MULTI_PAIR_PILOT_LEDGER,
+    append_multi_pair_pilot_history,
+    build_multi_pair_pilot_completion_gate_summary,
+    build_multi_pair_pilot_rollout_packet,
+    load_multi_pair_pilot_history,
+    summarize_multi_pair_pilot_rollout_execution,
+)
 from src.portfolio.shadow_rollout_suppression import (
     build_shadow_rollout_suppression_summary,
 )
@@ -50,6 +59,8 @@ def build_daily_shadow_ops_summary(
     recovery_ledger_path: Path | None = None,
     candidate_onboarding_output_dir: Path | None = None,
     multi_pair_preparation_output_dir: Path | None = None,
+    multi_pair_pilot_ledger_path: Path | None = None,
+    multi_pair_pilot_history_path: Path | None = None,
 ) -> dict[str, Any]:
     alert = summary.get("alert_summary") or {}
     trend = summary.get("trend_summary") or {}
@@ -478,6 +489,51 @@ def build_daily_shadow_ops_summary(
     )
     ops_summary["multi_pair_preparation_gate_blockers"] = multi_pair_gate_blockers
     ops_summary["multi_pair_preparation_gate_clear_conditions"] = multi_pair_gate_clear_conditions
+    multi_pair_pilot_rollout_packet = build_multi_pair_pilot_rollout_packet(ops_summary)
+    multi_pair_pilot_execution_state = summarize_multi_pair_pilot_rollout_execution(
+        multi_pair_pilot_rollout_packet,
+        ledger_path=multi_pair_pilot_ledger_path or DEFAULT_MULTI_PAIR_PILOT_LEDGER,
+    )
+    multi_pair_pilot_history_entries = load_multi_pair_pilot_history(
+        multi_pair_pilot_history_path or DEFAULT_MULTI_PAIR_PILOT_HISTORY
+    )
+    multi_pair_pilot_completion_gate = build_multi_pair_pilot_completion_gate_summary(
+        ops_summary,
+        multi_pair_pilot_execution_state,
+        multi_pair_pilot_history_entries,
+    )
+    ops_summary["multi_pair_pilot_rollout_packet"] = multi_pair_pilot_rollout_packet
+    ops_summary["multi_pair_pilot_execution_state"] = multi_pair_pilot_execution_state
+    ops_summary["multi_pair_pilot_completion_gate_summary"] = multi_pair_pilot_completion_gate
+    ops_summary["multi_pair_pilot_rollout_status"] = str(
+        multi_pair_pilot_rollout_packet.get("status") or "unknown"
+    )
+    ops_summary["multi_pair_pilot_execution_status"] = str(
+        multi_pair_pilot_execution_state.get("status") or "unknown"
+    )
+    ops_summary["multi_pair_pilot_completion_gate_status"] = str(
+        multi_pair_pilot_completion_gate.get("completion_gate_status") or "unknown"
+    )
+    ops_summary["multi_pair_pilot_next_symbol"] = str(
+        multi_pair_pilot_rollout_packet.get("next_symbol") or ""
+    )
+    ops_summary["multi_pair_pilot_recommended_action"] = str(
+        multi_pair_pilot_completion_gate.get("recommended_action")
+        or multi_pair_pilot_rollout_packet.get("next_action")
+        or "review_multi_pair_pilot_rollout"
+    )
+    ops_summary["multi_pair_pilot_stable_streak_days"] = int(
+        multi_pair_pilot_completion_gate.get("stable_streak_days") or 0
+    )
+    ops_summary["multi_pair_pilot_required_stable_days"] = int(
+        multi_pair_pilot_completion_gate.get("required_stable_days") or 0
+    )
+    ops_summary["multi_pair_pilot_blockers"] = [
+        str(item) for item in (multi_pair_pilot_completion_gate.get("blockers") or [])
+    ]
+    ops_summary["multi_pair_pilot_clear_conditions"] = [
+        str(item) for item in (multi_pair_pilot_completion_gate.get("clear_conditions") or [])
+    ]
     if ops_summary["rollout_rollback_recommended"]:
         ops_summary["headline"] = "critical: review_baseline_rollback"
         ops_summary["should_notify"] = True
@@ -520,6 +576,24 @@ def build_daily_shadow_ops_summary(
     ):
         ops_summary["headline"] = "blocked: multi_pair_preparation_promotion_gate"
         ops_summary["next_action"] = ops_summary["multi_pair_preparation_promotion_next_action"]
+        ops_summary["should_notify"] = True
+    if ops_summary["multi_pair_pilot_completion_gate_status"] == "ready_for_rollout":
+        ops_summary["headline"] = "ready: start_multi_pair_pilot_rollout"
+        ops_summary["next_action"] = ops_summary["multi_pair_pilot_recommended_action"]
+        ops_summary["should_notify"] = True
+    elif ops_summary["multi_pair_pilot_completion_gate_status"] == "monitoring":
+        ops_summary["headline"] = "monitor: multi_pair_pilot_rollout"
+        ops_summary["next_action"] = ops_summary["multi_pair_pilot_recommended_action"]
+    elif ops_summary["multi_pair_pilot_completion_gate_status"] == "qualified_for_pair_expansion":
+        ops_summary["headline"] = "ready: review_pair_expansion_candidate"
+        ops_summary["next_action"] = ops_summary["multi_pair_pilot_recommended_action"]
+        ops_summary["should_notify"] = True
+    elif (
+        ops_summary["multi_pair_pilot_completion_gate_status"] == "blocked"
+        and ops_summary["multi_pair_pilot_execution_status"] != "not_started"
+    ):
+        ops_summary["headline"] = "blocked: multi_pair_pilot_completion_gate"
+        ops_summary["next_action"] = ops_summary["multi_pair_pilot_recommended_action"]
         ops_summary["should_notify"] = True
     return ops_summary
 
@@ -793,6 +867,18 @@ def render_daily_shadow_ops_report(ops_summary: Mapping[str, Any]) -> str:
             )
     else:
         lines.append("- none")
+    lines.extend(["", "## Multi-Pair Pilot Rollout", ""])
+    lines.append(f"- rollout_status: `{ops_summary.get('multi_pair_pilot_rollout_status')}`")
+    lines.append(f"- execution_status: `{ops_summary.get('multi_pair_pilot_execution_status')}`")
+    lines.append(f"- completion_gate_status: `{ops_summary.get('multi_pair_pilot_completion_gate_status')}`")
+    lines.append(f"- next_symbol: `{ops_summary.get('multi_pair_pilot_next_symbol')}`")
+    lines.append(f"- recommended_action: `{ops_summary.get('multi_pair_pilot_recommended_action')}`")
+    lines.append(f"- stable_streak_days: `{ops_summary.get('multi_pair_pilot_stable_streak_days')}`")
+    lines.append(f"- required_stable_days: `{ops_summary.get('multi_pair_pilot_required_stable_days')}`")
+    for item in ops_summary.get("multi_pair_pilot_blockers", []):
+        lines.append(f"- blocker: `{item}`")
+    for item in ops_summary.get("multi_pair_pilot_clear_conditions", []):
+        lines.append(f"- clear_condition: `{item}`")
     lines.extend(["", "## Shadow Feedback", ""])
     for item in ops_summary.get("shadow_feedback_reasons", []):
         lines.append(f"- {item}")
@@ -985,6 +1071,20 @@ def append_shadow_notification(ops_summary: Mapping[str, Any], notification_log:
         )
         if isinstance(ops_summary.get("multi_pair_preparation_result"), Mapping)
         else [],
+        "multi_pair_pilot_rollout_status": ops_summary.get("multi_pair_pilot_rollout_status"),
+        "multi_pair_pilot_execution_status": ops_summary.get("multi_pair_pilot_execution_status"),
+        "multi_pair_pilot_completion_gate_status": ops_summary.get("multi_pair_pilot_completion_gate_status"),
+        "multi_pair_pilot_next_symbol": ops_summary.get("multi_pair_pilot_next_symbol"),
+        "multi_pair_pilot_recommended_action": ops_summary.get("multi_pair_pilot_recommended_action"),
+        "multi_pair_pilot_stable_streak_days": ops_summary.get("multi_pair_pilot_stable_streak_days"),
+        "multi_pair_pilot_required_stable_days": ops_summary.get("multi_pair_pilot_required_stable_days"),
+        "multi_pair_pilot_blockers": list(ops_summary.get("multi_pair_pilot_blockers") or []),
+        "multi_pair_pilot_clear_conditions": list(ops_summary.get("multi_pair_pilot_clear_conditions") or []),
+        "multi_pair_pilot_rollout_latest": (
+            (ops_summary.get("multi_pair_pilot_execution_state") or {}).get("latest")
+            if isinstance(ops_summary.get("multi_pair_pilot_execution_state"), Mapping)
+            else {}
+        ),
         "shadow_feedback_recovery_latest_execution": (
             (ops_summary.get("shadow_feedback_recovery_execution_state") or {}).get("latest")
             if isinstance(ops_summary.get("shadow_feedback_recovery_execution_state"), Mapping)
@@ -1023,6 +1123,8 @@ def write_daily_shadow_ops_report(
     output_dir: Path,
     notification_log: Path | None = None,
     rollout_history_path: Path | None = None,
+    multi_pair_pilot_history_path: Path | None = None,
+    multi_pair_pilot_ledger_path: Path | None = None,
     output_prefix: str = "daily_shadow_ops_summary",
 ) -> dict[str, Any]:
     ops_summary = build_daily_shadow_ops_summary(
@@ -1031,6 +1133,8 @@ def write_daily_shadow_ops_report(
         rollout_history_path=rollout_history_path,
         recovery_ledger_path=Path("logs/ops/shadow_feedback_recovery.jsonl"),
         multi_pair_preparation_output_dir=output_dir,
+        multi_pair_pilot_history_path=multi_pair_pilot_history_path,
+        multi_pair_pilot_ledger_path=multi_pair_pilot_ledger_path,
     )
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -1043,6 +1147,11 @@ def write_daily_shadow_ops_report(
         if rollout_history_path is not None
         else None
     )
+    multi_pair_pilot_snapshot = append_multi_pair_pilot_history(
+        ops_summary,
+        dict(ops_summary.get("multi_pair_pilot_execution_state") or {}),
+        history_path=multi_pair_pilot_history_path or DEFAULT_MULTI_PAIR_PILOT_HISTORY,
+    )
     notification = append_shadow_notification(ops_summary, notification_log) if notification_log is not None else None
     return {
         "ops_summary": ops_summary,
@@ -1051,6 +1160,8 @@ def write_daily_shadow_ops_report(
         "notification_log": str(notification_log) if notification_log is not None else None,
         "rollout_history_path": str(rollout_history_path) if rollout_history_path is not None else None,
         "rollout_snapshot": rollout_snapshot,
+        "multi_pair_pilot_history_path": str(multi_pair_pilot_history_path or DEFAULT_MULTI_PAIR_PILOT_HISTORY),
+        "multi_pair_pilot_snapshot": multi_pair_pilot_snapshot,
         "notification": notification,
     }
 
