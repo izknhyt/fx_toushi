@@ -225,6 +225,7 @@ def run_gui_ops_once(
     daily_shadow_ops_summary = build_daily_shadow_ops_summary(
         daily_shadow_review_summary,
         focused_validation_output_dir=Path("reports/analysis/shadow/feedback_validation"),
+        rollout_history_path=Path("reports/analysis/shadow/shadow_feedback_rollout_history.jsonl"),
     )
     shadow_feedback_validation_result = (
         dict(daily_shadow_ops_summary.get("shadow_feedback_validation_result") or {})

@@ -180,6 +180,83 @@ def test_build_daily_shadow_ops_summary_escalates_rollout_mismatch(tmp_path: Pat
     assert ops_summary["shadow_feedback_override_packet"]["allocation_profile_overrides"] == {}
 
 
+def test_build_daily_shadow_ops_summary_escalates_rollout_mismatch_streak(tmp_path: Path) -> None:
+    summary = _summary()
+    summary["generated_at_utc"] = "2026-03-20T13:00:00Z"
+    summary["alert_summary"] = {
+        "alert_level": "none",
+        "should_alert": False,
+        "headline": "stable: continue_shadow",
+        "reasons": [],
+        "worsening_signals": [],
+    }
+    summary["shadow_next_stage_execution_state"] = {
+        "latest": {
+            "status": "completed",
+            "phase": "candidate_onboarding",
+            "result_status": "completed",
+        }
+    }
+    output_dir = tmp_path / "feedback_validation"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    (output_dir / "shadow_feedback_validation.json").write_text(
+        json.dumps(
+            {
+                "generated_at_utc": "2026-03-20T12:30:00+00:00",
+                "validation_decision": {
+                    "status": "ok",
+                    "decision": "reject",
+                    "reasons": ["full_history_regressed"],
+                },
+                "runtime_guardrail_state": {"status": "rejected", "decision": "reject"},
+                "windows": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    rollout_history_path = tmp_path / "shadow_feedback_rollout_history.jsonl"
+    rollout_history_path.write_text(
+        "\n".join(
+            [
+                json.dumps(
+                    {
+                        "generated_at_utc": "2026-03-18T13:00:00Z",
+                        "review_date_utc": "2026-03-18",
+                        "rollout_alignment_status": "mismatch",
+                        "runtime_guardrail_status": "blocked",
+                        "runtime_guardrail_manual_clear_required": True,
+                        "shadow_feedback_validation_decision": "reject",
+                    }
+                ),
+                json.dumps(
+                    {
+                        "generated_at_utc": "2026-03-19T13:00:00Z",
+                        "review_date_utc": "2026-03-19",
+                        "rollout_alignment_status": "mismatch",
+                        "runtime_guardrail_status": "blocked",
+                        "runtime_guardrail_manual_clear_required": True,
+                        "shadow_feedback_validation_decision": "reject",
+                    }
+                ),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    ops_summary = build_daily_shadow_ops_summary(
+        summary,
+        focused_validation_output_dir=output_dir,
+        rollout_history_path=rollout_history_path,
+    )
+
+    assert ops_summary["headline"] == "critical: review_baseline_rollback"
+    assert ops_summary["rollout_guardrail_status"] == "rollback_recommendation"
+    assert ops_summary["rollout_mismatch_streak_days"] == 3
+    assert ops_summary["rollout_rollback_recommended"] is True
+    assert ops_summary["rollout_stronger_freeze"] is True
+
+
 def test_build_daily_shadow_ops_summary_promotes_stage_gate_ready_phase() -> None:
     summary = _summary()
     summary["posture"] = "shadow_monitor"

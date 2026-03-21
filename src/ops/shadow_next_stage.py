@@ -28,6 +28,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_SHADOW_NEXT_STAGE_AUTOMATION_CONFIG_PATH = Path("config/shadow_next_stage_automation.yaml")
 DEFAULT_SHADOW_NEXT_STAGE_EXECUTION_LEDGER_PATH = Path("logs/ops/shadow_next_stage_execution.jsonl")
 DEFAULT_SHADOW_NEXT_STAGE_AUTOMATION_COMMAND = "tradectl ops shadow-next-stage --run"
+DEFAULT_SHADOW_FEEDBACK_ROLLOUT_HISTORY_PATH = Path("reports/analysis/shadow/shadow_feedback_rollout_history.jsonl")
 
 
 def run_shadow_next_stage_daily(
@@ -38,6 +39,7 @@ def run_shadow_next_stage_daily(
     history_path: Path,
     discrepancy_ledger_path: Path = DEFAULT_DISCREPANCY_LEDGER_PATH,
     notification_log: Path,
+    rollout_history_path: Path = DEFAULT_SHADOW_FEEDBACK_ROLLOUT_HISTORY_PATH,
     automation_config_path: Path = DEFAULT_SHADOW_NEXT_STAGE_AUTOMATION_CONFIG_PATH,
     execution_ledger_path: Path = DEFAULT_SHADOW_NEXT_STAGE_EXECUTION_LEDGER_PATH,
     shadow_feedback_override_packet: Mapping[str, Any] | None = None,
@@ -68,6 +70,7 @@ def run_shadow_next_stage_daily(
         summary=review_payload["summary"],
         output_dir=output_dir,
         notification_log=notification_log,
+        rollout_history_path=rollout_history_path,
         output_prefix="daily_shadow_ops_summary",
     )
 

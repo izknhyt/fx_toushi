@@ -30,6 +30,11 @@ def main() -> int:
         default=DEFAULT_DISCREPANCY_LEDGER_PATH,
     )
     parser.add_argument("--notification-log", type=Path, default=Path("logs/ops/shadow_daily_notifications.jsonl"))
+    parser.add_argument(
+        "--rollout-history-path",
+        type=Path,
+        default=Path("reports/analysis/shadow/shadow_feedback_rollout_history.jsonl"),
+    )
     parser.add_argument("--limit", type=int, default=200)
     parser.add_argument("--window-hours", type=int, default=24)
     parser.add_argument("--output-dir", type=Path, default=Path("reports/analysis/shadow"))
@@ -53,6 +58,7 @@ def main() -> int:
         summary=review_summary,
         output_dir=args.output_dir,
         notification_log=args.notification_log,
+        rollout_history_path=args.rollout_history_path,
     )
     print(payload["markdown_path"])
     return 0

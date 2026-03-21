@@ -28,6 +28,9 @@ from src.interfaces.gui.shadow_daily_ops import (
 from src.interfaces.gui.shadow_feedback_validation_surface import (
     summarize_shadow_feedback_validation_result,
 )
+from src.interfaces.gui.shadow_feedback_rollout_history import (
+    load_shadow_feedback_rollout_history,
+)
 from src.interfaces.gui.shadow_next_stage_surface import (
     DEFAULT_SHADOW_NEXT_STAGE_EXECUTION_LEDGER,
     summarize_shadow_next_stage_execution,
@@ -51,6 +54,7 @@ DEFAULT_REPORT_DIR = Path("reports/analysis/shadow")
 DEFAULT_DAILY_SHADOW_HISTORY = Path("reports/analysis/shadow/daily_shadow_review_history.jsonl")
 DEFAULT_DAILY_SHADOW_DISCREPANCY_LEDGER = DEFAULT_DISCREPANCY_LEDGER_PATH
 DEFAULT_DAILY_SHADOW_NOTIFICATION_LOG = Path("logs/ops/shadow_daily_notifications.jsonl")
+DEFAULT_SHADOW_FEEDBACK_ROLLOUT_HISTORY = Path("reports/analysis/shadow/shadow_feedback_rollout_history.jsonl")
 DEFAULT_BROKER_SHADOW_EVENT_LOG = Path("logs/broker/shadow_events.jsonl")
 DEFAULT_BROKER_SHADOW_SESSION_LOG = Path("logs/broker/shadow_sessions.jsonl")
 
@@ -71,6 +75,7 @@ class ShadowGuiApi:
     daily_shadow_history_path: Path = DEFAULT_DAILY_SHADOW_HISTORY
     daily_shadow_discrepancy_ledger_path: Path = DEFAULT_DAILY_SHADOW_DISCREPANCY_LEDGER
     daily_shadow_notification_log: Path = DEFAULT_DAILY_SHADOW_NOTIFICATION_LOG
+    shadow_feedback_rollout_history_path: Path = DEFAULT_SHADOW_FEEDBACK_ROLLOUT_HISTORY
     broker_shadow_event_log: Path = DEFAULT_BROKER_SHADOW_EVENT_LOG
     broker_shadow_session_log: Path = DEFAULT_BROKER_SHADOW_SESSION_LOG
     shadow_next_stage_execution_ledger_path: Path = DEFAULT_SHADOW_NEXT_STAGE_EXECUTION_LEDGER
@@ -242,6 +247,7 @@ class ShadowGuiApi:
         daily_shadow_ops_summary = build_daily_shadow_ops_summary(
             daily_shadow_review_summary,
             focused_validation_output_dir=self.report_dir / "feedback_validation",
+            rollout_history_path=self.shadow_feedback_rollout_history_path,
         )
         shadow_feedback_validation_result = (
             dict(daily_shadow_ops_summary.get("shadow_feedback_validation_result") or {})
@@ -278,6 +284,9 @@ class ShadowGuiApi:
             "shadow_feedback_override_packet": daily_shadow_ops_summary.get("shadow_feedback_override_packet") or {},
             "shadow_feedback_validation_result": shadow_feedback_validation_result,
             "shadow_feedback_rollout_alignment": shadow_feedback_rollout_alignment,
+            "shadow_feedback_rollout_history": load_shadow_feedback_rollout_history(
+                self.shadow_feedback_rollout_history_path
+            ),
             "daily_shadow_ops_summary": daily_shadow_ops_summary,
             "schema_path": "docs/schema/shadow_gui.yaml",
         }
@@ -359,6 +368,7 @@ class ShadowGuiApi:
             summary=review_summary,
             output_dir=self.report_dir,
             notification_log=self.daily_shadow_notification_log,
+            rollout_history_path=self.shadow_feedback_rollout_history_path,
         )
 
     def _require_token(self, token: str | None) -> None:

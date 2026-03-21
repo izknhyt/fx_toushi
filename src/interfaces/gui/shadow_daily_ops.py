@@ -13,6 +13,11 @@ from src.interfaces.gui.shadow_feedback_validation_surface import (
 from src.interfaces.gui.shadow_feedback_rollout_surface import (
     summarize_shadow_feedback_rollout_alignment,
 )
+from src.interfaces.gui.shadow_feedback_rollout_history import (
+    append_shadow_feedback_rollout_history,
+    build_shadow_feedback_rollout_guardrail_summary,
+    load_shadow_feedback_rollout_history,
+)
 from src.portfolio.shadow_feedback import (
     materialize_effective_shadow_feedback_override_packet,
     materialize_shadow_feedback_override_packet,
@@ -24,6 +29,7 @@ def build_daily_shadow_ops_summary(
     summary: Mapping[str, Any],
     *,
     focused_validation_output_dir: Path | None = None,
+    rollout_history_path: Path | None = None,
 ) -> dict[str, Any]:
     alert = summary.get("alert_summary") or {}
     trend = summary.get("trend_summary") or {}
@@ -79,6 +85,11 @@ def build_daily_shadow_ops_summary(
         rollout_alignment=rollout_alignment,
     )
     runtime_guardrail_summary = dict(shadow_feedback_override_packet.get("runtime_guardrail") or {})
+    rollout_history_entries = (
+        load_shadow_feedback_rollout_history(rollout_history_path)
+        if rollout_history_path is not None
+        else []
+    )
     alert_level = str(alert.get("alert_level") or "none")
     reasons = [str(item) for item in (alert.get("reasons") or [])]
     worsening_signals = [str(item) for item in (alert.get("worsening_signals") or [])]
@@ -194,6 +205,21 @@ def build_daily_shadow_ops_summary(
             else readiness.get("next_action") or summary.get("recommended_action") or "continue_shadow"
         ),
     }
+    rollout_guardrail_summary = build_shadow_feedback_rollout_guardrail_summary(
+        ops_summary,
+        rollout_history_entries,
+    )
+    ops_summary["rollout_guardrail_summary"] = rollout_guardrail_summary
+    ops_summary["rollout_guardrail_status"] = str(rollout_guardrail_summary.get("escalation_status") or "monitor")
+    ops_summary["rollout_mismatch_streak_days"] = int(rollout_guardrail_summary.get("mismatch_streak_days") or 0)
+    ops_summary["rollout_rollback_recommended"] = bool(rollout_guardrail_summary.get("rollback_recommendation"))
+    ops_summary["rollout_stronger_freeze"] = bool(rollout_guardrail_summary.get("stronger_freeze"))
+    if ops_summary["rollout_rollback_recommended"]:
+        ops_summary["headline"] = "critical: review_baseline_rollback"
+        ops_summary["should_notify"] = True
+    elif ops_summary["rollout_stronger_freeze"]:
+        ops_summary["headline"] = "critical: maintain_rollout_freeze"
+        ops_summary["should_notify"] = True
     return ops_summary
 
 
@@ -226,6 +252,9 @@ def render_daily_shadow_ops_report(ops_summary: Mapping[str, Any]) -> str:
         f"- shadow_feedback_candidate_count: `{ops_summary.get('shadow_feedback_candidate_count')}`",
         f"- runtime_guardrail_status: `{((ops_summary.get('runtime_guardrail_summary') or {}).get('status'))}`",
         f"- runtime_guardrail_manual_clear_required: `{ops_summary.get('runtime_guardrail_manual_clear_required')}`",
+        f"- rollout_guardrail_status: `{ops_summary.get('rollout_guardrail_status')}`",
+        f"- rollout_mismatch_streak_days: `{ops_summary.get('rollout_mismatch_streak_days')}`",
+        f"- rollout_rollback_recommended: `{ops_summary.get('rollout_rollback_recommended')}`",
         f"- focused_validation_status: `{((ops_summary.get('focused_validation_summary') or {}).get('status'))}`",
         f"- focused_validation_template_status: `{ops_summary.get('focused_validation_template_status')}`",
         f"- drift_event_count: `{ops_summary.get('drift_event_count')}`",
@@ -409,6 +438,10 @@ def append_shadow_notification(ops_summary: Mapping[str, Any], notification_log:
         "focused_validation_template_runner_command": ops_summary.get("focused_validation_template_runner_command"),
         "runtime_guardrail_status": ops_summary.get("runtime_guardrail_status"),
         "runtime_guardrail_manual_clear_required": ops_summary.get("runtime_guardrail_manual_clear_required"),
+        "rollout_guardrail_status": ops_summary.get("rollout_guardrail_status"),
+        "rollout_mismatch_streak_days": ops_summary.get("rollout_mismatch_streak_days"),
+        "rollout_rollback_recommended": ops_summary.get("rollout_rollback_recommended"),
+        "rollout_stronger_freeze": ops_summary.get("rollout_stronger_freeze"),
         "shadow_feedback_rollout_alignment_status": ops_summary.get("shadow_feedback_rollout_alignment_status"),
         "shadow_feedback_rollout_recommended_action": (
             (ops_summary.get("shadow_feedback_rollout_alignment") or {}).get("recommended_action")
@@ -437,11 +470,13 @@ def write_daily_shadow_ops_report(
     summary: Mapping[str, Any],
     output_dir: Path,
     notification_log: Path | None = None,
+    rollout_history_path: Path | None = None,
     output_prefix: str = "daily_shadow_ops_summary",
 ) -> dict[str, Any]:
     ops_summary = build_daily_shadow_ops_summary(
         summary,
         focused_validation_output_dir=output_dir / "feedback_validation",
+        rollout_history_path=rollout_history_path,
     )
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -449,12 +484,19 @@ def write_daily_shadow_ops_report(
     md_path = output_dir / f"{output_prefix}_{stamp}.md"
     json_path.write_text(json.dumps(ops_summary, ensure_ascii=False, indent=2), encoding="utf-8")
     md_path.write_text(render_daily_shadow_ops_report(ops_summary), encoding="utf-8")
+    rollout_snapshot = (
+        append_shadow_feedback_rollout_history(ops_summary, rollout_history_path)
+        if rollout_history_path is not None
+        else None
+    )
     notification = append_shadow_notification(ops_summary, notification_log) if notification_log is not None else None
     return {
         "ops_summary": ops_summary,
         "json_path": str(json_path),
         "markdown_path": str(md_path),
         "notification_log": str(notification_log) if notification_log is not None else None,
+        "rollout_history_path": str(rollout_history_path) if rollout_history_path is not None else None,
+        "rollout_snapshot": rollout_snapshot,
         "notification": notification,
     }
 
