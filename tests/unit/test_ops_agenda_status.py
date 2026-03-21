@@ -900,3 +900,105 @@ def test_agenda_creates_next_pair_expansion_rollout_task_after_next_pair_review(
     assert "next_pair_expansion=ready_to_start:start_next_pair_expansion_rollout" in str(matching[0]["notes"])
     assert "next_pair_expansion_current=GBPUSD" in str(matching[0]["notes"])
     assert "next_pair_expansion_next=EURJPY" in str(matching[0]["notes"])
+
+
+def test_agenda_creates_stop_next_pair_expansion_rollout_task(tmp_path: Path) -> None:
+    notification_log = tmp_path / "logs" / "ops" / "shadow_daily_notifications.jsonl"
+    notification_log.parent.mkdir(parents=True, exist_ok=True)
+    notification_log.write_text(
+        json.dumps(
+            {
+                "event": "shadow.daily_alert",
+                "ts": "2026-03-21T09:00:00Z",
+                "review_date_utc": "2026-03-21",
+                "headline": "blocked: stop_next_pair_expansion_rollout",
+                "alert_level": "warn",
+                "readiness_status": "ok",
+                "runtime_guardrail_status": "blocked",
+                "rollout_suppression_status": "inactive",
+                "multi_pair_expansion_rollout_execution_status": "completed",
+                "multi_pair_expansion_rollout_guardrail_status": "qualified_for_steady_state",
+                "multi_pair_next_expansion_status": "monitoring",
+                "multi_pair_next_expansion_execution_status": "started",
+                "multi_pair_next_expansion_current_symbol": "GBPUSD",
+                "multi_pair_next_expansion_next_symbol": "EURJPY",
+                "multi_pair_next_expansion_recommended_action": "monitor_next_pair_expansion_rollout",
+                "multi_pair_next_expansion_rollout_guardrail_status": "stop_required",
+                "multi_pair_next_expansion_rollout_guardrail_recommended_action": "stop_next_pair_expansion_rollout",
+                "multi_pair_next_expansion_rollout_blockers": ["runtime_guardrail_status=blocked"],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    service = OpsAgendaService(
+        template_path=tmp_path / "docs" / "templates" / "daily_agenda.md",
+        output_dir=tmp_path / "docs" / "runbooks" / "daily_agenda",
+        health_state_path=tmp_path / "snapshots" / "latest" / "health_state.json",
+    )
+    _write_health_state(service._health_state_path, [], status="ok")
+
+    from src.ops import agenda as agenda_module
+
+    original_path = agenda_module.SHADOW_DAILY_NOTIFICATION_LOG_PATH
+    agenda_module.SHADOW_DAILY_NOTIFICATION_LOG_PATH = notification_log
+    try:
+        ctx = service.build_context(target_date=date(2026, 3, 21))
+    finally:
+        agenda_module.SHADOW_DAILY_NOTIFICATION_LOG_PATH = original_path
+
+    matching = [task for task in ctx.operational_tasks if task["task"] == "Stop next pair expansion rollout"]
+    assert matching
+    assert "next_pair_expansion_rollout=stop_required:stop_next_pair_expansion_rollout" in str(matching[0]["notes"])
+    assert "next_pair_expansion_rollout_blockers=runtime_guardrail_status=blocked" in str(matching[0]["notes"])
+
+
+def test_agenda_creates_rollback_next_pair_expansion_rollout_task(tmp_path: Path) -> None:
+    notification_log = tmp_path / "logs" / "ops" / "shadow_daily_notifications.jsonl"
+    notification_log.parent.mkdir(parents=True, exist_ok=True)
+    notification_log.write_text(
+        json.dumps(
+            {
+                "event": "shadow.daily_alert",
+                "ts": "2026-03-21T09:00:00Z",
+                "review_date_utc": "2026-03-21",
+                "headline": "critical: rollback_next_pair_expansion_rollout",
+                "alert_level": "critical",
+                "readiness_status": "ok",
+                "runtime_guardrail_status": "ready",
+                "rollout_suppression_status": "inactive",
+                "multi_pair_expansion_rollout_execution_status": "completed",
+                "multi_pair_expansion_rollout_guardrail_status": "qualified_for_steady_state",
+                "multi_pair_next_expansion_status": "monitoring",
+                "multi_pair_next_expansion_execution_status": "completed",
+                "multi_pair_next_expansion_current_symbol": "GBPUSD",
+                "multi_pair_next_expansion_next_symbol": "EURJPY",
+                "multi_pair_next_expansion_rollout_guardrail_status": "rollback_required",
+                "multi_pair_next_expansion_rollout_guardrail_recommended_action": "rollback_next_pair_expansion_rollout",
+                "multi_pair_next_expansion_rollout_blockers": ["rollout_rollback_recommended"],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    service = OpsAgendaService(
+        template_path=tmp_path / "docs" / "templates" / "daily_agenda.md",
+        output_dir=tmp_path / "docs" / "runbooks" / "daily_agenda",
+        health_state_path=tmp_path / "snapshots" / "latest" / "health_state.json",
+    )
+    _write_health_state(service._health_state_path, [], status="ok")
+
+    from src.ops import agenda as agenda_module
+
+    original_path = agenda_module.SHADOW_DAILY_NOTIFICATION_LOG_PATH
+    agenda_module.SHADOW_DAILY_NOTIFICATION_LOG_PATH = notification_log
+    try:
+        ctx = service.build_context(target_date=date(2026, 3, 21))
+    finally:
+        agenda_module.SHADOW_DAILY_NOTIFICATION_LOG_PATH = original_path
+
+    matching = [task for task in ctx.operational_tasks if task["task"] == "Rollback next pair expansion rollout"]
+    assert matching
+    assert "next_pair_expansion_rollout=rollback_required:rollback_next_pair_expansion_rollout" in str(matching[0]["notes"])

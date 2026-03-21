@@ -54,22 +54,25 @@ def build_multi_pair_next_expansion_execution_summary(
     ledger_path: Path = DEFAULT_MULTI_PAIR_NEXT_EXPANSION_LEDGER,
 ) -> dict[str, Any]:
     steady_state_status = str(ops_summary.get("multi_pair_steady_state_status") or "unknown")
+    ledger_rows_all = load_multi_pair_next_expansion_execution_history(ledger_path)
+    latest_any = dict(ledger_rows_all[-1]) if ledger_rows_all else {}
     current_symbol = str(
         ops_summary.get("multi_pair_expansion_next_symbol")
+        or latest_any.get("current_symbol")
         or ((ops_summary.get("multi_pair_steady_state_summary") or {}).get("expanded_symbol") or "")
     )
-    next_symbol = str(ops_summary.get("multi_pair_steady_state_next_symbol") or "")
+    next_symbol = str(ops_summary.get("multi_pair_steady_state_next_symbol") or latest_any.get("next_symbol") or "")
     runner_command = str(ops_summary.get("multi_pair_steady_state_runner_command") or "")
     execute_command = f"{runner_command} --run" if runner_command else ""
     ledger_rows = [
         row
-        for row in load_multi_pair_next_expansion_execution_history(ledger_path)
+        for row in ledger_rows_all
         if str(row.get("current_symbol") or "") == current_symbol
         and str(row.get("next_symbol") or "") == next_symbol
     ]
     latest = dict(ledger_rows[-1]) if ledger_rows else {}
 
-    if steady_state_status != "ready_for_next_pair_review":
+    if not latest and steady_state_status != "ready_for_next_pair_review":
         return {
             "status": "blocked",
             "execution_status": "blocked",

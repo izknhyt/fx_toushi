@@ -1072,6 +1072,19 @@ def _collect_shadow_daily_review_tasks(
     multi_pair_next_expansion_clear_conditions = [
         str(item) for item in (latest.get("multi_pair_next_expansion_clear_conditions") or [])
     ]
+    multi_pair_next_expansion_rollout_guardrail_status = str(
+        latest.get("multi_pair_next_expansion_rollout_guardrail_status") or "unknown"
+    )
+    multi_pair_next_expansion_rollout_guardrail_recommended_action = str(
+        latest.get("multi_pair_next_expansion_rollout_guardrail_recommended_action") or ""
+    )
+    multi_pair_next_expansion_rollout_blockers = [
+        str(item) for item in (latest.get("multi_pair_next_expansion_rollout_blockers") or [])
+    ]
+    multi_pair_next_expansion_rollout_clear_conditions = [
+        str(item)
+        for item in (latest.get("multi_pair_next_expansion_rollout_clear_conditions") or [])
+    ]
     recovery_runbook_ref = str(latest.get("shadow_feedback_recovery_runbook_ref") or "")
     recovery_runner_command = str(latest.get("shadow_feedback_recovery_runner_command") or "")
     recovery_execute_command = str(latest.get("shadow_feedback_recovery_execute_command") or "")
@@ -1146,15 +1159,32 @@ def _collect_shadow_daily_review_tasks(
             task = "Resume pair expansion rollout monitoring"
             estimate = max(estimate, 25)
         elif (
+            multi_pair_next_expansion_rollout_guardrail_status == "rollback_required"
+        ):
+            task = "Rollback next pair expansion rollout"
+            estimate = max(estimate, 40)
+        elif (
+            multi_pair_next_expansion_rollout_guardrail_status == "stop_required"
+        ):
+            task = "Stop next pair expansion rollout"
+            estimate = max(estimate, 35)
+        elif (
+            multi_pair_next_expansion_rollout_guardrail_status == "resume_ready"
+        ):
+            task = "Resume next pair expansion rollout"
+            estimate = max(estimate, 25)
+        elif (
+            multi_pair_next_expansion_rollout_guardrail_status == "monitoring"
+        ):
+            task = "Monitor next pair expansion rollout"
+            estimate = max(estimate, 25)
+        elif (
             multi_pair_expansion_rollout_execution_status not in {"", "unknown", "planned", "missing"}
             and multi_pair_expansion_rollout_guardrail_status == "qualified_for_steady_state"
         ):
             if multi_pair_next_expansion_status == "ready_to_start":
                 task = "Start next pair expansion rollout"
                 estimate = max(estimate, 35)
-            elif multi_pair_next_expansion_status == "monitoring":
-                task = "Monitor next pair expansion rollout"
-                estimate = max(estimate, 25)
             elif multi_pair_next_expansion_status == "re_review_required":
                 task = "Re-review next pair expansion rollout"
                 estimate = max(estimate, 35)
@@ -1406,6 +1436,21 @@ def _collect_shadow_daily_review_tasks(
             + (
                 f" / next_pair_expansion_clear_conditions={','.join(multi_pair_next_expansion_clear_conditions)}"
                 if multi_pair_next_expansion_clear_conditions
+                else ""
+            )
+            + (
+                f" / next_pair_expansion_rollout={multi_pair_next_expansion_rollout_guardrail_status}:{multi_pair_next_expansion_rollout_guardrail_recommended_action}"
+                if multi_pair_next_expansion_rollout_guardrail_status not in {"", "unknown"}
+                else ""
+            )
+            + (
+                f" / next_pair_expansion_rollout_blockers={','.join(multi_pair_next_expansion_rollout_blockers)}"
+                if multi_pair_next_expansion_rollout_blockers
+                else ""
+            )
+            + (
+                f" / next_pair_expansion_rollout_clear_conditions={','.join(multi_pair_next_expansion_rollout_clear_conditions)}"
+                if multi_pair_next_expansion_rollout_clear_conditions
                 else ""
             )
             + (

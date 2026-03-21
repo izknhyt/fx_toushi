@@ -777,6 +777,27 @@ function renderOps(payload) {
           `multi_pair_steady_state: status=${payload.daily_shadow_ops_summary.multi_pair_steady_state_status || "-"} next=${payload.daily_shadow_ops_summary.multi_pair_steady_state_next_symbol || "-"} action=${payload.daily_shadow_ops_summary.multi_pair_steady_state_recommended_action || "-"}`
         ]
       : [];
+  const multiPairNextExpansionLine =
+    payload && typeof payload.daily_shadow_ops_summary === "object"
+      ? [
+          `multi_pair_next_expansion: status=${payload.daily_shadow_ops_summary.multi_pair_next_expansion_status || "-"} execution=${payload.daily_shadow_ops_summary.multi_pair_next_expansion_execution_status || "-"} current=${payload.daily_shadow_ops_summary.multi_pair_next_expansion_current_symbol || "-"} next=${payload.daily_shadow_ops_summary.multi_pair_next_expansion_next_symbol || "-"} action=${payload.daily_shadow_ops_summary.multi_pair_next_expansion_recommended_action || "-"}`
+        ]
+      : [];
+  const multiPairNextExpansionRolloutLine =
+    payload && typeof payload.daily_shadow_ops_summary === "object"
+      ? [
+          `multi_pair_next_expansion_rollout: guardrail=${payload.daily_shadow_ops_summary.multi_pair_next_expansion_rollout_guardrail_status || "-"} action=${payload.daily_shadow_ops_summary.multi_pair_next_expansion_rollout_guardrail_recommended_action || "-"}`
+        ]
+      : [];
+  const multiPairNextExpansionRolloutBlockers =
+    payload &&
+    typeof payload.daily_shadow_ops_summary === "object" &&
+    Array.isArray(payload.daily_shadow_ops_summary.multi_pair_next_expansion_rollout_blockers) &&
+    payload.daily_shadow_ops_summary.multi_pair_next_expansion_rollout_blockers.length > 0
+      ? [
+          `multi_pair_next_expansion_rollout_blockers: ${payload.daily_shadow_ops_summary.multi_pair_next_expansion_rollout_blockers.join(", ")}`
+        ]
+      : [];
   const multiPairExpansionBlockerLine =
     payload &&
     typeof payload.daily_shadow_ops_summary === "object" &&
@@ -1017,6 +1038,9 @@ function renderOps(payload) {
     ...multiPairExpansionRolloutLine,
     ...multiPairExpansionRolloutGuardrailLine,
     ...multiPairSteadyStateLine,
+    ...multiPairNextExpansionLine,
+    ...multiPairNextExpansionRolloutLine,
+    ...multiPairNextExpansionRolloutBlockers,
     ...multiPairExpansionBlockerLine,
     ...executionSummaryLine,
     ...executionLine,

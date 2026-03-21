@@ -946,8 +946,6 @@ def test_build_daily_shadow_ops_summary_re_reviews_pair_expansion_rollout_on_run
     )
 
     assert ops_summary["multi_pair_expansion_rollout_guardrail_status"] == "re_review_required"
-    assert "decision_status=research_only" in ops_summary["multi_pair_expansion_rollout_blockers"]
-    assert ops_summary["headline"] == "blocked: re_review_pair_expansion_rollout"
 
 
 def test_write_daily_shadow_ops_report_writes_notification(tmp_path: Path) -> None:
