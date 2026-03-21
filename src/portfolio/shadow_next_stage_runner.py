@@ -2,15 +2,20 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from typing import Any, Mapping
 
+from src.portfolio.candidate_onboarding import (
+    DEFAULT_CANDIDATE_ONBOARDING_RUNBOOK,
+    DEFAULT_CANDIDATE_ONBOARDING_WINDOWS,
+    build_candidate_onboarding_packet,
+)
+
 import yaml
 
-DEFAULT_NEXT_STAGE_WINDOWS = ("2016_2021", "2016_2025", "2022_2025")
+DEFAULT_NEXT_STAGE_WINDOWS = DEFAULT_CANDIDATE_ONBOARDING_WINDOWS
 DEFAULT_MULTI_PAIR_WINDOWS = ("2016_2025", "2022_2025")
-DEFAULT_CANDIDATE_RUNBOOK = "docs/runbooks/PORTFOLIO-CANDIDATE-01.md"
+DEFAULT_CANDIDATE_RUNBOOK = DEFAULT_CANDIDATE_ONBOARDING_RUNBOOK
 DEFAULT_MULTI_PAIR_RUNBOOK = "docs/runbooks/PORTFOLIO-MULTIPAIR-01.md"
 
 
@@ -26,102 +31,10 @@ def build_candidate_onboarding_execution_packet(
     output_dir: Path | None = None,
 ) -> dict[str, Any]:
     baseline_ids = list(baseline_strategy_ids or _resolve_enabled_strategy_ids(manifest_path))
-    required_inputs: list[str] = []
-    if not candidate_strategy_ids:
-        required_inputs.append("candidate_strategy_ids")
-    if data_path is None:
-        required_inputs.append("data_path")
-
-    output_dir = output_dir or (Path("reports") / "analysis" / "shadow" / "next_stage")
-    output_prefix = "shadow_candidate_onboarding"
-    standalone_json = output_dir / f"{output_prefix}_standalone.json"
-    standalone_md = output_dir / f"{output_prefix}_standalone.md"
-    evaluate_json = output_dir / f"{output_prefix}_evaluation.json"
-    evaluate_md = output_dir / f"{output_prefix}_evaluation.md"
-    review_json = output_dir / f"{output_prefix}_review.json"
-    review_md = output_dir / f"{output_prefix}_review.md"
-
     candidate_csv = ",".join(candidate_strategy_ids) or "<candidate_ids>"
     baseline_csv = ",".join(baseline_ids) or "<baseline_ids>"
     data_path_text = str(data_path) if data_path is not None else "<data_path>"
-    windows_csv = ",".join(windows)
-
-    commands = [
-        {
-            "step": "standalone_validation",
-            "command": " ".join(
-                [
-                    "python3",
-                    "tools/run_long_horizon_portfolio_validation.py",
-                    "--manifest-path",
-                    str(manifest_path),
-                    "--allocation-config-path",
-                    str(allocation_config_path),
-                    "--allocation-profile",
-                    allocation_profile,
-                    "--data-path",
-                    data_path_text,
-                    "--windows",
-                    windows_csv,
-                    "--strategies",
-                    candidate_csv,
-                    "--plan-json",
-                    str(standalone_json),
-                    "--summary-md",
-                    str(standalone_md),
-                    "--run",
-                ]
-            ),
-            "artifacts": [str(standalone_json), str(standalone_md)],
-        },
-        {
-            "step": "portfolio_evaluate",
-            "command": " ".join(
-                [
-                    "tradectl",
-                    "portfolio",
-                    "evaluate",
-                    "--baseline-strategies",
-                    baseline_csv,
-                    "--candidate-strategies",
-                    candidate_csv,
-                    "--data-path",
-                    data_path_text,
-                    "--windows",
-                    windows_csv,
-                    "--manifest-path",
-                    str(manifest_path),
-                    "--allocation-config-path",
-                    str(allocation_config_path),
-                    "--allocation-profile",
-                    allocation_profile,
-                    "--output-dir",
-                    str(output_dir),
-                    "--output-prefix",
-                    output_prefix + "_evaluation",
-                ]
-            ),
-            "artifacts": [str(evaluate_json), str(evaluate_md)],
-        },
-        {
-            "step": "standalone_review",
-            "command": " ".join(
-                [
-                    "tradectl",
-                    "portfolio",
-                    "review",
-                    "--summary-json",
-                    str(standalone_json),
-                    "--output-dir",
-                    str(output_dir),
-                    "--output-prefix",
-                    output_prefix + "_review",
-                ]
-            ),
-            "artifacts": [str(review_json), str(review_md)],
-        },
-    ]
-
+    output_dir = output_dir or (Path("reports") / "analysis" / "shadow" / "next_stage")
     runner_command = " ".join(
         [
             "tradectl",
@@ -151,25 +64,19 @@ def build_candidate_onboarding_execution_packet(
             else []
         )
     )
-    return {
-        "status": "ready" if not required_inputs else "pending_inputs",
-        "phase": "candidate_onboarding",
-        "runbook_ref": DEFAULT_CANDIDATE_RUNBOOK,
-        "runner_command": runner_command,
-        "required_inputs": required_inputs,
-        "baseline_strategy_ids": baseline_ids,
-        "candidate_strategy_ids": candidate_strategy_ids,
-        "windows": list(windows),
-        "commands": commands,
-        "artifacts": {
-            "standalone_summary_json": str(standalone_json),
-            "standalone_summary_md": str(standalone_md),
-            "evaluation_summary_json": str(evaluate_json),
-            "evaluation_summary_md": str(evaluate_md),
-            "review_summary_json": str(review_json),
-            "review_summary_md": str(review_md),
-        },
-    }
+    return build_candidate_onboarding_packet(
+        manifest_path=manifest_path,
+        allocation_config_path=allocation_config_path,
+        allocation_profile=allocation_profile,
+        data_path=data_path,
+        candidate_strategy_ids=candidate_strategy_ids,
+        baseline_strategy_ids=baseline_ids,
+        windows=windows,
+        output_dir=output_dir,
+        output_prefix="shadow_candidate_onboarding",
+        runner_command=runner_command,
+        runbook_ref=DEFAULT_CANDIDATE_ONBOARDING_RUNBOOK,
+    )
 
 
 def build_multi_pair_preparation_execution_packet(

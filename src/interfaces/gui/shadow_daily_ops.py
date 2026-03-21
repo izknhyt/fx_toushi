@@ -21,6 +21,13 @@ from src.interfaces.gui.shadow_feedback_rollout_history import (
     build_shadow_feedback_rollout_guardrail_summary,
     load_shadow_feedback_rollout_history,
 )
+from src.interfaces.gui.candidate_onboarding_surface import (
+    summarize_candidate_onboarding_result,
+)
+from src.portfolio.candidate_onboarding import (
+    build_candidate_onboarding_promotion_gate_summary,
+    summarize_candidate_onboarding_promotion_execution,
+)
 from src.portfolio.shadow_feedback_recovery import build_shadow_feedback_recovery_packet
 from src.portfolio.shadow_feedback import (
     materialize_effective_shadow_feedback_override_packet,
@@ -38,6 +45,7 @@ def build_daily_shadow_ops_summary(
     focused_validation_output_dir: Path | None = None,
     rollout_history_path: Path | None = None,
     recovery_ledger_path: Path | None = None,
+    candidate_onboarding_output_dir: Path | None = None,
 ) -> dict[str, Any]:
     alert = summary.get("alert_summary") or {}
     trend = summary.get("trend_summary") or {}
@@ -274,6 +282,75 @@ def build_daily_shadow_ops_summary(
     ops_summary["safe_promotion_action"] = str(
         rollout_suppression_summary.get("safe_promotion_action") or "continue_shadow"
     )
+    candidate_onboarding_result = summarize_candidate_onboarding_result(
+        output_dir=candidate_onboarding_output_dir
+        if candidate_onboarding_output_dir is not None
+        else Path("reports/analysis/shadow/candidate_onboarding")
+    )
+    candidate_onboarding_latest = (
+        candidate_onboarding_result.get("latest")
+        if isinstance(candidate_onboarding_result.get("latest"), Mapping)
+        else {}
+    )
+    candidate_onboarding_result_summary = (
+        candidate_onboarding_latest.get("onboarding_result_summary")
+        if isinstance(candidate_onboarding_latest.get("onboarding_result_summary"), Mapping)
+        else {}
+    )
+    candidate_onboarding_promotion_gate_summary = build_candidate_onboarding_promotion_gate_summary(
+        candidate_onboarding_result_summary,
+        rollout_suppression_summary=rollout_suppression_summary,
+        recovery_execution_state=shadow_feedback_recovery_execution_state,
+        runtime_guardrail_summary=runtime_guardrail_summary,
+    )
+    decision_counts = (
+        candidate_onboarding_result.get("decision_counts")
+        if isinstance(candidate_onboarding_result.get("decision_counts"), Mapping)
+        else {}
+    )
+    ops_summary["candidate_onboarding_result"] = candidate_onboarding_result
+    ops_summary["candidate_onboarding_result_summary"] = dict(candidate_onboarding_result_summary)
+    ops_summary["candidate_onboarding_promotion_gate_summary"] = dict(
+        candidate_onboarding_promotion_gate_summary
+    )
+    ops_summary["candidate_onboarding_status"] = str(candidate_onboarding_result.get("status") or "missing")
+    ops_summary["candidate_onboarding_decision_status"] = str(
+        candidate_onboarding_result_summary.get("decision_status") or "pending"
+    )
+    ops_summary["candidate_onboarding_recommended_action"] = str(
+        candidate_onboarding_promotion_gate_summary.get("promotion_next_action")
+        or candidate_onboarding_result.get("recommended_action")
+        or "run_candidate_onboarding"
+    )
+    ops_summary["candidate_onboarding_promote_count"] = int((decision_counts or {}).get("promote") or 0)
+    ops_summary["candidate_onboarding_research_only_count"] = int((decision_counts or {}).get("research-only") or 0)
+    ops_summary["candidate_onboarding_reject_count"] = int((decision_counts or {}).get("reject") or 0)
+    ops_summary["candidate_onboarding_blocked_count"] = int((decision_counts or {}).get("blocked") or 0)
+    ops_summary["candidate_onboarding_promotion_gate_status"] = str(
+        candidate_onboarding_promotion_gate_summary.get("promotion_gate_status") or "review_required"
+    )
+    ops_summary["candidate_onboarding_promotion_eligible"] = bool(
+        candidate_onboarding_promotion_gate_summary.get("promotion_eligible")
+    )
+    ops_summary["candidate_onboarding_promotion_next_action"] = str(
+        candidate_onboarding_promotion_gate_summary.get("promotion_next_action") or "review_candidate_onboarding_result"
+    )
+    ops_summary["candidate_onboarding_gate_blockers"] = [
+        str(item) for item in (candidate_onboarding_promotion_gate_summary.get("blockers") or [])
+    ]
+    ops_summary["candidate_onboarding_gate_clear_conditions"] = [
+        str(item) for item in (candidate_onboarding_promotion_gate_summary.get("clear_conditions") or [])
+    ]
+    ops_summary["candidate_onboarding_candidate_strategy_ids"] = [
+        str(item) for item in (candidate_onboarding_result_summary.get("candidate_strategy_ids") or [])
+    ]
+    ops_summary["candidate_onboarding_baseline_strategy_ids"] = [
+        str(item) for item in (candidate_onboarding_result_summary.get("baseline_strategy_ids") or [])
+    ]
+    ops_summary["candidate_onboarding_windows"] = [
+        str(item) for item in (candidate_onboarding_result_summary.get("windows") or [])
+    ]
+    ops_summary["candidate_onboarding_promotion_execution_state"] = summarize_candidate_onboarding_promotion_execution()
     if ops_summary["rollout_rollback_recommended"]:
         ops_summary["headline"] = "critical: review_baseline_rollback"
         ops_summary["should_notify"] = True
@@ -289,6 +366,20 @@ def build_daily_shadow_ops_summary(
             ops_summary["headline"] = "critical: maintain_rollout_suppression"
         ops_summary["should_notify"] = True
         ops_summary["next_action"] = ops_summary["rollout_suppression_recommended_action"]
+    elif (
+        ops_summary["candidate_onboarding_promotion_gate_status"] == "eligible"
+        and ops_summary["candidate_onboarding_decision_status"] == "promote"
+    ):
+        ops_summary["headline"] = "ready: promote_candidate_onboarding"
+        ops_summary["next_action"] = ops_summary["candidate_onboarding_promotion_next_action"]
+        ops_summary["should_notify"] = True
+    elif (
+        ops_summary["candidate_onboarding_promotion_gate_status"] == "blocked"
+        and ops_summary["candidate_onboarding_decision_status"] == "promote"
+    ):
+        ops_summary["headline"] = "blocked: candidate_onboarding_promotion_gate"
+        ops_summary["next_action"] = ops_summary["candidate_onboarding_promotion_next_action"]
+        ops_summary["should_notify"] = True
     return ops_summary
 
 
@@ -331,6 +422,8 @@ def render_daily_shadow_ops_report(ops_summary: Mapping[str, Any]) -> str:
         f"- rollout_suppression_scope: `{ops_summary.get('rollout_suppression_scope')}`",
         f"- safe_promotion_status: `{ops_summary.get('safe_promotion_status')}`",
         f"- safe_promotion_ready: `{ops_summary.get('safe_promotion_ready')}`",
+        f"- candidate_onboarding_status: `{ops_summary.get('candidate_onboarding_status')}`",
+        f"- candidate_onboarding_promote_count: `{ops_summary.get('candidate_onboarding_promote_count')}`",
         f"- focused_validation_status: `{((ops_summary.get('focused_validation_summary') or {}).get('status'))}`",
         f"- focused_validation_template_status: `{ops_summary.get('focused_validation_template_status')}`",
         f"- drift_event_count: `{ops_summary.get('drift_event_count')}`",
@@ -445,6 +538,79 @@ def render_daily_shadow_ops_report(ops_summary: Mapping[str, Any]) -> str:
             lines.append(f"- reason: {item}")
         for item in suppression_summary.get("clear_conditions", []):
             lines.append(f"- clear_condition: {item}")
+    else:
+        lines.append("- none")
+    candidate_onboarding_result = (
+        ops_summary.get("candidate_onboarding_result")
+        if isinstance(ops_summary.get("candidate_onboarding_result"), Mapping)
+        else {}
+    )
+    lines.extend(["", "## Candidate Onboarding", ""])
+    if candidate_onboarding_result:
+        latest_onboarding = (
+            candidate_onboarding_result.get("latest")
+            if isinstance(candidate_onboarding_result.get("latest"), Mapping)
+            else {}
+        )
+        promotion_packet = (
+            latest_onboarding.get("promotion_gate")
+            if isinstance(latest_onboarding.get("promotion_gate"), Mapping)
+            else {}
+        )
+        onboarding_summary = (
+            latest_onboarding.get("onboarding_result_summary")
+            if isinstance(latest_onboarding.get("onboarding_result_summary"), Mapping)
+            else {}
+        )
+        lines.append(f"- status: `{ops_summary.get('candidate_onboarding_status')}`")
+        lines.append(f"- decision_status: `{ops_summary.get('candidate_onboarding_decision_status')}`")
+        lines.append(
+            f"- promotion_gate_status: `{ops_summary.get('candidate_onboarding_promotion_gate_status')}`"
+        )
+        lines.append(
+            f"- promotion_eligible: `{ops_summary.get('candidate_onboarding_promotion_eligible')}`"
+        )
+        lines.append(f"- recommended_action: `{ops_summary.get('candidate_onboarding_recommended_action')}`")
+        lines.append(f"- promote_count: `{ops_summary.get('candidate_onboarding_promote_count')}`")
+        lines.append(f"- research_only_count: `{ops_summary.get('candidate_onboarding_research_only_count')}`")
+        lines.append(f"- reject_count: `{ops_summary.get('candidate_onboarding_reject_count')}`")
+        lines.append(f"- blocked_count: `{ops_summary.get('candidate_onboarding_blocked_count')}`")
+        if onboarding_summary:
+            lines.append(f"- candidate_count: `{onboarding_summary.get('candidate_count')}`")
+            lines.append(
+                f"- candidate_strategies: `{', '.join(str(item) for item in (onboarding_summary.get('candidate_strategy_ids') or []))}`"
+            )
+            lines.append(
+                f"- baseline_strategies: `{', '.join(str(item) for item in (onboarding_summary.get('baseline_strategy_ids') or []))}`"
+            )
+        if promotion_packet:
+            lines.append(
+                f"- gate_next_action: `{promotion_packet.get('promotion_next_action', '')}`"
+            )
+            lines.append(
+                f"- gate_blockers: `{', '.join(str(item) for item in (promotion_packet.get('blockers') or []))}`"
+            )
+            lines.append(
+                f"- gate_clear_conditions: `{', '.join(str(item) for item in (promotion_packet.get('clear_conditions') or []))}`"
+            )
+        if promotion_packet:
+            lines.append(f"- promotion_status: `{promotion_packet.get('status', '')}`")
+            lines.append(f"- promotion_action: `{promotion_packet.get('promotion_next_action', '')}`")
+        promotion_execution_state = (
+            ops_summary.get("candidate_onboarding_promotion_execution_state")
+            if isinstance(ops_summary.get("candidate_onboarding_promotion_execution_state"), Mapping)
+            else {}
+        )
+        latest_promotion_execution = (
+            promotion_execution_state.get("latest")
+            if isinstance(promotion_execution_state.get("latest"), Mapping)
+            else {}
+        )
+        if latest_promotion_execution:
+            lines.append(f"- promotion_execution_status: `{latest_promotion_execution.get('status', '')}`")
+            lines.append(
+                f"- promotion_execution_manifest: `{latest_promotion_execution.get('manifest_output_path', '')}`"
+            )
     else:
         lines.append("- none")
     lines.extend(["", "## Shadow Feedback", ""])
@@ -591,6 +757,32 @@ def append_shadow_notification(ops_summary: Mapping[str, Any], notification_log:
         "safe_promotion_status": ops_summary.get("safe_promotion_status"),
         "safe_promotion_ready": ops_summary.get("safe_promotion_ready"),
         "safe_promotion_action": ops_summary.get("safe_promotion_action"),
+        "candidate_onboarding_status": ops_summary.get("candidate_onboarding_status"),
+        "candidate_onboarding_decision_status": ops_summary.get("candidate_onboarding_decision_status"),
+        "candidate_onboarding_recommended_action": ops_summary.get("candidate_onboarding_recommended_action"),
+        "candidate_onboarding_promote_count": ops_summary.get("candidate_onboarding_promote_count"),
+        "candidate_onboarding_research_only_count": ops_summary.get("candidate_onboarding_research_only_count"),
+        "candidate_onboarding_reject_count": ops_summary.get("candidate_onboarding_reject_count"),
+        "candidate_onboarding_blocked_count": ops_summary.get("candidate_onboarding_blocked_count"),
+        "candidate_onboarding_promotion_gate_status": ops_summary.get("candidate_onboarding_promotion_gate_status"),
+        "candidate_onboarding_promotion_eligible": ops_summary.get("candidate_onboarding_promotion_eligible"),
+        "candidate_onboarding_promotion_next_action": ops_summary.get("candidate_onboarding_promotion_next_action"),
+        "candidate_onboarding_gate_blockers": list(ops_summary.get("candidate_onboarding_gate_blockers") or []),
+        "candidate_onboarding_gate_clear_conditions": list(
+            ops_summary.get("candidate_onboarding_gate_clear_conditions") or []
+        ),
+        "candidate_onboarding_promotion_execution_latest": (
+            (ops_summary.get("candidate_onboarding_promotion_execution_state") or {}).get("latest")
+            if isinstance(ops_summary.get("candidate_onboarding_promotion_execution_state"), Mapping)
+            else {}
+        ),
+        "candidate_onboarding_candidate_strategy_ids": list(
+            ops_summary.get("candidate_onboarding_candidate_strategy_ids") or []
+        ),
+        "candidate_onboarding_baseline_strategy_ids": list(
+            ops_summary.get("candidate_onboarding_baseline_strategy_ids") or []
+        ),
+        "candidate_onboarding_windows": list(ops_summary.get("candidate_onboarding_windows") or []),
         "shadow_feedback_recovery_latest_execution": (
             (ops_summary.get("shadow_feedback_recovery_execution_state") or {}).get("latest")
             if isinstance(ops_summary.get("shadow_feedback_recovery_execution_state"), Mapping)

@@ -975,6 +975,23 @@ def _collect_shadow_daily_review_tasks(
     rollout_suppression_recommended_action = str(latest.get("rollout_suppression_recommended_action") or "")
     safe_promotion_status = str(latest.get("safe_promotion_status") or "monitor")
     safe_promotion_action = str(latest.get("safe_promotion_action") or "")
+    candidate_onboarding_status = str(latest.get("candidate_onboarding_status") or "missing")
+    candidate_onboarding_decision_status = str(
+        latest.get("candidate_onboarding_decision_status") or "pending"
+    )
+    candidate_onboarding_promotion_gate_status = str(
+        latest.get("candidate_onboarding_promotion_gate_status") or "review_required"
+    )
+    candidate_onboarding_promotion_eligible = bool(latest.get("candidate_onboarding_promotion_eligible"))
+    candidate_onboarding_recommended_action = str(
+        latest.get("candidate_onboarding_recommended_action") or ""
+    )
+    candidate_onboarding_gate_blockers = [
+        str(item) for item in (latest.get("candidate_onboarding_gate_blockers") or [])
+    ]
+    candidate_onboarding_gate_clear_conditions = [
+        str(item) for item in (latest.get("candidate_onboarding_gate_clear_conditions") or [])
+    ]
     recovery_runbook_ref = str(latest.get("shadow_feedback_recovery_runbook_ref") or "")
     recovery_runner_command = str(latest.get("shadow_feedback_recovery_runner_command") or "")
     recovery_execute_command = str(latest.get("shadow_feedback_recovery_execute_command") or "")
@@ -1014,12 +1031,29 @@ def _collect_shadow_daily_review_tasks(
         elif focused_validation_template_status in {"ready", "pending_inputs"}:
             task = "Run shadow feedback validation"
             estimate = max(estimate, 20)
+        elif candidate_onboarding_status not in {"", "missing", "unknown"}:
+            if candidate_onboarding_promotion_eligible and candidate_onboarding_decision_status == "promote":
+                task = "Promote candidate baseline"
+                estimate = max(estimate, 30)
+            elif candidate_onboarding_decision_status == "promote":
+                task = "Review candidate promotion gate"
+                estimate = max(estimate, 30)
+            elif candidate_onboarding_decision_status == "research-only":
+                task = "Review candidate onboarding result"
+                estimate = max(estimate, 20)
+            elif candidate_onboarding_decision_status == "reject":
+                task = "Archive candidate onboarding result"
+                estimate = max(estimate, 15)
     if execution_status == "completed" and task not in {
         "Execute baseline rollback recovery checklist",
         "Execute rollout drift recovery checklist",
         "Maintain rollout suppression until recovery resolves",
         "Immediate validation-execution drift review",
         "Monitor rollback recovery checklist",
+        "Promote candidate baseline",
+        "Review candidate promotion gate",
+        "Review candidate onboarding result",
+        "Archive candidate onboarding result",
     }:
         task = "Monitor shadow next-stage rollout"
         estimate = max(estimate, 20)
@@ -1079,6 +1113,26 @@ def _collect_shadow_daily_review_tasks(
             + (
                 f" / safe_promotion={safe_promotion_status}:{safe_promotion_action}"
                 if safe_promotion_status not in {"", "monitor", "unknown"}
+                else ""
+            )
+            + (
+                f" / candidate_onboarding={candidate_onboarding_status}:{candidate_onboarding_decision_status}"
+                if candidate_onboarding_status not in {"", "missing", "unknown"}
+                else ""
+            )
+            + (
+                f" / candidate_gate={candidate_onboarding_promotion_gate_status}:{candidate_onboarding_recommended_action}"
+                if candidate_onboarding_status not in {"", "missing", "unknown"}
+                else ""
+            )
+            + (
+                f" / candidate_gate_blockers={','.join(candidate_onboarding_gate_blockers)}"
+                if candidate_onboarding_gate_blockers
+                else ""
+            )
+            + (
+                f" / candidate_gate_clear_conditions={','.join(candidate_onboarding_gate_clear_conditions)}"
+                if candidate_onboarding_gate_clear_conditions
                 else ""
             )
             + (

@@ -647,6 +647,26 @@ function renderOps(payload) {
             .join(", ")}`,
         ]
       : [];
+  const candidateOnboardingResult =
+    payload && typeof payload.daily_shadow_ops_summary === "object"
+      ? payload.daily_shadow_ops_summary.candidate_onboarding_result_summary || null
+      : null;
+  const candidateOnboardingGate =
+    payload && typeof payload.daily_shadow_ops_summary === "object"
+      ? payload.daily_shadow_ops_summary.candidate_onboarding_promotion_gate_summary || null
+      : null;
+  const candidateOnboardingLine =
+    candidateOnboardingResult && Object.keys(candidateOnboardingResult).length > 0
+      ? [
+          `candidate_onboarding_result: decision=${candidateOnboardingResult.decision_status || "-"} status=${payload.daily_shadow_ops_summary.candidate_onboarding_status || "-"} candidates=${candidateOnboardingResult.candidate_count || 0}`,
+        ]
+      : [];
+  const candidateOnboardingGateLine =
+    candidateOnboardingGate && Object.keys(candidateOnboardingGate).length > 0
+      ? [
+          `candidate_onboarding_gate: status=${candidateOnboardingGate.promotion_gate_status || "-"} eligible=${candidateOnboardingGate.promotion_eligible ? "yes" : "no"} next=${candidateOnboardingGate.promotion_next_action || "-"} blockers=${(candidateOnboardingGate.blockers || []).join("|") || "-"}`,
+        ]
+      : [];
   const executionState =
     payload && typeof payload.shadow_next_stage_execution_state === "object"
       ? payload.shadow_next_stage_execution_state
@@ -772,6 +792,48 @@ function renderOps(payload) {
     payload && typeof payload.daily_shadow_ops_summary === "object"
       ? payload.daily_shadow_ops_summary.rollout_suppression_summary || null
       : null;
+  const candidateOnboardingResult =
+    payload && typeof payload.daily_shadow_ops_summary === "object"
+      ? payload.daily_shadow_ops_summary.candidate_onboarding_result || null
+      : null;
+  const candidateOnboardingLatest =
+    candidateOnboardingResult && typeof candidateOnboardingResult.latest === "object"
+      ? candidateOnboardingResult.latest
+      : null;
+  const candidateOnboardingDecisionLine =
+    payload && typeof payload.daily_shadow_ops_summary === "object"
+      ? [
+          `candidate_onboarding: status=${payload.daily_shadow_ops_summary.candidate_onboarding_status || "-"} decision=${payload.daily_shadow_ops_summary.candidate_onboarding_decision_status || "-"} gate=${payload.daily_shadow_ops_summary.candidate_onboarding_promotion_gate_status || "-"} next=${payload.daily_shadow_ops_summary.candidate_onboarding_promotion_next_action || payload.daily_shadow_ops_summary.candidate_onboarding_recommended_action || "-"}`
+        ]
+      : [];
+  const candidateOnboardingCountLine =
+    payload && typeof payload.daily_shadow_ops_summary === "object"
+      ? [
+          `candidate_onboarding_counts: promote=${payload.daily_shadow_ops_summary.candidate_onboarding_promote_count || 0} research=${payload.daily_shadow_ops_summary.candidate_onboarding_research_only_count || 0} reject=${payload.daily_shadow_ops_summary.candidate_onboarding_reject_count || 0} blocked=${payload.daily_shadow_ops_summary.candidate_onboarding_blocked_count || 0}`
+        ]
+      : [];
+  const candidateOnboardingBlockerLine =
+    payload && typeof payload.daily_shadow_ops_summary === "object" && Array.isArray(payload.daily_shadow_ops_summary.candidate_onboarding_gate_blockers) && payload.daily_shadow_ops_summary.candidate_onboarding_gate_blockers.length > 0
+      ? [
+          `candidate_onboarding_gate_blockers: ${payload.daily_shadow_ops_summary.candidate_onboarding_gate_blockers.join(", ")}`
+        ]
+      : [];
+  const candidateOnboardingExecutionLatest =
+    payload && typeof payload.daily_shadow_ops_summary === "object"
+      ? payload.daily_shadow_ops_summary.candidate_onboarding_promotion_execution_latest || null
+      : null;
+  const candidateOnboardingExecutionLine =
+    candidateOnboardingExecutionLatest && Object.keys(candidateOnboardingExecutionLatest).length > 0
+      ? [
+          `candidate_onboarding_promotion: status=${candidateOnboardingExecutionLatest.status || "-"} manifest=${candidateOnboardingExecutionLatest.manifest_output_path || "-"} strategies=${(candidateOnboardingExecutionLatest.promote_strategy_ids || []).join(",") || "-"}`
+        ]
+      : [];
+  const candidateOnboardingRecentLines =
+    candidateOnboardingLatest && Array.isArray(candidateOnboardingLatest.candidates)
+      ? candidateOnboardingLatest.candidates.slice(0, 3).map((entry) =>
+          `candidate_onboarding_recent: ${entry.strategy_id || "-"} decision=${entry.decision_status || "-"} reason=${(entry.decision_reasons || []).join("|") || "-"}`
+        )
+      : [];
   const rolloutSuppressionLine =
     rolloutSuppression && Object.keys(rolloutSuppression).length > 0
       ? [
@@ -820,6 +882,8 @@ function renderOps(payload) {
     ...winnerBiasLine,
     ...winnerReviewLine,
     ...candidateDecisionLine,
+    ...candidateOnboardingLine,
+    ...candidateOnboardingGateLine,
     ...executionSummaryLine,
     ...executionLine,
     ...shadowFeedbackLine,
@@ -832,6 +896,11 @@ function renderOps(payload) {
     ...shadowFeedbackRecoveryLine,
     ...shadowFeedbackRecoveryExecutionLine,
     ...shadowFeedbackRecoveryChecklistLines,
+    ...candidateOnboardingDecisionLine,
+    ...candidateOnboardingCountLine,
+    ...candidateOnboardingBlockerLine,
+    ...candidateOnboardingExecutionLine,
+    ...candidateOnboardingRecentLines,
     ...rolloutSuppressionLine,
     ...allocationRecentLines,
     ...candidateRecentLines,

@@ -231,6 +231,7 @@ def run_gui_ops_once(
         focused_validation_output_dir=Path("reports/analysis/shadow/feedback_validation"),
         rollout_history_path=Path("reports/analysis/shadow/shadow_feedback_rollout_history.jsonl"),
         recovery_ledger_path=Path("logs/ops/shadow_feedback_recovery.jsonl"),
+        candidate_onboarding_output_dir=Path("reports/analysis/shadow/candidate_onboarding"),
     )
     shadow_feedback_validation_result = (
         dict(daily_shadow_ops_summary.get("shadow_feedback_validation_result") or {})

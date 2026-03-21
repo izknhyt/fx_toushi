@@ -41,7 +41,8 @@ def test_build_candidate_onboarding_execution_packet_infers_baseline_from_manife
     assert packet["runbook_ref"].endswith("PORTFOLIO-CANDIDATE-01.md")
     assert "tradectl portfolio next-stage" in packet["runner_command"]
     assert packet["baseline_strategy_ids"] == ["alpha", "gamma"]
-    assert packet["commands"][1]["step"] == "portfolio_evaluate"
+    assert packet["commands"][0]["step"] == "portfolio_evaluate"
+    assert packet["commands"][1]["step"] == "portfolio_review"
 
 
 def test_build_multi_pair_preparation_execution_packet_requires_symbol_and_data() -> None:

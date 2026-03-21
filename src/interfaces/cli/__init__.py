@@ -6080,6 +6080,103 @@ def create_cli_app() -> typer.Typer:
         }
         _render_payload(console, result_payload, json_output=effective_json)
 
+    @portfolio_app.command("candidate-onboard")
+    def portfolio_candidate_onboard_command(
+        ctx: typer.Context,
+        candidate_strategies: str = typer.Option(
+            ...,
+            "--candidate-strategies",
+            help="Comma-separated candidate strategy ids",
+        ),
+        baseline_strategies: str | None = typer.Option(
+            None,
+            "--baseline-strategies",
+            help="Comma-separated baseline strategy ids",
+        ),
+        data_path: Path | None = typer.Option(None, "--data-path", help="Merged parquet path"),
+        manifest_path: Path = typer.Option(
+            Path("config") / "strategy_manifest.parallel_portfolio_v2.yaml",
+            "--manifest-path",
+            help="Portfolio manifest path",
+        ),
+        allocation_config_path: Path = typer.Option(
+            Path("config") / "strategy_allocation.yaml",
+            "--allocation-config-path",
+            help="Allocation config path",
+        ),
+        allocation_profile: str = typer.Option(
+            "portfolio_admission_v2",
+            "--allocation-profile",
+            help="Allocation profile name",
+        ),
+        windows: str = typer.Option(
+            "2016_2021,2016_2025,2022_2025",
+            "--windows",
+            help="Comma-separated windows override",
+        ),
+        output_prefix: str = typer.Option(
+            "portfolio_candidate_onboarding",
+            "--output-prefix",
+            help="Output prefix used for generated artifacts",
+        ),
+        output_dir: Path = typer.Option(
+            portfolio_output_dir,
+            "--output-dir",
+            help="Directory for deterministic CLI summary artifacts",
+        ),
+        shadow_ops_json: Path | None = typer.Option(
+            None,
+            "--shadow-ops-json",
+            help="Optional daily shadow ops summary JSON used for promotion gating",
+        ),
+        run: bool = typer.Option(False, "--run", help="Execute the generated candidate-onboarding packet"),
+        promote: bool = typer.Option(
+            False,
+            "--promote",
+            help="Apply eligible promotions to a promoted manifest copy and ledgerize execution",
+        ),
+        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
+    ) -> None:
+        effective_json = _effective_json_output(ctx, json_output)
+        output_dir.mkdir(parents=True, exist_ok=True)
+        summary_json_path = output_dir / f"{output_prefix}.json"
+        summary_md_path = output_dir / f"{output_prefix}.md"
+        command = [
+            sys.executable,
+            "tools/run_portfolio_candidate_onboarding_exec.py",
+            "--manifest-path",
+            str(manifest_path),
+            "--allocation-config-path",
+            str(allocation_config_path),
+            "--allocation-profile",
+            allocation_profile,
+            "--candidate-strategies",
+            candidate_strategies,
+            "--windows",
+            windows,
+            "--output-dir",
+            str(output_dir),
+            "--output-prefix",
+            output_prefix,
+        ]
+        if data_path is not None:
+            command.extend(["--data-path", str(data_path)])
+        if baseline_strategies:
+            command.extend(["--baseline-strategies", baseline_strategies])
+        if shadow_ops_json is not None:
+            command.extend(["--shadow-ops-json", str(shadow_ops_json)])
+        if run:
+            command.append("--run")
+        if promote:
+            command.append("--promote")
+        payload = _run_portfolio_tool(
+            command_name="candidate-onboard",
+            command=command,
+            output_json=summary_json_path,
+            output_md=summary_md_path,
+        )
+        _render_payload(console, payload, json_output=effective_json)
+
     @portfolio_app.command("next-stage")
     def portfolio_next_stage_command(
         ctx: typer.Context,
