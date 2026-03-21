@@ -26,6 +26,9 @@ from src.portfolio.shadow_feedback import (
     materialize_effective_shadow_feedback_override_packet,
     materialize_shadow_feedback_override_packet,
 )
+from src.portfolio.shadow_rollout_suppression import (
+    build_shadow_rollout_suppression_summary,
+)
 from src.portfolio.shadow_feedback_template import build_shadow_feedback_validation_template
 
 
@@ -253,12 +256,39 @@ def build_daily_shadow_ops_summary(
     ops_summary["shadow_feedback_recovery_recommended_action"] = str(
         shadow_feedback_recovery_execution_state.get("recommended_action") or "review_recovery_state"
     )
+    rollout_suppression_summary = build_shadow_rollout_suppression_summary(ops_summary)
+    ops_summary["rollout_suppression_summary"] = rollout_suppression_summary
+    ops_summary["rollout_suppression_status"] = str(rollout_suppression_summary.get("status") or "inactive")
+    ops_summary["rollout_suppression_active"] = bool(rollout_suppression_summary.get("active"))
+    ops_summary["rollout_suppression_scope"] = str(rollout_suppression_summary.get("scope") or "none")
+    ops_summary["rollout_suppression_reasons"] = [
+        str(item) for item in (rollout_suppression_summary.get("reasons") or [])
+    ]
+    ops_summary["rollout_suppression_recommended_action"] = str(
+        rollout_suppression_summary.get("recommended_action") or "continue_shadow"
+    )
+    ops_summary["safe_promotion_status"] = str(
+        rollout_suppression_summary.get("safe_promotion_status") or "monitor"
+    )
+    ops_summary["safe_promotion_ready"] = bool(rollout_suppression_summary.get("safe_promotion_ready"))
+    ops_summary["safe_promotion_action"] = str(
+        rollout_suppression_summary.get("safe_promotion_action") or "continue_shadow"
+    )
     if ops_summary["rollout_rollback_recommended"]:
         ops_summary["headline"] = "critical: review_baseline_rollback"
         ops_summary["should_notify"] = True
     elif ops_summary["rollout_stronger_freeze"]:
         ops_summary["headline"] = "critical: maintain_rollout_freeze"
         ops_summary["should_notify"] = True
+    elif ops_summary["rollout_suppression_active"]:
+        if ops_summary["headline"] not in {
+            "critical: review_validation_execution_drift",
+            "critical: review_baseline_rollback",
+            "critical: maintain_rollout_freeze",
+        }:
+            ops_summary["headline"] = "critical: maintain_rollout_suppression"
+        ops_summary["should_notify"] = True
+        ops_summary["next_action"] = ops_summary["rollout_suppression_recommended_action"]
     return ops_summary
 
 
@@ -297,6 +327,10 @@ def render_daily_shadow_ops_report(ops_summary: Mapping[str, Any]) -> str:
         f"- shadow_feedback_recovery_status: `{ops_summary.get('shadow_feedback_recovery_status')}`",
         f"- shadow_feedback_recovery_action: `{ops_summary.get('shadow_feedback_recovery_action')}`",
         f"- shadow_feedback_recovery_resolution_status: `{ops_summary.get('shadow_feedback_recovery_resolution_status')}`",
+        f"- rollout_suppression_status: `{ops_summary.get('rollout_suppression_status')}`",
+        f"- rollout_suppression_scope: `{ops_summary.get('rollout_suppression_scope')}`",
+        f"- safe_promotion_status: `{ops_summary.get('safe_promotion_status')}`",
+        f"- safe_promotion_ready: `{ops_summary.get('safe_promotion_ready')}`",
         f"- focused_validation_status: `{((ops_summary.get('focused_validation_summary') or {}).get('status'))}`",
         f"- focused_validation_template_status: `{ops_summary.get('focused_validation_template_status')}`",
         f"- drift_event_count: `{ops_summary.get('drift_event_count')}`",
@@ -393,6 +427,24 @@ def render_daily_shadow_ops_report(ops_summary: Mapping[str, Any]) -> str:
                 lines.append(
                     f"- latest_execution: action=`{latest.get('recovery_action')}` ts=`{latest.get('ts')}` status=`{latest.get('status')}`"
                 )
+    else:
+        lines.append("- none")
+    suppression_summary = (
+        ops_summary.get("rollout_suppression_summary")
+        if isinstance(ops_summary.get("rollout_suppression_summary"), Mapping)
+        else {}
+    )
+    lines.extend(["", "## Rollout Suppression", ""])
+    if suppression_summary:
+        lines.append(f"- status: `{ops_summary.get('rollout_suppression_status')}`")
+        lines.append(f"- scope: `{ops_summary.get('rollout_suppression_scope')}`")
+        lines.append(f"- recommended_action: `{ops_summary.get('rollout_suppression_recommended_action')}`")
+        lines.append(f"- safe_promotion_status: `{ops_summary.get('safe_promotion_status')}`")
+        lines.append(f"- safe_promotion_ready: `{ops_summary.get('safe_promotion_ready')}`")
+        for item in ops_summary.get("rollout_suppression_reasons", []):
+            lines.append(f"- reason: {item}")
+        for item in suppression_summary.get("clear_conditions", []):
+            lines.append(f"- clear_condition: {item}")
     else:
         lines.append("- none")
     lines.extend(["", "## Shadow Feedback", ""])
@@ -531,6 +583,14 @@ def append_shadow_notification(ops_summary: Mapping[str, Any], notification_log:
         "shadow_feedback_recovery_execute_command": ops_summary.get("shadow_feedback_recovery_execute_command"),
         "shadow_feedback_recovery_resolution_status": ops_summary.get("shadow_feedback_recovery_resolution_status"),
         "shadow_feedback_recovery_recommended_action": ops_summary.get("shadow_feedback_recovery_recommended_action"),
+        "rollout_suppression_status": ops_summary.get("rollout_suppression_status"),
+        "rollout_suppression_active": ops_summary.get("rollout_suppression_active"),
+        "rollout_suppression_scope": ops_summary.get("rollout_suppression_scope"),
+        "rollout_suppression_reasons": list(ops_summary.get("rollout_suppression_reasons") or []),
+        "rollout_suppression_recommended_action": ops_summary.get("rollout_suppression_recommended_action"),
+        "safe_promotion_status": ops_summary.get("safe_promotion_status"),
+        "safe_promotion_ready": ops_summary.get("safe_promotion_ready"),
+        "safe_promotion_action": ops_summary.get("safe_promotion_action"),
         "shadow_feedback_recovery_latest_execution": (
             (ops_summary.get("shadow_feedback_recovery_execution_state") or {}).get("latest")
             if isinstance(ops_summary.get("shadow_feedback_recovery_execution_state"), Mapping)

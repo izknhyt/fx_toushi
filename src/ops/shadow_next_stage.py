@@ -17,6 +17,7 @@ from src.interfaces.gui.shadow_daily_ops import write_daily_shadow_ops_report
 from src.interfaces.gui.shadow_daily_review import write_daily_shadow_review_report
 from src.interfaces.gui.shadow_next_stage_surface import summarize_shadow_next_stage_execution
 from src.interfaces.gui.shadow_discrepancy_ledger import DEFAULT_DISCREPANCY_LEDGER_PATH
+from src.portfolio.shadow_rollout_suppression import build_shadow_rollout_suppression_summary
 from src.portfolio.shadow_next_stage_runner import (
     DEFAULT_MULTI_PAIR_WINDOWS,
     DEFAULT_NEXT_STAGE_WINDOWS,
@@ -157,6 +158,11 @@ def build_shadow_next_stage_execution_summary(
         if isinstance(daily_shadow_ops_summary.get("runtime_guardrail_summary"), Mapping)
         else {}
     )
+    rollout_suppression_summary = (
+        dict(daily_shadow_ops_summary.get("rollout_suppression_summary") or {})
+        if isinstance(daily_shadow_ops_summary.get("rollout_suppression_summary"), Mapping)
+        else {}
+    )
     result: dict[str, Any] = {
         "status": "not_ready",
         "status_reason": "next_stage_template_not_ready",
@@ -173,6 +179,7 @@ def build_shadow_next_stage_execution_summary(
         "required_inputs": [],
         "automation_command": DEFAULT_SHADOW_NEXT_STAGE_AUTOMATION_COMMAND,
         "runtime_guardrail_summary": dict(runtime_guardrail_summary) if runtime_guardrail_summary else {},
+        "rollout_suppression_summary": dict(rollout_suppression_summary) if rollout_suppression_summary else {},
     }
     runtime_guardrail = dict(runtime_guardrail_summary)
     if isinstance(shadow_feedback_override_packet, Mapping):
@@ -196,6 +203,17 @@ def build_shadow_next_stage_execution_summary(
         result["status_reason"] = "shadow_runtime_guardrail_blocked"
         result["should_execute"] = False
         result["guardrail_blocked"] = True
+        return result
+    if not rollout_suppression_summary:
+        rollout_suppression_summary = build_shadow_rollout_suppression_summary(daily_shadow_ops_summary)
+        result["rollout_suppression_summary"] = dict(rollout_suppression_summary)
+    if bool(rollout_suppression_summary.get("active")):
+        result["status"] = "blocked_by_rollout_suppression"
+        result["status_reason"] = str(
+            rollout_suppression_summary.get("recommended_action") or "maintain_rollout_suppression"
+        )
+        result["should_execute"] = False
+        result["suppression_active"] = True
         return result
     if template_status != "ready" or template_phase not in {"candidate_onboarding", "multi_pair_preparation"}:
         return result

@@ -172,6 +172,43 @@ def test_build_shadow_next_stage_execution_summary_blocks_manual_clear_guardrail
     assert summary["runtime_guardrail_summary"]["status"] == "blocked"
 
 
+def test_build_shadow_next_stage_execution_summary_blocks_rollout_suppression() -> None:
+    summary = build_shadow_next_stage_execution_summary(
+        daily_shadow_ops_summary={
+            "review_date_utc": "2026-03-20",
+            "next_stage_template_status": "ready",
+            "next_stage_template_phase": "candidate_onboarding",
+            "next_stage_template_runbook_ref": "docs/runbooks/PORTFOLIO-CANDIDATE-01.md",
+            "rollout_suppression_summary": {
+                "status": "active",
+                "active": True,
+                "scope": "candidate_onboarding",
+                "recommended_action": "execute_recovery_packet",
+            },
+        },
+        automation_config={
+            "shared": {
+                "manifest_path": "config/strategy_manifest.parallel_portfolio_v2.yaml",
+                "allocation_config_path": "config/strategy_allocation.yaml",
+                "allocation_profile": "portfolio_admission_v2",
+                "output_dir": "reports/analysis/shadow",
+                "data_path": "/tmp/merged.parquet",
+            },
+            "candidate_onboarding": {
+                "baseline_strategies": ["m1_asia_compression_expansion_breakout"],
+                "candidate_strategies": ["shadow_feedback_override"],
+                "windows": ["2016_2021", "2016_2025"],
+            },
+        },
+        execution_history=[],
+    )
+
+    assert summary["status"] == "blocked_by_rollout_suppression"
+    assert summary["status_reason"] == "execute_recovery_packet"
+    assert summary["should_execute"] is False
+    assert summary["suppression_active"] is True
+
+
 def test_append_and_load_shadow_next_stage_execution_round_trip(tmp_path: Path) -> None:
     ledger_path = tmp_path / "shadow_next_stage_execution.jsonl"
     append_shadow_next_stage_execution(

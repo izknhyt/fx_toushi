@@ -969,6 +969,12 @@ def _collect_shadow_daily_review_tasks(
     recovery_action = str(latest.get("shadow_feedback_recovery_action") or "continue_shadow")
     recovery_resolution_status = str(latest.get("shadow_feedback_recovery_resolution_status") or "unknown")
     recovery_recommended_action = str(latest.get("shadow_feedback_recovery_recommended_action") or "")
+    rollout_suppression_status = str(latest.get("rollout_suppression_status") or "inactive")
+    rollout_suppression_active = bool(latest.get("rollout_suppression_active"))
+    rollout_suppression_scope = str(latest.get("rollout_suppression_scope") or "none")
+    rollout_suppression_recommended_action = str(latest.get("rollout_suppression_recommended_action") or "")
+    safe_promotion_status = str(latest.get("safe_promotion_status") or "monitor")
+    safe_promotion_action = str(latest.get("safe_promotion_action") or "")
     recovery_runbook_ref = str(latest.get("shadow_feedback_recovery_runbook_ref") or "")
     recovery_runner_command = str(latest.get("shadow_feedback_recovery_runner_command") or "")
     recovery_execute_command = str(latest.get("shadow_feedback_recovery_execute_command") or "")
@@ -988,6 +994,9 @@ def _collect_shadow_daily_review_tasks(
     elif runtime_guardrail_manual_clear_required:
         task = "Execute rollout drift recovery checklist"
         estimate = max(estimate, 60)
+    elif rollout_suppression_active:
+        task = "Maintain rollout suppression until recovery resolves"
+        estimate = max(estimate, 30)
     if recovery_resolution_status == "executed_pending_clear":
         task = "Monitor rollback recovery checklist"
         estimate = max(estimate, 30)
@@ -1008,6 +1017,7 @@ def _collect_shadow_daily_review_tasks(
     if execution_status == "completed" and task not in {
         "Execute baseline rollback recovery checklist",
         "Execute rollout drift recovery checklist",
+        "Maintain rollout suppression until recovery resolves",
         "Immediate validation-execution drift review",
         "Monitor rollback recovery checklist",
     }:
@@ -1054,6 +1064,21 @@ def _collect_shadow_daily_review_tasks(
             + (
                 f" / focused_runner={focused_validation_template_runner_command}"
                 if focused_validation_template_runner_command
+                else ""
+            )
+            + (
+                f" / suppression={rollout_suppression_status}:{rollout_suppression_recommended_action}"
+                if rollout_suppression_status not in {"", "inactive", "unknown"}
+                else ""
+            )
+            + (
+                f" / suppression_scope={rollout_suppression_scope}"
+                if rollout_suppression_active and rollout_suppression_scope not in {"", "none", "unknown"}
+                else ""
+            )
+            + (
+                f" / safe_promotion={safe_promotion_status}:{safe_promotion_action}"
+                if safe_promotion_status not in {"", "monitor", "unknown"}
                 else ""
             )
             + (

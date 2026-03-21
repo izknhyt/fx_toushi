@@ -29,6 +29,19 @@ def _load_phase(summary_json: Path | None) -> str | None:
     return None
 
 
+def _load_rollout_suppression(summary_json: Path | None) -> dict[str, object]:
+    if summary_json is None or not summary_json.exists():
+        return {}
+    payload = json.loads(summary_json.read_text(encoding="utf-8"))
+    if isinstance(payload.get("rollout_suppression_summary"), dict):
+        return dict(payload["rollout_suppression_summary"])
+    if isinstance(payload.get("daily_shadow_ops_summary"), dict):
+        summary = payload["daily_shadow_ops_summary"].get("rollout_suppression_summary")
+        if isinstance(summary, dict):
+            return dict(summary)
+    return {}
+
+
 def _parse_ids(raw: str | None) -> list[str]:
     if raw is None:
         return []
@@ -59,6 +72,15 @@ def main() -> int:
     phase = str(args.phase or _load_phase(args.summary_json) or "").strip()
     if not phase:
         raise SystemExit("phase or summary-json with next-stage template is required")
+    suppression = _load_rollout_suppression(args.summary_json)
+    if bool(suppression.get("active")):
+        payload = {
+            "status": "blocked_by_rollout_suppression",
+            "phase": phase,
+            "suppression_summary": suppression,
+        }
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+        return 0
 
     if phase == "candidate_onboarding":
         payload = run_candidate_onboarding(

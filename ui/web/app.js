@@ -768,6 +768,16 @@ function renderOps(payload) {
           `rollback_execution: resolution=${shadowFeedbackRecoveryExecution.resolution_status || "-"} action=${shadowFeedbackRecoveryExecution.recommended_action || "-"} latest=${shadowFeedbackRecoveryExecution.latest_action || "-"} count=${shadowFeedbackRecoveryExecution.count || 0}`
         ]
       : [];
+  const rolloutSuppression =
+    payload && typeof payload.daily_shadow_ops_summary === "object"
+      ? payload.daily_shadow_ops_summary.rollout_suppression_summary || null
+      : null;
+  const rolloutSuppressionLine =
+    rolloutSuppression && Object.keys(rolloutSuppression).length > 0
+      ? [
+          `rollout_suppression: status=${rolloutSuppression.status || "-"} scope=${rolloutSuppression.scope || "-"} action=${rolloutSuppression.recommended_action || "-"} safe_promotion=${rolloutSuppression.safe_promotion_status || "-"}`
+        ]
+      : [];
   const allocationRecentLines = allocationDecisions.map((entry) => {
     const decision = entry.allocation_decision || {};
     const reason = decision.reason_code || entry.reason || "-";
@@ -822,6 +832,7 @@ function renderOps(payload) {
     ...shadowFeedbackRecoveryLine,
     ...shadowFeedbackRecoveryExecutionLine,
     ...shadowFeedbackRecoveryChecklistLines,
+    ...rolloutSuppressionLine,
     ...allocationRecentLines,
     ...candidateRecentLines,
     ...warningLine,

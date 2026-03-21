@@ -120,6 +120,8 @@ def test_build_daily_shadow_ops_summary_sets_notification_fields() -> None:
     assert ops_summary["shadow_feedback_recovery_runner_command"] == ""
     assert ops_summary["shadow_feedback_recovery_resolution_status"] == "not_required"
     assert ops_summary["shadow_feedback_recovery_recommended_action"] == "continue_shadow"
+    assert ops_summary["rollout_suppression_status"] == "inactive"
+    assert ops_summary["safe_promotion_status"] == "monitor"
 
 
 def test_build_daily_shadow_ops_summary_notifies_on_blocked_readiness_without_alert() -> None:
@@ -184,6 +186,9 @@ def test_build_daily_shadow_ops_summary_escalates_rollout_mismatch(tmp_path: Pat
     assert ops_summary["runtime_guardrail_manual_clear_required"] is True
     assert ops_summary["shadow_feedback_override_packet"]["status"] == "blocked"
     assert ops_summary["shadow_feedback_override_packet"]["allocation_profile_overrides"] == {}
+    assert ops_summary["rollout_suppression_status"] == "active"
+    assert ops_summary["rollout_suppression_recommended_action"] == "execute_recovery_packet"
+    assert ops_summary["safe_promotion_status"] == "blocked"
 
 
 def test_build_daily_shadow_ops_summary_escalates_rollout_mismatch_streak(tmp_path: Path) -> None:
