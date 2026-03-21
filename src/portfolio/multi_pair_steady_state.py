@@ -7,7 +7,7 @@ from typing import Any, Mapping
 
 from src.portfolio.multi_pair import normalize_symbol, resolve_next_ranked_pair, resolve_pair_metadata
 
-DEFAULT_MULTI_PAIR_STEADY_STATE_RUNBOOK = "docs/runbooks/PORTFOLIO-MULTIPAIR-03.md"
+DEFAULT_MULTI_PAIR_STEADY_STATE_RUNBOOK = "docs/runbooks/PORTFOLIO-MULTIPAIR-04.md"
 
 
 def build_multi_pair_steady_state_promotion_summary(
@@ -70,15 +70,15 @@ def build_multi_pair_steady_state_promotion_summary(
             "next_symbol": next_symbol,
             "next_pair_metadata": _safe_pair_metadata(next_symbol, config_path=config_path),
             "runbook_ref": DEFAULT_MULTI_PAIR_STEADY_STATE_RUNBOOK,
-            "runner_command": _build_runner_command(next_symbol),
-            "execute_command": f"{_build_runner_command(next_symbol)} --run",
+            "runner_command": _build_runner_command(expanded_symbol, next_symbol),
+            "execute_command": f"{_build_runner_command(expanded_symbol, next_symbol)} --run",
             "blockers": _dedupe(blockers),
             "clear_conditions": _dedupe(clear_conditions),
             "reasons": reasons,
         }
 
     reasons.append("steady_state_ready_for_next_pair_review")
-    runner_command = _build_runner_command(next_symbol)
+    runner_command = _build_runner_command(expanded_symbol, next_symbol)
     return {
         "status": "ok",
         "promotion_status": "ready_for_next_pair_review",
@@ -106,16 +106,16 @@ def _safe_pair_metadata(symbol: str, *, config_path: Path | None) -> dict[str, A
         return {}
 
 
-def _build_runner_command(next_symbol: str) -> str:
-    if not next_symbol:
+def _build_runner_command(expanded_symbol: str, next_symbol: str) -> str:
+    if not expanded_symbol or not next_symbol:
         return ""
     return " ".join(
         [
             "tradectl",
             "portfolio",
-            "next-stage",
-            "--phase",
-            "multi_pair_preparation",
+            "pair-expansion-rollout",
+            "--current-symbol",
+            expanded_symbol,
             "--next-symbol",
             next_symbol,
         ]

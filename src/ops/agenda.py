@@ -1053,6 +1053,25 @@ def _collect_shadow_daily_review_tasks(
     multi_pair_steady_state_clear_conditions = [
         str(item) for item in (latest.get("multi_pair_steady_state_clear_conditions") or [])
     ]
+    multi_pair_next_expansion_status = str(latest.get("multi_pair_next_expansion_status") or "unknown")
+    multi_pair_next_expansion_execution_status = str(
+        latest.get("multi_pair_next_expansion_execution_status") or "unknown"
+    )
+    multi_pair_next_expansion_current_symbol = str(
+        latest.get("multi_pair_next_expansion_current_symbol") or ""
+    )
+    multi_pair_next_expansion_next_symbol = str(
+        latest.get("multi_pair_next_expansion_next_symbol") or ""
+    )
+    multi_pair_next_expansion_recommended_action = str(
+        latest.get("multi_pair_next_expansion_recommended_action") or ""
+    )
+    multi_pair_next_expansion_blockers = [
+        str(item) for item in (latest.get("multi_pair_next_expansion_blockers") or [])
+    ]
+    multi_pair_next_expansion_clear_conditions = [
+        str(item) for item in (latest.get("multi_pair_next_expansion_clear_conditions") or [])
+    ]
     recovery_runbook_ref = str(latest.get("shadow_feedback_recovery_runbook_ref") or "")
     recovery_runner_command = str(latest.get("shadow_feedback_recovery_runner_command") or "")
     recovery_execute_command = str(latest.get("shadow_feedback_recovery_execute_command") or "")
@@ -1130,7 +1149,16 @@ def _collect_shadow_daily_review_tasks(
             multi_pair_expansion_rollout_execution_status not in {"", "unknown", "planned", "missing"}
             and multi_pair_expansion_rollout_guardrail_status == "qualified_for_steady_state"
         ):
-            if multi_pair_steady_state_status == "ready_for_next_pair_review":
+            if multi_pair_next_expansion_status == "ready_to_start":
+                task = "Start next pair expansion rollout"
+                estimate = max(estimate, 35)
+            elif multi_pair_next_expansion_status == "monitoring":
+                task = "Monitor next pair expansion rollout"
+                estimate = max(estimate, 25)
+            elif multi_pair_next_expansion_status == "re_review_required":
+                task = "Re-review next pair expansion rollout"
+                estimate = max(estimate, 35)
+            elif multi_pair_steady_state_status == "ready_for_next_pair_review":
                 task = "Review next pair candidate"
                 estimate = max(estimate, 30)
             else:
@@ -1348,6 +1376,36 @@ def _collect_shadow_daily_review_tasks(
             + (
                 f" / pair_steady_state_clear_conditions={','.join(multi_pair_steady_state_clear_conditions)}"
                 if multi_pair_steady_state_clear_conditions
+                else ""
+            )
+            + (
+                f" / next_pair_expansion={multi_pair_next_expansion_status}:{multi_pair_next_expansion_recommended_action}"
+                if multi_pair_next_expansion_status not in {"", "unknown"}
+                else ""
+            )
+            + (
+                f" / next_pair_expansion_current={multi_pair_next_expansion_current_symbol}"
+                if multi_pair_next_expansion_current_symbol
+                else ""
+            )
+            + (
+                f" / next_pair_expansion_next={multi_pair_next_expansion_next_symbol}"
+                if multi_pair_next_expansion_next_symbol
+                else ""
+            )
+            + (
+                f" / next_pair_expansion_execution={multi_pair_next_expansion_execution_status}"
+                if multi_pair_next_expansion_execution_status not in {"", "unknown"}
+                else ""
+            )
+            + (
+                f" / next_pair_expansion_blockers={','.join(multi_pair_next_expansion_blockers)}"
+                if multi_pair_next_expansion_blockers
+                else ""
+            )
+            + (
+                f" / next_pair_expansion_clear_conditions={','.join(multi_pair_next_expansion_clear_conditions)}"
+                if multi_pair_next_expansion_clear_conditions
                 else ""
             )
             + (

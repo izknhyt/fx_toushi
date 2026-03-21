@@ -839,7 +839,15 @@ def test_build_daily_shadow_ops_summary_surfaces_pair_expansion_rollout_evidence
     assert ops_summary["multi_pair_expansion_rollout_guardrail_status"] == "qualified_for_steady_state"
     assert ops_summary["multi_pair_steady_state_status"] == "ready_for_next_pair_review"
     assert ops_summary["multi_pair_steady_state_next_symbol"] == "EURJPY"
-    assert ops_summary["headline"] == "ready: review_next_pair_candidate"
+    assert ops_summary["multi_pair_next_expansion_status"] == "ready_to_start"
+    assert ops_summary["multi_pair_next_expansion_current_symbol"] == "GBPUSD"
+    assert ops_summary["multi_pair_next_expansion_next_symbol"] == "EURJPY"
+    assert ops_summary["multi_pair_next_expansion_recommended_action"] == "start_next_pair_expansion_rollout"
+    assert (
+        ops_summary["multi_pair_next_expansion_runner_command"]
+        == "tradectl portfolio pair-expansion-rollout --current-symbol GBPUSD --next-symbol EURJPY"
+    )
+    assert ops_summary["headline"] == "ready: start_next_pair_expansion_rollout"
     assert "Multi-Pair Pair Expansion Rollout" in render_daily_shadow_ops_report(ops_summary)
 
 
