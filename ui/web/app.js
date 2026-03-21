@@ -665,6 +665,12 @@ function renderOps(payload) {
       : payload && typeof payload.daily_shadow_ops_summary === "object"
         ? payload.daily_shadow_ops_summary.shadow_feedback_validation_result || null
         : null;
+  const shadowFeedbackRolloutAlignment =
+    payload && typeof payload.shadow_feedback_rollout_alignment === "object"
+      ? payload.shadow_feedback_rollout_alignment
+      : payload && typeof payload.daily_shadow_ops_summary === "object"
+        ? payload.daily_shadow_ops_summary.shadow_feedback_rollout_alignment || null
+        : null;
   const executionLatest =
     executionState && typeof executionState.latest === "object" ? executionState.latest : null;
   const executionSummary =
@@ -726,6 +732,12 @@ function renderOps(payload) {
           `focused_validation_window: ${entry.window_name || "-"} pf_delta=${entry.pf_delta ?? "-"} avg_r_delta=${entry.avg_r_delta ?? "-"} dd_delta=${entry.max_drawdown_delta ?? "-"} improved=${entry.improved ? "yes" : "no"} degraded=${entry.degraded ? "yes" : "no"}`
         )
       : [];
+  const focusedValidationRolloutLine =
+    shadowFeedbackRolloutAlignment && Object.keys(shadowFeedbackRolloutAlignment).length > 0
+      ? [
+          `focused_validation_rollout: alignment=${shadowFeedbackRolloutAlignment.alignment_status || "-"} validation=${shadowFeedbackRolloutAlignment.validation_decision || "-"} execution=${shadowFeedbackRolloutAlignment.execution_status || "-"} phase=${shadowFeedbackRolloutAlignment.execution_phase || "-"} action=${shadowFeedbackRolloutAlignment.recommended_action || "-"}`
+        ]
+      : [];
   const allocationRecentLines = allocationDecisions.map((entry) => {
     const decision = entry.allocation_decision || {};
     const reason = decision.reason_code || entry.reason || "-";
@@ -776,6 +788,7 @@ function renderOps(payload) {
     ...focusedValidationTemplateLine,
     ...focusedValidationResultLine,
     ...focusedValidationWindowLines,
+    ...focusedValidationRolloutLine,
     ...allocationRecentLines,
     ...candidateRecentLines,
     ...warningLine,

@@ -250,6 +250,11 @@ class ShadowGuiApi:
                 output_dir=self.report_dir / "feedback_validation"
             )
         )
+        shadow_feedback_rollout_alignment = (
+            dict(daily_shadow_ops_summary.get("shadow_feedback_rollout_alignment") or {})
+            if isinstance(daily_shadow_ops_summary.get("shadow_feedback_rollout_alignment"), Mapping)
+            else {}
+        )
         return {
             "status": "ok",
             "token_count": len(tokens),
@@ -272,6 +277,7 @@ class ShadowGuiApi:
             "shadow_feedback_summary": daily_shadow_review_summary.get("shadow_feedback_summary") or {},
             "shadow_feedback_override_packet": daily_shadow_ops_summary.get("shadow_feedback_override_packet") or {},
             "shadow_feedback_validation_result": shadow_feedback_validation_result,
+            "shadow_feedback_rollout_alignment": shadow_feedback_rollout_alignment,
             "daily_shadow_ops_summary": daily_shadow_ops_summary,
             "schema_path": "docs/schema/shadow_gui.yaml",
         }

@@ -434,6 +434,7 @@ def test_ops_status_payload_includes_shadow_feedback_validation_result(tmp_path:
 
     assert payload["shadow_feedback_validation_result"]["status"] == "ok"
     assert payload["shadow_feedback_validation_result"]["decision"] == "reject"
+    assert payload["shadow_feedback_rollout_alignment"]["alignment_status"] in {"aligned", "mismatch", "pending_execution", "unknown"}
 
 
 def test_resolve_sync_source_dir_chooses_freshest_dataset_dir(tmp_path: Path, monkeypatch) -> None:

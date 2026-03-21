@@ -257,6 +257,8 @@ def test_shadow_gui_status_and_allocation_summary_include_admission_counts(tmp_p
     assert status["shadow_feedback_override_packet"]["status"] in {"ok", "no_changes"}
     assert status["shadow_feedback_validation_result"]["status"] == "ok"
     assert status["shadow_feedback_validation_result"]["decision"] == "hold"
+    assert status["shadow_feedback_rollout_alignment"]["status"] == "ok"
+    assert "alignment_status" in status["shadow_feedback_rollout_alignment"]
     assert status["daily_shadow_ops_summary"]["status"] == "ok"
     assert "alert_level" in status["daily_shadow_ops_summary"]
     assert "readiness_status" in status["daily_shadow_ops_summary"]
@@ -267,6 +269,7 @@ def test_shadow_gui_status_and_allocation_summary_include_admission_counts(tmp_p
     assert "shadow_feedback_loop_state" in status["daily_shadow_ops_summary"]
     assert "shadow_feedback_override_packet" in status["daily_shadow_ops_summary"]
     assert status["daily_shadow_ops_summary"]["shadow_feedback_validation_decision"] == "hold"
+    assert "shadow_feedback_rollout_alignment_status" in status["daily_shadow_ops_summary"]
     assert status["candidate_snapshot"]["candidates"][0]["decision_status"] == "accept"
     assert status["candidate_snapshot"]["candidates"][1]["decision_status"] == "accept"
     assert status["candidate_snapshot"]["decision_summary"] == [{"decision_status": "accept", "count": 2}]

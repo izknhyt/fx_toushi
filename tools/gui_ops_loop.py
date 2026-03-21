@@ -63,6 +63,7 @@ class GuiOpsResult:
     shadow_feedback_summary: dict[str, Any]
     shadow_feedback_override_packet: dict[str, Any]
     shadow_feedback_validation_result: dict[str, Any]
+    shadow_feedback_rollout_alignment: dict[str, Any]
     daily_shadow_ops_summary: dict[str, Any]
 
     def to_dict(self) -> dict[str, Any]:
@@ -84,6 +85,7 @@ class GuiOpsResult:
             "shadow_feedback_summary": self.shadow_feedback_summary,
             "shadow_feedback_override_packet": self.shadow_feedback_override_packet,
             "shadow_feedback_validation_result": self.shadow_feedback_validation_result,
+            "shadow_feedback_rollout_alignment": self.shadow_feedback_rollout_alignment,
             "daily_shadow_ops_summary": self.daily_shadow_ops_summary,
         }
 
@@ -248,6 +250,7 @@ def run_gui_ops_once(
         shadow_feedback_summary=dict(daily_shadow_review_summary.get("shadow_feedback_summary") or {}),
         shadow_feedback_override_packet=dict(daily_shadow_ops_summary.get("shadow_feedback_override_packet") or {}),
         shadow_feedback_validation_result=shadow_feedback_validation_result,
+        shadow_feedback_rollout_alignment=dict(daily_shadow_ops_summary.get("shadow_feedback_rollout_alignment") or {}),
         daily_shadow_ops_summary=daily_shadow_ops_summary,
     )
 

@@ -10,6 +10,9 @@ from typing import Any, Mapping
 from src.interfaces.gui.shadow_feedback_validation_surface import (
     summarize_shadow_feedback_validation_result,
 )
+from src.interfaces.gui.shadow_feedback_rollout_surface import (
+    summarize_shadow_feedback_rollout_alignment,
+)
 from src.portfolio.shadow_feedback import materialize_shadow_feedback_override_packet
 from src.portfolio.shadow_feedback_template import build_shadow_feedback_validation_template
 
@@ -62,6 +65,12 @@ def build_daily_shadow_ops_summary(
             output_dir=validation_output_dir,
         )
     active_rows = discrepancy.get("active_discrepancies") if isinstance(discrepancy.get("active_discrepancies"), list) else []
+    rollout_alignment = summarize_shadow_feedback_rollout_alignment(
+        latest_focused_validation_result,
+        summary.get("shadow_next_stage_execution_state")
+        if isinstance(summary.get("shadow_next_stage_execution_state"), Mapping)
+        else {},
+    )
     readiness_status = str(readiness.get("readiness_status") or "unknown")
     stage_gate_status = str(stage_gate.get("status") or stage_gate.get("stage_gate_status") or "unknown")
     recommended_next_phase = str(stage_gate.get("recommended_next_phase") or "continue_shadow")
@@ -140,6 +149,8 @@ def build_daily_shadow_ops_summary(
         "shadow_feedback_validation_result": latest_focused_validation_result,
         "shadow_feedback_validation_result_status": str(latest_focused_validation_result.get("status") or "unknown"),
         "shadow_feedback_validation_decision": str(latest_focused_validation_result.get("decision") or "unknown"),
+        "shadow_feedback_rollout_alignment": rollout_alignment,
+        "shadow_feedback_rollout_alignment_status": str(rollout_alignment.get("alignment_status") or "unknown"),
         "active_discrepancy_count": int(discrepancy.get("active_discrepancy_count") or 0),
         "max_consecutive_open_days": int(discrepancy.get("max_consecutive_open_days") or 0),
         "reasons": [str(item) for item in (alert.get("reasons") or [])],
@@ -290,6 +301,15 @@ def render_daily_shadow_ops_report(ops_summary: Mapping[str, Any]) -> str:
                 lines.append(
                     f"- window {row.get('window_name')}: pf_delta={row.get('pf_delta')} avg_r_delta={row.get('avg_r_delta')} dd_delta={row.get('max_drawdown_delta')}"
                 )
+        rollout_alignment = (
+            ops_summary.get("shadow_feedback_rollout_alignment")
+            if isinstance(ops_summary.get("shadow_feedback_rollout_alignment"), Mapping)
+            else {}
+        )
+        if rollout_alignment:
+            lines.append(
+                f"- rollout_alignment: `{rollout_alignment.get('alignment_status')}` validation=`{rollout_alignment.get('validation_decision')}` execution=`{rollout_alignment.get('execution_status')}` phase=`{rollout_alignment.get('execution_phase')}`"
+            )
     else:
         lines.append("- none")
     lines.extend(["", "## Allocator Feedback Candidates", ""])
