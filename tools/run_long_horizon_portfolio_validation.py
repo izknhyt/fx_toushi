@@ -305,6 +305,8 @@ def _run_poc(
     manifest_path: Path,
     allocation_config_path: Path,
     allocation_profile: str,
+    symbols: tuple[str, ...],
+    data_manifest_path: Path,
     window: ValidationWindow,
     stamp: str,
 ) -> tuple[Path, Path, Path, dict[str, Any]]:
@@ -317,13 +319,13 @@ def _run_poc(
         slippage_pips=FIXED.slippage,
         slippage_std=FIXED.slippage_std,
         commission_pct=FIXED.commission_pct,
-        symbols=list(FIXED.symbols),
+        symbols=list(symbols),
         seed=FIXED.seed,
         target_r_multiple=FIXED.target_r,
         ttl_bars=FIXED.ttl_bars,
         risk_policy_path=RISK_POLICY,
         strategy_manifest_path=manifest_path,
-        data_manifest_path=DATA_MANIFEST,
+        data_manifest_path=data_manifest_path,
         feature_config_path=FEATURE_CONFIG,
         allocation_config_path=allocation_config_path,
         allocation_profile=allocation_profile,
@@ -343,6 +345,7 @@ def _run_poc(
         "dataset_hash": result.dataset_hash,
         "metrics": dict(result.metrics),
         "trades": [trade.as_dict() for trade in result.trades],
+        "symbols": list(symbols),
     }
     raw_path.parent.mkdir(parents=True, exist_ok=True)
     raw_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -374,18 +377,34 @@ def _render_summary_md(payload: Mapping[str, Any]) -> str:
     lines.append(f"- symbol_scope: `{', '.join(payload['fixed_assumptions']['symbols'])}`")
     lines.append("")
 
-    quality = payload.get("data_quality", {})
-    if quality:
+    quality_by_symbol = payload.get("data_quality_by_symbol")
+    if isinstance(quality_by_symbol, Mapping) and quality_by_symbol:
         lines.append("## Data Quality")
         lines.append("")
-        lines.append(f"- source: `{quality.get('path')}`")
-        lines.append(
-            f"- rows/start/end: `{quality.get('rows')}` / `{quality.get('start')}` / `{quality.get('end')}`"
-        )
-        lines.append(
-            f"- gaps/max_gap/duplicates: `{quality.get('gap_count')}` / `{quality.get('max_gap_minutes')}` / `{quality.get('duplicate_timestamp_count')}`"
-        )
-        lines.append("")
+        for symbol, quality in quality_by_symbol.items():
+            lines.append(f"### `{symbol}`")
+            lines.append("")
+            lines.append(f"- source: `{quality.get('path')}`")
+            lines.append(
+                f"- rows/start/end: `{quality.get('rows')}` / `{quality.get('start')}` / `{quality.get('end')}`"
+            )
+            lines.append(
+                f"- gaps/max_gap/duplicates: `{quality.get('gap_count')}` / `{quality.get('max_gap_minutes')}` / `{quality.get('duplicate_timestamp_count')}`"
+            )
+            lines.append("")
+    else:
+        quality = payload.get("data_quality", {})
+        if quality:
+            lines.append("## Data Quality")
+            lines.append("")
+            lines.append(f"- source: `{quality.get('path')}`")
+            lines.append(
+                f"- rows/start/end: `{quality.get('rows')}` / `{quality.get('start')}` / `{quality.get('end')}`"
+            )
+            lines.append(
+                f"- gaps/max_gap/duplicates: `{quality.get('gap_count')}` / `{quality.get('max_gap_minutes')}` / `{quality.get('duplicate_timestamp_count')}`"
+            )
+            lines.append("")
 
     lines.append("## Window Summary")
     lines.append("")
@@ -445,13 +464,22 @@ def build_plan(
     allocation_profile: str,
     symbol: str,
     data_path: Path | None,
+    symbols: tuple[str, ...] | None = None,
+    data_manifest_path: Path = DATA_MANIFEST,
     expected_minutes: int,
     window_profile: str,
     selected_windows: Iterable[str] | None = None,
     selected_strategy_ids: Iterable[str] | None = None,
     strategy_overrides_path: Path | None = None,
 ) -> dict[str, Any]:
-    merged_path = data_path or _resolve_latest_merged(symbol)
+    resolved_symbols = tuple(
+        str(item).strip().upper()
+        for item in (symbols or (symbol,))
+        if str(item).strip()
+    ) or (symbol,)
+    quality_paths: dict[str, Path] = {}
+    for index, item in enumerate(resolved_symbols):
+        quality_paths[item] = data_path if index == 0 and data_path is not None else _resolve_latest_merged(item)
     windows = _resolve_windows(window_profile=window_profile, selected_names=selected_windows)
     strategies = _resolve_strategy_ids(
         manifest_path=manifest_path,
@@ -463,7 +491,12 @@ def build_plan(
             manifest_path=manifest_path,
             selected_ids=tuple(strategy_overrides),
         )
-    quality = _load_quality_snapshot(merged_path, expected_minutes=expected_minutes)
+    quality_by_symbol = {
+        item: _load_quality_snapshot(path, expected_minutes=expected_minutes)
+        for item, path in quality_paths.items()
+    }
+    fixed_assumptions = asdict(FIXED)
+    fixed_assumptions["symbols"] = list(resolved_symbols)
     return {
         "generated_at_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "manifest_path": str(manifest_path),
@@ -474,8 +507,10 @@ def build_plan(
         "selected_strategy_ids": list(strategies),
         "strategy_overrides_path": str(strategy_overrides_path) if strategy_overrides_path else None,
         "strategy_override_ids": sorted(strategy_overrides),
-        "fixed_assumptions": asdict(FIXED),
-        "data_quality": quality,
+        "fixed_assumptions": fixed_assumptions,
+        "data_quality": quality_by_symbol.get(symbol),
+        "data_quality_by_symbol": quality_by_symbol,
+        "data_manifest_path": str(data_manifest_path),
         "windows": [asdict(window) for window in windows],
     }
 
@@ -498,7 +533,9 @@ def main() -> int:
         help="Allocation profile to validate",
     )
     parser.add_argument("--symbol", default="USDJPY", help="Primary symbol for data quality checks")
+    parser.add_argument("--symbols", help="Comma-separated symbols for the validation run")
     parser.add_argument("--data-path", help="Merged parquet path for quality checks")
+    parser.add_argument("--data-manifest-path", default=str(DATA_MANIFEST), help="Data manifest path")
     parser.add_argument(
         "--window-profile",
         default="usd_jpy_long_horizon",
@@ -546,6 +583,8 @@ def main() -> int:
         allocation_profile=args.allocation_profile,
         symbol=args.symbol.upper(),
         data_path=data_path,
+        symbols=tuple(part.strip().upper() for part in str(args.symbols or "").split(",") if part.strip()),
+        data_manifest_path=Path(args.data_manifest_path),
         expected_minutes=args.expected_minutes,
         window_profile=args.window_profile,
         selected_windows=selected_windows,
@@ -581,6 +620,8 @@ def main() -> int:
                 manifest_path=effective_manifest_path,
                 allocation_config_path=allocation_config_path,
                 allocation_profile=args.allocation_profile,
+                symbols=tuple(str(item).upper() for item in payload["fixed_assumptions"]["symbols"]),
+                data_manifest_path=Path(str(payload["data_manifest_path"])),
                 window=window,
                 stamp=stamp,
             )

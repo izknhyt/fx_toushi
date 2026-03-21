@@ -24,6 +24,9 @@ from src.interfaces.gui.shadow_feedback_rollout_history import (
 from src.interfaces.gui.candidate_onboarding_surface import (
     summarize_candidate_onboarding_result,
 )
+from src.interfaces.gui.multi_pair_preparation_surface import (
+    summarize_multi_pair_preparation_result,
+)
 from src.portfolio.candidate_onboarding import (
     build_candidate_onboarding_promotion_gate_summary,
     summarize_candidate_onboarding_promotion_execution,
@@ -46,6 +49,7 @@ def build_daily_shadow_ops_summary(
     rollout_history_path: Path | None = None,
     recovery_ledger_path: Path | None = None,
     candidate_onboarding_output_dir: Path | None = None,
+    multi_pair_preparation_output_dir: Path | None = None,
 ) -> dict[str, Any]:
     alert = summary.get("alert_summary") or {}
     trend = summary.get("trend_summary") or {}
@@ -351,6 +355,129 @@ def build_daily_shadow_ops_summary(
         str(item) for item in (candidate_onboarding_result_summary.get("windows") or [])
     ]
     ops_summary["candidate_onboarding_promotion_execution_state"] = summarize_candidate_onboarding_promotion_execution()
+    multi_pair_preparation_result = summarize_multi_pair_preparation_result(
+        output_dir=multi_pair_preparation_output_dir
+        if multi_pair_preparation_output_dir is not None
+        else Path("reports/analysis/shadow")
+    )
+    multi_pair_preparation_latest = (
+        multi_pair_preparation_result.get("latest")
+        if isinstance(multi_pair_preparation_result.get("latest"), Mapping)
+        else {}
+    )
+    multi_pair_candidate_snapshot_summary = (
+        multi_pair_preparation_latest.get("candidate_snapshot_summary")
+        if isinstance(multi_pair_preparation_latest.get("candidate_snapshot_summary"), Mapping)
+        else {}
+    )
+    multi_pair_admit_snapshot_summary = (
+        multi_pair_preparation_latest.get("admit_snapshot_summary")
+        if isinstance(multi_pair_preparation_latest.get("admit_snapshot_summary"), Mapping)
+        else {}
+    )
+    multi_pair_step_counts = (
+        multi_pair_preparation_result.get("step_counts")
+        if isinstance(multi_pair_preparation_result.get("step_counts"), Mapping)
+        else {}
+    )
+    multi_pair_admission_summary = (
+        multi_pair_admit_snapshot_summary.get("admission_summary")
+        if isinstance(multi_pair_admit_snapshot_summary.get("admission_summary"), Mapping)
+        else {}
+    )
+    multi_pair_decision_summary = (
+        multi_pair_preparation_latest.get("decision_summary")
+        if isinstance(multi_pair_preparation_latest.get("decision_summary"), Mapping)
+        else {}
+    )
+    ops_summary["multi_pair_preparation_result"] = multi_pair_preparation_result
+    ops_summary["multi_pair_preparation_status"] = str(multi_pair_preparation_result.get("status") or "missing")
+    ops_summary["multi_pair_preparation_packet_status"] = str(
+        multi_pair_preparation_latest.get("packet_status") or "unknown"
+    )
+    ops_summary["multi_pair_preparation_execution_status"] = str(
+        multi_pair_preparation_latest.get("execution_status") or "unknown"
+    )
+    ops_summary["multi_pair_preparation_recommended_action"] = str(
+        multi_pair_preparation_result.get("recommended_action") or "run_multi_pair_preparation"
+    )
+    ops_summary["multi_pair_preparation_next_symbol"] = str(
+        multi_pair_preparation_latest.get("next_symbol") or ""
+    )
+    ops_summary["multi_pair_preparation_pair_metadata"] = dict(
+        multi_pair_preparation_latest.get("pair_metadata") or {}
+    )
+    ops_summary["multi_pair_preparation_windows"] = [
+        str(item) for item in (multi_pair_preparation_latest.get("windows") or [])
+    ]
+    ops_summary["multi_pair_preparation_required_inputs"] = [
+        str(item) for item in (multi_pair_preparation_latest.get("required_inputs") or [])
+    ]
+    ops_summary["multi_pair_preparation_candidate_count"] = int(
+        multi_pair_candidate_snapshot_summary.get("candidate_count") or 0
+    )
+    ops_summary["multi_pair_preparation_selected_strategy_count"] = int(
+        multi_pair_candidate_snapshot_summary.get("selected_strategy_count") or 0
+    )
+    ops_summary["multi_pair_preparation_admit_accept_count"] = int(
+        multi_pair_admission_summary.get("accept") or 0
+    )
+    ops_summary["multi_pair_preparation_admit_reject_count"] = int(
+        multi_pair_admission_summary.get("reject") or 0
+    )
+    ops_summary["multi_pair_preparation_admit_defer_count"] = int(
+        multi_pair_admission_summary.get("defer") or 0
+    )
+    ops_summary["multi_pair_preparation_completed_step_count"] = int(
+        multi_pair_step_counts.get("completed") or 0
+    )
+    ops_summary["multi_pair_preparation_pending_step_count"] = int(
+        multi_pair_step_counts.get("pending") or 0
+    )
+    ops_summary["multi_pair_preparation_blocked_step_count"] = int(
+        multi_pair_step_counts.get("blocked") or 0
+    )
+    ops_summary["multi_pair_preparation_decision_status"] = str(
+        multi_pair_decision_summary.get("decision_status") or "pending"
+    )
+    ops_summary["multi_pair_preparation_decision_reasons"] = [
+        str(item) for item in (multi_pair_decision_summary.get("decision_reasons") or [])
+    ]
+    ops_summary["multi_pair_preparation_promotion_candidate"] = bool(
+        multi_pair_decision_summary.get("promotion_candidate")
+    )
+    multi_pair_gate_blockers: list[str] = []
+    multi_pair_gate_clear_conditions: list[str] = []
+    if ops_summary["multi_pair_preparation_decision_status"] != "promote_shadow_pilot":
+        multi_pair_gate_blockers.append(
+            f"decision_status={ops_summary['multi_pair_preparation_decision_status']}"
+        )
+        multi_pair_gate_clear_conditions.append("multi_pair_preparation_decision_status=promote_shadow_pilot")
+    if ops_summary["rollout_suppression_active"]:
+        multi_pair_gate_blockers.append("rollout_suppression_active")
+        multi_pair_gate_clear_conditions.append("rollout_suppression_status=inactive")
+    if ops_summary["runtime_guardrail_status"] in {"blocked", "manual_clear_required"}:
+        multi_pair_gate_blockers.append(f"runtime_guardrail_status={ops_summary['runtime_guardrail_status']}")
+        multi_pair_gate_clear_conditions.append("runtime_guardrail_status=ready")
+    if ops_summary["shadow_feedback_recovery_execution_state"].get("resolution_status") not in {"resolved", "not_required"}:
+        multi_pair_gate_blockers.append(
+            "shadow_feedback_recovery_resolution_unresolved"
+        )
+        multi_pair_gate_clear_conditions.append("shadow_feedback_recovery_resolution_status=resolved")
+    multi_pair_promotion_eligible = (
+        ops_summary["multi_pair_preparation_promotion_candidate"] and not multi_pair_gate_blockers
+    )
+    ops_summary["multi_pair_preparation_promotion_gate_status"] = (
+        "eligible" if multi_pair_promotion_eligible else "blocked"
+    )
+    ops_summary["multi_pair_preparation_promotion_eligible"] = multi_pair_promotion_eligible
+    ops_summary["multi_pair_preparation_promotion_next_action"] = (
+        "enable_multi_pair_shadow_pilot"
+        if multi_pair_promotion_eligible
+        else ops_summary["multi_pair_preparation_recommended_action"]
+    )
+    ops_summary["multi_pair_preparation_gate_blockers"] = multi_pair_gate_blockers
+    ops_summary["multi_pair_preparation_gate_clear_conditions"] = multi_pair_gate_clear_conditions
     if ops_summary["rollout_rollback_recommended"]:
         ops_summary["headline"] = "critical: review_baseline_rollback"
         ops_summary["should_notify"] = True
@@ -379,6 +506,20 @@ def build_daily_shadow_ops_summary(
     ):
         ops_summary["headline"] = "blocked: candidate_onboarding_promotion_gate"
         ops_summary["next_action"] = ops_summary["candidate_onboarding_promotion_next_action"]
+        ops_summary["should_notify"] = True
+    elif (
+        ops_summary["multi_pair_preparation_promotion_gate_status"] == "eligible"
+        and ops_summary["multi_pair_preparation_decision_status"] == "promote_shadow_pilot"
+    ):
+        ops_summary["headline"] = "ready: promote_multi_pair_shadow_pilot"
+        ops_summary["next_action"] = ops_summary["multi_pair_preparation_promotion_next_action"]
+        ops_summary["should_notify"] = True
+    elif (
+        ops_summary["multi_pair_preparation_promotion_gate_status"] == "blocked"
+        and ops_summary["multi_pair_preparation_decision_status"] == "promote_shadow_pilot"
+    ):
+        ops_summary["headline"] = "blocked: multi_pair_preparation_promotion_gate"
+        ops_summary["next_action"] = ops_summary["multi_pair_preparation_promotion_next_action"]
         ops_summary["should_notify"] = True
     return ops_summary
 
@@ -424,6 +565,8 @@ def render_daily_shadow_ops_report(ops_summary: Mapping[str, Any]) -> str:
         f"- safe_promotion_ready: `{ops_summary.get('safe_promotion_ready')}`",
         f"- candidate_onboarding_status: `{ops_summary.get('candidate_onboarding_status')}`",
         f"- candidate_onboarding_promote_count: `{ops_summary.get('candidate_onboarding_promote_count')}`",
+        f"- multi_pair_preparation_status: `{ops_summary.get('multi_pair_preparation_status')}`",
+        f"- multi_pair_preparation_execution_status: `{ops_summary.get('multi_pair_preparation_execution_status')}`",
         f"- focused_validation_status: `{((ops_summary.get('focused_validation_summary') or {}).get('status'))}`",
         f"- focused_validation_template_status: `{ops_summary.get('focused_validation_template_status')}`",
         f"- drift_event_count: `{ops_summary.get('drift_event_count')}`",
@@ -613,6 +756,43 @@ def render_daily_shadow_ops_report(ops_summary: Mapping[str, Any]) -> str:
             )
     else:
         lines.append("- none")
+    multi_pair_preparation_result = (
+        ops_summary.get("multi_pair_preparation_result")
+        if isinstance(ops_summary.get("multi_pair_preparation_result"), Mapping)
+        else {}
+    )
+    lines.extend(["", "## Multi-Pair Preparation", ""])
+    if multi_pair_preparation_result:
+        latest_multi_pair = (
+            multi_pair_preparation_result.get("latest")
+            if isinstance(multi_pair_preparation_result.get("latest"), Mapping)
+            else {}
+        )
+        lines.append(f"- status: `{ops_summary.get('multi_pair_preparation_status')}`")
+        lines.append(f"- packet_status: `{ops_summary.get('multi_pair_preparation_packet_status')}`")
+        lines.append(f"- execution_status: `{ops_summary.get('multi_pair_preparation_execution_status')}`")
+        lines.append(f"- recommended_action: `{ops_summary.get('multi_pair_preparation_recommended_action')}`")
+        lines.append(f"- next_symbol: `{ops_summary.get('multi_pair_preparation_next_symbol')}`")
+        lines.append(f"- candidate_count: `{ops_summary.get('multi_pair_preparation_candidate_count')}`")
+        lines.append(
+            f"- selected_strategy_count: `{ops_summary.get('multi_pair_preparation_selected_strategy_count')}`"
+        )
+        lines.append(
+            f"- admit_summary: `accept={ops_summary.get('multi_pair_preparation_admit_accept_count')} reject={ops_summary.get('multi_pair_preparation_admit_reject_count')} defer={ops_summary.get('multi_pair_preparation_admit_defer_count')}`"
+        )
+        lines.append(
+            f"- step_counts: `completed={ops_summary.get('multi_pair_preparation_completed_step_count')} pending={ops_summary.get('multi_pair_preparation_pending_step_count')} blocked={ops_summary.get('multi_pair_preparation_blocked_step_count')}`"
+        )
+        if latest_multi_pair:
+            lines.append(f"- json_path: `{latest_multi_pair.get('json_path')}`")
+            lines.append(f"- markdown_path: `{latest_multi_pair.get('markdown_path')}`")
+            lines.append(f"- runner_command: `{latest_multi_pair.get('runner_command')}`")
+        for row in multi_pair_preparation_result.get("recent", []):
+            lines.append(
+                f"- step `{row.get('step')}`: status=`{row.get('status')}` artifacts=`{', '.join(str(item) for item in (row.get('artifacts') or []))}`"
+            )
+    else:
+        lines.append("- none")
     lines.extend(["", "## Shadow Feedback", ""])
     for item in ops_summary.get("shadow_feedback_reasons", []):
         lines.append(f"- {item}")
@@ -783,6 +963,28 @@ def append_shadow_notification(ops_summary: Mapping[str, Any], notification_log:
             ops_summary.get("candidate_onboarding_baseline_strategy_ids") or []
         ),
         "candidate_onboarding_windows": list(ops_summary.get("candidate_onboarding_windows") or []),
+        "multi_pair_preparation_status": ops_summary.get("multi_pair_preparation_status"),
+        "multi_pair_preparation_packet_status": ops_summary.get("multi_pair_preparation_packet_status"),
+        "multi_pair_preparation_execution_status": ops_summary.get("multi_pair_preparation_execution_status"),
+        "multi_pair_preparation_recommended_action": ops_summary.get("multi_pair_preparation_recommended_action"),
+        "multi_pair_preparation_next_symbol": ops_summary.get("multi_pair_preparation_next_symbol"),
+        "multi_pair_preparation_candidate_count": ops_summary.get("multi_pair_preparation_candidate_count"),
+        "multi_pair_preparation_selected_strategy_count": ops_summary.get("multi_pair_preparation_selected_strategy_count"),
+        "multi_pair_preparation_admit_accept_count": ops_summary.get("multi_pair_preparation_admit_accept_count"),
+        "multi_pair_preparation_admit_reject_count": ops_summary.get("multi_pair_preparation_admit_reject_count"),
+        "multi_pair_preparation_admit_defer_count": ops_summary.get("multi_pair_preparation_admit_defer_count"),
+        "multi_pair_preparation_completed_step_count": ops_summary.get("multi_pair_preparation_completed_step_count"),
+        "multi_pair_preparation_pending_step_count": ops_summary.get("multi_pair_preparation_pending_step_count"),
+        "multi_pair_preparation_blocked_step_count": ops_summary.get("multi_pair_preparation_blocked_step_count"),
+        "multi_pair_preparation_required_inputs": list(
+            ops_summary.get("multi_pair_preparation_required_inputs") or []
+        ),
+        "multi_pair_preparation_windows": list(ops_summary.get("multi_pair_preparation_windows") or []),
+        "multi_pair_preparation_recent": list(
+            (ops_summary.get("multi_pair_preparation_result") or {}).get("recent") or []
+        )
+        if isinstance(ops_summary.get("multi_pair_preparation_result"), Mapping)
+        else [],
         "shadow_feedback_recovery_latest_execution": (
             (ops_summary.get("shadow_feedback_recovery_execution_state") or {}).get("latest")
             if isinstance(ops_summary.get("shadow_feedback_recovery_execution_state"), Mapping)
@@ -828,6 +1030,7 @@ def write_daily_shadow_ops_report(
         focused_validation_output_dir=output_dir / "feedback_validation",
         rollout_history_path=rollout_history_path,
         recovery_ledger_path=Path("logs/ops/shadow_feedback_recovery.jsonl"),
+        multi_pair_preparation_output_dir=output_dir,
     )
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     output_dir.mkdir(parents=True, exist_ok=True)

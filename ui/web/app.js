@@ -667,6 +667,68 @@ function renderOps(payload) {
           `candidate_onboarding_gate: status=${candidateOnboardingGate.promotion_gate_status || "-"} eligible=${candidateOnboardingGate.promotion_eligible ? "yes" : "no"} next=${candidateOnboardingGate.promotion_next_action || "-"} blockers=${(candidateOnboardingGate.blockers || []).join("|") || "-"}`,
         ]
       : [];
+  const multiPairPreparationResult =
+    payload && typeof payload.daily_shadow_ops_summary === "object"
+      ? payload.daily_shadow_ops_summary.multi_pair_preparation_result || null
+      : null;
+  const multiPairPreparationLatest =
+    multiPairPreparationResult && typeof multiPairPreparationResult.latest === "object"
+      ? multiPairPreparationResult.latest
+      : null;
+  const multiPairPreparationLine =
+    payload && typeof payload.daily_shadow_ops_summary === "object"
+      ? [
+          `multi_pair_preparation: status=${payload.daily_shadow_ops_summary.multi_pair_preparation_status || "-"} execution=${payload.daily_shadow_ops_summary.multi_pair_preparation_execution_status || "-"} symbol=${payload.daily_shadow_ops_summary.multi_pair_preparation_next_symbol || "-"} next=${payload.daily_shadow_ops_summary.multi_pair_preparation_recommended_action || "-"}`
+        ]
+      : [];
+  const multiPairPreparationCountLine =
+    payload && typeof payload.daily_shadow_ops_summary === "object"
+      ? [
+          `multi_pair_preparation_counts: candidates=${payload.daily_shadow_ops_summary.multi_pair_preparation_candidate_count || 0} selected=${payload.daily_shadow_ops_summary.multi_pair_preparation_selected_strategy_count || 0} accept=${payload.daily_shadow_ops_summary.multi_pair_preparation_admit_accept_count || 0} reject=${payload.daily_shadow_ops_summary.multi_pair_preparation_admit_reject_count || 0} defer=${payload.daily_shadow_ops_summary.multi_pair_preparation_admit_defer_count || 0}`
+        ]
+      : [];
+  const multiPairPreparationDecisionLine =
+    payload && typeof payload.daily_shadow_ops_summary === "object"
+      ? [
+          `multi_pair_preparation_decision: status=${payload.daily_shadow_ops_summary.multi_pair_preparation_decision_status || "-"} gate=${payload.daily_shadow_ops_summary.multi_pair_preparation_promotion_gate_status || "-"} eligible=${payload.daily_shadow_ops_summary.multi_pair_preparation_promotion_eligible ? "yes" : "no"} next=${payload.daily_shadow_ops_summary.multi_pair_preparation_promotion_next_action || "-"}`
+        ]
+      : [];
+  const multiPairPreparationGateBlockerLine =
+    payload &&
+    typeof payload.daily_shadow_ops_summary === "object" &&
+    Array.isArray(payload.daily_shadow_ops_summary.multi_pair_preparation_gate_blockers) &&
+    payload.daily_shadow_ops_summary.multi_pair_preparation_gate_blockers.length > 0
+      ? [
+          `multi_pair_preparation_gate_blockers: ${payload.daily_shadow_ops_summary.multi_pair_preparation_gate_blockers.join(", ")}`
+        ]
+      : [];
+  const multiPairPreparationStepLine =
+    payload && typeof payload.daily_shadow_ops_summary === "object"
+      ? [
+          `multi_pair_preparation_steps: completed=${payload.daily_shadow_ops_summary.multi_pair_preparation_completed_step_count || 0} pending=${payload.daily_shadow_ops_summary.multi_pair_preparation_pending_step_count || 0} blocked=${payload.daily_shadow_ops_summary.multi_pair_preparation_blocked_step_count || 0}`
+        ]
+      : [];
+  const multiPairPreparationInputLine =
+    payload &&
+    typeof payload.daily_shadow_ops_summary === "object" &&
+    Array.isArray(payload.daily_shadow_ops_summary.multi_pair_preparation_required_inputs) &&
+    payload.daily_shadow_ops_summary.multi_pair_preparation_required_inputs.length > 0
+      ? [
+          `multi_pair_preparation_inputs: ${payload.daily_shadow_ops_summary.multi_pair_preparation_required_inputs.join(", ")}`
+        ]
+      : [];
+  const multiPairPreparationRecentLines =
+    multiPairPreparationResult && Array.isArray(multiPairPreparationResult.recent)
+      ? multiPairPreparationResult.recent.slice(0, 3).map((entry) =>
+          `multi_pair_preparation_recent: ${entry.step || "-"} status=${entry.status || "-"} artifacts=${(entry.artifacts || []).join("|") || "-"}`
+        )
+      : [];
+  const multiPairPreparationArtifactLine =
+    multiPairPreparationLatest && Object.keys(multiPairPreparationLatest).length > 0
+      ? [
+          `multi_pair_preparation_artifacts: json=${multiPairPreparationLatest.json_path || "-"} md=${multiPairPreparationLatest.markdown_path || "-"}`
+        ]
+      : [];
   const executionState =
     payload && typeof payload.shadow_next_stage_execution_state === "object"
       ? payload.shadow_next_stage_execution_state
@@ -884,6 +946,13 @@ function renderOps(payload) {
     ...candidateDecisionLine,
     ...candidateOnboardingLine,
     ...candidateOnboardingGateLine,
+    ...multiPairPreparationLine,
+    ...multiPairPreparationCountLine,
+    ...multiPairPreparationDecisionLine,
+    ...multiPairPreparationGateBlockerLine,
+    ...multiPairPreparationStepLine,
+    ...multiPairPreparationInputLine,
+    ...multiPairPreparationArtifactLine,
     ...executionSummaryLine,
     ...executionLine,
     ...shadowFeedbackLine,
@@ -901,6 +970,7 @@ function renderOps(payload) {
     ...candidateOnboardingBlockerLine,
     ...candidateOnboardingExecutionLine,
     ...candidateOnboardingRecentLines,
+    ...multiPairPreparationRecentLines,
     ...rolloutSuppressionLine,
     ...allocationRecentLines,
     ...candidateRecentLines,

@@ -255,6 +255,7 @@ class ShadowGuiApi:
             rollout_history_path=self.shadow_feedback_rollout_history_path,
             recovery_ledger_path=self.shadow_feedback_recovery_ledger_path,
             candidate_onboarding_output_dir=self.report_dir / "candidate_onboarding",
+            multi_pair_preparation_output_dir=self.report_dir,
         )
         shadow_feedback_validation_result = (
             dict(daily_shadow_ops_summary.get("shadow_feedback_validation_result") or {})

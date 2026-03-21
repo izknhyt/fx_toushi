@@ -216,6 +216,66 @@ def test_shadow_gui_status_and_allocation_summary_include_admission_counts(tmp_p
         + "\n",
         encoding="utf-8",
     )
+    (api.report_dir / "portfolio_candidates_snapshot.json").write_text(
+        json.dumps(
+            {
+                "symbols": ["EURUSD"],
+                "candidates": [{"strategy_id": "alpha"}],
+                "admission_outcomes": [{"status": "accept"}],
+                "selected_strategy_ids": ["alpha"],
+                "warnings": [],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (api.report_dir / "portfolio_admit_snapshot.json").write_text(
+        json.dumps(
+            {
+                "symbols": ["EURUSD"],
+                "candidates": [{"strategy_id": "alpha"}],
+                "admission_outcomes": [{"status": "accept"}, {"status": "defer"}],
+                "selected_strategy_ids": ["alpha"],
+                "warnings": [],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (api.report_dir / "shadow_multi_pair_preparation_20260320T130000Z.json").write_text(
+        json.dumps(
+            {
+                "status": "ok",
+                "packet": {
+                    "phase": "multi_pair_preparation",
+                    "status": "ready",
+                    "execution_status": "completed",
+                    "next_symbol": "EURUSD",
+                    "windows": ["2016_2025", "2022_2025"],
+                    "required_inputs": [],
+                    "runbook_ref": "docs/runbooks/PORTFOLIO-MULTIPAIR-01.md",
+                    "runner_command": "tradectl portfolio next-stage --phase multi_pair_preparation --run",
+                    "commands": [
+                        {"step": "kernel_validation", "command": "python3 validate.py", "artifacts": ["validation.json"]},
+                        {"step": "candidate_snapshot", "command": "tradectl portfolio candidates", "artifacts": [str(api.report_dir / "portfolio_candidates_snapshot.json")]},
+                        {"step": "admission_snapshot", "command": "tradectl portfolio admit", "artifacts": [str(api.report_dir / "portfolio_admit_snapshot.json")]},
+                    ],
+                    "execution_steps": [
+                        {"step": "kernel_validation", "status": "completed", "command": "python3 validate.py", "artifacts": ["validation.json"]},
+                        {"step": "candidate_snapshot", "status": "completed", "command": "tradectl portfolio candidates", "artifacts": [str(api.report_dir / "portfolio_candidates_snapshot.json")]},
+                    ],
+                    "artifacts": {
+                        "candidates_snapshot_json": str(api.report_dir / "portfolio_candidates_snapshot.json"),
+                        "admit_snapshot_json": str(api.report_dir / "portfolio_admit_snapshot.json"),
+                    },
+                },
+                "json_path": str(api.report_dir / "shadow_multi_pair_preparation_20260320T130000Z.json"),
+                "markdown_path": str(api.report_dir / "shadow_multi_pair_preparation_20260320T130000Z.md"),
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
 
     summary = api.allocation_summary(token="secret")
     assert summary["count"] == 2
@@ -275,6 +335,11 @@ def test_shadow_gui_status_and_allocation_summary_include_admission_counts(tmp_p
     assert "shadow_feedback_rollout_alignment_status" in status["daily_shadow_ops_summary"]
     assert "rollout_suppression_status" in status["daily_shadow_ops_summary"]
     assert "safe_promotion_status" in status["daily_shadow_ops_summary"]
+    assert status["daily_shadow_ops_summary"]["multi_pair_preparation_status"] == "ok"
+    assert status["daily_shadow_ops_summary"]["multi_pair_preparation_execution_status"] == "completed"
+    assert status["daily_shadow_ops_summary"]["multi_pair_preparation_next_symbol"] == "EURUSD"
+    assert status["daily_shadow_ops_summary"]["multi_pair_preparation_candidate_count"] == 1
+    assert status["daily_shadow_ops_summary"]["multi_pair_preparation_admit_defer_count"] == 1
     assert status["candidate_snapshot"]["candidates"][0]["decision_status"] == "accept"
     assert status["candidate_snapshot"]["candidates"][1]["decision_status"] == "accept"
     assert status["candidate_snapshot"]["decision_summary"] == [{"decision_status": "accept", "count": 2}]

@@ -18,7 +18,7 @@ candidate_onboarding:
     - 2016_2025
     - 2022_2025
 multi_pair_preparation:
-  next_symbol: ""
+  next_symbol: "EURUSD"
   windows:
     - 2016_2025
     - 2022_2025

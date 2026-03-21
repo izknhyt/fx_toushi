@@ -19,6 +19,7 @@ from typing import Any
 
 import yaml
 
+from src.portfolio.multi_pair import render_symbol_scoped_value
 from src.strategies.candidate import CandidateTrade
 
 
@@ -203,6 +204,8 @@ class AllocationActivePosition:
     direction: str
     opened_at: datetime | None = None
     position_id: str = ""
+    portfolio_group: str = ""
+    exposure_bucket: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -533,8 +536,8 @@ class StrategyAllocationPolicy:
         strategy_cfg = strategy_cfg or {}
         portfolio_cfg = self._resolve_portfolio_cfg(strategy_cfg)
         role_priority = _coerce_int(portfolio_cfg.get("role_priority"), 100)
-        portfolio_group = self._portfolio_group(strategy_cfg)
-        exposure_bucket = self._exposure_bucket(strategy_cfg)
+        portfolio_group = self._portfolio_group(strategy_cfg, symbol=symbol)
+        exposure_bucket = self._exposure_bucket(strategy_cfg, symbol=symbol)
         slot_cost = _coerce_float(portfolio_cfg.get("slot_cost"), 0.0)
         if not bool(strategy_cfg.get("enabled", True)):
             return _EvaluatedCandidate(
@@ -831,14 +834,14 @@ class StrategyAllocationPolicy:
             strategy_portfolio = {}
         return _deep_merge(global_portfolio, strategy_portfolio)
 
-    def candidate_metadata(self, strategy_id: str) -> dict[str, Any]:
+    def candidate_metadata(self, strategy_id: str, *, symbol: str | None = None) -> dict[str, Any]:
         strategy_cfg = self._strategy_config.get(strategy_id, {})
         if not isinstance(strategy_cfg, Mapping):
             return {}
         portfolio_cfg = self._resolve_portfolio_cfg(strategy_cfg)
         return {
-            "portfolio_group": self._portfolio_group(strategy_cfg),
-            "exposure_bucket": self._exposure_bucket(strategy_cfg),
+            "portfolio_group": self._portfolio_group(strategy_cfg, symbol=symbol),
+            "exposure_bucket": self._exposure_bucket(strategy_cfg, symbol=symbol),
             "expected_holding_minutes": _coerce_float(
                 portfolio_cfg.get("expected_holding_minutes"),
                 0.0,
@@ -882,6 +885,7 @@ class StrategyAllocationPolicy:
             strategy_cfg=strategy_cfg,
         )
         group_blocker = self._first_group_match(
+            candidate=candidate,
             context=context,
             strategy_cfg=strategy_cfg,
         )
@@ -913,6 +917,7 @@ class StrategyAllocationPolicy:
             strategy_cfg=strategy_cfg,
         )
         exposure_blocker = self._first_exposure_match(
+            candidate=candidate,
             context=context,
             strategy_cfg=strategy_cfg,
         )
@@ -968,26 +973,33 @@ class StrategyAllocationPolicy:
         context: AllocationContext,
         strategy_cfg: Mapping[str, Any],
     ) -> int:
-        candidate_group = self._portfolio_group(strategy_cfg)
+        candidate_group = self._portfolio_group(
+            strategy_cfg,
+            symbol=_candidate_symbol(candidate),
+        )
         if not candidate_group:
             return 0
         matches = 0
         for position in context.open_positions:
-            if self._strategy_portfolio_group(position.strategy_id) == candidate_group:
+            if self._position_portfolio_group(position) == candidate_group:
                 matches += 1
         return matches
 
     def _first_group_match(
         self,
         *,
+        candidate: AllocationCandidate,
         context: AllocationContext,
         strategy_cfg: Mapping[str, Any],
     ) -> AllocationActivePosition | None:
-        candidate_group = self._portfolio_group(strategy_cfg)
+        candidate_group = self._portfolio_group(
+            strategy_cfg,
+            symbol=_candidate_symbol(candidate),
+        )
         if not candidate_group:
             return None
         for position in context.open_positions:
-            if self._strategy_portfolio_group(position.strategy_id) == candidate_group:
+            if self._position_portfolio_group(position) == candidate_group:
                 return position
         return None
 
@@ -998,32 +1010,44 @@ class StrategyAllocationPolicy:
         context: AllocationContext,
         strategy_cfg: Mapping[str, Any],
     ) -> int:
-        candidate_bucket = self._exposure_bucket(strategy_cfg)
+        candidate_bucket = self._exposure_bucket(
+            strategy_cfg,
+            symbol=_candidate_symbol(candidate),
+        )
         if not candidate_bucket:
             return 0
         matches = 0
         for position in context.open_positions:
-            if self._strategy_exposure_bucket(position.strategy_id) == candidate_bucket:
+            if self._position_exposure_bucket(position) == candidate_bucket:
                 matches += 1
         return matches
 
     def _first_exposure_match(
         self,
         *,
+        candidate: AllocationCandidate,
         context: AllocationContext,
         strategy_cfg: Mapping[str, Any],
     ) -> AllocationActivePosition | None:
-        candidate_bucket = self._exposure_bucket(strategy_cfg)
+        candidate_bucket = self._exposure_bucket(
+            strategy_cfg,
+            symbol=_candidate_symbol(candidate),
+        )
         if not candidate_bucket:
             return None
         for position in context.open_positions:
-            if self._strategy_exposure_bucket(position.strategy_id) == candidate_bucket:
+            if self._position_exposure_bucket(position) == candidate_bucket:
                 return position
         return None
 
-    def _portfolio_group(self, strategy_cfg: Mapping[str, Any]) -> str:
+    def _portfolio_group(self, strategy_cfg: Mapping[str, Any], *, symbol: str | None = None) -> str:
         portfolio_cfg = self._resolve_portfolio_cfg(strategy_cfg)
-        return str(portfolio_cfg.get("group") or "").strip()
+        template = str(
+            portfolio_cfg.get("group_template")
+            or portfolio_cfg.get("group")
+            or ""
+        ).strip()
+        return render_symbol_scoped_value(template, symbol=symbol)
 
     def _strategy_portfolio_group(self, strategy_id: str) -> str:
         strategy_cfg = self._strategy_config.get(strategy_id, {})
@@ -1031,15 +1055,36 @@ class StrategyAllocationPolicy:
             return ""
         return self._portfolio_group(strategy_cfg)
 
-    def _exposure_bucket(self, strategy_cfg: Mapping[str, Any]) -> str:
+    def _position_portfolio_group(self, position: AllocationActivePosition) -> str:
+        if position.portfolio_group:
+            return str(position.portfolio_group).strip()
+        strategy_cfg = self._strategy_config.get(position.strategy_id, {})
+        if not isinstance(strategy_cfg, Mapping):
+            return ""
+        return self._portfolio_group(strategy_cfg, symbol=position.symbol)
+
+    def _exposure_bucket(self, strategy_cfg: Mapping[str, Any], *, symbol: str | None = None) -> str:
         portfolio_cfg = self._resolve_portfolio_cfg(strategy_cfg)
-        return str(portfolio_cfg.get("exposure_bucket") or "").strip()
+        template = str(
+            portfolio_cfg.get("exposure_bucket_template")
+            or portfolio_cfg.get("exposure_bucket")
+            or ""
+        ).strip()
+        return render_symbol_scoped_value(template, symbol=symbol)
 
     def _strategy_exposure_bucket(self, strategy_id: str) -> str:
         strategy_cfg = self._strategy_config.get(strategy_id, {})
         if not isinstance(strategy_cfg, Mapping):
             return ""
         return self._exposure_bucket(strategy_cfg)
+
+    def _position_exposure_bucket(self, position: AllocationActivePosition) -> str:
+        if position.exposure_bucket:
+            return str(position.exposure_bucket).strip()
+        strategy_cfg = self._strategy_config.get(position.strategy_id, {})
+        if not isinstance(strategy_cfg, Mapping):
+            return ""
+        return self._exposure_bucket(strategy_cfg, symbol=position.symbol)
 
     def _tie_break_sort_key(self, item: _EvaluatedCandidate) -> tuple[Any, ...]:
         score = item.score if item.score is not None else float("-inf")

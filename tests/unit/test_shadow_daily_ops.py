@@ -358,6 +358,137 @@ def test_build_daily_shadow_ops_summary_promotes_stage_gate_ready_phase() -> Non
     assert "tradectl portfolio next-stage --phase candidate_onboarding" in ops_summary["next_stage_template_runner_command"]
 
 
+def test_build_daily_shadow_ops_summary_surfaces_multi_pair_preparation_result(tmp_path: Path) -> None:
+    summary = _summary()
+    output_dir = tmp_path / "shadow"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    baseline_validation = output_dir / "shadow_multi_pair_eurusd_baseline_validation.json"
+    baseline_validation.write_text(
+        json.dumps(
+            {
+                "results": [
+                    {
+                        "window_name": "2016_2025",
+                        "summary": {"pf": 1.2, "avg_r": 0.03, "max_drawdown": 0.10},
+                        "acceptance": {"status": "pass"},
+                    },
+                    {
+                        "window_name": "2022_2025",
+                        "summary": {"pf": 1.25, "avg_r": 0.05, "max_drawdown": 0.08},
+                        "acceptance": {"status": "pass"},
+                    },
+                ]
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    multi_validation = output_dir / "shadow_multi_pair_eurusd_validation.json"
+    multi_validation.write_text(
+        json.dumps(
+            {
+                "results": [
+                    {
+                        "window_name": "2016_2025",
+                        "summary": {"pf": 1.22, "avg_r": 0.031, "max_drawdown": 0.11},
+                        "acceptance": {"status": "pass"},
+                    },
+                    {
+                        "window_name": "2022_2025",
+                        "summary": {"pf": 1.28, "avg_r": 0.051, "max_drawdown": 0.085},
+                        "acceptance": {"status": "pass"},
+                    },
+                ]
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    candidates_snapshot = output_dir / "portfolio_candidates_snapshot.json"
+    candidates_snapshot.write_text(
+        json.dumps(
+            {
+                "symbols": ["EURUSD"],
+                "candidates": [{"strategy_id": "alpha"}, {"strategy_id": "beta"}],
+                "admission_outcomes": [{"status": "accept"}, {"status": "reject"}],
+                "selected_strategy_ids": ["alpha", "beta"],
+                "warnings": [],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    admit_snapshot = output_dir / "portfolio_admit_snapshot.json"
+    admit_snapshot.write_text(
+        json.dumps(
+            {
+                "symbols": ["EURUSD"],
+                "candidates": [{"strategy_id": "alpha"}],
+                "admission_outcomes": [{"status": "accept"}, {"status": "defer"}],
+                "selected_strategy_ids": ["alpha"],
+                "warnings": [],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (output_dir / "shadow_multi_pair_preparation_20260321T000000Z.json").write_text(
+        json.dumps(
+            {
+                "status": "ok",
+                "packet": {
+                    "phase": "multi_pair_preparation",
+                    "status": "ready",
+                    "execution_status": "completed",
+                    "next_symbol": "EURUSD",
+                    "windows": ["2016_2025", "2022_2025"],
+                    "required_inputs": [],
+                    "runbook_ref": "docs/runbooks/PORTFOLIO-MULTIPAIR-01.md",
+                    "runner_command": "tradectl portfolio next-stage --phase multi_pair_preparation --run",
+                    "commands": [
+                        {"step": "kernel_validation", "command": "python3 validate.py", "artifacts": ["validation.json"]},
+                        {"step": "candidate_snapshot", "command": "tradectl portfolio candidates", "artifacts": [str(candidates_snapshot)]},
+                        {"step": "admission_snapshot", "command": "tradectl portfolio admit", "artifacts": [str(admit_snapshot)]},
+                    ],
+                    "execution_steps": [
+                        {"step": "kernel_validation", "status": "completed", "command": "python3 validate.py", "artifacts": ["validation.json"]},
+                        {"step": "candidate_snapshot", "status": "completed", "command": "tradectl portfolio candidates", "artifacts": [str(candidates_snapshot)]},
+                    ],
+                    "artifacts": {
+                        "baseline_validation_summary_json": str(baseline_validation),
+                        "validation_summary_json": str(multi_validation),
+                        "candidates_snapshot_json": str(candidates_snapshot),
+                        "admit_snapshot_json": str(admit_snapshot),
+                    },
+                },
+                "json_path": str(output_dir / "shadow_multi_pair_preparation_20260321T000000Z.json"),
+                "markdown_path": str(output_dir / "shadow_multi_pair_preparation_20260321T000000Z.md"),
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    ops_summary = build_daily_shadow_ops_summary(
+        summary,
+        multi_pair_preparation_output_dir=output_dir,
+    )
+
+    assert ops_summary["multi_pair_preparation_status"] == "ok"
+    assert ops_summary["multi_pair_preparation_packet_status"] == "ready"
+    assert ops_summary["multi_pair_preparation_execution_status"] == "completed"
+    assert ops_summary["multi_pair_preparation_recommended_action"] == "review_multi_pair_shadow_pilot_promotion"
+    assert ops_summary["multi_pair_preparation_next_symbol"] == "EURUSD"
+    assert ops_summary["multi_pair_preparation_candidate_count"] == 2
+    assert ops_summary["multi_pair_preparation_admit_accept_count"] == 1
+    assert ops_summary["multi_pair_preparation_admit_defer_count"] == 1
+    assert ops_summary["multi_pair_preparation_completed_step_count"] == 2
+    assert ops_summary["multi_pair_preparation_pending_step_count"] == 1
+    assert ops_summary["multi_pair_preparation_decision_status"] == "promote_shadow_pilot"
+    assert ops_summary["multi_pair_preparation_promotion_gate_status"] == "eligible"
+    assert "review_multi_pair_shadow_pilot_promotion" in render_daily_shadow_ops_report(ops_summary)
+
+
 def test_write_daily_shadow_ops_report_writes_notification(tmp_path: Path) -> None:
     notification_log = tmp_path / "logs" / "shadow_daily_notifications.jsonl"
     payload = write_daily_shadow_ops_report(

@@ -5,11 +5,13 @@ from pathlib import Path
 
 from src.ops.shadow_next_stage import (
     DEFAULT_SHADOW_NEXT_STAGE_AUTOMATION_COMMAND,
+    _build_next_stage_packet,
     append_shadow_next_stage_execution,
     build_shadow_next_stage_execution_summary,
     latest_shadow_next_stage_execution,
     load_shadow_next_stage_automation_config,
 )
+from src.portfolio.multi_pair import choose_default_multi_pair_symbol
 
 
 def test_build_shadow_next_stage_execution_summary_builds_candidate_command(tmp_path: Path) -> None:
@@ -207,6 +209,125 @@ def test_build_shadow_next_stage_execution_summary_blocks_rollout_suppression() 
     assert summary["status_reason"] == "execute_recovery_packet"
     assert summary["should_execute"] is False
     assert summary["suppression_active"] is True
+
+
+def test_build_next_stage_packet_multi_pair_uses_effective_data_manifest(tmp_path: Path) -> None:
+    manifest_path = tmp_path / "strategy_manifest.yaml"
+    manifest_path.write_text(
+        "\n".join(
+            [
+                "strategies:",
+                "  - id: alpha",
+                "    enabled: true",
+                "  - id: beta",
+                "    enabled: false",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    data_manifest_path = tmp_path / "data_manifest.json"
+    effective_data_path = tmp_path / "alpha_merged.parquet"
+    data_manifest_path.write_text(
+        json.dumps(
+            {
+                "strategies": {
+                    "alpha": {
+                        "dataset_path": str(effective_data_path),
+                    }
+                }
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+    packet = _build_next_stage_packet(
+        phase="multi_pair_preparation",
+        automation_config={
+            "shared": {
+                "manifest_path": str(manifest_path),
+                "allocation_config_path": "config/strategy_allocation.yaml",
+                "allocation_profile": "portfolio_admission_v2",
+                "output_dir": str(tmp_path / "out"),
+                "profile_path": "config/profiles/paper.yaml",
+                "data_dir": "data/research/curated",
+                "feature_config": "config/feature_pipeline.yaml",
+                "data_manifest": str(data_manifest_path),
+            },
+            "multi_pair_preparation": {
+                "next_symbol": "eurusd",
+            },
+        },
+    )
+
+    assert packet["status"] == "ready"
+    assert packet["next_symbol"] == "EURUSD"
+    assert packet["required_inputs"] == []
+    assert f"--data-path {effective_data_path}" in packet["runner_command"]
+    assert f"--next-symbol EURUSD" in packet["runner_command"]
+    assert f"--data-path {effective_data_path}" in packet["commands"][0]["command"]
+    assert str(tmp_path / "out") in packet["runner_command"]
+    assert packet["effective_data_manifest"].endswith("shadow_multi_pair_eurusd_data_manifest.json")
+
+
+def test_build_next_stage_packet_multi_pair_requires_next_symbol_when_data_manifest_resolves_path(
+    tmp_path: Path,
+) -> None:
+    manifest_path = tmp_path / "strategy_manifest.yaml"
+    manifest_path.write_text(
+        "\n".join(
+            [
+                "strategies:",
+                "  - id: alpha",
+                "    enabled: true",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    data_manifest_path = tmp_path / "data_manifest.json"
+    effective_data_path = tmp_path / "alpha_merged.parquet"
+    data_manifest_path.write_text(
+        json.dumps(
+            {
+                "strategies": {
+                    "alpha": {
+                        "dataset_path": str(effective_data_path),
+                    }
+                }
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+    packet = _build_next_stage_packet(
+        phase="multi_pair_preparation",
+        automation_config={
+            "shared": {
+                "manifest_path": str(manifest_path),
+                "allocation_config_path": "config/strategy_allocation.yaml",
+                "allocation_profile": "portfolio_admission_v2",
+                "output_dir": str(tmp_path / "out"),
+                "profile_path": "config/profiles/paper.yaml",
+                "data_dir": "data/research/curated",
+                "feature_config": "config/feature_pipeline.yaml",
+                "data_manifest": str(data_manifest_path),
+            },
+            "multi_pair_preparation": {},
+        },
+    )
+
+    expected_symbol = choose_default_multi_pair_symbol(baseline_symbols=["USDJPY"], requested_symbol=None)
+
+    assert packet["status"] == "ready"
+    assert packet["next_symbol"] == expected_symbol
+    assert packet["required_inputs"] == []
+    assert f"--data-path {effective_data_path}" in packet["runner_command"]
+    assert f"--next-symbol {expected_symbol}" in packet["runner_command"]
 
 
 def test_append_and_load_shadow_next_stage_execution_round_trip(tmp_path: Path) -> None:

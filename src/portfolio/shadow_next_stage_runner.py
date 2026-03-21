@@ -10,6 +10,12 @@ from src.portfolio.candidate_onboarding import (
     DEFAULT_CANDIDATE_ONBOARDING_WINDOWS,
     build_candidate_onboarding_packet,
 )
+from src.portfolio.multi_pair import (
+    choose_default_multi_pair_symbol,
+    materialize_multi_pair_data_manifest,
+    resolve_curated_merged_path,
+    resolve_pair_metadata,
+)
 
 import yaml
 
@@ -93,24 +99,73 @@ def build_multi_pair_preparation_execution_packet(
     windows: tuple[str, ...] = DEFAULT_MULTI_PAIR_WINDOWS,
     output_dir: Path | None = None,
 ) -> dict[str, Any]:
-    symbol = str(next_symbol or "").strip().upper()
+    baseline_symbols = ["USDJPY"]
+    symbol = choose_default_multi_pair_symbol(
+        baseline_symbols=baseline_symbols,
+        requested_symbol=next_symbol,
+    )
+    pair_metadata = resolve_pair_metadata(symbol)
     required_inputs: list[str] = []
-    if not symbol:
-        required_inputs.append("next_symbol")
-    if data_path is None:
-        required_inputs.append("data_path")
+    resolved_data_path = data_path
+    if resolved_data_path is None:
+        try:
+            resolved_data_path = resolve_curated_merged_path(symbol=symbol, data_dir=data_dir)
+        except FileNotFoundError:
+            required_inputs.append("data_path")
 
     output_dir = output_dir or (Path("reports") / "analysis" / "shadow" / "next_stage")
     output_prefix = f"shadow_multi_pair_{symbol.lower() or 'candidate'}"
+    baseline_validation_json = output_dir / f"{output_prefix}_baseline_validation.json"
+    baseline_validation_md = output_dir / f"{output_prefix}_baseline_validation.md"
     validation_json = output_dir / f"{output_prefix}_validation.json"
     validation_md = output_dir / f"{output_prefix}_validation.md"
     candidates_json = output_dir / "portfolio_candidates_snapshot.json"
     admit_json = output_dir / "portfolio_admit_snapshot.json"
+    effective_data_manifest = output_dir / f"{output_prefix}_data_manifest.json"
+    materialized_data_manifest: dict[str, Any] | None = None
+    if data_manifest.exists():
+        materialized_data_manifest = materialize_multi_pair_data_manifest(
+            source_path=data_manifest,
+            symbols=baseline_symbols + [symbol],
+            output_path=effective_data_manifest,
+            data_dir=data_dir,
+        )
     windows_csv = ",".join(windows)
-    data_path_text = str(data_path) if data_path is not None else "<data_path>"
-    symbol_text = symbol or "<next_symbol>"
+    data_path_text = str(resolved_data_path) if resolved_data_path is not None else "<data_path>"
+    symbol_text = symbol
+    symbol_scope_csv = ",".join(baseline_symbols + [symbol])
+    baseline_symbol_scope_csv = ",".join(baseline_symbols)
 
     commands = [
+        {
+            "step": "baseline_kernel_validation",
+            "command": " ".join(
+                [
+                    "python3",
+                    "tools/run_long_horizon_portfolio_validation.py",
+                    "--manifest-path",
+                    str(manifest_path),
+                    "--allocation-config-path",
+                    str(allocation_config_path),
+                    "--allocation-profile",
+                    allocation_profile,
+                    "--data-path",
+                    data_path_text,
+                    "--data-manifest-path",
+                    str(data_manifest),
+                    "--symbols",
+                    baseline_symbol_scope_csv,
+                    "--windows",
+                    windows_csv,
+                    "--plan-json",
+                    str(baseline_validation_json),
+                    "--summary-md",
+                    str(baseline_validation_md),
+                    "--run",
+                ]
+            ),
+            "artifacts": [str(baseline_validation_json), str(baseline_validation_md)],
+        },
         {
             "step": "kernel_validation",
             "command": " ".join(
@@ -125,6 +180,10 @@ def build_multi_pair_preparation_execution_packet(
                     allocation_profile,
                     "--data-path",
                     data_path_text,
+                    "--data-manifest-path",
+                    str(effective_data_manifest if materialized_data_manifest else data_manifest),
+                    "--symbols",
+                    symbol_scope_csv,
                     "--windows",
                     windows_csv,
                     "--plan-json",
@@ -144,7 +203,7 @@ def build_multi_pair_preparation_execution_packet(
                     "portfolio",
                     "candidates",
                     "--symbols",
-                    symbol_text,
+                    symbol_scope_csv,
                     "--profile",
                     str(profile_path),
                     "--data-dir",
@@ -158,7 +217,7 @@ def build_multi_pair_preparation_execution_packet(
                     "--allocation-profile",
                     allocation_profile,
                     "--data-manifest",
-                    str(data_manifest),
+                    str(effective_data_manifest if materialized_data_manifest else data_manifest),
                     "--output-dir",
                     str(output_dir),
                 ]
@@ -173,7 +232,7 @@ def build_multi_pair_preparation_execution_packet(
                     "portfolio",
                     "admit",
                     "--symbols",
-                    symbol_text,
+                    symbol_scope_csv,
                     "--profile",
                     str(profile_path),
                     "--data-dir",
@@ -187,7 +246,7 @@ def build_multi_pair_preparation_execution_packet(
                     "--allocation-profile",
                     allocation_profile,
                     "--data-manifest",
-                    str(data_manifest),
+                    str(effective_data_manifest if materialized_data_manifest else data_manifest),
                     "--output-dir",
                     str(output_dir),
                 ]
@@ -231,10 +290,17 @@ def build_multi_pair_preparation_execution_packet(
         "runbook_ref": DEFAULT_MULTI_PAIR_RUNBOOK,
         "runner_command": runner_command,
         "required_inputs": required_inputs,
+        "baseline_symbols": baseline_symbols,
+        "symbol_scope": baseline_symbols + [symbol],
         "next_symbol": symbol or None,
+        "pair_metadata": pair_metadata,
         "windows": list(windows),
+        "effective_data_manifest": str(effective_data_manifest if materialized_data_manifest else data_manifest),
+        "materialized_data_manifest": materialized_data_manifest or {"status": "skipped"},
         "commands": commands,
         "artifacts": {
+            "baseline_validation_summary_json": str(baseline_validation_json),
+            "baseline_validation_summary_md": str(baseline_validation_md),
             "validation_summary_json": str(validation_json),
             "validation_summary_md": str(validation_md),
             "candidates_snapshot_json": str(candidates_json),

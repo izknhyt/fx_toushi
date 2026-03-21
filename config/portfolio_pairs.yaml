@@ -1,0 +1,35 @@
+schema_version: portfolio.pairs.v1
+default_baseline_symbol: USDJPY
+default_first_added_pair: EURUSD
+
+pairs:
+  USDJPY:
+    base: USD
+    quote: JPY
+    class: major
+    region: asia
+    pilot_rank: 0
+  EURUSD:
+    base: EUR
+    quote: USD
+    class: major
+    region: europe_us
+    pilot_rank: 1
+  GBPUSD:
+    base: GBP
+    quote: USD
+    class: major
+    region: europe_us
+    pilot_rank: 2
+  EURJPY:
+    base: EUR
+    quote: JPY
+    class: cross
+    region: europe_asia
+    pilot_rank: 3
+  AUDUSD:
+    base: AUD
+    quote: USD
+    class: major
+    region: asia_us
+    pilot_rank: 4

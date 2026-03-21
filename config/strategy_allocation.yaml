@@ -192,8 +192,8 @@ profiles:
           spread_weight: 48.0
           slippage_weight: 34.0
         portfolio:
-          group: "usd_jpy_trend_breakout"
-          exposure_bucket: "usd_jpy_breakout_long"
+          group_template: "{symbol_lower}_trend_breakout"
+          exposure_bucket_template: "{symbol_lower}_breakout_long"
           role_priority: 10
           expected_holding_minutes: 50
           slot_cost: 0.010
@@ -213,8 +213,8 @@ profiles:
           spread_weight: 50.0
           slippage_weight: 40.0
         portfolio:
-          group: "usd_jpy_trend_breakout"
-          exposure_bucket: "usd_jpy_breakout_long"
+          group_template: "{symbol_lower}_trend_breakout"
+          exposure_bucket_template: "{symbol_lower}_breakout_long"
           role_priority: 20
           expected_holding_minutes: 180
           holding_minute_weight: 0.0012
@@ -235,8 +235,8 @@ profiles:
           spread_weight: 42.0
           slippage_weight: 32.0
         portfolio:
-          group: "usd_jpy_us_pullback"
-          exposure_bucket: "usd_jpy_pullback_long"
+          group_template: "{symbol_lower}_us_pullback"
+          exposure_bucket_template: "{symbol_lower}_pullback_long"
           role_priority: 15
           expected_holding_minutes: 55
           slot_cost: 0.012

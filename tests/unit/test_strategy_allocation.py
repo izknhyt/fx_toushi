@@ -78,6 +78,8 @@ def _position(
     symbol: str = "USDJPY",
     direction: str = "long",
     position_id: str = "pos-1",
+    portfolio_group: str = "",
+    exposure_bucket: str = "",
 ) -> AllocationActivePosition:
     return AllocationActivePosition(
         strategy_id=strategy_id,
@@ -85,6 +87,8 @@ def _position(
         direction=direction,
         opened_at=datetime(2026, 1, 1, 17, 0, tzinfo=timezone.utc),
         position_id=position_id,
+        portfolio_group=portfolio_group,
+        exposure_bucket=exposure_bucket,
     )
 
 
@@ -169,6 +173,98 @@ def test_allocation_tie_break_uses_priority_then_strategy_id(tmp_path: Path) -> 
     assert rejected[0].decision == "reject"
     assert rejected[0].blocked_by_strategy_id == "strat_a"
     assert rejected[0].replaced_candidate_id == "cand-a"
+
+
+def test_candidate_metadata_renders_symbol_scoped_templates(tmp_path: Path) -> None:
+    config_path = _write_policy(
+        tmp_path,
+        {
+            "profiles": {
+                "active": {
+                    "mode": "active",
+                    "global": {
+                        "require_strategy_config": True,
+                        "hard_filters": {"session_utc_range": "00-23"},
+                        "score": {"min_score": 0.0},
+                    },
+                    "strategies": {
+                        "strat_a": {
+                            "enabled": True,
+                            "portfolio": {
+                                "group_template": "{symbol_lower}_trend_breakout",
+                                "exposure_bucket_template": "{symbol_lower}_breakout_long",
+                            },
+                        }
+                    },
+                }
+            }
+        },
+    )
+    policy = StrategyAllocationPolicy.load(config_path, profile="active")
+
+    metadata = policy.candidate_metadata("strat_a", symbol="EURUSD")
+
+    assert metadata["portfolio_group"] == "eurusd_trend_breakout"
+    assert metadata["exposure_bucket"] == "eurusd_breakout_long"
+
+
+def test_allocation_uses_symbol_scoped_group_templates_for_active_position_conflicts(tmp_path: Path) -> None:
+    config_path = _write_policy(
+        tmp_path,
+        {
+            "profiles": {
+                "active": {
+                    "mode": "active",
+                    "global": {
+                        "require_strategy_config": True,
+                        "hard_filters": {"session_utc_range": "00-23"},
+                        "portfolio": {"active_group_policy": "block"},
+                        "score": {"min_score": 0.0},
+                    },
+                    "strategies": {
+                        "strat_a": {
+                            "enabled": True,
+                            "portfolio": {
+                                "group_template": "{symbol_lower}_trend_breakout",
+                                "exposure_bucket_template": "{symbol_lower}_breakout_long",
+                                "active_group_policy": "block",
+                            },
+                        }
+                    },
+                }
+            }
+        },
+    )
+    policy = StrategyAllocationPolicy.load(config_path, profile="active")
+
+    blocked = policy.allocate(
+        candidates=(_candidate(strategy_id="strat_a", score=1.0, symbol="EURUSD"),),
+        context=_context(
+            open_positions=(
+                _position(
+                    strategy_id="open_strat",
+                    symbol="EURUSD",
+                    portfolio_group="eurusd_trend_breakout",
+                ),
+            )
+        ),
+    )
+    allowed = policy.allocate(
+        candidates=(_candidate(strategy_id="strat_a", score=1.0, symbol="EURUSD"),),
+        context=_context(
+            open_positions=(
+                _position(
+                    strategy_id="open_strat",
+                    symbol="USDJPY",
+                    portfolio_group="usdjpy_trend_breakout",
+                ),
+            )
+        ),
+    )
+
+    assert blocked.selected == ()
+    assert blocked.outcomes[0].reason == "active_group_conflict"
+    assert [item.strategy_id for item in allowed.selected] == ["strat_a"]
 
 
 def test_allocation_excludes_kill_switch_board_mode_spread_and_session(tmp_path: Path) -> None:

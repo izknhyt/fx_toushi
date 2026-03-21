@@ -1389,13 +1389,16 @@ class StrategyEngine:
         context: StrategyContext,
     ) -> CandidateTrade:
         trade_fields = _derive_signal_trade_fields(signal=signal, context=context)
+        symbol = str(getattr(signal, "symbol", "") or "").strip().upper() or "UNKNOWN"
         allocation_metadata: Mapping[str, Any] = {}
         if self._allocation_policy is not None:
-            allocation_metadata = self._allocation_policy.candidate_metadata(strategy_id)
+            allocation_metadata = self._allocation_policy.candidate_metadata(
+                strategy_id,
+                symbol=symbol,
+            )
         timestamp = _iso_or_none(getattr(signal, "timestamp", None)) or _iso_or_none(
             getattr(getattr(context, "clock", None), "now", None)
         ) or _utcnow_iso()
-        symbol = str(getattr(signal, "symbol", "") or "").strip().upper() or "UNKNOWN"
         side = str(getattr(signal, "direction", "") or "").strip().lower() or "unknown"
         session_tag = getattr(signal, "session_tag", None)
         metadata = {
@@ -1492,6 +1495,12 @@ class StrategyEngine:
                     direction=direction,
                     opened_at=opened_at,
                     position_id=position_id,
+                    portfolio_group=str(raw.get("portfolio_group") or "").strip()
+                    if isinstance(raw, Mapping)
+                    else str(getattr(raw, "portfolio_group", "") or "").strip(),
+                    exposure_bucket=str(raw.get("exposure_bucket") or "").strip()
+                    if isinstance(raw, Mapping)
+                    else str(getattr(raw, "exposure_bucket", "") or "").strip(),
                 )
             )
         return tuple(positions)

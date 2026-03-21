@@ -906,6 +906,8 @@ def simulate_paper_poc(
                 "quality_score": spec.get("quality_score"),
                 "filter_flags": spec.get("filter_flags"),
                 "trend_value": trend_value,
+                "portfolio_group": spec.get("portfolio_group"),
+                "exposure_bucket": spec.get("exposure_bucket"),
                 "atr_value": atr_value,
                 "spread_used": dyn_spread,
                 "slippage_used": slip,
