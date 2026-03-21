@@ -948,6 +948,152 @@ def test_build_daily_shadow_ops_summary_re_reviews_pair_expansion_rollout_on_run
     assert ops_summary["multi_pair_expansion_rollout_guardrail_status"] == "re_review_required"
 
 
+def test_build_daily_shadow_ops_summary_hands_off_next_expansion_qualification_to_steady_state(tmp_path: Path) -> None:
+    summary = _summary()
+    summary["generated_at_utc"] = "2026-03-21T09:00:00Z"
+    summary["review_date_utc"] = "2026-03-21"
+    summary["alert_summary"] = {
+        "alert_level": "none",
+        "should_alert": False,
+        "headline": "stable: continue_shadow",
+        "reasons": [],
+        "worsening_signals": [],
+    }
+    summary["shadow_readiness_summary"] = {
+        "readiness_status": "ok",
+        "ready_for_next_stage": True,
+        "next_action": "continue_shadow",
+        "reasons": [],
+    }
+    summary["discrepancy_summary"] = {
+        "active_discrepancy_count": 0,
+        "max_consecutive_open_days": 0,
+        "active_discrepancies": [],
+    }
+    summary["daily_summary"] = ["alert_level=none", "drift_event_count=0"]
+    summary["shadow_feedback_summary"] = {
+        "status": "ok",
+        "feedback_loop_state": "stable_baseline",
+        "next_action": "continue_shadow",
+        "candidate_count": 0,
+        "reasons": [],
+        "allocator_feedback_candidates": [],
+    }
+    summary["runtime_guardrail_status"] = "ready"
+    summary["rollout_suppression_status"] = "inactive"
+    summary["shadow_feedback_recovery_resolution_status"] = "resolved"
+    output_dir = tmp_path / "shadow"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    baseline_validation = output_dir / "shadow_multi_pair_expand_gbpusd_baseline_validation.json"
+    validation = output_dir / "shadow_multi_pair_expand_gbpusd_validation.json"
+    baseline_validation.write_text(
+        json.dumps({"results": [{"window_name": "2016_2025", "summary": {"pf": 1.2, "avg_r": 0.03, "max_drawdown": 0.1}, "acceptance": {"status": "pass"}}]}) + "\n",
+        encoding="utf-8",
+    )
+    validation.write_text(
+        json.dumps({"results": [{"window_name": "2016_2025", "summary": {"pf": 1.23, "avg_r": 0.032, "max_drawdown": 0.11}, "acceptance": {"status": "pass"}}]}) + "\n",
+        encoding="utf-8",
+    )
+    (output_dir / "shadow_multi_pair_expansion_rollout_20260321T000000Z.json").write_text(
+        json.dumps(
+            {
+                "status": "ok",
+                "packet": {
+                    "phase": "multi_pair_expansion",
+                    "status": "ready",
+                    "execution_status": "completed",
+                    "current_symbol": "EURUSD",
+                    "next_symbol": "GBPUSD",
+                    "required_inputs": [],
+                    "runbook_ref": "docs/runbooks/PORTFOLIO-MULTIPAIR-04.md",
+                    "artifacts": {
+                        "baseline_validation_summary_json": str(baseline_validation),
+                        "validation_summary_json": str(validation),
+                    },
+                },
+                "json_path": str(output_dir / "shadow_multi_pair_expansion_rollout_20260321T000000Z.json"),
+                "markdown_path": str(output_dir / "shadow_multi_pair_expansion_rollout_20260321T000000Z.md"),
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    expansion_history = tmp_path / "multi_pair_expansion_rollout_history.jsonl"
+    expansion_history.write_text(
+        json.dumps(
+            {
+                "generated_at_utc": "2026-03-21T09:00:00Z",
+                "review_date_utc": "2026-03-21",
+                "current_symbol": "EURUSD",
+                "next_symbol": "GBPUSD",
+                "execution_status": "completed",
+                "decision_status": "promote_shadow_pilot",
+                "runtime_guardrail_status": "ready",
+                "rollout_suppression_status": "inactive",
+                "recovery_resolution_status": "resolved",
+                "alert_level": "none",
+                "active_discrepancy_count": 0,
+                "rollout_rollback_recommended": False,
+                "rollout_stronger_freeze": False,
+                "stable_for_rollout_guardrail": True,
+                "re_review_required": False,
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    next_expansion_ledger = tmp_path / "multi_pair_next_expansion_execution.jsonl"
+    next_expansion_ledger.write_text(
+        json.dumps(
+            {
+                "event": "multi_pair.next_expansion.execution",
+                "ts": "2026-03-21T09:00:00Z",
+                "status": "completed",
+                "current_symbol": "GBPUSD",
+                "next_symbol": "EURJPY",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    next_expansion_rollout_history = tmp_path / "multi_pair_next_expansion_rollout_history.jsonl"
+    next_expansion_rollout_history.write_text(
+        json.dumps(
+            {
+                "generated_at_utc": "2026-03-21T09:00:00Z",
+                "review_date_utc": "2026-03-21",
+                "current_symbol": "GBPUSD",
+                "next_symbol": "EURJPY",
+                "execution_status": "completed",
+                "linked_pair_expansion_rollout_guardrail_status": "qualified_for_steady_state",
+                "rollback_recommended": False,
+                "stop_required": False,
+                "blockers": [],
+                "clear_conditions": [],
+                "recommended_action": "maintain_pair_expansion_steady_state",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    ops_summary = build_daily_shadow_ops_summary(
+        summary,
+        multi_pair_preparation_output_dir=output_dir,
+        multi_pair_expansion_rollout_history_path=expansion_history,
+        multi_pair_next_expansion_ledger_path=next_expansion_ledger,
+        multi_pair_next_expansion_rollout_history_path=next_expansion_rollout_history,
+    )
+
+    assert ops_summary["multi_pair_steady_state_status"] == "ready_for_next_pair_review"
+    assert ops_summary["multi_pair_steady_state_next_symbol"] == "AUDUSD"
+    assert (
+        ops_summary["multi_pair_steady_state_runner_command"]
+        == "tradectl portfolio pair-expansion-rollout --current-symbol EURJPY --next-symbol AUDUSD"
+    )
+    assert ops_summary["headline"] == "ready: review_next_pair_candidate"
+
+
 def test_write_daily_shadow_ops_report_writes_notification(tmp_path: Path) -> None:
     notification_log = tmp_path / "logs" / "shadow_daily_notifications.jsonl"
     payload = write_daily_shadow_ops_report(

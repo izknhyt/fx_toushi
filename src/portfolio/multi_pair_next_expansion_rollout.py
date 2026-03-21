@@ -95,7 +95,8 @@ def build_multi_pair_next_expansion_rollout_guardrail_summary(
     if not rows or str(rows[-1].get("review_date_utc") or "") != current["review_date_utc"]:
         rows.append(current)
     else:
-        rows[-1] = current
+        rows[-1] = _merge_same_day_snapshot(dict(rows[-1]), current)
+    latest_row = dict(rows[-1])
 
     stop_streak_days = 0
     for row in reversed(rows):
@@ -113,9 +114,10 @@ def build_multi_pair_next_expansion_rollout_guardrail_summary(
 
     prior_stop_required = any(bool(row.get("stop_required")) for row in rows[:-1])
 
+    execution_status = str(latest_row.get("execution_status") or execution_status)
     if execution_status in {"missing", "unknown", "blocked", "blocked_missing_inputs"}:
-        blockers = list(current["blockers"])
-        clear_conditions = list(current["clear_conditions"])
+        blockers = list(latest_row.get("blockers") or [])
+        clear_conditions = list(latest_row.get("clear_conditions") or [])
         if execution_status == "blocked_missing_inputs":
             blockers.append("next_pair_expansion_missing_inputs")
             clear_conditions.append("supply_next_pair_expansion_rollout_inputs")
@@ -127,7 +129,7 @@ def build_multi_pair_next_expansion_rollout_guardrail_summary(
             "current_symbol": current_symbol,
             "next_symbol": next_symbol,
             "execution_status": execution_status,
-            "recommended_action": current["recommended_action"] or "start_next_pair_expansion_rollout",
+            "recommended_action": str(latest_row.get("recommended_action") or "start_next_pair_expansion_rollout"),
             "stop_streak_days": stop_streak_days,
             "rollback_streak_days": rollback_streak_days,
             "blockers": _dedupe(blockers),
@@ -135,7 +137,7 @@ def build_multi_pair_next_expansion_rollout_guardrail_summary(
             "recent_reviews": rows[-7:],
         }
 
-    if current["rollback_recommended"]:
+    if bool(latest_row.get("rollback_recommended")):
         return {
             "status": "ok",
             "guardrail_status": "rollback_required",
@@ -145,14 +147,15 @@ def build_multi_pair_next_expansion_rollout_guardrail_summary(
             "recommended_action": "rollback_next_pair_expansion_rollout",
             "stop_streak_days": stop_streak_days,
             "rollback_streak_days": rollback_streak_days,
-            "blockers": _dedupe(current["blockers"]),
+            "blockers": _dedupe(list(latest_row.get("blockers") or [])),
             "clear_conditions": _dedupe(
-                current["clear_conditions"] + ["rollback_next_pair_expansion_rollout_completed"]
+                list(latest_row.get("clear_conditions") or [])
+                + ["rollback_next_pair_expansion_rollout_completed"]
             ),
             "recent_reviews": rows[-7:],
         }
 
-    if current["stop_required"]:
+    if bool(latest_row.get("stop_required")):
         return {
             "status": "ok",
             "guardrail_status": "stop_required",
@@ -162,12 +165,12 @@ def build_multi_pair_next_expansion_rollout_guardrail_summary(
             "recommended_action": "stop_next_pair_expansion_rollout",
             "stop_streak_days": stop_streak_days,
             "rollback_streak_days": rollback_streak_days,
-            "blockers": _dedupe(current["blockers"]),
-            "clear_conditions": _dedupe(current["clear_conditions"]),
+            "blockers": _dedupe(list(latest_row.get("blockers") or [])),
+            "clear_conditions": _dedupe(list(latest_row.get("clear_conditions") or [])),
             "recent_reviews": rows[-7:],
         }
 
-    linked_guardrail_status = current["linked_pair_expansion_rollout_guardrail_status"]
+    linked_guardrail_status = str(latest_row.get("linked_pair_expansion_rollout_guardrail_status") or "unknown")
     if linked_guardrail_status == "qualified_for_steady_state":
         return {
             "status": "ok",
@@ -293,6 +296,24 @@ def _dedupe(items: list[str]) -> list[str]:
         seen.add(value)
         ordered.append(value)
     return ordered
+
+
+def _merge_same_day_snapshot(previous: dict[str, Any], current: dict[str, Any]) -> dict[str, Any]:
+    merged = dict(previous)
+    merged.update(current)
+    if str(current.get("linked_pair_expansion_rollout_guardrail_status") or "unknown") in {"", "unknown"}:
+        merged["linked_pair_expansion_rollout_guardrail_status"] = str(
+            previous.get("linked_pair_expansion_rollout_guardrail_status") or "unknown"
+        )
+    if not current.get("rollback_recommended"):
+        merged["rollback_recommended"] = bool(previous.get("rollback_recommended"))
+    if not current.get("stop_required"):
+        merged["stop_required"] = bool(previous.get("stop_required"))
+        merged["blockers"] = list(previous.get("blockers") or current.get("blockers") or [])
+        merged["clear_conditions"] = list(
+            previous.get("clear_conditions") or current.get("clear_conditions") or []
+        )
+    return merged
 
 
 def _utcnow_iso() -> str:

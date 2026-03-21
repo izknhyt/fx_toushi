@@ -72,6 +72,31 @@ from src.portfolio.shadow_rollout_suppression import (
 from src.portfolio.shadow_feedback_template import build_shadow_feedback_validation_template
 
 
+def _apply_multi_pair_steady_state_summary(
+    ops_summary: dict[str, Any],
+    multi_pair_steady_state_summary: Mapping[str, Any],
+) -> None:
+    ops_summary["multi_pair_steady_state_summary"] = dict(multi_pair_steady_state_summary)
+    ops_summary["multi_pair_steady_state_status"] = str(
+        multi_pair_steady_state_summary.get("promotion_status") or "unknown"
+    )
+    ops_summary["multi_pair_steady_state_recommended_action"] = str(
+        multi_pair_steady_state_summary.get("recommended_action") or "maintain_pair_expansion_rollout"
+    )
+    ops_summary["multi_pair_steady_state_next_symbol"] = str(
+        multi_pair_steady_state_summary.get("next_symbol") or ""
+    )
+    ops_summary["multi_pair_steady_state_runner_command"] = str(
+        multi_pair_steady_state_summary.get("runner_command") or ""
+    )
+    ops_summary["multi_pair_steady_state_blockers"] = [
+        str(item) for item in (multi_pair_steady_state_summary.get("blockers") or [])
+    ]
+    ops_summary["multi_pair_steady_state_clear_conditions"] = [
+        str(item) for item in (multi_pair_steady_state_summary.get("clear_conditions") or [])
+    ]
+
+
 def build_daily_shadow_ops_summary(
     summary: Mapping[str, Any],
     *,
@@ -670,25 +695,7 @@ def build_daily_shadow_ops_summary(
         str(item) for item in (multi_pair_expansion_rollout_guardrail.get("clear_conditions") or [])
     ]
     multi_pair_steady_state_summary = build_multi_pair_steady_state_promotion_summary(ops_summary)
-    ops_summary["multi_pair_steady_state_summary"] = multi_pair_steady_state_summary
-    ops_summary["multi_pair_steady_state_status"] = str(
-        multi_pair_steady_state_summary.get("promotion_status") or "unknown"
-    )
-    ops_summary["multi_pair_steady_state_recommended_action"] = str(
-        multi_pair_steady_state_summary.get("recommended_action") or "maintain_pair_expansion_rollout"
-    )
-    ops_summary["multi_pair_steady_state_next_symbol"] = str(
-        multi_pair_steady_state_summary.get("next_symbol") or ""
-    )
-    ops_summary["multi_pair_steady_state_runner_command"] = str(
-        multi_pair_steady_state_summary.get("runner_command") or ""
-    )
-    ops_summary["multi_pair_steady_state_blockers"] = [
-        str(item) for item in (multi_pair_steady_state_summary.get("blockers") or [])
-    ]
-    ops_summary["multi_pair_steady_state_clear_conditions"] = [
-        str(item) for item in (multi_pair_steady_state_summary.get("clear_conditions") or [])
-    ]
+    _apply_multi_pair_steady_state_summary(ops_summary, multi_pair_steady_state_summary)
     multi_pair_next_expansion_summary = build_multi_pair_next_expansion_execution_summary(
         ops_summary,
         ledger_path=multi_pair_next_expansion_ledger_path
@@ -755,6 +762,8 @@ def build_daily_shadow_ops_summary(
         str(item)
         for item in (multi_pair_next_expansion_rollout_guardrail.get("clear_conditions") or [])
     ]
+    multi_pair_steady_state_summary = build_multi_pair_steady_state_promotion_summary(ops_summary)
+    _apply_multi_pair_steady_state_summary(ops_summary, multi_pair_steady_state_summary)
     if ops_summary["rollout_rollback_recommended"]:
         ops_summary["headline"] = "critical: review_baseline_rollback"
         ops_summary["should_notify"] = True
@@ -834,7 +843,11 @@ def build_daily_shadow_ops_summary(
         ops_summary["headline"] = "ready: start_pair_expansion_rollout"
         ops_summary["next_action"] = ops_summary["multi_pair_expansion_rollout_recommended_action"]
         ops_summary["should_notify"] = True
-    elif ops_summary["multi_pair_expansion_rollout_guardrail_status"] == "re_review_required":
+    elif (
+        ops_summary["multi_pair_expansion_rollout_guardrail_status"] == "re_review_required"
+        and ops_summary["multi_pair_next_expansion_rollout_guardrail_status"]
+        != "qualified_for_steady_state"
+    ):
         ops_summary["headline"] = "blocked: re_review_pair_expansion_rollout"
         ops_summary["next_action"] = ops_summary["multi_pair_expansion_rollout_guardrail_recommended_action"]
         ops_summary["should_notify"] = True
@@ -869,10 +882,14 @@ def build_daily_shadow_ops_summary(
             "multi_pair_next_expansion_rollout_guardrail_recommended_action"
         ]
     elif ops_summary["multi_pair_next_expansion_rollout_guardrail_status"] == "qualified_for_steady_state":
-        ops_summary["headline"] = "ready: maintain_pair_expansion_steady_state"
-        ops_summary["next_action"] = ops_summary[
-            "multi_pair_next_expansion_rollout_guardrail_recommended_action"
-        ]
+        if ops_summary["multi_pair_steady_state_status"] == "ready_for_next_pair_review":
+            ops_summary["headline"] = "ready: review_next_pair_candidate"
+            ops_summary["next_action"] = ops_summary["multi_pair_steady_state_recommended_action"]
+        else:
+            ops_summary["headline"] = "ready: maintain_pair_expansion_steady_state"
+            ops_summary["next_action"] = ops_summary[
+                "multi_pair_next_expansion_rollout_guardrail_recommended_action"
+            ]
         ops_summary["should_notify"] = True
     elif ops_summary["multi_pair_expansion_rollout_guardrail_status"] == "qualified_for_steady_state":
         if ops_summary["multi_pair_next_expansion_status"] == "ready_to_start":

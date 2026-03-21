@@ -16,28 +16,33 @@ def build_multi_pair_steady_state_promotion_summary(
     config_path: Path | None = None,
 ) -> dict[str, Any]:
     baseline_symbol = normalize_symbol("USDJPY")
-    current_symbol = normalize_symbol(ops_summary.get("multi_pair_expansion_current_symbol"))
-    expanded_symbol = normalize_symbol(ops_summary.get("multi_pair_expansion_next_symbol"))
-    active_symbols = [symbol for symbol in [baseline_symbol, current_symbol, expanded_symbol] if symbol]
+    handoff = _resolve_handoff_symbols(ops_summary)
+    current_symbol = handoff["current_symbol"]
+    expanded_symbol = handoff["expanded_symbol"]
+    active_symbols = _dedupe(
+        [symbol for symbol in [baseline_symbol, *handoff["prior_active_symbols"], current_symbol, expanded_symbol] if symbol]
+    )
     next_symbol = resolve_next_ranked_pair(active_symbols=active_symbols, config_path=config_path)
 
-    guardrail_status = str(ops_summary.get("multi_pair_expansion_rollout_guardrail_status") or "unknown")
-    rollout_execution_status = str(ops_summary.get("multi_pair_expansion_rollout_execution_status") or "unknown")
+    guardrail_status = handoff["guardrail_status"]
+    rollout_execution_status = handoff["execution_status"]
+    status_field = handoff["status_field"]
+    execution_field = handoff["execution_field"]
     blockers: list[str] = []
     clear_conditions: list[str] = []
     reasons: list[str] = []
 
     if guardrail_status != "qualified_for_steady_state":
-        blockers.append(f"pair_expansion_rollout_guardrail_status={guardrail_status}")
-        clear_conditions.append("multi_pair_expansion_rollout_guardrail_status=qualified_for_steady_state")
+        blockers.append(f"{status_field}={guardrail_status}")
+        clear_conditions.append(f"{status_field}=qualified_for_steady_state")
 
     if rollout_execution_status != "completed":
-        blockers.append(f"pair_expansion_rollout_execution_status={rollout_execution_status}")
-        clear_conditions.append("multi_pair_expansion_rollout_execution_status=completed")
+        blockers.append(f"{execution_field}={rollout_execution_status}")
+        clear_conditions.append(f"{execution_field}=completed")
 
     if not expanded_symbol:
         blockers.append("expanded_pair_symbol_missing")
-        clear_conditions.append("multi_pair_expansion_next_symbol=<symbol>")
+        clear_conditions.append(f"{handoff['expanded_symbol_field']}=<symbol>")
 
     if not next_symbol:
         reasons.append("no_next_ranked_pair_available")
@@ -104,6 +109,44 @@ def _safe_pair_metadata(symbol: str, *, config_path: Path | None) -> dict[str, A
         return resolve_pair_metadata(symbol, config_path=config_path)
     except Exception:
         return {}
+
+
+def _resolve_handoff_symbols(ops_summary: Mapping[str, Any]) -> dict[str, str]:
+    prior_current_symbol = normalize_symbol(ops_summary.get("multi_pair_expansion_current_symbol"))
+    prior_expanded_symbol = normalize_symbol(ops_summary.get("multi_pair_expansion_next_symbol"))
+    next_rollout_status = str(
+        ops_summary.get("multi_pair_next_expansion_rollout_guardrail_status") or "unknown"
+    )
+    next_rollout_execution_status = str(
+        ops_summary.get("multi_pair_next_expansion_execution_status") or "unknown"
+    )
+    if next_rollout_status == "qualified_for_steady_state":
+        return {
+            "current_symbol": normalize_symbol(
+                ops_summary.get("multi_pair_next_expansion_current_symbol")
+            ),
+            "expanded_symbol": normalize_symbol(
+                ops_summary.get("multi_pair_next_expansion_next_symbol")
+            ),
+            "prior_active_symbols": _dedupe(
+                [symbol for symbol in [prior_current_symbol, prior_expanded_symbol] if symbol]
+            ),
+            "guardrail_status": next_rollout_status,
+            "execution_status": next_rollout_execution_status,
+            "status_field": "multi_pair_next_expansion_rollout_guardrail_status",
+            "execution_field": "multi_pair_next_expansion_execution_status",
+            "expanded_symbol_field": "multi_pair_next_expansion_next_symbol",
+        }
+    return {
+        "current_symbol": prior_current_symbol,
+        "expanded_symbol": prior_expanded_symbol,
+        "prior_active_symbols": [],
+        "guardrail_status": str(ops_summary.get("multi_pair_expansion_rollout_guardrail_status") or "unknown"),
+        "execution_status": str(ops_summary.get("multi_pair_expansion_rollout_execution_status") or "unknown"),
+        "status_field": "multi_pair_expansion_rollout_guardrail_status",
+        "execution_field": "multi_pair_expansion_rollout_execution_status",
+        "expanded_symbol_field": "multi_pair_expansion_next_symbol",
+    }
 
 
 def _build_runner_command(expanded_symbol: str, next_symbol: str) -> str:
