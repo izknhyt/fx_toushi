@@ -423,3 +423,49 @@ def test_agenda_creates_candidate_onboarding_task_when_stage_gate_ready(tmp_path
     assert len(matching) == 1
     assert "next_phase=candidate_onboarding" in str(matching[0]["notes"])
     assert "template_phase=candidate_onboarding" in str(matching[0]["notes"])
+
+
+def test_agenda_elevates_validation_execution_mismatch(tmp_path: Path) -> None:
+    health_state_path = tmp_path / "snapshots" / "latest" / "health_state.json"
+    _write_health_state(health_state_path, [], status="ok")
+
+    notification_log = tmp_path / "logs" / "ops" / "shadow_daily_notifications.jsonl"
+    notification_log.parent.mkdir(parents=True, exist_ok=True)
+    notification_log.write_text(
+        json.dumps(
+            {
+                "event": "shadow.daily_alert",
+                "ts": "2026-01-12T02:00:00Z",
+                "review_date_utc": "2026-01-12",
+                "headline": "critical: review_validation_execution_drift",
+                "alert_level": "critical",
+                "recommended_action": "continue_shadow",
+                "shadow_feedback_rollout_alignment_status": "mismatch",
+                "shadow_feedback_rollout_recommended_action": "review_or_stop_rollout",
+                "next_stage_template_phase": "candidate_onboarding",
+                "next_stage_template_runbook_ref": "docs/runbooks/PORTFOLIO-CANDIDATE-01.md",
+                "next_stage_template_runner_command": "tradectl portfolio next-stage --phase candidate_onboarding",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    service = OpsAgendaService(
+        template_path=tmp_path / "docs" / "templates" / "daily_agenda.md",
+        output_dir=tmp_path / "docs" / "runbooks" / "daily_agenda",
+        health_state_path=health_state_path,
+    )
+
+    from src.ops import agenda as agenda_module
+
+    original_path = agenda_module.SHADOW_DAILY_NOTIFICATION_LOG_PATH
+    agenda_module.SHADOW_DAILY_NOTIFICATION_LOG_PATH = notification_log
+    try:
+        ctx = service.build_context(target_date=date(2026, 1, 12))
+    finally:
+        agenda_module.SHADOW_DAILY_NOTIFICATION_LOG_PATH = original_path
+
+    matching = [task for task in ctx.operational_tasks if task["task"] == "Immediate validation-execution drift review"]
+    assert len(matching) == 1
+    assert "rollout_alignment=mismatch:review_or_stop_rollout" in str(matching[0]["notes"])

@@ -133,6 +133,49 @@ def test_build_daily_shadow_ops_summary_notifies_on_blocked_readiness_without_al
     assert ops_summary["readiness_status"] == "blocked"
 
 
+def test_build_daily_shadow_ops_summary_escalates_rollout_mismatch(tmp_path: Path) -> None:
+    summary = _summary()
+    summary["alert_summary"] = {
+        "alert_level": "none",
+        "should_alert": False,
+        "headline": "stable: continue_shadow",
+        "reasons": [],
+        "worsening_signals": [],
+    }
+    summary["shadow_next_stage_execution_state"] = {
+        "latest": {
+            "status": "completed",
+            "phase": "candidate_onboarding",
+            "result_status": "completed",
+        }
+    }
+    output_dir = tmp_path / "feedback_validation"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    (output_dir / "shadow_feedback_validation.json").write_text(
+        json.dumps(
+            {
+                "generated_at_utc": "2026-03-20T12:30:00+00:00",
+                "validation_decision": {
+                    "status": "ok",
+                    "decision": "reject",
+                    "reasons": ["full_history_regressed"],
+                },
+                "runtime_guardrail_state": {"status": "rejected", "decision": "reject"},
+                "windows": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    ops_summary = build_daily_shadow_ops_summary(summary, focused_validation_output_dir=output_dir)
+
+    assert ops_summary["alert_level"] == "critical"
+    assert ops_summary["should_notify"] is True
+    assert ops_summary["headline"] == "critical: review_validation_execution_drift"
+    assert "validation_execution_mismatch" in ops_summary["reasons"]
+    assert ops_summary["shadow_feedback_rollout_alignment_status"] == "mismatch"
+
+
 def test_build_daily_shadow_ops_summary_promotes_stage_gate_ready_phase() -> None:
     summary = _summary()
     summary["posture"] = "shadow_monitor"

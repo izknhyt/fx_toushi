@@ -958,6 +958,8 @@ def _collect_shadow_daily_review_tasks(
     focused_validation_template_action = str(latest.get("focused_validation_template_action") or "skip_focused_validation")
     focused_validation_template_runbook_ref = str(latest.get("focused_validation_template_runbook_ref") or "")
     focused_validation_template_runner_command = str(latest.get("focused_validation_template_runner_command") or "")
+    rollout_alignment_status = str(latest.get("shadow_feedback_rollout_alignment_status") or "unknown")
+    rollout_alignment_action = str(latest.get("shadow_feedback_rollout_recommended_action") or "")
     execution = _latest_shadow_next_stage_execution(
         execution_log,
         review_date_utc=str(latest.get("review_date_utc") or ""),
@@ -968,7 +970,10 @@ def _collect_shadow_daily_review_tasks(
     automation_command = str((execution or {}).get("automation_command") or "tradectl ops shadow-next-stage --run")
     estimate = 30 if alert_level == "warn" else 60 if alert_level == "critical" or readiness_status == "blocked" else 15
     task = "Review shadow daily summary"
-    if readiness_status == "blocked" or alert_level == "critical":
+    if rollout_alignment_status == "mismatch":
+        task = "Immediate validation-execution drift review"
+        estimate = max(estimate, 60)
+    elif readiness_status == "blocked" or alert_level == "critical":
         task = "Immediate shadow discrepancy review"
     elif soak_ready and qualified_next_phase == "multi_pair_preparation":
         task = "Start multi-pair preparation"
@@ -1022,6 +1027,11 @@ def _collect_shadow_daily_review_tasks(
             + (
                 f" / focused_runner={focused_validation_template_runner_command}"
                 if focused_validation_template_runner_command
+                else ""
+            )
+            + (
+                f" / rollout_alignment={rollout_alignment_status}:{rollout_alignment_action}"
+                if rollout_alignment_status not in {"", "unknown"}
                 else ""
             )
             + (

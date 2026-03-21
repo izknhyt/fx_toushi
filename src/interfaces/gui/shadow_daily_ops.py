@@ -71,6 +71,19 @@ def build_daily_shadow_ops_summary(
         if isinstance(summary.get("shadow_next_stage_execution_state"), Mapping)
         else {},
     )
+    alert_level = str(alert.get("alert_level") or "none")
+    reasons = [str(item) for item in (alert.get("reasons") or [])]
+    worsening_signals = [str(item) for item in (alert.get("worsening_signals") or [])]
+    if str(rollout_alignment.get("alignment_status") or "") == "mismatch":
+        alert_level = "critical"
+        if "validation_execution_mismatch" not in reasons:
+            reasons.append("validation_execution_mismatch")
+        if "rollout_state_diverged" not in worsening_signals:
+            worsening_signals.append("rollout_state_diverged")
+    elif str(rollout_alignment.get("alignment_status") or "") == "pending_execution" and alert_level == "none":
+        alert_level = "warn"
+        if "validated_but_not_executed" not in reasons:
+            reasons.append("validated_but_not_executed")
     readiness_status = str(readiness.get("readiness_status") or "unknown")
     stage_gate_status = str(stage_gate.get("status") or stage_gate.get("stage_gate_status") or "unknown")
     recommended_next_phase = str(stage_gate.get("recommended_next_phase") or "continue_shadow")
@@ -78,8 +91,12 @@ def build_daily_shadow_ops_summary(
     soak_status = str(soak.get("status") or "unknown")
     qualified_next_phase = str(soak.get("qualified_next_phase") or "continue_shadow")
     soak_ready_for_transition = bool(soak.get("ready_for_transition"))
-    should_notify = bool(alert.get("should_alert")) or readiness_status == "blocked" or soak_ready_for_transition
-    if bool(alert.get("should_alert")):
+    should_notify = alert_level in {"warn", "critical"} or readiness_status == "blocked" or soak_ready_for_transition
+    if str(rollout_alignment.get("alignment_status") or "") == "mismatch":
+        headline = "critical: review_validation_execution_drift"
+    elif str(rollout_alignment.get("alignment_status") or "") == "pending_execution":
+        headline = "warn: validation_ready_execution_pending"
+    elif alert_level in {"warn", "critical"}:
         headline = str(alert.get("headline") or "stable: continue_shadow")
     elif readiness_status == "blocked":
         headline = f"blocked: {str(readiness.get('next_action') or summary.get('recommended_action') or 'continue_shadow')}"
@@ -92,7 +109,7 @@ def build_daily_shadow_ops_summary(
         "generated_at_utc": str(summary.get("generated_at_utc") or _utcnow_iso()),
         "review_date_utc": str(summary.get("generated_at_utc") or _utcnow_iso())[:10],
         "headline": headline,
-        "alert_level": str(alert.get("alert_level") or "none"),
+        "alert_level": alert_level,
         "should_notify": should_notify,
         "recommended_action": str(summary.get("recommended_action") or "continue_shadow"),
         "posture": str(summary.get("posture") or "unknown"),
@@ -153,8 +170,8 @@ def build_daily_shadow_ops_summary(
         "shadow_feedback_rollout_alignment_status": str(rollout_alignment.get("alignment_status") or "unknown"),
         "active_discrepancy_count": int(discrepancy.get("active_discrepancy_count") or 0),
         "max_consecutive_open_days": int(discrepancy.get("max_consecutive_open_days") or 0),
-        "reasons": [str(item) for item in (alert.get("reasons") or [])],
-        "worsening_signals": [str(item) for item in (alert.get("worsening_signals") or [])],
+        "reasons": reasons,
+        "worsening_signals": worsening_signals,
         "readiness_reasons": [str(item) for item in (readiness.get("reasons") or [])],
         "daily_summary": [str(item) for item in (summary.get("daily_summary") or [])],
         "resolution_state": "open" if int(discrepancy.get("active_discrepancy_count") or 0) > 0 else "resolved",
@@ -379,6 +396,17 @@ def append_shadow_notification(ops_summary: Mapping[str, Any], notification_log:
         "focused_validation_template_action": ops_summary.get("focused_validation_template_action"),
         "focused_validation_template_runbook_ref": ops_summary.get("focused_validation_template_runbook_ref"),
         "focused_validation_template_runner_command": ops_summary.get("focused_validation_template_runner_command"),
+        "shadow_feedback_rollout_alignment_status": ops_summary.get("shadow_feedback_rollout_alignment_status"),
+        "shadow_feedback_rollout_recommended_action": (
+            (ops_summary.get("shadow_feedback_rollout_alignment") or {}).get("recommended_action")
+            if isinstance(ops_summary.get("shadow_feedback_rollout_alignment"), Mapping)
+            else ""
+        ),
+        "shadow_feedback_rollout_should_alert": (
+            (ops_summary.get("shadow_feedback_rollout_alignment") or {}).get("should_alert")
+            if isinstance(ops_summary.get("shadow_feedback_rollout_alignment"), Mapping)
+            else False
+        ),
         "worsening_signals": list(ops_summary.get("worsening_signals") or []),
         "resolution_state": ops_summary.get("resolution_state"),
         "open_discrepancy_count": ops_summary.get("open_discrepancy_count"),
