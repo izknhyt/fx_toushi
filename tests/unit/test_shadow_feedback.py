@@ -6,6 +6,7 @@ from src.portfolio.shadow_feedback import (
     build_shadow_feedback_runtime_guardrail_state,
     build_shadow_feedback_validation_decision,
     build_shadow_feedback_summary,
+    materialize_effective_shadow_feedback_override_packet,
     materialize_shadow_feedback_override_packet,
 )
 
@@ -182,3 +183,30 @@ def test_apply_shadow_feedback_override_packet_returns_original_for_non_actionab
         allocation_profile="portfolio_admission_v2",
     )
     assert merged == config
+
+
+def test_materialize_effective_shadow_feedback_override_packet_blocks_mismatch() -> None:
+    packet = materialize_effective_shadow_feedback_override_packet(
+        {
+            "status": "ok",
+            "allocation_profile": "portfolio_admission_v2",
+            "allocation_profile_overrides": {"global": {"score": {"min_score": 0.6}}},
+            "runtime_guardrail": {
+                "status": "guarded",
+                "freeze_next_stage": True,
+                "recommended_action": "retain_current_profile",
+                "reasons": ["open_discrepancies"],
+            },
+        },
+        rollout_alignment={
+            "alignment_status": "mismatch",
+            "recommended_action": "review_or_stop_rollout",
+            "reasons": ["execution_failed_after_adopt"],
+        },
+    )
+
+    assert packet["status"] == "blocked"
+    assert packet["allocation_profile_overrides"] == {}
+    assert packet["runtime_guardrail"]["status"] == "blocked"
+    assert packet["runtime_guardrail"]["manual_clear_required"] is True
+    assert "validation_execution_mismatch" in packet["runtime_guardrail"]["reasons"]

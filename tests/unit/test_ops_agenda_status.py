@@ -440,6 +440,8 @@ def test_agenda_elevates_validation_execution_mismatch(tmp_path: Path) -> None:
                 "headline": "critical: review_validation_execution_drift",
                 "alert_level": "critical",
                 "recommended_action": "continue_shadow",
+                "runtime_guardrail_status": "blocked",
+                "runtime_guardrail_manual_clear_required": True,
                 "shadow_feedback_rollout_alignment_status": "mismatch",
                 "shadow_feedback_rollout_recommended_action": "review_or_stop_rollout",
                 "next_stage_template_phase": "candidate_onboarding",
@@ -466,6 +468,8 @@ def test_agenda_elevates_validation_execution_mismatch(tmp_path: Path) -> None:
     finally:
         agenda_module.SHADOW_DAILY_NOTIFICATION_LOG_PATH = original_path
 
-    matching = [task for task in ctx.operational_tasks if task["task"] == "Immediate validation-execution drift review"]
+    matching = [task for task in ctx.operational_tasks if task["task"] == "Manual clear runtime guardrail for rollout drift"]
     assert len(matching) == 1
     assert "rollout_alignment=mismatch:review_or_stop_rollout" in str(matching[0]["notes"])
+    assert "runtime_guardrail=blocked" in str(matching[0]["notes"])
+    assert "manual_clear_required=true" in str(matching[0]["notes"])

@@ -960,6 +960,8 @@ def _collect_shadow_daily_review_tasks(
     focused_validation_template_runner_command = str(latest.get("focused_validation_template_runner_command") or "")
     rollout_alignment_status = str(latest.get("shadow_feedback_rollout_alignment_status") or "unknown")
     rollout_alignment_action = str(latest.get("shadow_feedback_rollout_recommended_action") or "")
+    runtime_guardrail_status = str(latest.get("runtime_guardrail_status") or "")
+    runtime_guardrail_manual_clear_required = bool(latest.get("runtime_guardrail_manual_clear_required"))
     execution = _latest_shadow_next_stage_execution(
         execution_log,
         review_date_utc=str(latest.get("review_date_utc") or ""),
@@ -970,7 +972,10 @@ def _collect_shadow_daily_review_tasks(
     automation_command = str((execution or {}).get("automation_command") or "tradectl ops shadow-next-stage --run")
     estimate = 30 if alert_level == "warn" else 60 if alert_level == "critical" or readiness_status == "blocked" else 15
     task = "Review shadow daily summary"
-    if rollout_alignment_status == "mismatch":
+    if runtime_guardrail_manual_clear_required:
+        task = "Manual clear runtime guardrail for rollout drift"
+        estimate = max(estimate, 60)
+    elif rollout_alignment_status == "mismatch":
         task = "Immediate validation-execution drift review"
         estimate = max(estimate, 60)
     elif readiness_status == "blocked" or alert_level == "critical":
@@ -1027,6 +1032,16 @@ def _collect_shadow_daily_review_tasks(
             + (
                 f" / focused_runner={focused_validation_template_runner_command}"
                 if focused_validation_template_runner_command
+                else ""
+            )
+            + (
+                f" / runtime_guardrail={runtime_guardrail_status}"
+                if runtime_guardrail_status not in {"", "unknown"}
+                else ""
+            )
+            + (
+                " / manual_clear_required=true"
+                if runtime_guardrail_manual_clear_required
                 else ""
             )
             + (

@@ -181,7 +181,14 @@ def build_shadow_next_stage_execution_summary(
         result["shadow_feedback_override_packet_status"] = str(
             (shadow_feedback_override_packet or {}).get("status") or ""
         )
-    if runtime_guardrail.get("status") == "guarded" and bool(runtime_guardrail.get("freeze_next_stage", False)):
+    if bool(runtime_guardrail.get("manual_clear_required", False)):
+        result["status"] = "blocked_by_runtime_guardrail"
+        result["status_reason"] = "shadow_runtime_guardrail_manual_clear_required"
+        result["should_execute"] = False
+        result["guardrail_blocked"] = True
+        result["manual_clear_required"] = True
+        return result
+    if bool(runtime_guardrail.get("freeze_next_stage", False)):
         result["status"] = "blocked_by_runtime_guardrail"
         result["status_reason"] = "shadow_runtime_guardrail_blocked"
         result["should_execute"] = False
@@ -190,6 +197,12 @@ def build_shadow_next_stage_execution_summary(
     if template_status != "ready" or template_phase not in {"candidate_onboarding", "multi_pair_preparation"}:
         return result
 
+    if bool(runtime_guardrail_summary.get("manual_clear_required")):
+        result["status"] = "blocked_by_runtime_guardrail"
+        result["status_reason"] = "shadow_runtime_guardrail_manual_clear_required"
+        result["guardrail_blocked"] = True
+        result["manual_clear_required"] = True
+        return result
     if bool(runtime_guardrail_summary.get("freeze_next_stage")):
         result["status"] = "blocked_by_runtime_guardrail"
         result["status_reason"] = "shadow_runtime_guardrail_blocked"

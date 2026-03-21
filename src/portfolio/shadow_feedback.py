@@ -324,6 +324,49 @@ def load_shadow_feedback_override_packet(
     return dict(loaded) if isinstance(loaded, Mapping) else {}
 
 
+def materialize_effective_shadow_feedback_override_packet(
+    override_packet_or_path: Mapping[str, Any] | Path | str | None,
+    *,
+    rollout_alignment: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    packet = load_shadow_feedback_override_packet(override_packet_or_path)
+    alignment = dict(rollout_alignment or {})
+    if str(alignment.get("alignment_status") or "") != "mismatch":
+        return packet
+
+    runtime_guardrail = (
+        dict(packet.get("runtime_guardrail") or {})
+        if isinstance(packet.get("runtime_guardrail"), Mapping)
+        else {}
+    )
+    reasons = [str(item) for item in (runtime_guardrail.get("reasons") or [])]
+    for item in alignment.get("reasons") or []:
+        text = str(item)
+        if text and text not in reasons:
+            reasons.append(text)
+    if "validation_execution_mismatch" not in reasons:
+        reasons.append("validation_execution_mismatch")
+
+    runtime_guardrail.update(
+        {
+            "status": "blocked",
+            "decision": "manual_clear_required",
+            "freeze_next_stage": True,
+            "manual_clear_required": True,
+            "recommended_action": str(alignment.get("recommended_action") or "review_or_stop_rollout"),
+            "reasons": reasons,
+        }
+    )
+
+    packet["status"] = "blocked"
+    packet["allocation_profile_overrides"] = {}
+    packet["materialized_targets"] = []
+    packet["runtime_guardrail"] = runtime_guardrail
+    packet["effective_reason"] = "validation_execution_mismatch"
+    packet["effective_from_rollout_alignment"] = dict(alignment)
+    return packet
+
+
 def apply_shadow_feedback_override_packet(
     allocation_config_payload_or_path: Mapping[str, Any] | Path | str | None,
     *,
@@ -518,6 +561,7 @@ __all__ = [
     "build_shadow_feedback_runtime_guardrail_state",
     "build_shadow_feedback_validation_decision",
     "build_shadow_feedback_summary",
+    "materialize_effective_shadow_feedback_override_packet",
     "load_shadow_feedback_override_packet",
     "materialize_shadow_feedback_override_packet",
 ]

@@ -174,6 +174,10 @@ def test_build_daily_shadow_ops_summary_escalates_rollout_mismatch(tmp_path: Pat
     assert ops_summary["headline"] == "critical: review_validation_execution_drift"
     assert "validation_execution_mismatch" in ops_summary["reasons"]
     assert ops_summary["shadow_feedback_rollout_alignment_status"] == "mismatch"
+    assert ops_summary["runtime_guardrail_status"] == "blocked"
+    assert ops_summary["runtime_guardrail_manual_clear_required"] is True
+    assert ops_summary["shadow_feedback_override_packet"]["status"] == "blocked"
+    assert ops_summary["shadow_feedback_override_packet"]["allocation_profile_overrides"] == {}
 
 
 def test_build_daily_shadow_ops_summary_promotes_stage_gate_ready_phase() -> None:

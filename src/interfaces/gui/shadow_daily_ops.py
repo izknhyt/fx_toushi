@@ -13,7 +13,10 @@ from src.interfaces.gui.shadow_feedback_validation_surface import (
 from src.interfaces.gui.shadow_feedback_rollout_surface import (
     summarize_shadow_feedback_rollout_alignment,
 )
-from src.portfolio.shadow_feedback import materialize_shadow_feedback_override_packet
+from src.portfolio.shadow_feedback import (
+    materialize_effective_shadow_feedback_override_packet,
+    materialize_shadow_feedback_override_packet,
+)
 from src.portfolio.shadow_feedback_template import build_shadow_feedback_validation_template
 
 
@@ -71,6 +74,11 @@ def build_daily_shadow_ops_summary(
         if isinstance(summary.get("shadow_next_stage_execution_state"), Mapping)
         else {},
     )
+    shadow_feedback_override_packet = materialize_effective_shadow_feedback_override_packet(
+        shadow_feedback_override_packet,
+        rollout_alignment=rollout_alignment,
+    )
+    runtime_guardrail_summary = dict(shadow_feedback_override_packet.get("runtime_guardrail") or {})
     alert_level = str(alert.get("alert_level") or "none")
     reasons = [str(item) for item in (alert.get("reasons") or [])]
     worsening_signals = [str(item) for item in (alert.get("worsening_signals") or [])]
@@ -153,7 +161,9 @@ def build_daily_shadow_ops_summary(
         "shadow_feedback_candidate_count": int(shadow_feedback.get("candidate_count") or 0),
         "shadow_feedback_reasons": [str(item) for item in (shadow_feedback.get("reasons") or [])],
         "allocator_feedback_candidates": list(shadow_feedback.get("allocator_feedback_candidates") or []),
-        "runtime_guardrail_summary": dict(shadow_feedback_override_packet.get("runtime_guardrail") or {}),
+        "runtime_guardrail_summary": runtime_guardrail_summary,
+        "runtime_guardrail_status": str(runtime_guardrail_summary.get("status") or "unknown"),
+        "runtime_guardrail_manual_clear_required": bool(runtime_guardrail_summary.get("manual_clear_required")),
         "focused_validation_summary": dict(shadow_feedback_override_packet.get("focused_validation") or {}),
         "focused_validation_template": focused_validation_template,
         "focused_validation_template_status": str(focused_validation_template.get("status") or "unknown"),
@@ -215,6 +225,7 @@ def render_daily_shadow_ops_report(ops_summary: Mapping[str, Any]) -> str:
         f"- shadow_feedback_next_action: `{ops_summary.get('shadow_feedback_next_action')}`",
         f"- shadow_feedback_candidate_count: `{ops_summary.get('shadow_feedback_candidate_count')}`",
         f"- runtime_guardrail_status: `{((ops_summary.get('runtime_guardrail_summary') or {}).get('status'))}`",
+        f"- runtime_guardrail_manual_clear_required: `{ops_summary.get('runtime_guardrail_manual_clear_required')}`",
         f"- focused_validation_status: `{((ops_summary.get('focused_validation_summary') or {}).get('status'))}`",
         f"- focused_validation_template_status: `{ops_summary.get('focused_validation_template_status')}`",
         f"- drift_event_count: `{ops_summary.get('drift_event_count')}`",
@@ -396,6 +407,8 @@ def append_shadow_notification(ops_summary: Mapping[str, Any], notification_log:
         "focused_validation_template_action": ops_summary.get("focused_validation_template_action"),
         "focused_validation_template_runbook_ref": ops_summary.get("focused_validation_template_runbook_ref"),
         "focused_validation_template_runner_command": ops_summary.get("focused_validation_template_runner_command"),
+        "runtime_guardrail_status": ops_summary.get("runtime_guardrail_status"),
+        "runtime_guardrail_manual_clear_required": ops_summary.get("runtime_guardrail_manual_clear_required"),
         "shadow_feedback_rollout_alignment_status": ops_summary.get("shadow_feedback_rollout_alignment_status"),
         "shadow_feedback_rollout_recommended_action": (
             (ops_summary.get("shadow_feedback_rollout_alignment") or {}).get("recommended_action")
