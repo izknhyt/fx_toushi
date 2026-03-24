@@ -88,3 +88,37 @@ def test_ops_shadow_next_stage_command(monkeypatch, tmp_path: Path) -> None:
     payload = json.loads(result.stdout)
     assert payload["status"] == "ok"
     assert payload["execution_summary"]["phase"] == "candidate_onboarding"
+
+
+def test_ops_v2_completion_check_command(monkeypatch, tmp_path: Path) -> None:
+    from src.interfaces import cli as cli_module
+
+    def _fake_v2_completion_check(**kwargs):
+        output_dir = kwargs["output_dir"]
+        return {
+            "status": "ok",
+            "completion_status": "blocked",
+            "completion_candidate": False,
+            "blockers": ["readiness_status=monitor"],
+            "completion_json": str(output_dir / "v2_completion_evidence.json"),
+        }
+
+    monkeypatch.setattr(cli_module, "ops_v2_completion_check", _fake_v2_completion_check)
+    app = create_cli_app()
+    runner = CliRunner()
+
+    result = runner.invoke(
+        app,
+        [
+            "ops",
+            "v2-completion-check",
+            "--output-dir",
+            str(tmp_path / "out"),
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["status"] == "ok"
+    assert payload["completion_status"] == "blocked"

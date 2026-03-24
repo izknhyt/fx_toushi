@@ -28,6 +28,11 @@ from src.ops.shadow_next_stage import (
     DEFAULT_SHADOW_NEXT_STAGE_EXECUTION_LEDGER_PATH,
     run_shadow_next_stage_daily,
 )
+from src.interfaces.gui.v2_completion_check_surface import (
+    DEFAULT_EXECUTION_LEDGER as DEFAULT_V2_COMPLETION_CHECK_EXECUTION_LEDGER,
+    DEFAULT_OUTPUT_DIR as DEFAULT_V2_COMPLETION_CHECK_OUTPUT_DIR,
+    run_v2_completion_check,
+)
 from src.ops.profit_readiness import (
     DEFAULT_PROFIT_READINESS_PATH,
     EXIT_GUARDED,
@@ -71,6 +76,7 @@ __all__ = [
     "OpsDrillService",
     "OpsWorklogEntry",
     "shadow_next_stage_daily",
+    "v2_completion_check",
 ]
 
 DEFAULT_GATE_STATE_PATH = Path("snapshots/latest/gate_state.json")
@@ -84,6 +90,8 @@ DEFAULT_SHADOW_DISCREPANCY_LEDGER_PATH = Path("reports/analysis/shadow/shadow_di
 DEFAULT_SHADOW_BROKER_EVENT_LOG = Path("logs/broker/shadow_events.jsonl")
 DEFAULT_SHADOW_BROKER_SESSION_LOG = Path("logs/broker/shadow_sessions.jsonl")
 DEFAULT_SHADOW_REPORT_DIR = Path("reports/analysis/shadow")
+DEFAULT_V2_COMPLETION_CHECK_OUTPUT_PATH = DEFAULT_V2_COMPLETION_CHECK_OUTPUT_DIR
+DEFAULT_V2_COMPLETION_CHECK_LEDGER_PATH = DEFAULT_V2_COMPLETION_CHECK_EXECUTION_LEDGER
 
 
 def _utcnow() -> str:
@@ -298,6 +306,24 @@ def shadow_next_stage_daily(
         limit=limit,
         window_hours=window_hours,
         run=run,
+    )
+
+
+def v2_completion_check(
+    *,
+    output_dir: Path = DEFAULT_V2_COMPLETION_CHECK_OUTPUT_PATH,
+    execution_ledger_path: Path = DEFAULT_V2_COMPLETION_CHECK_LEDGER_PATH,
+    limit: int = 200,
+    window_hours: int = 24,
+) -> dict[str, object]:
+    """Run the latest v2 completion check and record execution evidence."""
+
+    return run_v2_completion_check(
+        output_dir=output_dir,
+        ledger_path=execution_ledger_path,
+        limit=limit,
+        window_hours=window_hours,
+        requested_via="ops_cli",
     )
 
 

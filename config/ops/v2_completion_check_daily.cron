@@ -1,0 +1,2 @@
+# Daily v2 completion check automation (every day at 09:25 JST)
+25 9 * * * cd /Users/izumimotohayato/development/codex_invest && /bin/bash tools/scripts/run_v2_completion_check_daily.sh >> logs/ops/v2_completion_check_daily.log 2>> logs/ops/v2_completion_check_daily.err.log

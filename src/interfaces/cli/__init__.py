@@ -249,6 +249,7 @@ from .ops import (
     drill_step,
     readiness,
     shadow_next_stage_daily,
+    v2_completion_check as ops_v2_completion_check,
     agenda,
     automation_add,
     worklog_add,
@@ -9729,6 +9730,32 @@ def create_cli_app() -> typer.Typer:
             limit=limit,
             window_hours=window_hours,
             run=run,
+        )
+        _render_payload(console, payload, json_output=effective_json)
+
+    @ops_app.command("v2-completion-check")
+    def ops_v2_completion_check_command(
+        ctx: typer.Context,
+        output_dir: Path = typer.Option(
+            Path("reports") / "analysis" / "shadow",
+            "--output-dir",
+            help="Output directory for completion check artifacts.",
+        ),
+        execution_ledger_path: Path = typer.Option(
+            Path("logs") / "ops" / "v2_completion_check_execution.jsonl",
+            "--execution-ledger-path",
+            help="Execution ledger for v2 completion checks.",
+        ),
+        limit: int = typer.Option(200, "--limit", help="Maximum recent rows to summarize."),
+        window_hours: int = typer.Option(24, "--window-hours", help="Lookback window in hours."),
+        json_output: bool | None = typer.Option(None, "--json", help="Render as JSON"),
+    ) -> None:
+        effective_json = _effective_json_output(ctx, json_output)
+        payload = ops_v2_completion_check(
+            output_dir=output_dir,
+            execution_ledger_path=execution_ledger_path,
+            limit=limit,
+            window_hours=window_hours,
         )
         _render_payload(console, payload, json_output=effective_json)
 
