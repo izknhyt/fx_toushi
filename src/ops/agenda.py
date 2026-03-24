@@ -1085,6 +1085,24 @@ def _collect_shadow_daily_review_tasks(
         str(item)
         for item in (latest.get("multi_pair_next_expansion_rollout_clear_conditions") or [])
     ]
+    multi_pair_post_qualification_status = str(
+        latest.get("multi_pair_post_qualification_status") or "unknown"
+    )
+    multi_pair_post_qualification_recommended_action = str(
+        latest.get("multi_pair_post_qualification_recommended_action") or ""
+    )
+    multi_pair_post_qualification_stable_streak_days = int(
+        latest.get("multi_pair_post_qualification_stable_streak_days") or 0
+    )
+    multi_pair_post_qualification_next_review_symbol = str(
+        latest.get("multi_pair_post_qualification_next_review_symbol") or ""
+    )
+    multi_pair_post_qualification_blockers = [
+        str(item) for item in (latest.get("multi_pair_post_qualification_blockers") or [])
+    ]
+    multi_pair_post_qualification_clear_conditions = [
+        str(item) for item in (latest.get("multi_pair_post_qualification_clear_conditions") or [])
+    ]
     recovery_runbook_ref = str(latest.get("shadow_feedback_recovery_runbook_ref") or "")
     recovery_runner_command = str(latest.get("shadow_feedback_recovery_runner_command") or "")
     recovery_execute_command = str(latest.get("shadow_feedback_recovery_execute_command") or "")
@@ -1177,6 +1195,9 @@ def _collect_shadow_daily_review_tasks(
             multi_pair_next_expansion_rollout_guardrail_status == "monitoring"
         ):
             task = "Monitor next pair expansion rollout"
+            estimate = max(estimate, 25)
+        elif multi_pair_post_qualification_status == "re_review_required":
+            task = "Re-review post-qualification handoff"
             estimate = max(estimate, 25)
         elif (
             multi_pair_expansion_rollout_execution_status not in {"", "unknown", "planned", "missing"}
@@ -1451,6 +1472,31 @@ def _collect_shadow_daily_review_tasks(
             + (
                 f" / next_pair_expansion_rollout_clear_conditions={','.join(multi_pair_next_expansion_rollout_clear_conditions)}"
                 if multi_pair_next_expansion_rollout_clear_conditions
+                else ""
+            )
+            + (
+                f" / post_qualification={multi_pair_post_qualification_status}:{multi_pair_post_qualification_recommended_action}"
+                if multi_pair_post_qualification_status not in {"", "unknown"}
+                else ""
+            )
+            + (
+                f" / post_qualification_streak={multi_pair_post_qualification_stable_streak_days}"
+                if multi_pair_post_qualification_stable_streak_days
+                else ""
+            )
+            + (
+                f" / post_qualification_next={multi_pair_post_qualification_next_review_symbol}"
+                if multi_pair_post_qualification_next_review_symbol
+                else ""
+            )
+            + (
+                f" / post_qualification_blockers={','.join(multi_pair_post_qualification_blockers)}"
+                if multi_pair_post_qualification_blockers
+                else ""
+            )
+            + (
+                f" / post_qualification_clear_conditions={','.join(multi_pair_post_qualification_clear_conditions)}"
+                if multi_pair_post_qualification_clear_conditions
                 else ""
             )
             + (

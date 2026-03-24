@@ -482,6 +482,65 @@ def test_agenda_elevates_validation_execution_mismatch(tmp_path: Path) -> None:
     assert "recovery_execute=tradectl portfolio shadow-feedback-recover --run" in str(matching[0]["notes"])
 
 
+def test_agenda_surfaces_post_qualification_handoff_re_review(tmp_path: Path) -> None:
+    health_state_path = tmp_path / "snapshots" / "latest" / "health_state.json"
+    _write_health_state(health_state_path, [], status="ok")
+
+    notification_log = tmp_path / "logs" / "ops" / "shadow_daily_notifications.jsonl"
+    notification_log.parent.mkdir(parents=True, exist_ok=True)
+    notification_log.write_text(
+        json.dumps(
+            {
+                "event": "shadow.daily_alert",
+                "ts": "2026-03-24T00:30:00Z",
+                "review_date_utc": "2026-03-24",
+                "headline": "blocked: re_review_post_qualification_handoff",
+                "alert_level": "none",
+                "recommended_action": "re_review_post_qualification_handoff",
+                "multi_pair_expansion_rollout_execution_status": "completed",
+                "multi_pair_expansion_rollout_guardrail_status": "qualified_for_steady_state",
+                "multi_pair_next_expansion_rollout_guardrail_status": "qualified_for_steady_state",
+                "multi_pair_post_qualification_status": "re_review_required",
+                "multi_pair_post_qualification_recommended_action": "re_review_post_qualification_handoff",
+                "multi_pair_post_qualification_stable_streak_days": 0,
+                "multi_pair_post_qualification_next_review_symbol": "AUDUSD",
+                "multi_pair_post_qualification_blockers": [
+                    "steady_state_not_ready_for_next_pair_review"
+                ],
+                "multi_pair_post_qualification_clear_conditions": [
+                    "multi_pair_steady_state_status=ready_for_next_pair_review"
+                ],
+                "multi_pair_next_expansion_current_symbol": "EURUSD",
+                "multi_pair_next_expansion_next_symbol": "GBPUSD",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    service = OpsAgendaService(
+        template_path=tmp_path / "docs" / "templates" / "daily_agenda.md",
+        output_dir=tmp_path / "docs" / "runbooks" / "daily_agenda",
+        health_state_path=health_state_path,
+    )
+
+    from src.ops import agenda as agenda_module
+
+    original_path = agenda_module.SHADOW_DAILY_NOTIFICATION_LOG_PATH
+    agenda_module.SHADOW_DAILY_NOTIFICATION_LOG_PATH = notification_log
+    try:
+        ctx = service.build_context(target_date=date(2026, 3, 24))
+    finally:
+        agenda_module.SHADOW_DAILY_NOTIFICATION_LOG_PATH = original_path
+
+    matching = [task for task in ctx.operational_tasks if task["task"] == "Re-review post-qualification handoff"]
+    assert len(matching) == 1
+    notes = str(matching[0]["notes"])
+    assert "post_qualification=re_review_required:re_review_post_qualification_handoff" in notes
+    assert "post_qualification_next=AUDUSD" in notes
+    assert "post_qualification_blockers=steady_state_not_ready_for_next_pair_review" in notes
+
+
 def test_agenda_elevates_rollout_rollback_recommendation(tmp_path: Path) -> None:
     health_state_path = tmp_path / "snapshots" / "latest" / "health_state.json"
     _write_health_state(health_state_path, [], status="ok")
