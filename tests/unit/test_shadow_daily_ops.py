@@ -836,8 +836,122 @@ def test_build_daily_shadow_ops_summary_advances_when_post_qualification_consist
 
     assert ops_summary["multi_pair_post_qualification_status"] == "consistent"
     assert ops_summary["multi_pair_post_qualification_stable_streak_days"] == 2
-    assert ops_summary["headline"] == "ready: review_next_pair_candidate"
-    assert ops_summary["next_action"] == "review_next_pair_candidate"
+    assert ops_summary["multi_pair_next_review_bridge_status"] == "re_review_required"
+    assert ops_summary["headline"] == "blocked: re_review_next_pair_review_handoff"
+    assert ops_summary["next_action"] == "re_review_next_pair_review_handoff"
+
+
+def test_build_daily_shadow_ops_summary_advances_next_review_bridge_to_expansion_start(
+    tmp_path: Path, monkeypatch
+) -> None:
+    summary = _summary()
+    summary["posture"] = "stable_shadow"
+    summary["recommended_action"] = "continue_shadow"
+    summary["drift_event_count"] = 0
+    summary["missed_fill_count"] = 0
+    summary["trend_summary"] = {"consecutive_action_required_days": 0}
+    summary["discrepancy_summary"] = {
+        "active_discrepancy_count": 0,
+        "max_consecutive_open_days": 0,
+        "active_discrepancies": [],
+    }
+    summary["shadow_readiness_summary"] = {
+        "readiness_status": "ready",
+        "ready_for_next_stage": True,
+        "next_action": "baseline_shadow_ready",
+        "reasons": [],
+    }
+    summary["alert_summary"] = {
+        "alert_level": "none",
+        "should_alert": False,
+        "headline": "stable: continue_shadow",
+        "reasons": [],
+        "worsening_signals": [],
+    }
+    summary["shadow_feedback_summary"] = {
+        "status": "ok",
+        "feedback_loop_state": "stable_baseline",
+        "next_action": "continue_shadow",
+        "candidate_count": 0,
+        "reasons": [],
+        "allocator_feedback_candidates": [],
+    }
+    summary["multi_pair_expansion_current_symbol"] = "GBPUSD"
+    summary["multi_pair_expansion_next_symbol"] = "AUDUSD"
+    summary["multi_pair_next_expansion_current_symbol"] = "EURJPY"
+    summary["multi_pair_next_expansion_next_symbol"] = "AUDUSD"
+    summary["multi_pair_next_expansion_status"] = "ready_to_start"
+    summary["multi_pair_next_expansion_execution_status"] = "missing"
+
+    monkeypatch.setattr(
+        "src.interfaces.gui.shadow_daily_ops.build_multi_pair_next_expansion_rollout_guardrail_summary",
+        lambda _ops_summary, _history_entries: {
+            "status": "ok",
+            "guardrail_status": "qualified_for_steady_state",
+            "current_symbol": "GBPUSD",
+            "next_symbol": "AUDUSD",
+            "execution_status": "completed",
+            "recommended_action": "maintain_pair_expansion_steady_state",
+            "blockers": [],
+            "clear_conditions": [],
+            "recent_reviews": [],
+        },
+    )
+    monkeypatch.setattr(
+        "src.interfaces.gui.shadow_daily_ops.build_multi_pair_post_qualification_summary",
+        lambda _ops_summary, _history_entries: {
+            "status": "consistent",
+            "recommended_action": "review_next_pair_candidate",
+            "stable_streak_days": 2,
+            "current_symbol": "GBPUSD",
+            "expanded_symbol": "EURJPY",
+            "next_review_symbol": "AUDUSD",
+            "blockers": [],
+            "clear_conditions": [],
+            "recent_reviews": [],
+        },
+    )
+    monkeypatch.setattr(
+        "src.interfaces.gui.shadow_daily_ops.build_multi_pair_steady_state_promotion_summary",
+        lambda _ops_summary: {
+            "status": "ok",
+            "promotion_status": "ready_for_next_pair_review",
+            "recommended_action": "review_next_pair_candidate",
+            "active_symbols": ["USDJPY", "EURUSD", "GBPUSD", "EURJPY"],
+            "current_symbol": "GBPUSD",
+            "expanded_symbol": "EURJPY",
+            "next_symbol": "AUDUSD",
+            "next_pair_metadata": {},
+            "runbook_ref": "docs/runbooks/PORTFOLIO-MULTIPAIR-04.md",
+            "runner_command": "",
+            "execute_command": "",
+            "blockers": [],
+            "clear_conditions": [],
+            "reasons": [],
+        },
+    )
+    monkeypatch.setattr(
+        "src.interfaces.gui.shadow_daily_ops.build_multi_pair_next_expansion_execution_summary",
+        lambda _ops_summary, ledger_path=None: {
+            "status": "ready_to_start",
+            "execution_status": "missing",
+            "current_symbol": "EURJPY",
+            "next_symbol": "AUDUSD",
+            "recommended_action": "start_next_pair_expansion_rollout",
+            "blockers": [],
+            "clear_conditions": [],
+        },
+    )
+
+    ops_summary = build_daily_shadow_ops_summary(
+        summary,
+        multi_pair_next_review_bridge_history_path=tmp_path / "multi_pair_next_review_bridge_history.jsonl",
+    )
+
+    assert ops_summary["multi_pair_next_review_bridge_status"] == "ready_for_review_start"
+    assert ops_summary["multi_pair_next_review_bridge_recommended_action"] == "start_next_pair_expansion_rollout"
+    assert ops_summary["headline"] == "ready: start_next_pair_expansion_rollout"
+    assert ops_summary["next_action"] == "start_next_pair_expansion_rollout"
 
 
 def test_build_daily_shadow_ops_summary_surfaces_pair_expansion_gate_when_pilot_qualified(tmp_path: Path) -> None:
@@ -1390,7 +1504,8 @@ def test_build_daily_shadow_ops_summary_hands_off_next_expansion_qualification_t
         ops_summary["multi_pair_steady_state_runner_command"]
         == "tradectl portfolio pair-expansion-rollout --current-symbol EURJPY --next-symbol AUDUSD"
     )
-    assert ops_summary["headline"] == "ready: review_next_pair_candidate"
+    assert ops_summary["multi_pair_next_review_bridge_status"] == "re_review_required"
+    assert ops_summary["headline"] == "blocked: re_review_next_pair_review_handoff"
 
 
 def test_write_daily_shadow_ops_report_writes_notification(tmp_path: Path) -> None:

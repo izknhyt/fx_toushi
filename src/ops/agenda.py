@@ -1103,6 +1103,27 @@ def _collect_shadow_daily_review_tasks(
     multi_pair_post_qualification_clear_conditions = [
         str(item) for item in (latest.get("multi_pair_post_qualification_clear_conditions") or [])
     ]
+    multi_pair_next_review_bridge_status = str(
+        latest.get("multi_pair_next_review_bridge_status") or "unknown"
+    )
+    multi_pair_next_review_bridge_recommended_action = str(
+        latest.get("multi_pair_next_review_bridge_recommended_action") or ""
+    )
+    multi_pair_next_review_bridge_stable_streak_days = int(
+        latest.get("multi_pair_next_review_bridge_stable_streak_days") or 0
+    )
+    multi_pair_next_review_bridge_expanded_symbol = str(
+        latest.get("multi_pair_next_review_bridge_expanded_symbol") or ""
+    )
+    multi_pair_next_review_bridge_next_review_symbol = str(
+        latest.get("multi_pair_next_review_bridge_next_review_symbol") or ""
+    )
+    multi_pair_next_review_bridge_blockers = [
+        str(item) for item in (latest.get("multi_pair_next_review_bridge_blockers") or [])
+    ]
+    multi_pair_next_review_bridge_clear_conditions = [
+        str(item) for item in (latest.get("multi_pair_next_review_bridge_clear_conditions") or [])
+    ]
     recovery_runbook_ref = str(latest.get("shadow_feedback_recovery_runbook_ref") or "")
     recovery_runner_command = str(latest.get("shadow_feedback_recovery_runner_command") or "")
     recovery_execute_command = str(latest.get("shadow_feedback_recovery_execute_command") or "")
@@ -1198,6 +1219,15 @@ def _collect_shadow_daily_review_tasks(
             estimate = max(estimate, 25)
         elif multi_pair_post_qualification_status == "re_review_required":
             task = "Re-review post-qualification handoff"
+            estimate = max(estimate, 25)
+        elif multi_pair_next_review_bridge_status == "re_review_required":
+            task = "Re-review next pair review handoff"
+            estimate = max(estimate, 25)
+        elif multi_pair_next_review_bridge_status == "ready_for_review_start":
+            task = "Start next pair expansion rollout"
+            estimate = max(estimate, 35)
+        elif multi_pair_next_review_bridge_status == "expansion_started":
+            task = "Monitor next pair expansion rollout"
             estimate = max(estimate, 25)
         elif (
             multi_pair_expansion_rollout_execution_status not in {"", "unknown", "planned", "missing"}
@@ -1497,6 +1527,36 @@ def _collect_shadow_daily_review_tasks(
             + (
                 f" / post_qualification_clear_conditions={','.join(multi_pair_post_qualification_clear_conditions)}"
                 if multi_pair_post_qualification_clear_conditions
+                else ""
+            )
+            + (
+                f" / next_review_bridge={multi_pair_next_review_bridge_status}:{multi_pair_next_review_bridge_recommended_action}"
+                if multi_pair_next_review_bridge_status not in {"", "unknown"}
+                else ""
+            )
+            + (
+                f" / next_review_bridge_streak={multi_pair_next_review_bridge_stable_streak_days}"
+                if multi_pair_next_review_bridge_stable_streak_days
+                else ""
+            )
+            + (
+                f" / next_review_bridge_expanded={multi_pair_next_review_bridge_expanded_symbol}"
+                if multi_pair_next_review_bridge_expanded_symbol
+                else ""
+            )
+            + (
+                f" / next_review_bridge_next={multi_pair_next_review_bridge_next_review_symbol}"
+                if multi_pair_next_review_bridge_next_review_symbol
+                else ""
+            )
+            + (
+                f" / next_review_bridge_blockers={','.join(multi_pair_next_review_bridge_blockers)}"
+                if multi_pair_next_review_bridge_blockers
+                else ""
+            )
+            + (
+                f" / next_review_bridge_clear_conditions={','.join(multi_pair_next_review_bridge_clear_conditions)}"
+                if multi_pair_next_review_bridge_clear_conditions
                 else ""
             )
             + (

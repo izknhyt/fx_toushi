@@ -72,6 +72,12 @@ from src.portfolio.multi_pair_post_qualification import (
     build_multi_pair_post_qualification_summary,
     load_multi_pair_post_qualification_history,
 )
+from src.portfolio.multi_pair_next_review_bridge import (
+    DEFAULT_MULTI_PAIR_NEXT_REVIEW_BRIDGE_HISTORY,
+    append_multi_pair_next_review_bridge_history,
+    build_multi_pair_next_review_bridge_summary,
+    load_multi_pair_next_review_bridge_history,
+)
 from src.portfolio.shadow_rollout_suppression import (
     build_shadow_rollout_suppression_summary,
 )
@@ -117,6 +123,7 @@ def build_daily_shadow_ops_summary(
     multi_pair_next_expansion_ledger_path: Path | None = None,
     multi_pair_next_expansion_rollout_history_path: Path | None = None,
     multi_pair_post_qualification_history_path: Path | None = None,
+    multi_pair_next_review_bridge_history_path: Path | None = None,
 ) -> dict[str, Any]:
     alert = summary.get("alert_summary") or {}
     trend = summary.get("trend_summary") or {}
@@ -798,6 +805,36 @@ def build_daily_shadow_ops_summary(
     ops_summary["multi_pair_post_qualification_clear_conditions"] = [
         str(item) for item in (multi_pair_post_qualification_summary.get("clear_conditions") or [])
     ]
+    multi_pair_next_review_bridge_history_entries = load_multi_pair_next_review_bridge_history(
+        multi_pair_next_review_bridge_history_path or DEFAULT_MULTI_PAIR_NEXT_REVIEW_BRIDGE_HISTORY
+    )
+    multi_pair_next_review_bridge_summary = build_multi_pair_next_review_bridge_summary(
+        ops_summary,
+        multi_pair_next_review_bridge_history_entries,
+    )
+    ops_summary["multi_pair_next_review_bridge_summary"] = multi_pair_next_review_bridge_summary
+    ops_summary["multi_pair_next_review_bridge_status"] = str(
+        multi_pair_next_review_bridge_summary.get("status") or "unknown"
+    )
+    ops_summary["multi_pair_next_review_bridge_recommended_action"] = str(
+        multi_pair_next_review_bridge_summary.get("recommended_action")
+        or "continue_next_pair_review_monitoring"
+    )
+    ops_summary["multi_pair_next_review_bridge_stable_streak_days"] = int(
+        multi_pair_next_review_bridge_summary.get("stable_streak_days") or 0
+    )
+    ops_summary["multi_pair_next_review_bridge_expanded_symbol"] = str(
+        multi_pair_next_review_bridge_summary.get("expanded_symbol") or ""
+    )
+    ops_summary["multi_pair_next_review_bridge_next_review_symbol"] = str(
+        multi_pair_next_review_bridge_summary.get("next_review_symbol") or ""
+    )
+    ops_summary["multi_pair_next_review_bridge_blockers"] = [
+        str(item) for item in (multi_pair_next_review_bridge_summary.get("blockers") or [])
+    ]
+    ops_summary["multi_pair_next_review_bridge_clear_conditions"] = [
+        str(item) for item in (multi_pair_next_review_bridge_summary.get("clear_conditions") or [])
+    ]
     if ops_summary["rollout_rollback_recommended"]:
         ops_summary["headline"] = "critical: review_baseline_rollback"
         ops_summary["should_notify"] = True
@@ -920,6 +957,17 @@ def build_daily_shadow_ops_summary(
             ops_summary["headline"] = "blocked: re_review_post_qualification_handoff"
             ops_summary["next_action"] = ops_summary["multi_pair_post_qualification_recommended_action"]
             ops_summary["should_notify"] = True
+        elif ops_summary["multi_pair_next_review_bridge_status"] == "re_review_required":
+            ops_summary["headline"] = "blocked: re_review_next_pair_review_handoff"
+            ops_summary["next_action"] = ops_summary["multi_pair_next_review_bridge_recommended_action"]
+            ops_summary["should_notify"] = True
+        elif ops_summary["multi_pair_next_review_bridge_status"] == "ready_for_review_start":
+            ops_summary["headline"] = "ready: start_next_pair_expansion_rollout"
+            ops_summary["next_action"] = ops_summary["multi_pair_next_review_bridge_recommended_action"]
+            ops_summary["should_notify"] = True
+        elif ops_summary["multi_pair_next_review_bridge_status"] == "expansion_started":
+            ops_summary["headline"] = "monitor: next_pair_review_to_expansion_start"
+            ops_summary["next_action"] = ops_summary["multi_pair_next_review_bridge_recommended_action"]
         elif ops_summary["multi_pair_steady_state_status"] == "ready_for_next_pair_review":
             ops_summary["headline"] = "ready: review_next_pair_candidate"
             ops_summary["next_action"] = ops_summary["multi_pair_steady_state_recommended_action"]
@@ -1316,6 +1364,24 @@ def render_daily_shadow_ops_report(ops_summary: Mapping[str, Any]) -> str:
         lines.append(f"- blocker: `{item}`")
     for item in ops_summary.get("multi_pair_post_qualification_clear_conditions", []):
         lines.append(f"- clear_condition: `{item}`")
+    lines.extend(["", "## Next Pair Review Bridge", ""])
+    lines.append(f"- status: `{ops_summary.get('multi_pair_next_review_bridge_status')}`")
+    lines.append(
+        f"- recommended_action: `{ops_summary.get('multi_pair_next_review_bridge_recommended_action')}`"
+    )
+    lines.append(
+        f"- stable_streak_days: `{ops_summary.get('multi_pair_next_review_bridge_stable_streak_days')}`"
+    )
+    lines.append(
+        f"- expanded_symbol: `{ops_summary.get('multi_pair_next_review_bridge_expanded_symbol')}`"
+    )
+    lines.append(
+        f"- next_review_symbol: `{ops_summary.get('multi_pair_next_review_bridge_next_review_symbol')}`"
+    )
+    for item in ops_summary.get("multi_pair_next_review_bridge_blockers", []):
+        lines.append(f"- blocker: `{item}`")
+    for item in ops_summary.get("multi_pair_next_review_bridge_clear_conditions", []):
+        lines.append(f"- clear_condition: `{item}`")
     lines.extend(["", "## Shadow Feedback", ""])
     for item in ops_summary.get("shadow_feedback_reasons", []):
         lines.append(f"- {item}")
@@ -1595,6 +1661,25 @@ def append_shadow_notification(ops_summary: Mapping[str, Any], notification_log:
         "multi_pair_post_qualification_clear_conditions": list(
             ops_summary.get("multi_pair_post_qualification_clear_conditions") or []
         ),
+        "multi_pair_next_review_bridge_status": ops_summary.get("multi_pair_next_review_bridge_status"),
+        "multi_pair_next_review_bridge_recommended_action": ops_summary.get(
+            "multi_pair_next_review_bridge_recommended_action"
+        ),
+        "multi_pair_next_review_bridge_stable_streak_days": ops_summary.get(
+            "multi_pair_next_review_bridge_stable_streak_days"
+        ),
+        "multi_pair_next_review_bridge_expanded_symbol": ops_summary.get(
+            "multi_pair_next_review_bridge_expanded_symbol"
+        ),
+        "multi_pair_next_review_bridge_next_review_symbol": ops_summary.get(
+            "multi_pair_next_review_bridge_next_review_symbol"
+        ),
+        "multi_pair_next_review_bridge_blockers": list(
+            ops_summary.get("multi_pair_next_review_bridge_blockers") or []
+        ),
+        "multi_pair_next_review_bridge_clear_conditions": list(
+            ops_summary.get("multi_pair_next_review_bridge_clear_conditions") or []
+        ),
         "multi_pair_next_expansion_latest": (
             (ops_summary.get("multi_pair_next_expansion_summary") or {}).get("latest")
             if isinstance(ops_summary.get("multi_pair_next_expansion_summary"), Mapping)
@@ -1644,6 +1729,7 @@ def write_daily_shadow_ops_report(
     multi_pair_next_expansion_ledger_path: Path | None = None,
     multi_pair_next_expansion_rollout_history_path: Path | None = None,
     multi_pair_post_qualification_history_path: Path | None = None,
+    multi_pair_next_review_bridge_history_path: Path | None = None,
     output_prefix: str = "daily_shadow_ops_summary",
 ) -> dict[str, Any]:
     ops_summary = build_daily_shadow_ops_summary(
@@ -1658,6 +1744,7 @@ def write_daily_shadow_ops_report(
         multi_pair_next_expansion_ledger_path=multi_pair_next_expansion_ledger_path,
         multi_pair_next_expansion_rollout_history_path=multi_pair_next_expansion_rollout_history_path,
         multi_pair_post_qualification_history_path=multi_pair_post_qualification_history_path,
+        multi_pair_next_review_bridge_history_path=multi_pair_next_review_bridge_history_path,
     )
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -1696,6 +1783,13 @@ def write_daily_shadow_ops_report(
             or DEFAULT_MULTI_PAIR_POST_QUALIFICATION_HISTORY
         ),
     )
+    multi_pair_next_review_bridge_snapshot = append_multi_pair_next_review_bridge_history(
+        ops_summary,
+        history_path=(
+            multi_pair_next_review_bridge_history_path
+            or DEFAULT_MULTI_PAIR_NEXT_REVIEW_BRIDGE_HISTORY
+        ),
+    )
     notification = append_shadow_notification(ops_summary, notification_log) if notification_log is not None else None
     return {
         "ops_summary": ops_summary,
@@ -1723,6 +1817,11 @@ def write_daily_shadow_ops_report(
             or DEFAULT_MULTI_PAIR_POST_QUALIFICATION_HISTORY
         ),
         "multi_pair_post_qualification_snapshot": multi_pair_post_qualification_snapshot,
+        "multi_pair_next_review_bridge_history_path": str(
+            multi_pair_next_review_bridge_history_path
+            or DEFAULT_MULTI_PAIR_NEXT_REVIEW_BRIDGE_HISTORY
+        ),
+        "multi_pair_next_review_bridge_snapshot": multi_pair_next_review_bridge_snapshot,
         "notification": notification,
     }
 
