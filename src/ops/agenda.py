@@ -1124,6 +1124,36 @@ def _collect_shadow_daily_review_tasks(
     multi_pair_next_review_bridge_clear_conditions = [
         str(item) for item in (latest.get("multi_pair_next_review_bridge_clear_conditions") or [])
     ]
+    multi_pair_cycle_status = str(latest.get("multi_pair_cycle_status") or "unknown")
+    multi_pair_cycle_recommended_action = str(
+        latest.get("multi_pair_cycle_recommended_action") or ""
+    )
+    multi_pair_cycle_stable_streak_days = int(
+        latest.get("multi_pair_cycle_stable_streak_days") or 0
+    )
+    multi_pair_cycle_qualified_streak_days = int(
+        latest.get("multi_pair_cycle_qualified_streak_days") or 0
+    )
+    multi_pair_cycle_expanded_symbol = str(
+        latest.get("multi_pair_cycle_expanded_symbol") or ""
+    )
+    multi_pair_cycle_next_review_symbol = str(
+        latest.get("multi_pair_cycle_next_review_symbol") or ""
+    )
+    multi_pair_cycle_blockers = [
+        str(item) for item in (latest.get("multi_pair_cycle_blockers") or [])
+    ]
+    multi_pair_cycle_clear_conditions = [
+        str(item) for item in (latest.get("multi_pair_cycle_clear_conditions") or [])
+    ]
+    v2_completion_status = str(latest.get("v2_completion_status") or "unknown")
+    v2_completion_recommended_action = str(
+        latest.get("v2_completion_recommended_action") or ""
+    )
+    v2_completion_candidate = bool(latest.get("v2_completion_candidate"))
+    v2_completion_blockers = [
+        str(item) for item in (latest.get("v2_completion_blockers") or [])
+    ]
     recovery_runbook_ref = str(latest.get("shadow_feedback_recovery_runbook_ref") or "")
     recovery_runner_command = str(latest.get("shadow_feedback_recovery_runner_command") or "")
     recovery_execute_command = str(latest.get("shadow_feedback_recovery_execute_command") or "")
@@ -1229,6 +1259,12 @@ def _collect_shadow_daily_review_tasks(
         elif multi_pair_next_review_bridge_status == "expansion_started":
             task = "Monitor next pair expansion rollout"
             estimate = max(estimate, 25)
+        elif multi_pair_cycle_status == "re_review_required":
+            task = "Re-review multi-pair cycle evidence"
+            estimate = max(estimate, 30)
+        elif multi_pair_cycle_status == "ready_for_next_cycle":
+            task = "Review next pair candidate"
+            estimate = max(estimate, 30)
         elif (
             multi_pair_expansion_rollout_execution_status not in {"", "unknown", "planned", "missing"}
             and multi_pair_expansion_rollout_guardrail_status == "qualified_for_steady_state"
@@ -1263,6 +1299,12 @@ def _collect_shadow_daily_review_tasks(
         elif multi_pair_pilot_execution_status not in {"", "unknown", "not_started"}:
             task = "Review multi-pair pilot stability"
             estimate = max(estimate, 20)
+    if v2_completion_candidate and task in {
+        "Review shadow daily summary",
+        "Review next pair candidate",
+    }:
+        task = "Review v2 completion evidence"
+        estimate = max(estimate, 30)
     if execution_status == "completed" and task not in {
         "Execute baseline rollback recovery checklist",
         "Execute rollout drift recovery checklist",
@@ -1557,6 +1599,56 @@ def _collect_shadow_daily_review_tasks(
             + (
                 f" / next_review_bridge_clear_conditions={','.join(multi_pair_next_review_bridge_clear_conditions)}"
                 if multi_pair_next_review_bridge_clear_conditions
+                else ""
+            )
+            + (
+                f" / multi_pair_cycle={multi_pair_cycle_status}:{multi_pair_cycle_recommended_action}"
+                if multi_pair_cycle_status not in {"", "unknown"}
+                else ""
+            )
+            + (
+                f" / multi_pair_cycle_streak={multi_pair_cycle_stable_streak_days}"
+                if multi_pair_cycle_stable_streak_days
+                else ""
+            )
+            + (
+                f" / multi_pair_cycle_qualified_streak={multi_pair_cycle_qualified_streak_days}"
+                if multi_pair_cycle_qualified_streak_days
+                else ""
+            )
+            + (
+                f" / multi_pair_cycle_expanded={multi_pair_cycle_expanded_symbol}"
+                if multi_pair_cycle_expanded_symbol
+                else ""
+            )
+            + (
+                f" / multi_pair_cycle_next={multi_pair_cycle_next_review_symbol}"
+                if multi_pair_cycle_next_review_symbol
+                else ""
+            )
+            + (
+                f" / multi_pair_cycle_blockers={','.join(multi_pair_cycle_blockers)}"
+                if multi_pair_cycle_blockers
+                else ""
+            )
+            + (
+                f" / multi_pair_cycle_clear_conditions={','.join(multi_pair_cycle_clear_conditions)}"
+                if multi_pair_cycle_clear_conditions
+                else ""
+            )
+            + (
+                f" / v2_completion={v2_completion_status}:{v2_completion_recommended_action}"
+                if v2_completion_status not in {"", "unknown"}
+                else ""
+            )
+            + (
+                " / v2_completion_candidate=true"
+                if v2_completion_candidate
+                else ""
+            )
+            + (
+                f" / v2_completion_blockers={','.join(v2_completion_blockers)}"
+                if v2_completion_blockers
                 else ""
             )
             + (

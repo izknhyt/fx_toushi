@@ -78,6 +78,15 @@ from src.portfolio.multi_pair_next_review_bridge import (
     build_multi_pair_next_review_bridge_summary,
     load_multi_pair_next_review_bridge_history,
 )
+from src.portfolio.multi_pair_cycle_completion import (
+    DEFAULT_MULTI_PAIR_CYCLE_HISTORY,
+    append_multi_pair_cycle_history,
+    build_multi_pair_cycle_completion_summary,
+    load_multi_pair_cycle_history,
+)
+from src.portfolio.v2_completion_evidence import (
+    build_v2_completion_evidence_summary,
+)
 from src.portfolio.shadow_rollout_suppression import (
     build_shadow_rollout_suppression_summary,
 )
@@ -124,6 +133,7 @@ def build_daily_shadow_ops_summary(
     multi_pair_next_expansion_rollout_history_path: Path | None = None,
     multi_pair_post_qualification_history_path: Path | None = None,
     multi_pair_next_review_bridge_history_path: Path | None = None,
+    multi_pair_cycle_history_path: Path | None = None,
 ) -> dict[str, Any]:
     alert = summary.get("alert_summary") or {}
     trend = summary.get("trend_summary") or {}
@@ -835,6 +845,50 @@ def build_daily_shadow_ops_summary(
     ops_summary["multi_pair_next_review_bridge_clear_conditions"] = [
         str(item) for item in (multi_pair_next_review_bridge_summary.get("clear_conditions") or [])
     ]
+    multi_pair_cycle_history_entries = load_multi_pair_cycle_history(
+        multi_pair_cycle_history_path or DEFAULT_MULTI_PAIR_CYCLE_HISTORY
+    )
+    multi_pair_cycle_summary = build_multi_pair_cycle_completion_summary(
+        ops_summary,
+        multi_pair_cycle_history_entries,
+    )
+    ops_summary["multi_pair_cycle_summary"] = multi_pair_cycle_summary
+    ops_summary["multi_pair_cycle_status"] = str(
+        multi_pair_cycle_summary.get("status") or "unknown"
+    )
+    ops_summary["multi_pair_cycle_recommended_action"] = str(
+        multi_pair_cycle_summary.get("recommended_action") or "continue_multi_pair_cycle_monitoring"
+    )
+    ops_summary["multi_pair_cycle_stable_streak_days"] = int(
+        multi_pair_cycle_summary.get("stable_streak_days") or 0
+    )
+    ops_summary["multi_pair_cycle_qualified_streak_days"] = int(
+        multi_pair_cycle_summary.get("qualified_streak_days") or 0
+    )
+    ops_summary["multi_pair_cycle_expanded_symbol"] = str(
+        multi_pair_cycle_summary.get("expanded_symbol") or ""
+    )
+    ops_summary["multi_pair_cycle_next_review_symbol"] = str(
+        multi_pair_cycle_summary.get("next_review_symbol") or ""
+    )
+    ops_summary["multi_pair_cycle_blockers"] = [
+        str(item) for item in (multi_pair_cycle_summary.get("blockers") or [])
+    ]
+    ops_summary["multi_pair_cycle_clear_conditions"] = [
+        str(item) for item in (multi_pair_cycle_summary.get("clear_conditions") or [])
+    ]
+    v2_completion_evidence_summary = build_v2_completion_evidence_summary(ops_summary)
+    ops_summary["v2_completion_evidence_summary"] = v2_completion_evidence_summary
+    ops_summary["v2_completion_status"] = str(v2_completion_evidence_summary.get("status") or "unknown")
+    ops_summary["v2_completion_recommended_action"] = str(
+        v2_completion_evidence_summary.get("recommended_action") or "continue_multi_pair_cycle_monitoring"
+    )
+    ops_summary["v2_completion_candidate"] = bool(
+        v2_completion_evidence_summary.get("completion_candidate")
+    )
+    ops_summary["v2_completion_blockers"] = [
+        str(item) for item in (v2_completion_evidence_summary.get("blockers") or [])
+    ]
     if ops_summary["rollout_rollback_recommended"]:
         ops_summary["headline"] = "critical: review_baseline_rollback"
         ops_summary["should_notify"] = True
@@ -1382,6 +1436,27 @@ def render_daily_shadow_ops_report(ops_summary: Mapping[str, Any]) -> str:
         lines.append(f"- blocker: `{item}`")
     for item in ops_summary.get("multi_pair_next_review_bridge_clear_conditions", []):
         lines.append(f"- clear_condition: `{item}`")
+    lines.extend(["", "## Multi-Pair Cycle Completion", ""])
+    lines.append(f"- status: `{ops_summary.get('multi_pair_cycle_status')}`")
+    lines.append(f"- recommended_action: `{ops_summary.get('multi_pair_cycle_recommended_action')}`")
+    lines.append(f"- stable_streak_days: `{ops_summary.get('multi_pair_cycle_stable_streak_days')}`")
+    lines.append(
+        f"- qualified_streak_days: `{ops_summary.get('multi_pair_cycle_qualified_streak_days')}`"
+    )
+    lines.append(f"- expanded_symbol: `{ops_summary.get('multi_pair_cycle_expanded_symbol')}`")
+    lines.append(
+        f"- next_review_symbol: `{ops_summary.get('multi_pair_cycle_next_review_symbol')}`"
+    )
+    for item in ops_summary.get("multi_pair_cycle_blockers", []):
+        lines.append(f"- blocker: `{item}`")
+    for item in ops_summary.get("multi_pair_cycle_clear_conditions", []):
+        lines.append(f"- clear_condition: `{item}`")
+    lines.extend(["", "## V2 Completion Evidence", ""])
+    lines.append(f"- status: `{ops_summary.get('v2_completion_status')}`")
+    lines.append(f"- recommended_action: `{ops_summary.get('v2_completion_recommended_action')}`")
+    lines.append(f"- completion_candidate: `{ops_summary.get('v2_completion_candidate')}`")
+    for item in ops_summary.get("v2_completion_blockers", []):
+        lines.append(f"- blocker: `{item}`")
     lines.extend(["", "## Shadow Feedback", ""])
     for item in ops_summary.get("shadow_feedback_reasons", []):
         lines.append(f"- {item}")
@@ -1680,6 +1755,20 @@ def append_shadow_notification(ops_summary: Mapping[str, Any], notification_log:
         "multi_pair_next_review_bridge_clear_conditions": list(
             ops_summary.get("multi_pair_next_review_bridge_clear_conditions") or []
         ),
+        "multi_pair_cycle_status": ops_summary.get("multi_pair_cycle_status"),
+        "multi_pair_cycle_recommended_action": ops_summary.get("multi_pair_cycle_recommended_action"),
+        "multi_pair_cycle_stable_streak_days": ops_summary.get("multi_pair_cycle_stable_streak_days"),
+        "multi_pair_cycle_qualified_streak_days": ops_summary.get("multi_pair_cycle_qualified_streak_days"),
+        "multi_pair_cycle_expanded_symbol": ops_summary.get("multi_pair_cycle_expanded_symbol"),
+        "multi_pair_cycle_next_review_symbol": ops_summary.get("multi_pair_cycle_next_review_symbol"),
+        "multi_pair_cycle_blockers": list(ops_summary.get("multi_pair_cycle_blockers") or []),
+        "multi_pair_cycle_clear_conditions": list(
+            ops_summary.get("multi_pair_cycle_clear_conditions") or []
+        ),
+        "v2_completion_status": ops_summary.get("v2_completion_status"),
+        "v2_completion_recommended_action": ops_summary.get("v2_completion_recommended_action"),
+        "v2_completion_candidate": ops_summary.get("v2_completion_candidate"),
+        "v2_completion_blockers": list(ops_summary.get("v2_completion_blockers") or []),
         "multi_pair_next_expansion_latest": (
             (ops_summary.get("multi_pair_next_expansion_summary") or {}).get("latest")
             if isinstance(ops_summary.get("multi_pair_next_expansion_summary"), Mapping)
@@ -1730,6 +1819,7 @@ def write_daily_shadow_ops_report(
     multi_pair_next_expansion_rollout_history_path: Path | None = None,
     multi_pair_post_qualification_history_path: Path | None = None,
     multi_pair_next_review_bridge_history_path: Path | None = None,
+    multi_pair_cycle_history_path: Path | None = None,
     output_prefix: str = "daily_shadow_ops_summary",
 ) -> dict[str, Any]:
     ops_summary = build_daily_shadow_ops_summary(
@@ -1745,6 +1835,7 @@ def write_daily_shadow_ops_report(
         multi_pair_next_expansion_rollout_history_path=multi_pair_next_expansion_rollout_history_path,
         multi_pair_post_qualification_history_path=multi_pair_post_qualification_history_path,
         multi_pair_next_review_bridge_history_path=multi_pair_next_review_bridge_history_path,
+        multi_pair_cycle_history_path=multi_pair_cycle_history_path,
     )
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -1790,6 +1881,10 @@ def write_daily_shadow_ops_report(
             or DEFAULT_MULTI_PAIR_NEXT_REVIEW_BRIDGE_HISTORY
         ),
     )
+    multi_pair_cycle_snapshot = append_multi_pair_cycle_history(
+        ops_summary,
+        history_path=(multi_pair_cycle_history_path or DEFAULT_MULTI_PAIR_CYCLE_HISTORY),
+    )
     notification = append_shadow_notification(ops_summary, notification_log) if notification_log is not None else None
     return {
         "ops_summary": ops_summary,
@@ -1822,6 +1917,10 @@ def write_daily_shadow_ops_report(
             or DEFAULT_MULTI_PAIR_NEXT_REVIEW_BRIDGE_HISTORY
         ),
         "multi_pair_next_review_bridge_snapshot": multi_pair_next_review_bridge_snapshot,
+        "multi_pair_cycle_history_path": str(
+            multi_pair_cycle_history_path or DEFAULT_MULTI_PAIR_CYCLE_HISTORY
+        ),
+        "multi_pair_cycle_snapshot": multi_pair_cycle_snapshot,
         "notification": notification,
     }
 

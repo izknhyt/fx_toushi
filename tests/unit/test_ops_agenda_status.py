@@ -596,6 +596,56 @@ def test_agenda_surfaces_next_review_bridge_start(tmp_path: Path) -> None:
     assert "next_review_bridge_next=AUDUSD" in notes
 
 
+def test_agenda_surfaces_v2_completion_candidate(tmp_path: Path) -> None:
+    health_state_path = tmp_path / "snapshots" / "latest" / "health_state.json"
+    _write_health_state(health_state_path, [], status="ok")
+
+    notification_log = tmp_path / "logs" / "ops" / "shadow_daily_notifications.jsonl"
+    notification_log.parent.mkdir(parents=True, exist_ok=True)
+    notification_log.write_text(
+        json.dumps(
+            {
+                "event": "shadow.daily_alert",
+                "ts": "2026-03-24T02:30:00Z",
+                "review_date_utc": "2026-03-24",
+                "headline": "ready: review_next_pair_candidate",
+                "alert_level": "none",
+                "recommended_action": "review_next_pair_candidate",
+                "multi_pair_cycle_status": "ready_for_next_cycle",
+                "multi_pair_cycle_recommended_action": "review_next_pair_candidate",
+                "multi_pair_cycle_qualified_streak_days": 3,
+                "v2_completion_status": "complete_candidate",
+                "v2_completion_recommended_action": "record_v2_completion_evidence",
+                "v2_completion_candidate": True,
+                "v2_completion_blockers": [],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    service = OpsAgendaService(
+        template_path=tmp_path / "docs" / "templates" / "daily_agenda.md",
+        output_dir=tmp_path / "docs" / "runbooks" / "daily_agenda",
+        health_state_path=health_state_path,
+    )
+
+    from src.ops import agenda as agenda_module
+
+    original_path = agenda_module.SHADOW_DAILY_NOTIFICATION_LOG_PATH
+    agenda_module.SHADOW_DAILY_NOTIFICATION_LOG_PATH = notification_log
+    try:
+        ctx = service.build_context(target_date=date(2026, 3, 24))
+    finally:
+        agenda_module.SHADOW_DAILY_NOTIFICATION_LOG_PATH = original_path
+
+    matching = [task for task in ctx.operational_tasks if task["task"] == "Review v2 completion evidence"]
+    assert len(matching) == 1
+    notes = str(matching[0]["notes"])
+    assert "v2_completion=complete_candidate:record_v2_completion_evidence" in notes
+    assert "v2_completion_candidate=true" in notes
+
+
 def test_agenda_elevates_rollout_rollback_recommendation(tmp_path: Path) -> None:
     health_state_path = tmp_path / "snapshots" / "latest" / "health_state.json"
     _write_health_state(health_state_path, [], status="ok")

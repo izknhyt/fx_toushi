@@ -952,6 +952,8 @@ def test_build_daily_shadow_ops_summary_advances_next_review_bridge_to_expansion
     assert ops_summary["multi_pair_next_review_bridge_recommended_action"] == "start_next_pair_expansion_rollout"
     assert ops_summary["headline"] == "ready: start_next_pair_expansion_rollout"
     assert ops_summary["next_action"] == "start_next_pair_expansion_rollout"
+    assert ops_summary["multi_pair_cycle_status"] == "monitoring"
+    assert ops_summary["v2_completion_status"] == "monitoring"
 
 
 def test_build_daily_shadow_ops_summary_surfaces_pair_expansion_gate_when_pilot_qualified(tmp_path: Path) -> None:
