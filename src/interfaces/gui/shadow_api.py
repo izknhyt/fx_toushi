@@ -39,6 +39,10 @@ from src.interfaces.gui.shadow_next_stage_surface import (
     DEFAULT_SHADOW_NEXT_STAGE_EXECUTION_LEDGER,
     summarize_shadow_next_stage_execution,
 )
+from src.interfaces.gui.v2_completion_check_surface import (
+    run_v2_completion_check,
+    summarize_v2_completion_check_execution,
+)
 from src.interfaces.gui.shadow_discrepancy_ledger import (
     DEFAULT_DISCREPANCY_LEDGER_PATH,
     build_shadow_baseline_readiness_summary,
@@ -84,6 +88,7 @@ class ShadowGuiApi:
     broker_shadow_event_log: Path = DEFAULT_BROKER_SHADOW_EVENT_LOG
     broker_shadow_session_log: Path = DEFAULT_BROKER_SHADOW_SESSION_LOG
     shadow_next_stage_execution_ledger_path: Path = DEFAULT_SHADOW_NEXT_STAGE_EXECUTION_LEDGER
+    v2_completion_check_execution_ledger_path: Path = Path("logs/ops/v2_completion_check_execution.jsonl")
 
     def list_tickets(
         self,
@@ -276,6 +281,9 @@ class ShadowGuiApi:
             shadow_feedback_recovery_packet,
             self.shadow_feedback_recovery_ledger_path,
         )
+        v2_completion_check_execution_state = summarize_v2_completion_check_execution(
+            self.v2_completion_check_execution_ledger_path
+        )
         return {
             "status": "ok",
             "token_count": len(tokens),
@@ -301,12 +309,30 @@ class ShadowGuiApi:
             "shadow_feedback_rollout_alignment": shadow_feedback_rollout_alignment,
             "shadow_feedback_recovery_packet": shadow_feedback_recovery_packet,
             "shadow_feedback_recovery_execution_state": shadow_feedback_recovery_execution_state,
+            "v2_completion_check_execution_state": v2_completion_check_execution_state,
             "shadow_feedback_rollout_history": load_shadow_feedback_rollout_history(
                 self.shadow_feedback_rollout_history_path
             ),
             "daily_shadow_ops_summary": daily_shadow_ops_summary,
             "schema_path": "docs/schema/shadow_gui.yaml",
         }
+
+    def v2_completion_check(
+        self,
+        *,
+        token: str | None = None,
+        output_dir: Path | None = None,
+        limit: int = 200,
+        window_hours: int = 24,
+    ) -> dict[str, object]:
+        self._require_token(token)
+        return run_v2_completion_check(
+            output_dir=output_dir or self.report_dir,
+            limit=limit,
+            window_hours=window_hours,
+            requested_via="shadow_api",
+            ledger_path=self.v2_completion_check_execution_ledger_path,
+        )
 
     def allocation_summary(
         self,

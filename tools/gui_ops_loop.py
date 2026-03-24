@@ -30,6 +30,7 @@ from src.interfaces.gui.shadow_feedback_validation_surface import (
     summarize_shadow_feedback_validation_result,
 )
 from src.interfaces.gui.shadow_next_stage_surface import summarize_shadow_next_stage_execution
+from src.interfaces.gui.v2_completion_check_surface import summarize_v2_completion_check_execution
 from src.portfolio.shadow_stage_gate import build_shadow_stage_gate_summary
 from tools.ingestion_loop import run_once as ingestion_run_once
 from tools.signal_preview import run_preview as signal_preview_run
@@ -66,6 +67,7 @@ class GuiOpsResult:
     shadow_feedback_rollout_alignment: dict[str, Any]
     shadow_feedback_recovery_packet: dict[str, Any]
     shadow_feedback_recovery_execution_state: dict[str, Any]
+    v2_completion_check_execution_state: dict[str, Any]
     daily_shadow_ops_summary: dict[str, Any]
 
     def to_dict(self) -> dict[str, Any]:
@@ -90,6 +92,7 @@ class GuiOpsResult:
             "shadow_feedback_rollout_alignment": self.shadow_feedback_rollout_alignment,
             "shadow_feedback_recovery_packet": self.shadow_feedback_recovery_packet,
             "shadow_feedback_recovery_execution_state": self.shadow_feedback_recovery_execution_state,
+            "v2_completion_check_execution_state": self.v2_completion_check_execution_state,
             "daily_shadow_ops_summary": self.daily_shadow_ops_summary,
         }
 
@@ -241,6 +244,7 @@ def run_gui_ops_once(
         if isinstance(daily_shadow_ops_summary.get("shadow_feedback_validation_result"), Mapping)
         else summarize_shadow_feedback_validation_result()
     )
+    v2_completion_check_execution_state = summarize_v2_completion_check_execution()
 
     return GuiOpsResult(
         ingestion=ingestion_payloads,
@@ -265,6 +269,7 @@ def run_gui_ops_once(
         shadow_feedback_recovery_execution_state=dict(
             daily_shadow_ops_summary.get("shadow_feedback_recovery_execution_state") or {}
         ),
+        v2_completion_check_execution_state=v2_completion_check_execution_state,
         daily_shadow_ops_summary=daily_shadow_ops_summary,
     )
 

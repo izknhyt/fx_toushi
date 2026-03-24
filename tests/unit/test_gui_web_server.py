@@ -12,6 +12,7 @@ from src.interfaces.gui.web_server import (
     GuiOpsRuntimeConfig,
     GuiOpsRuntimeController,
     _allocation_decisions_payload,
+    _ops_v2_completion_check_payload,
     _build_strategy_catalog,
     _ops_status_payload,
     _load_signal_records,
@@ -435,6 +436,35 @@ def test_ops_status_payload_includes_shadow_feedback_validation_result(tmp_path:
     assert payload["shadow_feedback_validation_result"]["status"] == "ok"
     assert payload["shadow_feedback_validation_result"]["decision"] == "reject"
     assert payload["shadow_feedback_rollout_alignment"]["alignment_status"] in {"aligned", "mismatch", "pending_execution", "unknown"}
+    assert payload["v2_completion_check_execution_state"]["status"] == "ok"
+
+
+def test_ops_v2_completion_check_payload_runs_runner(monkeypatch, tmp_path: Path) -> None:
+    class _Controller:
+        def snapshot(self) -> dict[str, object]:
+            return {"status": "ok"}
+
+    monkeypatch.chdir(tmp_path)
+
+    def _fake_run(**kwargs):  # noqa: ANN001
+        assert kwargs["requested_via"] == "gui"
+        return {
+            "status": "ok",
+            "completion_status": "blocked",
+            "completion_candidate": False,
+            "blockers": ["readiness_status=monitor"],
+        }
+
+    monkeypatch.setattr("src.interfaces.gui.web_server.run_v2_completion_check", _fake_run)
+
+    payload, status_code = _ops_v2_completion_check_payload(
+        SimpleNamespace(ops_controller=_Controller()),
+        {"limit": 150, "window_hours": 48},
+    )
+
+    assert status_code == 200
+    assert payload["status"] == "ok"
+    assert payload["completion_status"] == "blocked"
 
 
 def test_resolve_sync_source_dir_chooses_freshest_dataset_dir(tmp_path: Path, monkeypatch) -> None:

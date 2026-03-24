@@ -8,12 +8,12 @@ import logging
 import mimetypes
 import threading
 import time
+from pathlib import Path
 from copy import deepcopy
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
@@ -29,6 +29,10 @@ from src.interfaces.gui.shadow_feedback_rollout_surface import (
     summarize_shadow_feedback_rollout_alignment,
 )
 from src.interfaces.gui.shadow_next_stage_surface import summarize_shadow_next_stage_execution
+from src.interfaces.gui.v2_completion_check_surface import (
+    run_v2_completion_check,
+    summarize_v2_completion_check_execution,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -718,6 +722,10 @@ def _build_handler(config: GuiServerConfig):
                 payload = _ops_stop_payload(config)
                 self._json(payload)
                 return
+            if parsed.path == "/api/ops/v2-completion-check":
+                payload, status_code = _ops_v2_completion_check_payload(config, body)
+                self._json(payload, status=status_code)
+                return
             self._json({"status": "error", "error": "not_found"}, status=404)
 
         def _read_json_body(self) -> dict[str, Any] | None:
@@ -1325,6 +1333,7 @@ def _ops_status_payload(config: GuiServerConfig) -> dict[str, Any]:
         payload.get("shadow_feedback_validation_result"),
         payload.get("shadow_next_stage_execution_state"),
     )
+    payload["v2_completion_check_execution_state"] = summarize_v2_completion_check_execution()
     return payload
 
 
@@ -1345,3 +1354,21 @@ def _ops_stop_payload(config: GuiServerConfig) -> dict[str, Any]:
     if config.ops_controller is None:
         return {"status": "disabled", "reason": "ops_runtime_not_configured"}
     return config.ops_controller.stop()
+
+
+def _ops_v2_completion_check_payload(
+    config: GuiServerConfig, payload: Mapping[str, Any] | None
+) -> tuple[dict[str, Any], int]:
+    if config.ops_controller is None:
+        return {"status": "disabled", "reason": "ops_runtime_not_configured"}, 503
+    body = payload if isinstance(payload, Mapping) else {}
+    output_dir = Path(str(body.get("output_dir") or "reports/analysis/shadow"))
+    limit = _positive_int(body.get("limit"), default=200)
+    window_hours = _positive_int(body.get("window_hours"), default=24)
+    response = run_v2_completion_check(
+        output_dir=output_dir,
+        limit=limit,
+        window_hours=window_hours,
+        requested_via="gui",
+    )
+    return response, 200 if response.get("status") == "ok" else 500

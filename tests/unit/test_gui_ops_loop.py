@@ -300,6 +300,7 @@ def test_gui_ops_result_to_dict_includes_candidate_snapshot() -> None:
         shadow_feedback_rollout_alignment={"status": "ok", "alignment_status": "aligned", "validation_decision": "hold"},
         shadow_feedback_recovery_packet={"status": "not_required", "recovery_action": "continue_shadow"},
         shadow_feedback_recovery_execution_state={"status": "ok", "resolution_status": "not_required"},
+        v2_completion_check_execution_state={"status": "ok", "count": 1, "latest": {"completion_status": "blocked"}},
         daily_shadow_ops_summary={"status": "ok", "alert_level": "none", "should_notify": False},
     )
 
@@ -324,6 +325,7 @@ def test_gui_ops_result_to_dict_includes_candidate_snapshot() -> None:
     assert payload["shadow_feedback_validation_result"]["decision"] == "hold"
     assert payload["shadow_feedback_rollout_alignment"]["alignment_status"] == "aligned"
     assert payload["shadow_feedback_recovery_execution_state"]["resolution_status"] == "not_required"
+    assert payload["v2_completion_check_execution_state"]["latest"]["completion_status"] == "blocked"
     assert payload["daily_shadow_ops_summary"]["alert_level"] == "none"
 
 

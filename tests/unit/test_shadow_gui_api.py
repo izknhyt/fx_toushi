@@ -321,6 +321,7 @@ def test_shadow_gui_status_and_allocation_summary_include_admission_counts(tmp_p
     assert status["shadow_feedback_rollout_alignment"]["status"] == "ok"
     assert status["shadow_feedback_recovery_packet"]["status"] in {"ready", "not_required"}
     assert status["shadow_feedback_recovery_execution_state"]["status"] == "ok"
+    assert status["v2_completion_check_execution_state"]["status"] == "ok"
     assert "alignment_status" in status["shadow_feedback_rollout_alignment"]
     assert status["daily_shadow_ops_summary"]["status"] == "ok"
     assert "alert_level" in status["daily_shadow_ops_summary"]

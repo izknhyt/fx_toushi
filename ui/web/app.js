@@ -10,6 +10,7 @@ const signalTableEl = document.getElementById("signal-table");
 const opsStartEl = document.getElementById("ops-start");
 const opsSyncOnlyEl = document.getElementById("ops-sync-only");
 const opsLoopOnlyEl = document.getElementById("ops-loop-only");
+const opsV2CompletionCheckEl = document.getElementById("ops-v2-completion-check");
 const opsStopEl = document.getElementById("ops-stop");
 const opsMetaEl = document.getElementById("ops-meta");
 const opsLogEl = document.getElementById("ops-log");
@@ -471,6 +472,7 @@ function renderOps(payload) {
     if (opsStartEl) opsStartEl.disabled = true;
     if (opsSyncOnlyEl) opsSyncOnlyEl.disabled = true;
     if (opsLoopOnlyEl) opsLoopOnlyEl.disabled = true;
+    if (opsV2CompletionCheckEl) opsV2CompletionCheckEl.disabled = true;
     if (opsStopEl) opsStopEl.disabled = true;
     renderOpsProgress(null);
     return;
@@ -980,6 +982,20 @@ function renderOps(payload) {
           `rollout_suppression: status=${rolloutSuppression.status || "-"} scope=${rolloutSuppression.scope || "-"} action=${rolloutSuppression.recommended_action || "-"} safe_promotion=${rolloutSuppression.safe_promotion_status || "-"}`
         ]
       : [];
+  const v2CompletionCheckState =
+    payload && typeof payload.v2_completion_check_execution_state === "object"
+      ? payload.v2_completion_check_execution_state
+      : null;
+  const v2CompletionCheckLatest =
+    v2CompletionCheckState && typeof v2CompletionCheckState.latest === "object"
+      ? v2CompletionCheckState.latest
+      : null;
+  const v2CompletionCheckLine =
+    v2CompletionCheckLatest && Object.keys(v2CompletionCheckLatest).length > 0
+      ? [
+          `v2_completion_check: status=${v2CompletionCheckLatest.status || "-"} completion=${v2CompletionCheckLatest.completion_status || "-"} action=${v2CompletionCheckLatest.completion_recommended_action || "-"} blockers=${(v2CompletionCheckLatest.blockers || []).join("|") || "-"} ts=${v2CompletionCheckLatest.ts || "-"}`
+        ]
+      : [];
   const allocationRecentLines = allocationDecisions.map((entry) => {
     const decision = entry.allocation_decision || {};
     const reason = decision.reason_code || entry.reason || "-";
@@ -1061,6 +1077,7 @@ function renderOps(payload) {
     ...candidateOnboardingRecentLines,
     ...multiPairPreparationRecentLines,
     ...rolloutSuppressionLine,
+    ...v2CompletionCheckLine,
     ...allocationRecentLines,
     ...candidateRecentLines,
     ...warningLine,
@@ -1069,6 +1086,7 @@ function renderOps(payload) {
   if (opsStartEl) opsStartEl.disabled = opsRunning;
   if (opsSyncOnlyEl) opsSyncOnlyEl.disabled = opsRunning;
   if (opsLoopOnlyEl) opsLoopOnlyEl.disabled = opsRunning;
+  if (opsV2CompletionCheckEl) opsV2CompletionCheckEl.disabled = false;
   if (opsStopEl) opsStopEl.disabled = !opsRunning;
 }
 
@@ -1120,6 +1138,19 @@ async function stopOps() {
   }
 }
 
+async function runV2CompletionCheck() {
+  if (!opsV2CompletionCheckEl) return;
+  opsV2CompletionCheckEl.disabled = true;
+  try {
+    await postJson("/api/ops/v2-completion-check");
+    const ops = await fetchJson("/api/ops/status");
+    renderOps(ops);
+  } catch (err) {
+    opsMetaEl.textContent = `状態: completion check error（${_errorText(err)}）`;
+    opsV2CompletionCheckEl.disabled = false;
+  }
+}
+
 async function refresh() {
   try {
     const [status, price, signals, ops] = await Promise.all([
@@ -1153,6 +1184,7 @@ function scheduleNextRefresh() {
 if (opsStartEl) opsStartEl.addEventListener("click", startOps);
 if (opsSyncOnlyEl) opsSyncOnlyEl.addEventListener("click", startSyncOnly);
 if (opsLoopOnlyEl) opsLoopOnlyEl.addEventListener("click", startLoopOnly);
+if (opsV2CompletionCheckEl) opsV2CompletionCheckEl.addEventListener("click", runV2CompletionCheck);
 if (opsStopEl) opsStopEl.addEventListener("click", stopOps);
 if (timezoneToggleEl) timezoneToggleEl.addEventListener("click", toggleTimezoneMode);
 
