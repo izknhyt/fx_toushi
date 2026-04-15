@@ -19,8 +19,37 @@ from typing import Any
 
 import yaml
 
-from src.portfolio.multi_pair import render_symbol_scoped_value
 from src.strategies.candidate import CandidateTrade
+
+
+def render_symbol_scoped_value(value: str | None, *, symbol: str | None) -> str:
+    """Minimal stub of the archived ``src.portfolio.multi_pair.render_symbol_scoped_value``.
+
+    Substitutes ``{symbol}``, ``{symbol_lower}``, ``{base}``, ``{quote}``,
+    ``{base_lower}``, ``{quote_lower}`` without the pair-metadata lookup the
+    original did. Sufficient for the template strings currently exercised
+    under the admission scaffolding; if richer pair metadata is needed,
+    revive a lean version of the lookup instead of un-archiving the full
+    multi_pair module.
+    """
+
+    text = str(value or "").strip()
+    if not text or symbol is None:
+        return text
+    sym = str(symbol)
+    base = sym[:3].upper() if len(sym) >= 6 else sym
+    quote = sym[3:6].upper() if len(sym) >= 6 else ""
+    try:
+        return text.format(
+            symbol=sym,
+            symbol_lower=sym.lower(),
+            base=base,
+            quote=quote,
+            base_lower=base.lower(),
+            quote_lower=quote.lower(),
+        )
+    except (KeyError, IndexError):
+        return text
 
 
 def _coerce_float(value: Any, default: float = 0.0) -> float:

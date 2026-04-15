@@ -18,7 +18,42 @@ import json
 import uuid
 
 from src.infra.secrets import SecretNotFoundError, SecretsVaultService
-from src.security.access import AccessGovernanceService
+
+
+# ---------------------------------------------------------------------------
+# Access governance stub
+# ---------------------------------------------------------------------------
+#
+# The legacy ``src.security.access.AccessGovernanceService`` was archived as
+# part of the personal-use simplification (see ``archive/enterprise/src/security``).
+# For now brokers run with an open no-op policy — we are pre-live and the
+# repo is single-user. A lean access layer returns in Phase 3 when live /
+# shadow trading wiring resumes. Keeping the class name and shape so that
+# downstream call sites (``_require_access`` etc.) remain untouched.
+
+
+class _NoopAccessResult:
+    """No-op access check result: always allowed, no reasons, no device bind."""
+
+    __slots__ = ("status", "reasons", "runbook_ref", "device_id")
+
+    def __init__(self) -> None:
+        self.status: str = "allowed"
+        self.reasons: list[str] = []
+        self.runbook_ref: str | None = None
+        self.device_id: str | None = None
+
+
+class AccessGovernanceService:
+    """Stub access-governance service that allows all operations.
+
+    Replaces the archived enterprise access governance. Accepts (and ignores)
+    any policy arguments so existing call sites keep working. Phase 3 will
+    re-introduce a real implementation if live trading requires it.
+    """
+
+    def enforce_policy(self, principal_id: str) -> _NoopAccessResult:  # noqa: ARG002
+        return _NoopAccessResult()
 
 
 class BrokerAdapterError(RuntimeError):

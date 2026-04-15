@@ -11,13 +11,50 @@ from typing import Any, Mapping
 import yaml
 
 from src.features.pipeline import FeaturePipeline
-from src.ops.worklog import OpsWorklogEntry, OpsWorklogService
 from src.core.scheduler import AsyncIntervalJob
 from src.strategies.registry import (
     ManifestLoadError,
     ManifestValidationError,
     StrategyManifest,
 )
+
+
+# ---------------------------------------------------------------------------
+# OpsWorklog no-op stub (archived module)
+# ---------------------------------------------------------------------------
+#
+# ``src.ops.worklog`` was archived to ``archive/governance/src/ops/worklog.py``
+# per the personal-use simplification. ``StrategyManifestValidator`` still
+# accepts a worklog path on its public API so existing call sites compile,
+# but persistence is a no-op. Phase 2 decides whether a lean manifest log
+# returns; if not, this stub and its call sites leave with it.
+
+
+@dataclass(slots=True)
+class OpsWorklogEntry:
+    """Stub mirroring archived ``src.ops.worklog.OpsWorklogEntry``."""
+
+    schema_version: str
+    ts: datetime
+    task: str
+    duration_min: int
+    owner: str
+    mode: str
+    source: str
+    related_artifacts: list[str]
+    health_state: str
+    board_mode: str
+    notes: str | None = None
+
+
+class OpsWorklogService:
+    """No-op stub. ``record()`` drops the entry silently."""
+
+    def __init__(self, *, ledger_path: Path = Path("ops_worklog.jsonl")) -> None:
+        self._ledger_path = ledger_path
+
+    def record(self, entry: OpsWorklogEntry) -> None:  # noqa: ARG002
+        return None
 
 DEFAULT_MANIFEST_PATH = Path("config") / "strategy_manifest.yaml"
 DEFAULT_PLAYBOOK_DIR = Path("docs") / "validation_playbook"

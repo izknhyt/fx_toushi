@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any, Mapping, Sequence
 
 from src.brokers.adapter import (
+    AccessGovernanceService,  # no-op stub; see adapter.py
     BrokerAdapter,
     BrokerOrder,
     BrokerOrderRejected,
@@ -15,7 +16,6 @@ from src.brokers.adapter import (
     _utcnow_iso,
 )
 from src.infra.secrets import SecretsVaultService
-from src.security.access import AccessGovernanceService
 
 
 class SandboxAdapter(BrokerAdapter):
