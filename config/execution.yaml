@@ -1,0 +1,77 @@
+# Execution cost model — the one source of truth for round-trip cost.
+#
+# Read by src/execution/cost.py (Phase 2). Every Candidate.estimated_cost
+# MUST derive from this file; constants and ad-hoc values are forbidden
+# (see docs/invariants.md §I3).
+#
+# The curves below are intentionally conservative. The goal is to stop
+# the historical pattern where slippage=0 / commission=0 / no swap / no
+# weekend gap produced PF > 1.2 numbers that collapsed the moment real
+# execution intervened. When in doubt about a number here, bias toward
+# the higher cost — false profits are more expensive than false losses.
+
+schema_version: execution.cost.v1
+
+# Spread curve in price units (e.g. 0.010 = 1.0 pip on USDJPY priced ~150).
+# Keyed by symbol and session. Asia is quiet, London / NY overlap is tight,
+# off-hours (rollover + weekend edges) widens sharply.
+spread:
+  USDJPY:
+    asia:       0.012    # 1.2 pips — Tokyo session
+    london:     0.010    # 1.0 pip  — London open through NY overlap
+    ny:         0.010    # 1.0 pip  — NY session
+    overlap:    0.009    # 0.9 pips — London / NY overlap (tightest)
+    off_hours:  0.020    # 2.0 pips — rollover, holiday edges
+  default:
+    asia:       0.015
+    london:     0.014
+    ny:         0.014
+    overlap:    0.013
+    off_hours:  0.025
+
+# Slippage distribution in price units per fill. Sampled per side; total
+# round trip pays twice (entry + exit). p50 is the typical draw; p90 is
+# the adverse tail used for stress testing.
+slippage:
+  USDJPY:
+    base:
+      p50:      0.003    # 0.3 pips typical
+      p90:      0.010    # 1.0 pip tail
+    volatile:           # news / illiquid conditions
+      p50:      0.010
+      p90:      0.030
+  default:
+    base:
+      p50:      0.004
+      p90:      0.015
+    volatile:
+      p50:      0.015
+      p90:      0.040
+
+# Commission in price units per side per fill. Swap brokers that bundle
+# spread may set this to 0; ECN-style brokers charge explicitly.
+commission:
+  USDJPY:
+    per_side:   0.0005   # 0.05 pips per side
+  default:
+    per_side:   0.0010
+
+# Overnight swap charged at rollover (~21:00 UTC for most brokers).
+# Negative = pay (common for JPY long short USD). Positive = receive.
+# round_trip_cost() charges |swap| for simplicity; the sign is decorative
+# for now but preserved for later receive-side accounting.
+swap:
+  USDJPY:
+    long_per_night:    -0.006  # pay ~0.6 pips/night holding USD long vs JPY
+    short_per_night:    0.002  # receive ~0.2 pips/night holding USD short
+  default:
+    long_per_night:    -0.010
+    short_per_night:   -0.005
+
+# Weekend gap cost for positions held through Friday close → Sunday open.
+# Priced as an expected-loss premium since realised gaps are fat-tailed.
+weekend_gap:
+  USDJPY:
+    premium:    0.020    # 2.0 pips expected adverse move across weekend
+  default:
+    premium:    0.030

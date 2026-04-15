@@ -17,7 +17,7 @@ Individual strategy PF is **not** the optimization target. Marginal contribution
 
 ## 2. The 10 invariants
 
-1. **Candidate contract.** Strategies emit `Candidate` (13 fields, see `src/contract.py`). Nothing else.
+1. **Candidate contract.** Strategies emit `Candidate` (14 fields, see `src/contract.py`). Nothing else.
 2. **Utility target.** `portfolio_utility` above is what we maximize.
 3. **Admission is the core.** A central admission layer decides `accept / reject / defer / resize / replace`. Strategies do not place orders.
 4. **Admission score.** `admission_score = expected_edge - estimated_cost - holding_penalty - correlation_penalty - conflict_penalty`.
