@@ -38,7 +38,7 @@ class $1Strategy(Strategy):
 
     def generate(self, context: StrategyContext) -> Iterable[Candidate]:
         # TODO: implement the alpha hypothesis.
-        # Every emitted Candidate must populate all 13 fields (see src/contract.py).
+        # Every emitted Candidate must populate all 14 fields (see src/contract.py).
         # estimated_cost must come from config/execution.yaml, not a constant.
         return []
 ```

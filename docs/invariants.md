@@ -4,25 +4,26 @@ Unchangeable rules every change must preserve. Violations block merge.
 
 ## I1. Candidate contract
 
-Every strategy plugin under `src/strategies/` must emit `src.contract.Candidate` objects with **all 13 fields populated**:
+Every strategy plugin under `src/strategies/` must emit `src.contract.Candidate` objects with **all 14 fields populated**:
 
 | field | type | notes |
 | --- | --- | --- |
 | `strategy_id` | `str` | Matches the plugin's declared id. |
 | `symbol` | `str` | e.g. `"USDJPY"`. |
 | `side` | `Literal["long", "short"]` | |
-| `entry` | `float` | |
+| `entry` | `float` | For `long`: `stop < entry < target`. For `short`: `target < entry < stop`. |
 | `stop` | `float` | |
 | `target` | `float` | |
 | `expected_edge` | `float` | Pre-cost expected R. |
-| `estimated_cost` | `float` | Sourced from `config/execution.yaml` curves — not a constant. |
+| `estimated_cost` | `float` | ≥ 0. Sourced from `config/execution.yaml` curves — not a constant. |
 | `confidence` | `float` | Within `[0.0, 1.0]`. |
 | `expected_holding_minutes` | `int` | > 0. |
 | `portfolio_group` | `str` | Declared in `config/portfolio.yaml`. |
 | `exposure_bucket` | `str` | Declared in `config/portfolio.yaml`. |
-| `regime_fit` | `float` | [-1.0, 1.0]; the regime layer provides this. |
+| `regime_fit` | `float` | `[-1.0, 1.0]`; the regime layer provides this. |
+| `timestamp` | `datetime` | Timezone-aware; matches the bar timestamp that produced the signal. |
 
-Enforced by `tests/test_contract.py` — loops over every registered strategy, runs against a canned context, validates every emitted candidate.
+Enforced by `tests/contracts/test_candidate_contract.py` — loops over every registered strategy, runs against a canned context, calls `src.contract.validate_candidate` on every emitted candidate.
 
 ## I2. Parity (one decision path)
 

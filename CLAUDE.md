@@ -10,7 +10,7 @@ Read [docs/architecture.md](docs/architecture.md) before any non-trivial change.
 
 ## The 10 invariants
 
-1. `Candidate` contract: strategies emit `Candidate`, nothing else. 13 fields required (see `src/contract.py`).
+1. `Candidate` contract: strategies emit `Candidate`, nothing else. 14 fields required (see `src/contract.py`).
 2. `portfolio_utility = expected_return - drawdown_penalty - trading_cost - slot_time_penalty - correlation_penalty` is the optimization target.
 3. Admission layer is the core decision point (`accept` / `reject` / `defer` / `resize` / `replace`).
 4. `admission_score = expected_edge - estimated_cost - holding_penalty - correlation_penalty - conflict_penalty`.
