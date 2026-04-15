@@ -13,7 +13,42 @@ try:  # pragma: no cover - optional dependency
 except ModuleNotFoundError:  # pragma: no cover
     yaml = None  # type: ignore[assignment]
 
-from src.ops.worklog import OpsWorklogEntry, OpsWorklogService
+# ---------------------------------------------------------------------------
+# OpsWorklog no-op stub
+# ---------------------------------------------------------------------------
+#
+# The legacy ``src.ops.worklog`` module was archived to
+# ``archive/governance/src/ops/worklog.py`` as part of the personal-use
+# simplification (see ``CLAUDE.md``). This file still accepts and records
+# worklog entries on the public surface, but persistence is a no-op until a
+# lean replacement lands in Phase 2 (if still needed).
+
+
+@dataclass(slots=True)
+class OpsWorklogEntry:
+    """Minimal stub mirroring the archived ``src.ops.worklog.OpsWorklogEntry``."""
+
+    schema_version: str
+    ts: datetime
+    task: str
+    duration_min: int
+    owner: str
+    mode: str
+    source: str
+    related_artifacts: list[str]
+    health_state: str
+    board_mode: str
+    notes: str | None = None
+
+
+class OpsWorklogService:
+    """No-op stub. ``record()`` drops the entry silently."""
+
+    def __init__(self, *, ledger_path: Path = Path("ops_worklog.jsonl")) -> None:
+        self._ledger_path = ledger_path
+
+    def record(self, entry: OpsWorklogEntry) -> None:  # noqa: ARG002
+        return None
 
 DEFAULT_PLAYBOOK_CONFIG = Path("config/emergency.yaml")
 DEFAULT_STATE_PATH = Path("data/emergency/state.json")

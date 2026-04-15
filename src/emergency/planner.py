@@ -8,7 +8,43 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
 
-from src.ops.emergency import trigger as emergency_trigger
+# ---------------------------------------------------------------------------
+# Emergency trigger no-op stub
+# ---------------------------------------------------------------------------
+#
+# The legacy ``src.ops.emergency`` module (playbook-integrated emergency
+# trigger service) was archived to ``archive/governance/src/ops/`` as part
+# of the personal-use simplification. ``EmergencyPlanner.dispatch`` still
+# returns a structured result so callers stay compatible — the actual
+# trigger is a no-op until a lean emergency / kill-switch module lands
+# (Phase 2 if needed).
+
+
+class _EmergencyStubResult:
+    """Serialisable placeholder returned by the no-op emergency trigger."""
+
+    __slots__ = ("scenario", "runbook", "simulated")
+
+    def __init__(self, *, scenario: str, runbook: str, simulated: bool) -> None:
+        self.scenario = scenario
+        self.runbook = runbook
+        self.simulated = simulated
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "status": "stub",
+            "scenario": self.scenario,
+            "runbook": self.runbook,
+            "simulated": self.simulated,
+        }
+
+
+def emergency_trigger(
+    *, scenario: str, runbook: str, simulate: bool = False,
+) -> _EmergencyStubResult:
+    """No-op replacement. Returns a result payload but does not escalate."""
+
+    return _EmergencyStubResult(scenario=scenario, runbook=runbook, simulated=simulate)
 
 DEFAULT_PLAN_LOG = Path("logs/events/emergency_plan.jsonl")
 
