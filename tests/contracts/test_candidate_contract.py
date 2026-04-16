@@ -10,6 +10,7 @@ See ``docs/invariants.md`` §I1 and ``docs/architecture.md`` §2.
 
 from __future__ import annotations
 
+import dataclasses
 from datetime import datetime, timezone
 
 import pytest
@@ -92,75 +93,56 @@ def test_non_candidate_input_rejected() -> None:
 
 
 def test_empty_strategy_id_rejected() -> None:
-    bad = _sample_long().__class__(
-        **{**_sample_long().__dict__, "strategy_id": ""}
-    )
+    bad = dataclasses.replace(_sample_long(), strategy_id="")
     with pytest.raises(CandidateContractError, match="strategy_id"):
         validate_candidate(bad)
 
 
 def test_bad_side_rejected() -> None:
-    bad = _sample_long().__class__(
-        **{**_sample_long().__dict__, "side": "flat"}
-    )
+    bad = dataclasses.replace(_sample_long(), side="flat")
     with pytest.raises(CandidateContractError, match="side"):
         validate_candidate(bad)
 
 
 def test_long_with_inverted_prices_rejected() -> None:
     """stop must be below entry for a long — no exceptions."""
-
-    bad = _sample_long().__class__(
-        **{**_sample_long().__dict__, "stop": 150.50}
-    )
+    bad = dataclasses.replace(_sample_long(), stop=150.50)
     with pytest.raises(CandidateContractError, match="long"):
         validate_candidate(bad)
 
 
 def test_short_with_inverted_prices_rejected() -> None:
-    bad = _sample_short().__class__(
-        **{**_sample_short().__dict__, "stop": 149.90}
-    )
+    bad = dataclasses.replace(_sample_short(), stop=149.90)
     with pytest.raises(CandidateContractError, match="short"):
         validate_candidate(bad)
 
 
 def test_confidence_out_of_range_rejected() -> None:
-    bad = _sample_long().__class__(
-        **{**_sample_long().__dict__, "confidence": 1.2}
-    )
+    bad = dataclasses.replace(_sample_long(), confidence=1.2)
     with pytest.raises(CandidateContractError, match="confidence"):
         validate_candidate(bad)
 
 
 def test_regime_fit_out_of_range_rejected() -> None:
-    bad = _sample_long().__class__(
-        **{**_sample_long().__dict__, "regime_fit": -1.5}
-    )
+    bad = dataclasses.replace(_sample_long(), regime_fit=-1.5)
     with pytest.raises(CandidateContractError, match="regime_fit"):
         validate_candidate(bad)
 
 
 def test_negative_holding_minutes_rejected() -> None:
-    bad = _sample_long().__class__(
-        **{**_sample_long().__dict__, "expected_holding_minutes": 0}
-    )
+    bad = dataclasses.replace(_sample_long(), expected_holding_minutes=0)
     with pytest.raises(CandidateContractError, match="expected_holding_minutes"):
         validate_candidate(bad)
 
 
 def test_naive_timestamp_rejected() -> None:
-    bad = _sample_long().__class__(
-        **{**_sample_long().__dict__, "timestamp": datetime(2026, 4, 15, 9, 0)}
-    )
+    bad = dataclasses.replace(_sample_long(), timestamp=datetime(2026, 4, 15, 9, 0))
     with pytest.raises(CandidateContractError, match="timezone-aware"):
         validate_candidate(bad)
 
 
 def test_negative_estimated_cost_rejected() -> None:
-    bad = _sample_long().__class__(
-        **{**_sample_long().__dict__, "estimated_cost": -0.0001}
-    )
+    bad = dataclasses.replace(_sample_long(), estimated_cost=-0.0001)
     with pytest.raises(CandidateContractError, match="estimated_cost"):
         validate_candidate(bad)
 

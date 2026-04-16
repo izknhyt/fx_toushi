@@ -18,7 +18,9 @@ from .model import (
     FillPolicy,
     FillStyle,
 )
-from .order_router import OrderDispatchRejected, OrderRouter, OrderRouterProtocol
+# NOTE: order_router is NOT imported eagerly because it transitively pulls
+# in brokers → infra/secrets → cryptography → persistence → jsonschema.
+# Consumers needing OrderRouter should: ``from src.execution.order_router import ...``
 from .reduce_only import ReduceOnlyAdvisorProtocol
 from .spread import (
     SpreadCooldownState,
@@ -36,9 +38,6 @@ __all__ = [
     "ExecutionRuleViolationError",
     "FillPolicy",
     "FillStyle",
-    "OrderDispatchRejected",
-    "OrderRouter",
-    "OrderRouterProtocol",
     "ReduceOnlyAdvisorProtocol",
     "SpreadCooldownState",
     "SpreadMonitorProtocol",

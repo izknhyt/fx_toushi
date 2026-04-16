@@ -1,26 +1,12 @@
-"""Strategy plugin contracts, manifest models, and execution registry."""
+"""Strategy plugin contracts, manifest models, and execution registry.
 
-from .base import Strategy, StrategyContext, StrategyMetadata, StrategyPluginProtocol
-from .registry import (
-    ManifestLoadError,
-    ManifestValidationError,
-    StrategyEngine,
-    StrategyExecutionError,
-    StrategyManifest,
-    StrategyRegistrationError,
-    StrategyRegistryError,
-)
+The registry and base types are NOT eagerly imported because they
+transitively pull in pydantic, execution barrel, and broker chains.
+Consumers should import from the specific module:
 
-__all__ = [
-    "Strategy",
-    "StrategyContext",
-    "StrategyMetadata",
-    "StrategyPluginProtocol",
-    "StrategyEngine",
-    "StrategyManifest",
-    "StrategyRegistryError",
-    "StrategyRegistrationError",
-    "StrategyExecutionError",
-    "ManifestLoadError",
-    "ManifestValidationError",
-]
+    from src.strategies.base import StrategyContext, StrategyPluginProtocol
+    from src.strategies.registry import StrategyEngine, StrategyManifest
+    from src.strategies.round_number_rejection import RoundNumberRejectionStrategy
+"""
+
+__all__: list[str] = []
